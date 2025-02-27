@@ -1,0 +1,118 @@
+URL: https://bisq.wiki/Bisq_2_Roles
+
+Bisq 2 has contributors that take responsibility for specific bonded roles for the network resources and processes.
+There are 2 types of bonded roles.
+System roles
+Delegable roles
+Contents
+1
+System roles
+1.1
+Mediator
+1.2
+Moderator
+1.3
+Security Manager
+1.4
+Update manager
+2
+Delegable roles
+2.1
+Seed node
+2.2
+Oracle node
+2.2.1
+DAO bridge service
+2.2.2
+Reputation service
+2.2.3
+Time-stamping service
+2.3
+Explorer nodes
+2.4
+Market price node
+3
+How does someone get to perform a bonded role in Bisq 2
+4
+BSQ bonding for roles/nodes
+5
+Confiscation of BSQ bonding for roles/nodes
+System roles
+System roles for Bisq 2 have to be carried out by the authorized contributor. They cannot be delegated to anyone else to maintain security of Bisq.
+Mediator
+Bisq 2 mediators help users of the the Bisq Easy trade protocol in Bisq should they encounter any issues during their trades. Mediators have no control over users funds and no enforcement powers. Should a trader in Bisq Easy be behaving poorly (eg trying to scam users) mediators can provide information to moderators to ban users who severely, or repeatedly, violated the trade rules.
+Moderator
+Moderators help ensure the smooth running of the Bisq Easy trade protocol in Bisq 2.
+Moderators will:
+Monitor offers to remove spam.
+Deal with reports from users/mediators requesting any violations of Bisq Easy rules.
+Investigate any cases of violations.
+Ban users profile IDs.
+Flag any messages in violation of the rules.
+Users should be aware that as Bisq 2 provides support for multiple identities banning will not have a big effect as banned users can easily create a new profile.
+Security Manager
+The Security Manager role is  is similar to the filter operator in Bisq 1. The Security Manager can publish data to block other roles/nodes and other security related things (block trading in the event of a critical incident). However, users will be to deactivate the security manager should they wish.
+Another role of the security manager is to broadcast alert messages to the network or to specific users. Alerts can be ignored by the users should they wish.
+The types of alters include:
+INFO (info popup with a text message)
+WARN (warn popup with a text message)
+HALT_TRADE (custom emergency popup with a text message and disable all trade operations for the defined trade protocol)
+BAN (no text message, data of the banned role)
+Update manager
+The release manager can broadcast a update notification to the network.
+The types of notification types include:
+PRE_RELEASE: Send update notification for new pre-release (user can enable to get notified about pre-releases in settings, default is off).
+RELEASE: Send update notification about a new release.
+FORCED_UPDATE: Warn popup with a text message about the need for update to the required min version. All trade operations will be halted until updated.
+Delegable roles
+Delegable roles can be operated by any users themself and assigned via JVM arguments. They are based on publicly available data and do not require to be in consensus with other Bisq 2 users.
+Seed node
+Seed nodes act as providers for the P2P network data and filtered blocks from the Bitcoin blockchain for lite nodes. When a node starts, it requests all P2P network data from several seed nodes.
+There must be at least one hard coded (root) seed node.
+Oracle node
+Oracle nodes provide three services. There always has to be at least one oracle node.
+DAO bridge service
+The DAO bridge service requests DAO data from a Bisq 1 API and broadcasts the relevant data to the Bisq 2 network. This data is required to verify bonded roles and for reputation sources (Users that have burned BSQ or bonded BSQ).
+Users can verify the DAO data provided by the DAO bridge service by requesting the DAO data itself from a Bisq 1 API node and checking if the distributed data was correct. If they would detect invalid data they have to report it to the developers and if it turns out the DAO bridge service has provided incorrect data intentionally a confiscation proposal will be created to request the DAO for confiscating the operators bond.
+Reputation service
+The reputation service request data from Bisq 1 via an API for reputation sources (account age and signed account age witness) and broadcasts the relevant data to the Bisq 2 network.
+Time-stamping service
+The time-stamping service provides a time-stamping function for profile age of Bisq 2 users.
+Explorer nodes
+Explorer nodes are used for requesting the state of a transaction during the trade process. For example they once bitcoin payment is confirmed then they will inform the user.
+Market price node
+Market price node are used for requesting market prices. For example the BTC/USD or BTC/EUR price. As trades are made based on this information it is important that the market price nodes are bonded.
+How does someone get to perform a bonded role in Bisq 2
+Contributors for the roles are usually have established Bisq contributors that have been approved by a DAO vote to perform a certain role.
+For increased security a contributor must make a proposal to become a contributor for a specific role that is voted on by the Bisq DAO. If the vote is successful that a BSQ bond will be locked up automatically for that contributors specific role.
+The process for performing a role in Bisq 2 is usually as follows:
+A potential contributor posts a proposal to
+Bisq GitHub Proposals Repository
+putting their case forward for performing a certain role for Bisq.
+The proposal is discussed on the GitHub issue.
+Once there is rough consensus for the proposal to be accepted the potential contributor then makes a proposal for a bonded roles from the Bisq application. They would need to ensure that they have enough BSQ available for the BSQ bond.
+The proposal is put to the Bisq DAO for voting. If the proposal is accepted the BSQ bond is locked, the role will be registered in the UI, and then the user can then work in their new role. If the proposal is rejected the BSQ is returned to the user that made the proposal.
+For more information on becoming a contributor for Bisq see the
+Contributor Checklist
+.
+Not all roles require bonding so it is often easier to get started on a non-bonded role and develop your reputation prior to contributing for a role that requires bonding.
+BSQ bonding for roles/nodes
+All roles/nodes require a BSQ bond and DAO voting.
+The oracle node verifies that all Bisq 2 bonded roles/nodes have a BSQ bond setup.
+Their are 2 nodes that cannot be verified by the oracle node. These are the root seed node and the root oracle node (as this would present a chicken and egg problem).
+Both these root nodes however are required to have also their own BSQ bond set up.
+The bonding process is transparent all users are able to manually verify that all bonded roles / nodes have valid BSQ bonds. This is can be done though the DAO section of the Bisq 1 application.
+Confiscation of BSQ bonding for roles/nodes
+If a role/node is behaving in a way that is harmful to users then anyone can make a request for the bond for that role/node to be confiscated.
+The process would be as follows:
+A user posts a proposal explaining why they think a bond should be confiscated on the
+Bisq GitHub Proposals Repository
+.
+The proposal is discussed on the GitHub issue. This is also give the bond holder the opportunity to respond.
+Once there is rough consensus for confiscation to be accepted the user requesting the confiscation then makes a proposal to confiscate the bond in the Bisq 1 application.
+The proposal is put to the Bisq DAO for voting. If the proposal is accepted the BSQ bond is burnt, the role will be un-registered in the UI, and then the contributor of the role/node will lose their bond and cease performing that bonded role for Bisq. If the proposal is rejected their would be no changes.
+Confiscating a bond is a harsh penalty which should not be taken lightly. Therefore, the Bisq DAO makes confiscation proposals especially hard to approve: they require a quorum of at least 200,000 BSQ and 85% acceptance to pass (instead of the typical >50%).
+In this way, the risk that people in high-trust roles misbehave is minimized, and the community has access to a responsible mechanism for handling such a scenario in cases that warrant it.
+For more information see
+Ensuring honesty in high-trust roles
+.

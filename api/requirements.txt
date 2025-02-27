@@ -1,0 +1,39 @@
+# API Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# RAG Components
+langchain
+langchain-community
+langchain-core
+langchain-huggingface
+langchain-chroma
+chromadb
+sentence-transformers
+
+# LLM Integration
+openai
+torch
+transformers
+
+# Data Processing
+pandas
+numpy
+tqdm
+requests
+aiohttp
+asyncio
+
+# Monitoring & Logging
+psutil
+prometheus-client
+python-json-logger
+
+# Development Tools
+pytest
+pytest-asyncio
+black
+isort
+mypy 

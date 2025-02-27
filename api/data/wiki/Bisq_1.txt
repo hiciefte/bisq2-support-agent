@@ -1,0 +1,93 @@
+URL: https://bisq.wiki/Bisq_1
+
+Bisq
+Bisq
+is a decentralized bitcoin exchange network that enables secure, private and censorship-resistant exchange of bitcoin for national currencies and other cryptocurrencies over the internet.
+The Bisq application forms a
+peer-to-peer network
+by discovering, connecting to, and working with one another to implement the Bisq trading protocol. The Bisq network is
+fully
+peer-to-peer in that it requires no centrally-controlled servers and has no single points of failure.
+See more details in the
+introduction
+.
+Why?
+Satoshi Nakamoto created Bitcoin to solve the problems of centralized payment systems, so it seems inconsistent for corporate, centralized bitcoin exchanges to be the primary way to acquire bitcoin. It often seems the dominance and vulnerability of centralized exchanges is the Achilles heel in the Bitcoin ecosystem.
+Bisq is built on pure P2P infrastructure:
+desktop software, Tor, local wallets, and no central accounts
+. Furthermore,
+it is not a company
+, and its governance model actually
+incentivizes
+the protection of user privacy and freedoms.
+While the transfer of national currency requires traditional payment channels like banks and payment processors, Bisq is not dependent on any particular provider. The role of these payment channels is limited to what it should be: transferring national currency. That's it—no censoring, confiscating, monitoring, or controlling your financial transactions.
+Bisq is built for those who:
+Want to exchange a national currency such as dollars, euros, or yen for bitcoin.
+Want to exchange a wide range of alternative cryptocurrencies for bitcoin.
+Do not want to trust any entity to hold their funds.
+Do not want to forfeit control or privacy to a central authority in order to trade with other individuals.
+Regard financial transactions as a form of private speech that should be protected from surveillance by banks, governments, and other institutions.
+Using Bisq
+Introduction
+— what Bisq is and why
+Getting started
+— complete your first trade in minutes
+Downloading and installing
+— or
+build it yourself
+Backing up critical data
+—
+seed words
+and
+data directory
+Take a tour
+— get acquainted with the interface
+Payment methods
+— supported payment methods and limitations
+Trading fees
+— competitive rates for unparalleled privacy
+Dispute resolution
+— what happens when a trade doesn't go smoothly
+Support
+— where to go when you need support
+Installing your own Bitcoin node
+— take the next step in Bitcoin self sovereignty
+Troubleshooting
+— solutions to known issues
+Tips and Tricks
+— how to get the most out of Bisq (
+performance
++
+privacy
+)
+Contributing
+Contributor checklist
+— see how we think, work, and collaborate
+GitHub
+— all the code
+Current projects
+— see what we're up to right now
+Network activity and stats
+Overview
+— trading volume, BSQ issuance, other activity
+Trading activity
+— all the numbers, in detail
+Network monitor
+— P2P network activity, Tor metrics, other data
+Release stats
+— download numbers by release
+Community
+Matrix
+— where everyone hangs out and collaborates
+Nostr
+and
+Twitter
+— user-facing announcements and news
+Blog
+— longer-form updates and perspectives
+YouTube
+— calls, how-tos, interviews, and more
+Forum
+— ask questions, post opinions
+Reddit
+— mingle with other redditors who use Bisq

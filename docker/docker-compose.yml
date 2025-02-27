@@ -1,0 +1,81 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    volumes:
+      - ../api:/app
+      - ../api/data:/app/data
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BISQ_API_URL=http://host.docker.internal:8090  # For macOS/Windows
+      # - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
+    ports:
+      - "8000:8000"
+    networks:
+      - bisq-support-network
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/web/Dockerfile
+    volumes:
+      - ../web:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    networks:
+      - bisq-support-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - bisq-support-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    depends_on:
+      - prometheus
+    networks:
+      - bisq-support-network
+
+  faq-extractor:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    command: ["python", "-m", "app.scripts.extract_faqs"]
+    volumes:
+      - ../api/data:/app/data
+    depends_on:
+      - api
+    networks:
+      - bisq-support-network
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  bisq-support-network:
+    driver: bridge 

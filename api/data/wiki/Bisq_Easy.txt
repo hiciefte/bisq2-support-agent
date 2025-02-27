@@ -1,0 +1,246 @@
+URL: https://bisq.wiki/Bisq_Easy
+
+Bisq Easy is a trade protocol for Bisq 2, designed to facilitate the acquisition of bitcoin with zero trade fees and without the requirement of a security deposit. Bisq Easy is a social trade protocol intended for novice bitcoin buyers seeking a non-KYC option and aiming to be efficiently onboarded by experienced and knowledgeable sellers that are familiar with the Bisq platform.
+Bisq Easy is currently the only trade protocol for
+Bisq 2
+. More
+trade protocols
+are planned for the future.
+Contents
+1
+Bisq Easy Trade Protocol Specifics
+1.1
+Trade fees
+1.2
+Mining fees
+1.3
+Security mechanisms
+1.4
+Currencies / Payment Methods
+1.5
+Dispute mechanisms
+1.6
+Security deposit requirements
+1.7
+Privacy benefits / trade-offs
+2
+Identity
+3
+Reputation
+4
+Using Bisq Easy to buy bitcoin
+5
+Using Bisq Easy to sell bitcoin
+6
+How to buy bitcoin on Bisq Easy
+6.1
+Creating an offer
+6.2
+Taking an offer
+7
+How to sell bitcoin on Bisq Easy
+8
+Trade Process
+9
+Trade Rules
+10
+Chat Rules
+11
+How to stay safe on Bisq Easy
+11.1
+Tips for bitcoin buyers
+11.2
+Tips for bitcoin sellers
+Bisq Easy Trade Protocol Specifics
+Trade fees
+There are no trade fees for buyers or sellers for trading on Bisq Easy.
+Mining fees
+Buyers will not have to pay any mining fees when they trade on Bisq Easy.
+Sellers will need to pay any fees required to send the bitcoin to the buyer after receiving their payment.  For on chain transactions the seller is responsible for paying mining fees needed to send the bitcoin to the buyer's waller.  For lighting transactions the seller is responsible for paying any routing fees needed to pay the buyer's ln invoice.
+Security mechanisms
+The security of the trade is proportional to the reputation of the seller.
+As Bisq Easy is
+reputation based
+, and reputation provides a fairly low security model, it means traders on Bisq Easy are suited only to rather small amounts of bitcoin.
+By default buyers can only exchange messages with sellers that have a certain level of reputation, however, buyers can opt-out from that protection.
+Trading with sellers without reputation, or very low reputation, carries significant risks and should be only done if the risks are well understood and managed.
+Currencies / Payment Methods
+Bisq Easy buyers and sellers can trade bitcoin for any type of fiat.
+Fiat buyers and sellers can choose whatever type of payment method they agree upon for fiat transfer.
+Dispute mechanisms
+Buyers and sellers trading on Bisq Easy can access mediation support should anything go wrong with their trade.
+Mediators will be able to:
+Help facilitate the successful completion of the trade
+Confirm fiat / altcoin and bitcoin payments
+Help cancel trade if needed
+Report a trader who severely violated the trade rules to the moderator who can ban the user.
+Depending on the form of reputation used, a fraudulent seller can get their bonded BSQ confiscated by the DAO or their Bisq 1 onion address banned. As all reputation is linked to the user profile, a banned user profile disables their reputation.
+Security deposit requirements
+Bisq Easy trades do not require any security deposits from either the buyer or seller.
+Privacy benefits / trade-offs
+As no security deposits are required buyers and sellers using fiat will be revealing their bank account details to users that might end up backing out of the trade. If a user backs out of a trade there is less possibility to penalize them than if they had to trade using a security deposit. The seller can report a buyer who cancelled the trade after the payment account data has been transmitted to the moderator, who can ban the buyer.
+Identity
+Buyers and sellers on Bisq Easy can create multiple identities.
+Find out more about managing your
+Identity
+on Bisq 2.
+Reputation
+The security mechanism of Bisq Easy is based on the reputation of the seller. Buyers on Bisq Easy do not need to have a reputation as they will always send the payment first.
+Find out more about
+Reputation
+for Bisq Easy.
+Using Bisq Easy to buy bitcoin
+Users of Bisq Easy can buy bitcoin using fiat or altcoins with no fees and no security deposits.
+Using Bisq Easy to sell bitcoin
+Users of Bisq Easy can sell bitcoin for fiat or altcoins with no fees and no security deposits.
+Sellers of Bisq Easy will however have to build up their
+reputation
+in order to get buyers.
+How to buy bitcoin on Bisq Easy
+Buying Bitcoin with Bisq Easy is recommended for small fiat amounts, or as a starting point if you still have no Bitcoin that you can use for the security deposits of other trade protocols.
+You can opt for two ways to find a trading partner to get some Bitcoin: taking an existing offer or creating one.
+Creating an offer
+Creating an offer is a great way to establish your own terms and simply wait for someone to match what you are after. It is also the right option if you don't find any offers with the right premium or payment methods in the market you want to trade in. Follow along to learn how to navigate to your preferred market and create a new offer in it:
+Begin by opening up Bisq 2. Once the application has started, you should select
+Bisq Easy
+on the left panel, and
+Offerbook
+on the top tab.
+Each different national currency has its own market. You can click on the displayed pair to open a selector where you can choose the currency you would like to trade in. In this example, we are interested in buying some Bitcoin by paying with Euros, so we will select the
+BTC/EUR
+pair, but you should select whatever currency you are using. Afterward, click on the
+Create offer
+button on the right-hand side.
+You will now enter the offer creation wizard. The first step will be to choose between buying or selling Bitcoin. Select
+Buy Bitcoin
+and click on
+Next
+.
+On the following screen, you will be asked for confirmation on which currency you want to pay your Bitcoin with. The selected currency will be the one you selected in the previous
+Offerbook
+screen. You can change your mind here if needed. Since for this example we want to move forward with Euros, we don't need to change anything on this screen, and we can simply click
+Next
+.
+On the next screen, you will have to select which Payment Methods are you willing to use. You should select at least one, but you can also select multiple of them. The more Payment Methods you add, the more chances you will have of finding a willing trade peer. In this example, we initially select
+SEPA
+and
+Revolut
+.
+Besides the presented Payment Methods, you can also add customized Payment Methods to your offer. For instance, for this offer, I would be happy to make a cash deposit at a Rabobank physical branch. I can use the bottom input to add this method to my offer.
+Once you are done selecting Payment Methods, you can move on by clicking
+Next
+.
+On the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq easy is the equivalent of 6 USD and the maximum amount is the equivalent of 600 USD.  You can write the fiat amount, the BTC amount, or simply move the slider around.
+You also have the option of defining a range instead of a fixed value for the trade amount. By doing that, you set a minimum and maximum amount, and you signal to the market that you are willing to trade any amount between those two numbers. For this example, we will create an offer with a range between 100€ and 200€. Once you have set your fixed value or a range, click
+Next
+to move on.
+With this, you will reach the final step of the offer creation wizard. The final screen shows a summary of all the details you have defined. Now is the time for you to review whether everything is fine. This is important because, once you click on
+Create offer
+, the offer will be available for anyone to take and, once that happens, it will be binding. So, make sure you are happy with the details you see. Once you are sure, click on
+Create offer
+and your offer will be added to the market.
+Your order is finally ready. Now, you will have to wait until another peer takes it. If your offer remains unpicked for longer than you would like to, consider modifying it to add additional payment methods or adding a more flexible range of values that could attract different users.
+Once a peer takes your offer, you will receive a notification and be able to see the started trade in the
+Open Trades
+panel of Bisq Easy. Also, keep in mind that offers remain open until you close them. If you only want to transact once, you should close it after it gets taken, or more peers could keep taking it!
+Taking an offer
+Taking an existing offer is the fastest and simplest way to find a partner and start trading. Follow along to learn how to navigate to your preferred market and pick an existing offer in it.
+Begin by opening up Bisq 2. Once the application has started, you should select
+Bisq Easy
+on the left panel, and
+Getting started
+on the top tab.
+On this page, click on the
+Start trade wizard
+. This is the easiest way to get started. A small note: once you become more experienced, you might prefer to use the
+Offerbook
+page to do your trades. But for the first trades, we advise using the trade wizard.
+With this, you will enter the trade wizard, which will guide you step by step through the process of taking an existing offer to buy some Bitcoin. In the first screen, select
+Buy Bitcoin
+and click on
+Next
+.
+In the following screen, you need to indicate which national currency you want to use to pay your trading partner. Since we want to use Euros for this trade, we select that currency in the list. Once you have selected your currency, click on
+Next
+to move on.
+On the next screen, you will have to select which Payment Methods you are willing to use. You should select at least one, but you can also select multiple of them. The more Payment Methods you add, the more chances you will have of finding a willing trade peer. In this example, we initially select
+SEPA
+and
+Revolut
+.
+Once you are done selecting Payment Methods, you can move on by clicking
+Next
+.
+On the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq Easy is the equivalent of 6 USD and the maximum amount is the equivalent of 600 USD.  You can write the fiat amount, the BTC amount, or simply move the slider around.
+For this example, let's imagine we would like to buy 150€ worth of Bitcoin. We set the value and click on
+Next
+to move on.
+In the following screen, you will be presented a list of offers that match your needs. You can select any of the offers presented, but we advise taking the first offer. By default, offers will be presented by decreasing reputation, so the most trusted trades will be on the top of the list. You can check other offers that might have more interesting prices, but be aware that the lower the reputation of the trader, the higher the risk you will face. If you want to keep things safe and simple, simply pick the first offer that you see. Once you have settled for an offer, click on
+Next
+to move on.
+The final screen will allow you to review all the details. Make sure you are happy with all the details of the trade, since once you move on, you will effectively commit to doing the trade. If there's anything you want to change, you can always navigate back and modify any of the trade details. Once you are ready, click on
+Confirm trade
+.
+Once you have done this, the offer is taken and you can begin the trade process. You can read more about the trade process here:
+Trade Process
+.
+Remember that when you take an offer, you commit to follow through. Be aware that, once you take it, you can't simply back down without consequences.
+Note that there is also a chance that no offers are found matching your needs. If this is the case, you will see a screen like the one below. You can wait some time and try again later, or you can instead create your own offer. You can read more about creating an offer here
+Creating a buy offer
+.
+How to sell bitcoin on Bisq Easy
+Users of Bisq Easy can both make an offer to sell bitcoin, or take an offer from a user looking to buy bitcoin.
+Seller's on Bisq Easy will usually be experienced Bisq users. It is expected they will be helpful and supportive to buyers who are new to Bitcoin and/or Bisq. Bisq Easy seller's should be passionate about helping new Bisq users smoothly acquire no KYC bitcoin in a peer to peer manner.
+As building reputation incurs costs for the bitcoin sellers. It is expected that they will sell bitcoin at a premium of about 10-15%. The premium reflects the additional costs and compensates sellers for the on-boarding service they provide.
+Trade Process
+Trade process for Bisq Easy is as follows:
+The offer maker defines the trade terms, if this was not already defined in the maker's user profile.
+Once the traders have agreed on the trade terms (e.g. payment method and trade price) the trade starts.
+The seller transmits the payment account details to the buyer (e.g. bank account number). The buyer sends the BTC address to the seller.
+The buyer starts the Fiat payment to the seller's account and sends the seller a message that the payment is in transit.
+Once the seller has received the Fiat payment they send the Bitcoin to the buyer's address.
+After the buyer receives the Bitcoin the trade is completed.
+Trade Rules
+Bisq Easy trading rules are as follows:
+Before the payment details are exchanged the trade can be canceled by any party without justification.
+After the payment details are exchanged, not fulfilling the trade obligations is considered a breach of the trade contract and can lead to getting banned from the network.
+When sending the Fiat the buyer MUST NOT use any term in the 'reason for payment' field which relates to 'Bisq' or 'Bitcoin'. The traders can agree on an identifier to associate the bank transfer to the trade (e.g. use some random string like 'H3TJAPD').
+If the trade cannot be completed instantly because the Fiat transfer takes longer, both traders have to be online at least once a day to follow up the trade process.
+If there are any open questions or problems the traders can use the support chat, invite a mediator into their trade chat or get in touch with Bisq support team on the
+Matrix channel
+.
+Chat Rules
+Bisq Easy has the following chat rules it expects traders to follow:
+Be respectful: Always treat others with kindness and respect. Avoid offensive language, personal attacks, and harassment. Remember that behind every screen is a real person with feelings.
+No spamming: Please refrain from flooding the chat with repetitive or irrelevant messages. Keeping the conversation meaningful and on-topic helps everyone engage in a more constructive manner.
+No advertising: We kindly ask you to avoid promoting products, services, or posting external links. This ensures that the focus remains on meaningful discussions rather than promotional content.
+No hate speech: We have zero tolerance for content that promotes discrimination, hate speech, or violence against any individual or group. Let's foster an inclusive and supportive community.
+No trolling: Disruptive behavior, trolling, or intentionally provoking others disrupts the positive atmosphere we aim to maintain. Let's all strive for respectful and constructive interactions.
+Keep it safe: Protect your privacy and that of others by not sharing personal information such as phone numbers, addresses or any other sensitive data in the chat. Safety first!
+Respect privacy: Do not share private conversations or screenshots without consent. Respecting each other's privacy is a cornerstone of trust.
+Report misconduct: If you witness any violations of these rules or encounter inappropriate behavior, please report it to the moderator. Your vigilance helps maintain a friendly and safe community.
+Follow moderator's Instructions: Our moderators are here to ensure a positive environment. Please comply with any instructions or guidelines they provide to maintain order and respect.
+Enjoy the chat: Above all, we encourage you to engage in meaningful discussions, make friends, and have fun in a positive and inclusive environment. Let's create a community we can all be proud to be a part of.
+Remember, by participating in the chat, you agree to abide by these rules. Failure to comply may result in warnings, temporary mute, or ban from the Bisq network.
+How to stay safe on Bisq Easy
+Here are some tips for keeping safe when trading on Bisq Easy and avoiding any scams.
+Tips for bitcoin buyers
+Bitcoin buyers send the fiat payment before sending any bitcoin. For this reason they should take steps to ensure their trades are successful.
+Start with a small amount as a test trade
+Start chatting with the seller before sending the fiat payment to check that they are still active
+Choose a seller with a high reputation. The higher the reputation of the seller the better. Sellers need a minimum reputation score of 30,000, ideally you should be choosing to trade with someone higher than this. Look at the star system for guidance. It will be safer to trade with a 5 star rated seller than a 1 star rated seller.
+Send payment as soon as possible once you have the seller's account details.
+Only send payment to the account details provided by the Seller in the trade chat window. If the seller is trying to change the account they want you to send payment to, it would be better to cancel the trade and open a new trade with another seller.
+Do not include any references with your payments. For example do send a payment with a reference 'cycle' or worse 'bitcoin'. This could cause issues for both the seller and yourself. If a reference is required keep use your account name as the reference. This will allow the seller to know the payment is from yourself and not give any information away other than what they already know.
+Send the payment from the same account you share the information with in trader chat. For example if you are having problems with the payment do not send payment from your partners, business, friends etc account. Instead try and resolve the issue so you can send payment from the correct account and failing that open mediation to get additional support.
+Keep the trade chat limited to using Bisq 2. Do not communicate with the seller via WhatsApp, Matrix etc as it will make mediation much harder if there is an issue.
+Avoid trading off platform with any Bisq sellers.
+Tips for bitcoin sellers
+Although bitcoin buyers send the fiat payment before bitcoin sellers send them any bitcoin, sellers should still be aware of buyers attempting any charge-back scams. There is almost no cost for a bitcoin buyer to create an account and start making trades, therefore, there is little for a buyer to lose by attempting a scam. Almost all buyers on Bisq Easy will be honest but it is still good to be cautious.
+For this reason they should take steps to ensure their trades are successful.
+Be careful when dealing with buyers with brand new accounts (the buyer's account age is shown in their profile).
+Avoid payment methods that have a high possibility of charge-backs eg; PayPal, Venmo
+Make sure the payment you receive matches the buyers account details. Avoid sending bitcoin to buyer's with mis-matching account details. It would be better to refund the payment to the account you received the payment from and cancel the trade.
+Keep the trade chat limited to using Bisq 2. Do not communicate with the buyer via WhatsApp, Matrix etc as it will make mediation much harder if there is an issue.
+Avoid trading off platform with any Bisq sellers.
+If you have any concerns about a trade open mediation.
