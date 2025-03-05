@@ -55,11 +55,21 @@ app.add_middleware(
 )
 
 # Set up Prometheus metrics
-instrumentator = Instrumentator().instrument(app)
+# Modified to explicitly set the endpoint and expose it immediately
+instrumentator = Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_respect_env_var=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=[".*admin.*", "/metrics"],
+    env_var_name="ENABLE_METRICS",
+    inprogress_name="inprogress",
+    inprogress_labels=True,
+)
 
 @app.on_event("startup")
 async def startup():
-    instrumentator.expose(app)
+    instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
