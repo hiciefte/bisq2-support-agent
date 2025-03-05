@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   bisq-api:
     image: your_dockerhub_username/bisq-api:latest  # pre-built production image

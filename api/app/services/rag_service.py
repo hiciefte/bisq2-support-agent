@@ -82,8 +82,27 @@ class RAGService:
 
     def load_wiki_data(self, wiki_dir: str = None) -> List[Document]:
         """Load and process wiki documentation."""
+        # Log the current working directory and its contents
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Contents of the current directory: {os.listdir(os.getcwd())}")
+
+        # Log the contents of the /app/api directory if it exists
+        api_dir = "/app/api"
+        if os.path.exists(api_dir):
+            logger.info(f"Contents of {api_dir}: {os.listdir(api_dir)}")
+        else:
+            logger.info(f"Directory {api_dir} does not exist")
+
+        # Log the contents of the /app/api/data directory if it exists
+        data_dir = "/app/api/data"
+        if os.path.exists(data_dir):
+            logger.info(f"Contents of {data_dir}: {os.listdir(data_dir)}")
+        else:
+            logger.info(f"Directory {data_dir} does not exist")
+
         if wiki_dir is None:
             wiki_dir = os.path.join(self.settings.DATA_DIR, "wiki")
+            logger.info(f"Using wiki_dir path: {wiki_dir}")
 
         documents = []
 

@@ -4,12 +4,11 @@ services:
       context: ..
       dockerfile: docker/api/Dockerfile
     volumes:
-      - ../api:/app
-      - ../api/data:/app/data
+      - ../api/app:/app/app  # Mount only the app directory for development
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - BISQ_API_URL=http://host.docker.internal:8090  # For macOS/Windows
-      # - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
+      - CORS_ORIGINS=["http://localhost:3000", "http://0.0.0.0:3000"]
+      - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
     ports:
       - "8000:8000"
     networks:

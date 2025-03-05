@@ -25,12 +25,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy only necessary files from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
-COPY api/app ./app
-# COPY api/main.py ./main.py
+
+# First copy the application code
+COPY api/app /app/app
+COPY api/setup.py /app/setup.py
+COPY api/requirements.txt /app/requirements.txt
+COPY api/.env* /app/
+
+# Create data directory structure
+RUN mkdir -p /app/api/data
+
+# Copy the data directory with all its contents
+COPY api/data/ /app/api/data/
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Run the application using the app-level main.py
-CMD ["python", "-m", "app.main"]
+# Install uvicorn
+RUN pip install --no-cache-dir uvicorn
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Run the application using Uvicorn
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
