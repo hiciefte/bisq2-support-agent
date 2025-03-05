@@ -87,6 +87,36 @@ mkdir -p api/data/wiki api/data/vectorstore
 # Example: cp your-documentation.md api/data/wiki/
 ```
 
+## Deployment Options
+
+### Local Development
+
+For local development, use the `docker-compose.local.yml` file, which mounts the local data directory into the container:
+
+```bash
+# Run the local development environment
+./run-local.sh
+```
+
+This configuration:
+- Mounts the `api/data` directory to `/app/api/data` in the container
+- Allows you to modify files locally and see changes immediately
+- Is ideal for development and testing
+
+### Cloud Deployment
+
+For cloud deployment, use the standard `docker-compose.yml` file:
+
+```bash
+# Run the cloud deployment environment
+./run-cloud.sh
+```
+
+This configuration:
+- Copies the data directory into the container during the build process
+- Does not mount local volumes for data (only for app code)
+- Is more suitable for production environments
+
 ## Running with Docker
 
 1. Start all services:
@@ -220,6 +250,10 @@ When adding new content:
 3. **OpenAI API Key**: Verify your OpenAI API key is valid and has sufficient quota.
 
 4. **Docker Networking**: If services can't communicate, check Docker network settings.
+
+### UUID Generation in Web Frontend
+
+If you encounter an error related to `crypto.randomUUID()` not being available, the application includes a fallback mechanism using the `uuid` library. This ensures compatibility across different browsers and environments.
 
 ## Contributing
 

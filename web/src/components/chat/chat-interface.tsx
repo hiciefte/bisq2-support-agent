@@ -7,6 +7,22 @@ import {Loader2, MessageSquare, Plus, Send, UserIcon} from "lucide-react"
 import {cn} from "@/lib/utils"
 import {Rating} from "@/components/ui/rating"
 import Image from "next/image"
+import { v4 as uuidv4 } from 'uuid'
+
+// Utility function to generate UUID with fallback
+const generateUUID = (): string => {
+  try {
+    // Try to use the native crypto.randomUUID() first
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    // Fall back to uuid library if crypto.randomUUID is not available
+    return uuidv4();
+  } catch (error) {
+    // Final fallback in case of any errors
+    return uuidv4();
+  }
+};
 
 interface Message {
   id: string
@@ -65,7 +81,7 @@ const ChatInterface = () => {
 
   const sendMessage = async (text: string) => {
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       content: text,
       role: "user",
       timestamp: new Date(),
@@ -88,7 +104,7 @@ const ChatInterface = () => {
 
       if (!response.ok) {
         const errorMessage: Message = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           content: `Error: Server returned ${response.status}. Please try again.`,
           role: "assistant",
           timestamp: new Date(),
@@ -99,14 +115,14 @@ const ChatInterface = () => {
 
       const data = await response.json()
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         content: data.answer,
         role: "assistant",
         timestamp: new Date(),
         sources: data.sources,
         metadata: {
           response_time: data.response_time,
-          token_count: data.token_count
+          token_count: data.token_count || 0
         }
       }
 
@@ -114,7 +130,7 @@ const ChatInterface = () => {
     } catch (error) {
       console.error("Error:", error)
       const errorMessage: Message = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         content: "Sorry, I encountered an error connecting to the server. Please check your connection and try again.",
         role: "assistant",
         timestamp: new Date(),

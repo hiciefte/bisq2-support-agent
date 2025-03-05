@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY api/requirements.txt .
+# Install PyTorch with native MPS support
+RUN pip install --no-cache-dir torch>=2.0.0
+# Then install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage

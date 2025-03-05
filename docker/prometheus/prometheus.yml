@@ -19,7 +19,7 @@ scrape_configs:
   - job_name: 'web'
     static_configs:
       - targets: ['web:3000']
-    metrics_path: '/metrics'
+    metrics_path: '/api/metrics'
 
 alerting:
   alertmanagers:
