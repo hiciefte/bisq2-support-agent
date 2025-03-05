@@ -98,49 +98,79 @@ const ChatInterface = () => {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${hostname}:8000`;
       console.log(`Using API URL: ${apiUrl}`);
       
-      const response = await fetch(`${apiUrl}/chat/query`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: text,
-        }),
-      })
+      // Create an AbortController to handle timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+      
+      try {
+        const response = await fetch(`${apiUrl}/chat/query`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question: text,
+          }),
+          signal: controller.signal
+        });
+        
+        // Clear the timeout since the request completed
+        clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        const errorMessage: Message = {
+        if (!response.ok) {
+          const errorMessage: Message = {
+            id: generateUUID(),
+            content: `Error: Server returned ${response.status}. Please try again.`,
+            role: "assistant",
+            timestamp: new Date(),
+          }
+          setMessages((prev) => [...prev, errorMessage])
+          return
+        }
+
+        const data = await response.json()
+        const assistantMessage: Message = {
           id: generateUUID(),
-          content: `Error: Server returned ${response.status}. Please try again.`,
+          content: data.answer,
           role: "assistant",
           timestamp: new Date(),
+          sources: data.sources,
+          metadata: {
+            response_time: data.response_time,
+            token_count: data.token_count || 0
+          }
         }
-        setMessages((prev) => [...prev, errorMessage])
-        return
-      }
 
-      const data = await response.json()
-      const assistantMessage: Message = {
-        id: generateUUID(),
-        content: data.answer,
-        role: "assistant",
-        timestamp: new Date(),
-        sources: data.sources,
-        metadata: {
-          response_time: data.response_time,
-          token_count: data.token_count || 0
+        setMessages((prev) => [...prev, assistantMessage])
+      } catch (error) {
+        // Handle AbortController error (timeout) or other fetch errors
+        let errorContent = "An error occurred while processing your request.";
+        
+        if (error instanceof DOMException && error.name === "AbortError") {
+          errorContent = "The request took too long to complete. The server might be busy processing your question. Please try again later or ask a simpler question.";
+        } else if (error instanceof Error) {
+          errorContent = `Error: ${error.message}`;
         }
+        
+        const errorMessage: Message = {
+          id: generateUUID(),
+          content: errorContent,
+          role: "assistant",
+          timestamp: new Date(),
+        };
+        
+        setMessages((prev) => [...prev, errorMessage]);
       }
-
-      setMessages((prev) => [...prev, assistantMessage])
     } catch (error) {
-      console.error("Error:", error)
+      console.error("Error in sendMessage:", error);
+      
       const errorMessage: Message = {
         id: generateUUID(),
-        content: "Sorry, I encountered an error connecting to the server. Please check your connection and try again.",
+        content: "An unexpected error occurred. Please try again.",
         role: "assistant",
         timestamp: new Date(),
       }
+      
       setMessages((prev) => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
@@ -181,45 +211,79 @@ const ChatInterface = () => {
     }
 
     try {
-      // Send feedback to server
-      const response = await fetch("http://localhost:8000/feedback/submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(feedbackData),
-      })
-
-      if (!response.ok) {
-        // Handle error response directly instead of throwing
-        console.error(`Failed to submit feedback: Server returned ${response.status}`)
+      // Use the same dynamic API URL as the chat query
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${hostname}:8000`;
+      
+      // Create an AbortController to handle timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout for feedback
+      
+      try {
+        const response = await fetch(`${apiUrl}/feedback/submit`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(feedbackData),
+          signal: controller.signal
+        });
         
-        // Store in local storage as backup even when server request fails
+        // Clear the timeout since the request completed
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          // Handle error response directly instead of throwing
+          console.error(`Failed to submit feedback: Server returned ${response.status}`)
+          
+          // Store in local storage as backup even when server request fails
+          const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
+          storedRatings[messageId] = feedbackData
+          localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
+          
+          // Still update the UI to show the rating
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === messageId ? { ...msg, rating } : msg
+            )
+          )
+          
+          return
+        }
+
+        // Update message with rating locally
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, rating } : msg
+          )
+        )
+
+        // Store in local storage as backup
         const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
         storedRatings[messageId] = feedbackData
         localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
+      } catch (error) {
+        // Handle AbortController error (timeout) or other fetch errors
+        let errorMessage = "Failed to submit feedback";
         
-        // Still update the UI to show the rating
+        if (error instanceof DOMException && error.name === "AbortError") {
+          errorMessage = "The feedback request timed out. Your rating has been saved locally.";
+        }
+        
+        console.error(`Error submitting feedback: ${errorMessage}`, error);
+        
+        // Even if there's a network error, still update the UI and store locally
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === messageId ? { ...msg, rating } : msg
           )
         )
         
-        return
+        // Store in local storage as backup
+        const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
+        storedRatings[messageId] = feedbackData
+        localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
       }
-
-      // Update message with rating locally
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId ? { ...msg, rating } : msg
-        )
-      )
-
-      // Store in local storage as backup
-      const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-      storedRatings[messageId] = feedbackData
-      localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
     } catch (error) {
       console.error("Error submitting feedback:", error)
       
