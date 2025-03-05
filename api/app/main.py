@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import Settings
 from app.routes import chat, feedback, health
@@ -52,6 +53,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Set up Prometheus metrics
+instrumentator = Instrumentator().instrument(app)
+
+@app.on_event("startup")
+async def startup():
+    instrumentator.expose(app)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])

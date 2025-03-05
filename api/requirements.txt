@@ -36,4 +36,7 @@ pytest
 pytest-asyncio
 black
 isort
-mypy 
+mypy
+
+# Prometheus FastAPI Instrumentator
+prometheus-fastapi-instrumentator 
