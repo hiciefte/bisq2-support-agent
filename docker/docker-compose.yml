@@ -7,7 +7,7 @@ services:
       - ../api/app:/app/app  # Mount only the app directory for development
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CORS_ORIGINS=["http://localhost:3000", "http://0.0.0.0:3000"]
+      - CORS_ORIGINS=["*"]  # Allow all origins
       - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
     ports:
       - "8000:8000"
@@ -24,7 +24,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=${API_URL:-http://localhost:8000}  # Use environment variable with fallback
     networks:
       - bisq-support-network
 

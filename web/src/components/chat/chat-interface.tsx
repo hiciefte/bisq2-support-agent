@@ -92,7 +92,12 @@ const ChatInterface = () => {
     setIsLoading(true)
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      // Use window.location.hostname to get the current server's hostname
+      // This ensures that when accessed remotely, it uses the correct server address
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${hostname}:8000`;
+      console.log(`Using API URL: ${apiUrl}`);
+      
       const response = await fetch(`${apiUrl}/chat/query`, {
         method: "POST",
         headers: {
