@@ -48,28 +48,20 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware, # type: ignore
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Set up Prometheus metrics
-# Modified to explicitly set the endpoint and expose it immediately
-instrumentator = Instrumentator(
-    should_group_status_codes=True,
-    should_ignore_untemplated=True,
-    should_respect_env_var=True,
-    should_instrument_requests_inprogress=True,
-    excluded_handlers=[".*admin.*", "/metrics"],
-    env_var_name="ENABLE_METRICS",
-    inprogress_name="inprogress",
-    inprogress_labels=True,
-)
+# Set up Prometheus metrics - simplified approach
+instrumentator = Instrumentator()
 
 @app.on_event("startup")
 async def startup():
-    instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
+    # Expose metrics at /metrics endpoint
+    instrumentator.instrument(app).expose(app)
+    logger.info("Metrics endpoint exposed at /metrics")
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
