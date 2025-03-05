@@ -1,9 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.core.config import Settings
 from app.routes import chat, feedback, health
@@ -54,14 +55,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Set up Prometheus metrics - simplified approach
-instrumentator = Instrumentator()
+# Set up Prometheus metrics
+instrumentator = Instrumentator().instrument(app)
 
 @app.on_event("startup")
 async def startup():
-    # Expose metrics at /metrics endpoint
-    instrumentator.instrument(app).expose(app)
-    logger.info("Metrics endpoint exposed at /metrics")
+    # Initialize the instrumentator but don't expose it
+    logger.info("Prometheus metrics instrumentation initialized")
+
+# Create a dedicated metrics endpoint
+@app.get("/metrics", include_in_schema=True)
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
