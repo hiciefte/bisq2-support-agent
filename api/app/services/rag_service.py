@@ -284,9 +284,11 @@ Question: {question}
 
     async def cleanup(self):
         """Clean up resources."""
-        if self.vectorstore:
+        logger.info("Cleaning up RAG service resources...")
+        # Check if vectorstore has persist method before calling it
+        if self.vectorstore and hasattr(self.vectorstore, 'persist'):
             self.vectorstore.persist()
-        logger.info("Cleanup complete")
+        logger.info("RAG service cleanup complete")
 
     def _apply_source_weights(self, docs: List[Document]) -> List[Document]:
         """Apply source-specific weights to document scores."""
