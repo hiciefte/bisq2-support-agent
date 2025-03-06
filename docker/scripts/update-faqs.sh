@@ -8,6 +8,9 @@
 # Set the project directory - update this to your actual path on the server
 PROJECT_DIR="/path/to/bisq2-support-agent"
 
+# Set the Docker Compose file path
+DOCKER_COMPOSE_FILE="$PROJECT_DIR/docker/docker-compose.yml"
+
 # Ensure logs directory exists
 mkdir -p "$PROJECT_DIR/logs"
 
@@ -50,11 +53,17 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
   error_exit ".env file not found in $PROJECT_DIR"
 fi
 
+# Check if Docker Compose file exists
+if [ ! -f "$DOCKER_COMPOSE_FILE" ]; then
+  error_exit "Docker Compose file not found at $DOCKER_COMPOSE_FILE"
+fi
+
 log "Using .env file from $PROJECT_DIR"
+log "Using Docker Compose file: $DOCKER_COMPOSE_FILE"
 log "Checking Docker Compose configuration..."
 
 # Validate Docker Compose configuration
-docker compose --env-file "$PROJECT_DIR/.env" config > "$PROJECT_DIR/logs/docker-compose-config-$TIMESTAMP.log" 2>&1
+docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" config > "$PROJECT_DIR/logs/docker-compose-config-$TIMESTAMP.log" 2>&1
 if [ $? -ne 0 ]; then
   error_exit "Docker Compose configuration is invalid. Check $PROJECT_DIR/logs/docker-compose-config-$TIMESTAMP.log"
 fi
@@ -63,7 +72,7 @@ log "Docker Compose configuration is valid"
 log "Checking if faq-extractor service is defined..."
 
 # Check if faq-extractor service is defined
-if ! docker compose --env-file "$PROJECT_DIR/.env" config --services | grep -q "faq-extractor"; then
+if ! docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" config --services | grep -q "faq-extractor"; then
   error_exit "faq-extractor service is not defined in Docker Compose configuration"
 fi
 
@@ -71,8 +80,8 @@ log "faq-extractor service is defined"
 log "Running FAQ extractor"
 
 # Capture both stdout and stderr, and log the output
-log "Command: docker compose --env-file \"$PROJECT_DIR/.env\" run --rm faq-extractor python -m app.scripts.extract_faqs"
-docker compose --env-file "$PROJECT_DIR/.env" run --rm faq-extractor python -m app.scripts.extract_faqs > "$EXTRACT_LOG_FILE" 2>&1
+log "Command: docker compose -f \"$DOCKER_COMPOSE_FILE\" --env-file \"$PROJECT_DIR/.env\" run --rm faq-extractor python -m app.scripts.extract_faqs"
+docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" run --rm faq-extractor python -m app.scripts.extract_faqs > "$EXTRACT_LOG_FILE" 2>&1
 EXTRACT_STATUS=$?
 
 log "FAQ extractor command completed with status: $EXTRACT_STATUS"
@@ -93,9 +102,9 @@ sleep 5
 
 # Check if API service is running
 log "Checking if API service is running..."
-if ! docker compose --env-file "$PROJECT_DIR/.env" ps --services --filter "status=running" | grep -q "api"; then
+if ! docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" ps --services --filter "status=running" | grep -q "api"; then
   log "WARNING: API service is not running. Starting it instead of restarting."
-  docker compose --env-file "$PROJECT_DIR/.env" up -d api > "$PROJECT_DIR/logs/api-start-$TIMESTAMP.log" 2>&1
+  docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" up -d api > "$PROJECT_DIR/logs/api-start-$TIMESTAMP.log" 2>&1
   START_STATUS=$?
   
   if [ $START_STATUS -ne 0 ]; then
@@ -106,7 +115,7 @@ if ! docker compose --env-file "$PROJECT_DIR/.env" ps --services --filter "statu
 else
   # Restart the API service to load the new FAQs
   log "Restarting API service"
-  docker compose --env-file "$PROJECT_DIR/.env" restart api > "$PROJECT_DIR/logs/api-restart-$TIMESTAMP.log" 2>&1
+  docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" restart api > "$PROJECT_DIR/logs/api-restart-$TIMESTAMP.log" 2>&1
   RESTART_STATUS=$?
 
   if [ $RESTART_STATUS -ne 0 ]; then
@@ -127,7 +136,7 @@ if curl -s http://localhost:8000/health | grep -q "healthy"; then
 else
   log "WARNING: API health check failed"
   log "Getting API container logs for debugging"
-  docker compose --env-file "$PROJECT_DIR/.env" logs --tail=50 api > "$PROJECT_DIR/logs/api-logs-$TIMESTAMP.log" 2>&1
+  docker compose -f "$DOCKER_COMPOSE_FILE" --env-file "$PROJECT_DIR/.env" logs --tail=50 api > "$PROJECT_DIR/logs/api-logs-$TIMESTAMP.log" 2>&1
   log "API logs saved to $PROJECT_DIR/logs/api-logs-$TIMESTAMP.log"
   log "The API may not be fully operational"
 fi
