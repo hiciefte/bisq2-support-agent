@@ -68,6 +68,9 @@ services:
     command: ["python", "-m", "app.scripts.extract_faqs"]
     volumes:
       - ../api/data:/app/api/data
+    network_mode: "host"
+    environment:
+      - BISQ_API_URL=http://127.0.0.1:8090
     depends_on:
       - api
     networks:
