@@ -41,13 +41,74 @@ interface Message {
   }
 }
 
+// Function to calculate average response time from messages
+const calculateAverageResponseTime = (messages: Message[]): number => {
+  const responseTimes = messages
+    .filter(msg => msg.role === "assistant" && msg.metadata?.response_time)
+    .map(msg => msg.metadata!.response_time);
+  
+  if (responseTimes.length === 0) return 300; // Default to 5 minutes (300 seconds) if no data
+  
+  const sum = responseTimes.reduce((acc, time) => acc + time, 0);
+  return sum / responseTimes.length;
+};
+
+// Convert seconds to a human-readable format
+const formatResponseTime = (seconds: number): string => {
+  if (seconds < 60) return `${Math.round(seconds)} seconds`;
+  const minutes = Math.round(seconds / 60);
+  return `~${minutes} minute${minutes !== 1 ? 's' : ''}`;
+};
+
+// Funny loading messages with {time} placeholder
+const loadingMessages = [
+"Hang tight, our AI's flexing on a potato CPU—your answer's dropping in {time}!",
+"Grandma's dial-up soup takes longer than this—AI's got you in {time}!",
+"Chill, the AI's meditating with a modem for {time} before it enlightens you!",
+"Hamster union break! The AI's back in {time} with your fix!",
+"AI's procrastinating like a champ—give it {time} to stumble over!",
+"Turtles in molasses? That's our CPUs—your reply's {time} out!",
+"AI's sharpening its crayon—your answer's scribbled in {time}!",
+"Coffee break with a 56k vibe—AI's buzzing back in {time}!",
+"Sloth-mode AI: slow, steady, and {time} from brilliance!",
+"CPUs moonwalking your request—give 'em {time} to slide in!",
+"Drunk penguin AI waddling your way— ETA {time}!",
+"AI's arguing with a floppy disk—your turn's in {time}!",
+"Running on Wi-Fi fumes—AI's coughing up an answer in {time}!",
+"Mini-vacay time! AI's wrestling a calculator for {time}!",
+"Stuck in a 90s dial-up loop—AI escapes in {time}!",
+"Snail rave on the CPUs—your answer drops in {time}!",
+"AI's teaching a toaster binary—your toast pops in {time}!",
+"Smoking with a Commodore 64—AI hacks back in {time}!",
+"One-handed juggling with a brick—AI's ready in {time}!",
+"Unicycle CPU uphill grind—your answer's {time} away!"
+];
+
+// Function to get a random loading message with the time placeholder replaced
+const getRandomLoadingMessage = (avgTime: number): string => {
+  const randomIndex = Math.floor(Math.random() * loadingMessages.length);
+  const timeString = formatResponseTime(avgTime);
+  return loadingMessages[randomIndex].replace('{time}', timeString);
+};
+
+// Function to clean up AI responses
+const cleanupResponse = (text: string): string => {
+  // Remove trailing backticks that might be included in the AI response
+  return text.replace(/```+\s*$/, '').trim();
+};
+
 const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState("");
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const loadingRef = useRef<HTMLDivElement>(null)
+  
+  // Calculate average response time from existing messages
+  const avgResponseTime = calculateAverageResponseTime(messages);
+  const formattedAvgTime = formatResponseTime(avgResponseTime);
 
   // Example questions that can be clicked
   const exampleQuestions = [
@@ -56,6 +117,13 @@ const ChatInterface = () => {
     "What are the main differences between Bisq 1 and Bisq 2?",
     "How can I safely buy bitcoin on Bisq 2?"
   ]
+
+  // Update loading message when isLoading changes
+  useEffect(() => {
+    if (isLoading) {
+      setLoadingMessage(getRandomLoadingMessage(avgResponseTime));
+    }
+  }, [isLoading, avgResponseTime]);
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -131,7 +199,7 @@ const ChatInterface = () => {
         const data = await response.json()
         const assistantMessage: Message = {
           id: generateUUID(),
-          content: data.answer,
+          content: cleanupResponse(data.answer),
           role: "assistant",
           timestamp: new Date(),
           sources: data.sources,
@@ -148,18 +216,18 @@ const ChatInterface = () => {
         
         if (error instanceof DOMException && error.name === "AbortError") {
           errorContent = "The request took too long to complete. The server might be busy processing your question. Please try again later or ask a simpler question.";
-        } else if (error instanceof Error) {
-          errorContent = `Error: ${error.message}`;
+        } else {
+          console.error("Error fetching response:", error);
         }
         
         const errorMessage: Message = {
           id: generateUUID(),
-          content: errorContent,
+          content: cleanupResponse(errorContent),
           role: "assistant",
           timestamp: new Date(),
-        };
+        }
         
-        setMessages((prev) => [...prev, errorMessage]);
+        setMessages((prev) => [...prev, errorMessage])
       }
     } catch (error) {
       console.error("Error in sendMessage:", error);
@@ -323,7 +391,7 @@ const ChatInterface = () => {
                   </div>
                   <p className="text-lg font-medium mb-2">Welcome to Bisq Support AI</p>
                   <p className="text-sm text-muted-foreground text-center max-w-sm mb-8">
-                    Your AI-powered assistant for Bisq-related questions. Ask anything about trading, features, or troubleshooting.
+                    Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes about {formattedAvgTime} to answer, but the wait's worth it. Picture a caffeinated gremlin strapped to spare toaster parts, here to solve your Bisq 2 questions!
                   </p>
                 </div>
               ) : (
@@ -387,12 +455,13 @@ const ChatInterface = () => {
                     />
                   </div>
                   <div className="flex-1 space-y-2">
-                    <div className="inline-flex items-center rounded-lg px-3 py-2 text-sm bg-muted">
-                      <div className="flex gap-1">
+                    <div className="inline-flex flex-col rounded-lg px-3 py-2 text-sm bg-muted">
+                      <div className="flex gap-1 mb-2">
                         <span className="animate-bounce">.</span>
                         <span className="animate-bounce delay-100">.</span>
                         <span className="animate-bounce delay-200">.</span>
                       </div>
+                      <p className="text-xs text-muted-foreground">{loadingMessage}</p>
                     </div>
                   </div>
                 </div>
