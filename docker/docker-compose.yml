@@ -72,6 +72,25 @@ services:
     networks:
       - bisq-support-network
 
+  scheduler:
+    image: alpine:latest
+    volumes:
+      - ./scripts:/scripts
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "
+        apk add --no-cache docker-cli docker-compose bash coreutils &&
+        chmod +x /scripts/update-faqs.sh &&
+        echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron.log 2>&1' > /etc/crontabs/root &&
+        crond -f -d 8
+      "
+    restart: unless-stopped
+    depends_on:
+      - api
+      - faq-extractor
+    networks:
+      - bisq-support-network
+
 volumes:
   prometheus-data:
   grafana-data:
