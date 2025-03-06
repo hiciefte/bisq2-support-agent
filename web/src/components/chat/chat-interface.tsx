@@ -19,6 +19,8 @@ const generateUUID = (): string => {
     // Fall back to uuid library if crypto.randomUUID is not available
     return uuidv4();
   } catch (error) {
+    // Log the error before falling back
+    console.error("Error generating UUID with crypto.randomUUID:", error);
     // Final fallback in case of any errors
     return uuidv4();
   }
@@ -168,7 +170,7 @@ const ChatInterface = () => {
       
       // Create an AbortController to handle timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 600000); // 60 second timeout
       
       try {
         const response = await fetch(`${apiUrl}/chat/query`, {
@@ -210,7 +212,7 @@ const ChatInterface = () => {
         }
 
         setMessages((prev) => [...prev, assistantMessage])
-      } catch (error) {
+      } catch (error: any) {
         // Handle AbortController error (timeout) or other fetch errors
         let errorContent = "An error occurred while processing your request.";
         
@@ -218,6 +220,10 @@ const ChatInterface = () => {
           errorContent = "The request took too long to complete. The server might be busy processing your question. Please try again later or ask a simpler question.";
         } else {
           console.error("Error fetching response:", error);
+          // Include error message in the log if available
+          if (error.message) {
+            console.error("Error message:", error.message);
+          }
         }
         
         const errorMessage: Message = {
@@ -229,8 +235,15 @@ const ChatInterface = () => {
         
         setMessages((prev) => [...prev, errorMessage])
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Log the detailed error information
       console.error("Error in sendMessage:", error);
+      if (error.message) {
+        console.error("Error message:", error.message);
+      }
+      if (error.stack) {
+        console.error("Error stack:", error.stack);
+      }
       
       const errorMessage: Message = {
         id: generateUUID(),
@@ -391,7 +404,7 @@ const ChatInterface = () => {
                   </div>
                   <p className="text-lg font-medium mb-2">Welcome to Bisq Support AI</p>
                   <p className="text-sm text-muted-foreground text-center max-w-sm mb-8">
-                    Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes about {formattedAvgTime} to answer, but the wait's worth it. Picture a caffeinated gremlin strapped to spare toaster parts, here to solve your Bisq 2 questions!
+                    Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes about {formattedAvgTime} to answer, but the wait&#39;s worth it. Picture a caffeinated gremlin strapped to spare toaster parts, here to solve your Bisq 2 questions!
                   </p>
                 </div>
               ) : (
