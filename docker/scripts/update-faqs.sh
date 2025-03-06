@@ -4,16 +4,19 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Set the project directory - update this to your actual path on the server
+PROJECT_DIR="/path/to/bisq2-support-agent"
+
+# Ensure logs directory exists
+mkdir -p "$PROJECT_DIR/logs"
+
 # Log file for the script
-LOG_FILE="/var/log/bisq-faq-updater.log"
+LOG_FILE="$PROJECT_DIR/logs/faq-updater.log"
 
 # Function to log messages
 log() {
   echo "$(date): $1" | tee -a "$LOG_FILE"
 }
-
-# Set the project directory - update this to your actual path on the server
-PROJECT_DIR="/path/to/bisq2-support-agent"
 
 # Change to the project directory
 cd "$PROJECT_DIR"
