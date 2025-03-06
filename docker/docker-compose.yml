@@ -5,6 +5,7 @@ services:
       dockerfile: docker/api/Dockerfile
     volumes:
       - ../api/app:/app/app  # Mount only the app directory for development
+      - ../api/data:/app/api/data  # Mount the data directory
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CORS_ORIGINS=["*"]  # Allow all origins
@@ -66,7 +67,7 @@ services:
       dockerfile: docker/api/Dockerfile
     command: ["python", "-m", "app.scripts.extract_faqs"]
     volumes:
-      - ../api/data:/app/data
+      - ../api/data:/app/api/data
     depends_on:
       - api
     networks:
