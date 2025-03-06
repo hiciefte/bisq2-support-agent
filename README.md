@@ -10,7 +10,7 @@ This project consists of the following components:
 
 - **API Service**: FastAPI-based backend implementing the RAG (Retrieval Augmented Generation) system
 - **Web Frontend**: Next.js web application for the chat interface
-- **Bisq Integration**: Connection to Bisq 2 API
+- **Bisq Integration**: Connection to Bisq 2 API for support chat data
 - **Monitoring**: Prometheus and Grafana for system monitoring
 
 ## Prerequisites
@@ -19,6 +19,7 @@ This project consists of the following components:
 - OpenAI API key (for the RAG model)
 - Python 3.11+ (for local development)
 - Node.js 18+ (for web frontend development)
+- Bisq 2 API instance (for FAQ extraction) - see [Bisq 2 API Setup](docs/bisq2-api-setup.md)
 
 ## Project Structure
 
@@ -38,11 +39,14 @@ bisq-support-assistant/
 ├── docker/               # Docker configuration
 │   ├── api/              # API service Dockerfile
 │   ├── web/              # Web frontend Dockerfile
-│   ├── bisq/             # Bisq API Dockerfile
 │   ├── prometheus/       # Prometheus configuration
 │   ├── grafana/          # Grafana configuration
 │   └── docker-compose.yml # Docker Compose configuration
-├── prometheus/           # Prometheus configuration
+├── docs/                 # Documentation
+│   ├── bisq2-api-setup.md # Bisq 2 API setup guide
+│   ├── faq-automation.md # FAQ automation guide
+│   ├── troubleshooting.md # Troubleshooting guide
+│   └── monitoring-security.md # Monitoring security guide
 ├── scripts/              # Utility scripts
 └── .env.example          # Example environment variables
 ```
@@ -234,26 +238,15 @@ When adding new content:
 
 ## Troubleshooting
 
-### Common Issues:
+If you encounter any issues with the Bisq 2 Support Agent, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). Common issues covered include:
 
-1. **Missing or Empty Data Directories**: If the RAG system isn't working properly, check that:
-   ```bash
-   # Verify the wiki directory contains Markdown files
-   ls -la api/data/wiki/
-   
-   # If empty, add some documentation files
-   cp your-documentation.md api/data/wiki/
-   ```
+- API service errors
+- Bisq API connection issues
+- Docker configuration problems
+- FAQ extractor issues
+- Monitoring setup problems
 
-2. **Environment Variables**: Check that your `.env` files contain all required variables.
-
-3. **OpenAI API Key**: Verify your OpenAI API key is valid and has sufficient quota.
-
-4. **Docker Networking**: If services can't communicate, check Docker network settings.
-
-### UUID Generation in Web Frontend
-
-If you encounter an error related to `crypto.randomUUID()` not being available, the application includes a fallback mechanism using the `uuid` library. This ensures compatibility across different browsers and environments.
+For detailed solutions and step-by-step instructions, see the [Troubleshooting Guide](docs/troubleshooting.md).
 
 ## Contributing
 
