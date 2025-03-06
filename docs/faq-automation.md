@@ -29,7 +29,19 @@ The automation:
    PROJECT_DIR="/path/to/bisq2-support-agent"
    ```
 
-3. Make the script executable:
+3. Make sure your `.env` file exists in the project directory:
+   ```bash
+   # Check if .env file exists
+   ls -la /path/to/bisq2-support-agent/.env
+   
+   # If it doesn't exist, copy the example file
+   cp /path/to/bisq2-support-agent/.env.example /path/to/bisq2-support-agent/.env
+   
+   # Edit the .env file with your configuration
+   nano /path/to/bisq2-support-agent/.env
+   ```
+
+4. Make the script executable:
    ```bash
    chmod +x /path/to/scripts/update-faqs.sh
    ```
@@ -85,6 +97,21 @@ For more cron schedule options, see [crontab.guru](https://crontab.guru/).
    ```bash
    sudo touch /var/log/bisq-faq-updater.log
    sudo chown $USER:$USER /var/log/bisq-faq-updater.log
+   ```
+
+4. **Environment File Not Found**: If you see an error like `no configuration file provided: not found`, make sure your `.env` file exists in the project directory:
+   ```bash
+   # Check if .env file exists
+   ls -la /path/to/bisq2-support-agent/.env
+   
+   # Create it if it doesn't exist
+   cp /path/to/bisq2-support-agent/.env.example /path/to/bisq2-support-agent/.env
+   nano /path/to/bisq2-support-agent/.env  # Edit with your settings
+   ```
+
+5. **Docker Compose Version Issues**: If you're using Docker Compose V2, you might need to use `docker compose` instead of `docker-compose` in the scripts. Check your Docker Compose version:
+   ```bash
+   docker compose version
    ```
 
 ### Checking Logs
