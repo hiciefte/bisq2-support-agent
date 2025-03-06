@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Body
@@ -97,4 +99,82 @@ async def query(
         return JSONResponse(
             status_code=500,
             content={"detail": str(e)}
+        )
+
+@router.get("/stats")
+async def get_chat_stats(settings: Settings = Depends(get_settings)):
+    """Get statistics about chat responses including average response time."""
+    try:
+        # Get the feedback directory from settings
+        feedback_dir = Path(settings.DATA_DIR) / "feedback"
+        
+        # Default values if no data is available
+        stats = {
+            "total_queries": 0,
+            "average_response_time": 300,  # Default to 5 minutes
+            "last_24h_average_response_time": 300
+        }
+        
+        if not feedback_dir.exists():
+            return stats
+        
+        total_queries = 0
+        total_response_time = 0
+        
+        # For tracking recent queries (last 24 hours)
+        import datetime
+        recent_queries = 0
+        recent_response_time = 0
+        cutoff_time = datetime.datetime.now() - datetime.timedelta(hours=24)
+        
+        # Process all feedback files
+        for feedback_file in feedback_dir.glob("feedback_*.jsonl"):
+            if not feedback_file.exists():
+                continue
+                
+            with open(feedback_file) as f:
+                for line in f:
+                    try:
+                        feedback = json.loads(line)
+                        
+                        # Check if metadata and response_time exist
+                        if feedback.get("metadata") and feedback["metadata"].get("response_time"):
+                            total_queries += 1
+                            response_time = feedback["metadata"]["response_time"]
+                            total_response_time += response_time
+                            
+                            # Check if this is a recent query
+                            if "timestamp" in feedback:
+                                try:
+                                    timestamp = datetime.datetime.fromisoformat(feedback["timestamp"])
+                                    if timestamp > cutoff_time:
+                                        recent_queries += 1
+                                        recent_response_time += response_time
+                                except (ValueError, TypeError):
+                                    # If timestamp parsing fails, skip this check
+                                    pass
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid JSON in feedback file: {feedback_file}")
+                        continue
+        
+        # Calculate averages if we have data
+        if total_queries > 0:
+            stats["total_queries"] = total_queries
+            stats["average_response_time"] = total_response_time / total_queries
+        
+        if recent_queries > 0:
+            stats["last_24h_average_response_time"] = recent_response_time / recent_queries
+        else:
+            # If no recent queries, use the overall average
+            stats["last_24h_average_response_time"] = stats["average_response_time"]
+        
+        logger.info(f"Calculated chat stats: {stats}")
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting chat stats: {str(e)}")
+        logger.exception("Full error details:")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while retrieving chat statistics"
         )

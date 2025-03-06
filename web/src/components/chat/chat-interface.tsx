@@ -43,18 +43,6 @@ interface Message {
   }
 }
 
-// Function to calculate average response time from messages
-const calculateAverageResponseTime = (messages: Message[]): number => {
-  const responseTimes = messages
-    .filter(msg => msg.role === "assistant" && msg.metadata?.response_time)
-    .map(msg => msg.metadata!.response_time);
-  
-  if (responseTimes.length === 0) return 300; // Default to 5 minutes (300 seconds) if no data
-  
-  const sum = responseTimes.reduce((acc, time) => acc + time, 0);
-  return sum / responseTimes.length;
-};
-
 // Convert seconds to a human-readable format
 const formatResponseTime = (seconds: number): string => {
   if (seconds < 60) return `${Math.round(seconds)} seconds`;
@@ -107,9 +95,62 @@ const ChatInterface = () => {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const loadingRef = useRef<HTMLDivElement>(null)
+  const [globalAverageResponseTime, setGlobalAverageResponseTime] = useState<number>(300); // Default to 5 minutes
+  
+  // Fetch global stats on component mount
+  useEffect(() => {
+    const fetchGlobalStats = async () => {
+      try {
+        // Use the same API URL construction as in sendMessage
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${hostname}:8000`;
+        const statsUrl = `${apiUrl}/chat/stats`;
+        console.log(`Fetching stats from: ${statsUrl}`);
+        
+        const response = await fetch(statsUrl);
+        console.log(`Stats response status: ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          const stats = await response.json();
+          console.log('Stats response data:', stats);
+          // Use the last 24h average if available, otherwise use the overall average
+          const avgTime = stats.last_24h_average_response_time || stats.average_response_time || 300;
+          setGlobalAverageResponseTime(avgTime);
+          console.log('Loaded global average response time:', avgTime);
+        } else {
+          console.error('Failed to fetch global stats:', response.statusText);
+          // Fall back to a reasonable default if we can't get stats
+          console.log('Using default average response time of 12 seconds');
+          setGlobalAverageResponseTime(12); // Use a more reasonable default based on actual data
+        }
+      } catch (error) {
+        console.error('Error fetching global stats:', error);
+        // Fall back to a reasonable default if we can't get stats
+        console.log('Using default average response time of 12 seconds');
+        setGlobalAverageResponseTime(12); // Use a more reasonable default based on actual data
+      }
+    };
+
+    fetchGlobalStats();
+  }, []);
   
   // Calculate average response time from existing messages
-  const avgResponseTime = calculateAverageResponseTime(messages);
+  const calculateLocalAverageResponseTime = (): number => {
+    const responseTimes = messages
+      .filter(msg => msg.role === "assistant" && msg.metadata?.response_time)
+      .map(msg => msg.metadata!.response_time);
+    
+    if (responseTimes.length === 0) {
+      // If no local response times, use the global average
+      return globalAverageResponseTime;
+    }
+    
+    const sum = responseTimes.reduce((acc, time) => acc + time, 0);
+    return sum / responseTimes.length;
+  };
+  
+  // Get the average response time, preferring local data if available
+  const avgResponseTime = calculateLocalAverageResponseTime();
   const formattedAvgTime = formatResponseTime(avgResponseTime);
 
   // Example questions that can be clicked
