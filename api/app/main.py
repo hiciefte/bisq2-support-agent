@@ -3,12 +3,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import Settings
 from app.routes import chat, feedback, health
-from app.services.rag_service import RAGService
+from app.services.simplified_rag_service import SimplifiedRAGService
 
 # Configure logging
 logging.basicConfig(
@@ -24,10 +24,10 @@ settings = Settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize services on startup
-    logger.info("Initializing RAG service...")
-    rag_service = RAGService(settings=settings)
+    logger.info("Initializing Simplified RAG service...")
+    rag_service = SimplifiedRAGService(settings=settings)
     await rag_service.setup()
-    
+
     # FastAPI's app.state is dynamically typed
     app.state.rag_service = rag_service  # type: ignore
 
@@ -41,14 +41,14 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="Bisq Support Assistant API",
-    description="API for the Bisq Support Assistant chatbot",
+    description="API for the Bisq Support Assistant chatbot using simplified RAG implementation",
     version="1.0.0",
     lifespan=lifespan
 )
 
 # Configure CORS
 app.add_middleware(
-    CORSMiddleware, # type: ignore
+    CORSMiddleware,  # type: ignore
     allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
@@ -58,15 +58,18 @@ app.add_middleware(
 # Set up Prometheus metrics
 instrumentator = Instrumentator().instrument(app)
 
+
 @app.on_event("startup")
 async def startup():
     # Initialize the instrumentator but don't expose it
     logger.info("Prometheus metrics instrumentation initialized")
 
+
 # Create a dedicated metrics endpoint
 @app.get("/metrics", include_in_schema=True)
 async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
