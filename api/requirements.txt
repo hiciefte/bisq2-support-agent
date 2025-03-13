@@ -8,23 +8,28 @@ pydantic-settings
 langchain
 langchain-community
 langchain-core
-langchain-huggingface
 langchain-chroma
 chromadb
-sentence-transformers
 
-# LLM Integration
+# LLM Integration - Core
 openai
-torch
-transformers
+langchain-openai
+
+# LLM Integration - xAI
+langchain-xai
+
+# Web Scraping
+beautifulsoup4
+requests
 
 # Data Processing
 pandas
 numpy
 tqdm
-requests
 aiohttp
 asyncio
+mwxml
+mwparserfromhell
 
 # Monitoring & Logging
 psutil

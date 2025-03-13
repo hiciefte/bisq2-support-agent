@@ -73,8 +73,6 @@ services:
       - BISQ_API_URL=http://127.0.0.1:8090
     depends_on:
       - api
-    networks:
-      - bisq-support-network
 
   scheduler:
     image: alpine:latest

@@ -21,13 +21,17 @@ class Settings(BaseSettings):
 
     # OpenAI Configuration
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "o1-mini"
+    OPENAI_MODEL: str = "o3-mini"
+
+    # xAI Configuration
+    XAI_API_KEY: str = ""
+    XAI_MODEL: str = "grok-1"
 
     # Bisq API Configuration
     BISQ_API_URL: str = "http://localhost:8082"
 
     # Model Configuration
-    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # Data paths - these will be relative to DATA_DIR
     DATA_DIR: str = "/app/api/data"  # Default for Docker, can be overridden for local dev
@@ -38,6 +42,10 @@ class Settings(BaseSettings):
 
     # API settings
     API_DIR: str = str(Path(__file__).parent.parent.parent)
+
+    # LLM Provider Selection
+    # Options: "openai", "xai"
+    LLM_PROVIDER: str = "openai"
 
     model_config = {
         "env_file": str(Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / ".env"),
