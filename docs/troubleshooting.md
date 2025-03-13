@@ -211,6 +211,36 @@ If Prometheus can't scrape metrics from the API or web service:
    docker compose restart prometheus
    ```
 
+## MediaWiki XML Namespace Conflicts
+
+If you encounter warnings like these when processing the MediaWiki XML dump:
+
+```
+WARNING:mwxml.iteration.page:Namespace id conflict detected. <title>=File:Example.png, <namespace>=0, mapped_namespace=6
+WARNING:mwxml.iteration.page:Namespace id conflict detected. <title>=Category:Example, <namespace>=0, mapped_namespace=14
+```
+
+These occur because some pages have titles with namespace prefixes (like 'File:' or 'Category:') but are incorrectly tagged with namespace ID 0 in the XML dump.
+
+**Note**: The latest version of the `download_bisq2_media_wiki.py` script already handles namespaces correctly. This fix is only needed for existing XML files created with older versions of the download script.
+
+To fix these conflicts:
+
+1. Run the namespace fix script:
+   ```bash
+   python3 scripts/fix_xml_namespaces.py
+   ```
+
+2. The script will:
+   - Update pages with 'File:' prefixes to namespace 6
+   - Update pages with 'Category:' prefixes to namespace 14
+   - Create a backup of the original file before making changes
+
+3. Restart the API service:
+   ```bash
+   docker compose restart api
+   ```
+
 ## Getting Help
 
 If you're still experiencing issues:

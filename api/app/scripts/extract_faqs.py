@@ -544,7 +544,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 if __name__ == "__main__":
     # Create an instance of FAQExtractor with explicit type annotation
     extractor: FAQExtractor = FAQExtractor()
-    
+
     # Run the extractor using get_event_loop instead of asyncio.run
     loop = get_event_loop()
     try:

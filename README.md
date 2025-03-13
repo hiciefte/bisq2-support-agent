@@ -184,7 +184,7 @@ This ensures the API service uses the `api/data` directory when running locally,
    ```
    # OpenAI API key (required for the RAG service)
    OPENAI_API_KEY=your_api_key_here
-   OPENAI_MODEL=o1-mini
+   OPENAI_MODEL=o3-mini
    
    # Bisq API URL
    BISQ_API_URL=http://localhost:8082
@@ -229,12 +229,41 @@ This ensures the API service uses the `api/data` directory when running locally,
 The RAG system uses documents from the following locations:
 
 - **Wiki Documents**: Place Markdown files in `api/data/wiki/`
+- **MediaWiki XML Dump**: Place a MediaWiki XML dump file named `bisq_dump.xml` in `api/data/wiki/` to load content from a MediaWiki export
 - **FAQ Data**: The system will automatically extract FAQ data from the wiki documents
 
 When adding new content:
-1. Add Markdown files to `api/data/wiki/`
+1. Add Markdown files to `api/data/wiki/` or add a MediaWiki XML dump file named `bisq_dump.xml` to the same directory
 2. Restart the API service to rebuild the vector store
 3. The system will automatically process and index the new content
+
+### Using MediaWiki XML Dumps
+
+The system supports loading content from MediaWiki XML dumps, which can be exported from any MediaWiki instance (including Wikipedia). To use this feature:
+
+1. Export the XML dump from your MediaWiki instance
+2. Name the file `bisq_dump.xml` and place it in the `api/data/wiki/` directory
+3. Restart the API service to rebuild the vector store
+
+The system will automatically load content from the XML dump, including page titles and sections, and use it for the RAG system.
+
+### MediaWiki XML Namespace Issues
+
+If you encounter namespace conflict warnings when processing an existing MediaWiki XML dump:
+
+```
+WARNING:mwxml.iteration.page:Namespace id conflict detected. <title>=File:Example.png, <namespace>=0, mapped_namespace=6
+```
+
+**Note**: The latest version of the `download_bisq2_media_wiki.py` script already handles namespaces correctly. This fix is only needed for existing XML files created with older versions of the download script.
+
+You can fix these conflicts by running:
+
+```bash
+python3 scripts/fix_xml_namespaces.py
+```
+
+This script will fix namespace issues in your existing `api/data/wiki/bisq_dump.xml` file.
 
 ## Troubleshooting
 
