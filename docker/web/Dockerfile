@@ -13,8 +13,18 @@ RUN npm ci
 # Copy the rest of the application
 COPY web/ ./
 
+# Set build argument with default to development
+ARG BUILD_ENV=development
+
+# Set environment variable based on build arg
+ENV NODE_ENV=${BUILD_ENV}
+
 # Expose the port
 EXPOSE 3000
 
-# Start the development server
-CMD ["npm", "run", "dev"] 
+# Use different commands based on environment
+CMD if [ "$NODE_ENV" = "production" ]; then \
+      npm run build && npm run start; \
+    else \
+      npm run dev; \
+    fi 
