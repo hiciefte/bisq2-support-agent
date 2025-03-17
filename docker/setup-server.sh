@@ -17,11 +17,13 @@ print_warning() {
 
 # Create necessary directories
 print_message "Creating necessary directories..."
+mkdir -p ./logs/nginx
 mkdir -p ./logs/cron
 mkdir -p ./prometheus
 mkdir -p ./grafana/provisioning/datasources
 mkdir -p ./grafana/provisioning/dashboards
 mkdir -p ./grafana/dashboards
+mkdir -p ./nginx/conf.d
 
 # Configure the server IP
 print_message "Please enter your server's IP address (leave empty for 'localhost'):"
@@ -40,8 +42,8 @@ print_message "Configuration setup complete!"
 print_message "To start the services, run: docker compose up -d"
 print_message ""
 print_message "Once the services are up, you can access them at:"
-print_message "- Frontend: http://$server_ip:3000"
-print_message "- API: http://$server_ip:8000"
+print_message "- Web Frontend (via Nginx): http://$server_ip"
+print_message "- API (direct access): http://$server_ip:8000"
 print_message "- Prometheus: http://$server_ip:9090"
 print_message "- Grafana: http://$server_ip:3001 (admin/securepassword)"
 
