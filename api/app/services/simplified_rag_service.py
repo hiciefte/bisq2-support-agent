@@ -212,10 +212,10 @@ class SimplifiedRAGService:
         self.llm = ChatOpenAI(
             api_key=self.settings.OPENAI_API_KEY,
             model=model_name,
-            max_tokens=512,
+            max_tokens=self.settings.MAX_TOKENS,
             verbose=True,
         )
-        logger.info(f"OpenAI model initialized: {model_name}")
+        logger.info(f"OpenAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}")
 
     def _initialize_xai_llm(self):
         """Initialize xAI (Grok) model."""
@@ -230,10 +230,10 @@ class SimplifiedRAGService:
                 api_key=self.settings.XAI_API_KEY,
                 model=model_name,
                 temperature=0.7,
-                max_tokens=512,
+                max_tokens=self.settings.MAX_TOKENS,
                 timeout=30,
             )
-            logger.info(f"xAI model initialized: {model_name}")
+            logger.info(f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}")
         except ImportError:
             logger.error("langchain_xai package not installed. Please install it to use xAI models.")
             logger.info("Falling back to OpenAI model.")
@@ -492,7 +492,8 @@ Answer:"""
                 # Extract content from response
                 if hasattr(response, "content"):
                     content = response.content
-                    logger.info(f"Content found: {content[:100] if content else 'EMPTY CONTENT'}...")
+                    logger.info(f"Content found (first 100 chars): {content[:100] if content else 'EMPTY CONTENT'}...")
+                    logger.info(f"Total content length: {len(content) if content else 0}")
                     if not content or not content.strip():
                         logger.warning("Empty content received from LLM")
                         return "I apologize, but I couldn't generate a proper response based on the available information."
