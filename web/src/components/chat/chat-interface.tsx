@@ -213,6 +213,14 @@ const ChatInterface = () => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 600000); // 60 second timeout
       
+      // Format previous messages for chat history
+      const chatHistory = messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      })).slice(-8); // Only send the last 8 messages to keep context manageable
+      
+      console.log("Sending chat history:", chatHistory);
+      
       try {
         const response = await fetch(`${apiUrl}/chat/query`, {
           method: "POST",
@@ -221,6 +229,7 @@ const ChatInterface = () => {
           },
           body: JSON.stringify({
             question: text,
+            chat_history: chatHistory // Send chat history to the API
           }),
           signal: controller.signal
         });
