@@ -1,38 +1,80 @@
+version: '3.8'
+
 services:
+  # API backend
   api:
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
+      args:
+        - BUILD_ENV=production
+    restart: always
     volumes:
-      - ../api/app:/app/app  # Mount only the app directory for development
+      - ../api/app:/app/app  # Mount the app directory for development
       - ../api/data:/app/api/data  # Mount the data directory
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CORS_ORIGINS=["*"]  # Allow all origins
-      - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
+      - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
+      - BISQ_API_URL=http://172.17.0.1:8090
     ports:
-      - "8000:8000"
+      - "${EXPOSE_API_PORT:-8000}:8000"
     networks:
       - bisq-support-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
 
+  # Web frontend
   web:
     build:
       context: ..
       dockerfile: docker/web/Dockerfile
-    volumes:
-      - ../web:/app
-      - /app/node_modules
-    ports:
-      - "3000:3000"
+      args:
+        - BUILD_ENV=production
+    restart: always
     environment:
-      - NEXT_PUBLIC_API_URL=${API_URL:-http://localhost:8000}  # Use environment variable with fallback
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NODE_ENV=production
+    ports:
+      - "${EXPOSE_WEB_PORT:-3000}:3000"
+    depends_on:
+      - api
     networks:
       - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
+  # Monitoring - Prometheus
   prometheus:
     image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
+    restart: always
     volumes:
       - ./prometheus:/etc/prometheus
       - prometheus-data:/prometheus
@@ -41,57 +83,120 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "${EXPOSE_PROMETHEUS_PORT:-9090}:9090"
     networks:
       - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
+  # Monitoring - Grafana
   grafana:
     image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
+    restart: always
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-securepassword}
+      - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
+    ports:
+      - "${EXPOSE_GRAFANA_PORT:-3001}:3000"
     depends_on:
       - prometheus
     networks:
       - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
+  # Node exporter for host metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: always
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    expose:
+      - "9100"
+    networks:
+      - bisq-support-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
+
+  # Data ingestion - FAQ Extractor
   faq-extractor:
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
+    restart: on-failure
     command: ["python", "-m", "app.scripts.extract_faqs"]
     volumes:
       - ../api/data:/app/api/data
-    network_mode: "host"
     environment:
-      - BISQ_API_URL=http://127.0.0.1:8090
+      - BISQ_API_URL=http://172.17.0.1:8090
     depends_on:
       - api
+    networks:
+      - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # Scheduler for periodic tasks
   scheduler:
     image: alpine:latest
+    restart: always
     volumes:
-      - ./scripts:/scripts
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./logs/cron:/var/log/cron
     command: >
       sh -c "
         apk add --no-cache docker-cli docker-compose bash coreutils &&
         chmod +x /scripts/update-faqs.sh &&
-        echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron.log 2>&1' > /etc/crontabs/root &&
+        echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron/cron.log 2>&1' > /etc/crontabs/root &&
         crond -f -d 8
       "
-    restart: unless-stopped
     depends_on:
       - api
       - faq-extractor
     networks:
       - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   prometheus-data:
