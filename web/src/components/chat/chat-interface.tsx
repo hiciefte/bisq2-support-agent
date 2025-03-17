@@ -45,9 +45,7 @@ interface Message {
 
 // Convert seconds to a human-readable format
 const formatResponseTime = (seconds: number): string => {
-  if (seconds < 60) return `${Math.round(seconds)} seconds`;
-  const minutes = Math.round(seconds / 60);
-  return `~${minutes} minute${minutes !== 1 ? 's' : ''}`;
+  return seconds < 60 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`;
 };
 
 // Funny loading messages with {time} placeholder
@@ -88,7 +86,14 @@ const cleanupResponse = (text: string): string => {
 };
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState<Message[]>([])
+  // Load messages from localStorage on initial render
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (typeof window !== 'undefined') {
+      const savedMessages = localStorage.getItem('bisq_chat_messages');
+      return savedMessages ? JSON.parse(savedMessages) : [];
+    }
+    return [];
+  });
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState("");
@@ -96,6 +101,14 @@ const ChatInterface = () => {
   const inputRef = useRef<HTMLInputElement>(null)
   const loadingRef = useRef<HTMLDivElement>(null)
   const [globalAverageResponseTime, setGlobalAverageResponseTime] = useState<number>(300); // Default to 5 minutes
+  
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== 'undefined' && messages.length > 0) {
+      localStorage.setItem('bisq_chat_messages', JSON.stringify(messages));
+      console.log('Saved messages to localStorage:', messages);
+    }
+  }, [messages]);
   
   // Fetch global stats on component mount
   useEffect(() => {
@@ -198,7 +211,11 @@ const ChatInterface = () => {
       timestamp: new Date(),
     }
 
-    setMessages((prev) => [...prev, userMessage])
+    // Update messages state with the new user message
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    console.log('Updated messages state:', updatedMessages);
+    
     setInput("")
     setIsLoading(true)
 
@@ -214,7 +231,8 @@ const ChatInterface = () => {
       const timeoutId = setTimeout(() => controller.abort(), 600000); // 60 second timeout
       
       // Format previous messages for chat history
-      const chatHistory = messages.map(msg => ({
+      // Use updatedMessages to ensure the latest user message is included
+      const chatHistory = updatedMessages.map(msg => ({
         role: msg.role,
         content: msg.content
       })).slice(-8); // Only send the last 8 messages to keep context manageable
@@ -261,7 +279,10 @@ const ChatInterface = () => {
           }
         }
 
-        setMessages((prev) => [...prev, assistantMessage])
+        // Use the updatedMessages approach for consistent state handling
+        const updatedWithResponse = [...updatedMessages, assistantMessage];
+        setMessages(updatedWithResponse);
+        console.log('Updated messages with assistant response:', updatedWithResponse);
       } catch (error: any) {
         // Handle AbortController error (timeout) or other fetch errors
         let errorContent = "An error occurred while processing your request.";
@@ -432,6 +453,15 @@ const ChatInterface = () => {
     }
   }
 
+  // Add a function to clear chat history
+  const clearChatHistory = () => {
+    setMessages([]);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('bisq_chat_messages');
+      console.log('Chat history cleared');
+    }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Messages container */}
@@ -578,6 +608,17 @@ const ChatInterface = () => {
               )}
             </Button>
           </div>
+          {messages.length > 0 && (
+            <div className="flex justify-center mt-3">
+              <button 
+                onClick={clearChatHistory}
+                className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
+                type="button"
+              >
+                Clear conversation
+              </button>
+            </div>
+          )}
         </div>
       </form>
     </div>

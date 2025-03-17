@@ -78,6 +78,14 @@ async def query(
             raise HTTPException(status_code=422, detail=str(e))
 
         # Get response from simplified RAG service
+        logger.info(f"Chat history type: {type(query_request.chat_history)}")
+        if query_request.chat_history:
+            logger.info(f"Number of messages in chat history: {len(query_request.chat_history)}")
+            for i, msg in enumerate(query_request.chat_history):
+                logger.info(f"Message {i}: role={msg.role}, content={msg.content[:30]}...")
+        else:
+            logger.info("No chat history provided in the request")
+            
         result = rag_service.query(query_request.question, query_request.chat_history)
 
         # Convert sources to the expected format
