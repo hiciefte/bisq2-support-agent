@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "o3-mini"
+    MAX_TOKENS: int = 4096  # Default max tokens for LLM response length
 
     # xAI Configuration
     XAI_API_KEY: str = ""
