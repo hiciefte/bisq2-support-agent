@@ -30,37 +30,8 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     networks:
       - bisq-support-network
-
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus:/etc/prometheus
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-    networks:
-      - bisq-support-network
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
-      - grafana-data:/var/lib/grafana
-    environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     depends_on:
-      - prometheus
-    networks:
-      - bisq-support-network
+      - api
 
   faq-extractor:
     build:
@@ -76,10 +47,6 @@ services:
       - api
     networks:
       - bisq-support-network
-
-volumes:
-  prometheus-data:
-  grafana-data:
 
 networks:
   bisq-support-network:

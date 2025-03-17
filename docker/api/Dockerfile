@@ -7,6 +7,9 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libxml2-dev \
+    libxslt-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -21,9 +24,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install curl for healthcheck
+# Install curl for healthcheck and libxml2 runtime for mwxml
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libxml2 \
+    libxslt1.1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files from builder
