@@ -14,6 +14,7 @@ chromadb
 # LLM Integration - Core
 openai
 langchain-openai
+langchain-huggingface
 
 # LLM Integration - xAI
 langchain-xai
