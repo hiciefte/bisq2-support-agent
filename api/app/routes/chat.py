@@ -1,14 +1,14 @@
 import json
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.config import get_settings, Settings
-from app.services.rag_service import get_rag_service, RAGService
+from app.services.simplified_rag_service import get_rag_service, SimplifiedRAGService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -20,8 +20,14 @@ class Source(BaseModel):
     content: str
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class QueryRequest(BaseModel):
     question: str
+    chat_history: Optional[List[ChatMessage]] = None
 
     model_config = {"extra": "allow"}  # Allow extra fields in the request payload
 
@@ -36,7 +42,7 @@ class QueryResponse(BaseModel):
 async def query(
         request: Request,
         settings: Settings = Depends(get_settings),
-        rag_service: RAGService = Depends(get_rag_service),
+        rag_service: SimplifiedRAGService = Depends(get_rag_service),
         body_payload: dict = Body(...)
 ):
     """Process a query and return a response with sources."""
@@ -72,7 +78,7 @@ async def query(
             raise HTTPException(status_code=422, detail=str(e))
 
         # Get response from simplified RAG service
-        result = rag_service.query(query_request.question, None)
+        result = rag_service.query(query_request.question, query_request.chat_history)
 
         # Convert sources to the expected format
         formatted_sources = [
