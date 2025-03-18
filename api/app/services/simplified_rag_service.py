@@ -42,6 +42,8 @@ def redact_pii(text: str) -> str:
     - IP addresses
     - Numeric sequences that might be IDs
     - Long alphanumeric strings that might be keys/passwords
+    - Phone numbers (various formats)
+    - Partial numeric sequences that might be sensitive identifiers
     """
     if not text:
         return text
@@ -57,6 +59,12 @@ def redact_pii(text: str) -> str:
 
     # Redact alphanumeric strings that look like API keys (30+ chars)
     text = re.sub(r'\b[a-zA-Z0-9_\-.]{30,}\b', '[REDACTED_KEY]', text)
+    
+    # Redact phone numbers (various formats)
+    text = re.sub(r'\b(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b', '[REDACTED_PHONE]', text)
+
+    # Redact potentially sensitive partial numeric sequences (e.g., SSN fragments)
+    text = re.sub(r'\b\d{3}[\s.-]?\d{2}[\s.-]?\d{4}\b', '[REDACTED_ID_PATTERN]', text)
 
     return text
 

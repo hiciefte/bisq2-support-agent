@@ -31,6 +31,12 @@ for cmd in git docker; do
   fi
 done
 
+# Also check for Docker Compose plugin if not already integrated
+if ! docker compose version &> /dev/null; then
+  echo -e "${RED}Error: Docker Compose plugin is not installed or not working${NC}"
+  exit 1
+fi
+
 # Check if Docker daemon is running
 if ! docker info &> /dev/null; then
   echo -e "${RED}Error: Docker daemon is not running${NC}"
@@ -44,33 +50,73 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Function to check if we need to rebuild
+# Uses git diff to determine if dependencies have changed
 needs_rebuild() {
   # Check for changes in key files that would require a rebuild
-  if git diff --name-only "HEAD@{1}" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
-    return 0  # True, needs rebuild
+  # Fallback for CI/CD or environments where reflog might not be available
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    # Use git merge-base for branch comparison
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+        return 0  # True, needs rebuild
+      fi
+    else
+      # Failsafe: If we can't determine base, assume rebuild needed
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming rebuild needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no rebuild needed
+    # Standard approach for normal repositories with reflog
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+      return 0  # True, needs rebuild
+    fi
   fi
+  return 1  # False, no rebuild needed
 }
 
 # Function to check if we need to restart API
 needs_api_restart() {
-  # Check for changes in API code
-  if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^api/'; then
-    return 0  # True, needs restart
+  # Similar fallback strategy as in needs_rebuild
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE '^api/'; then
+        return 0  # True, needs restart
+      fi
+    else
+      # Failsafe
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming API restart needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no restart needed
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^api/'; then
+      return 0  # True, needs restart
+    fi
   fi
+  return 1  # False, no restart needed
 }
 
 # Function to check if we need to restart Web
 needs_web_restart() {
-  # Check for changes in Web code
-  if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^web/'; then
-    return 0  # True, needs restart
+  # Similar fallback strategy as in needs_rebuild
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE '^web/'; then
+        return 0  # True, needs restart
+      fi
+    else
+      # Failsafe
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming web restart needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no restart needed
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^web/'; then
+      return 0  # True, needs restart
+    fi
   fi
+  return 1  # False, no restart needed
 }
 
 # Go to installation directory
@@ -101,7 +147,7 @@ else
 fi
 
 # Record current HEAD before pull
-echo -e "${BLUE}Recording current state...${NC}"
+echo -e "${BLUE}Recording current git HEAD hash before pull for change detection...${NC}"
 PREV_HEAD=$(git rev-parse HEAD)
 if [ -z "$PREV_HEAD" ]; then
   echo -e "${RED}Error: Failed to get current HEAD.${NC}"
@@ -140,7 +186,7 @@ fi
 # Show what was updated
 echo -e "${GREEN}Updates pulled successfully!${NC}"
 echo -e "${BLUE}Changes in this update:${NC}"
-git log --oneline --no-merges "${PREV_HEAD}..HEAD"
+git log --oneline --no-merges --max-count=10 "${PREV_HEAD}..HEAD"
 
 # Determine if we need to rebuild or just restart
 echo -e "${BLUE}Analyzing changes to determine rebuild/restart requirements...${NC}"

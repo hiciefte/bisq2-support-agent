@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python dependencies
 COPY api/requirements.txt .
 # Install PyTorch with native MPS support - with cleanup to save space
-RUN pip install --no-cache-dir torch>=2.0.0 && \
+RUN pip install --no-cache-dir torch==2.0.1 && \
     find /usr/local/lib/python3.11/site-packages/ -name "*.pyc" -delete && \
     find /usr/local/lib/python3.11/site-packages/ -name "__pycache__" -delete
 # Then install the rest of the requirements
