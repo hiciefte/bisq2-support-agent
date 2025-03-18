@@ -12,9 +12,16 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     networks:
       - bisq-support-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: "json-file"
       options:
@@ -70,13 +77,19 @@ services:
       args:
         - BUILD_ENV=production
     restart: always
-    environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      - NODE_ENV=production
+    volumes:
+      - ../web:/app
+      - web_node_modules:/app/node_modules
     expose:
       - "3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - NODE_ENV=production
+      - npm_config_update_notifier=false
+      - npm_config_fund=false
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - bisq-support-network
     healthcheck:
@@ -226,6 +239,8 @@ services:
 volumes:
   prometheus-data:
   grafana-data:
+  web_node_modules:
+    name: bisq2-web-node-modules
 
 networks:
   bisq-support-network:

@@ -6,9 +6,10 @@
 
 set -e  # Exit on error
 
-# Default installation directory
-INSTALL_DIR=${INSTALL_DIR:-"/opt/bisq-support"}
+# Default installation directory using HOME for portability
+INSTALL_DIR=${INSTALL_DIR:-"$HOME/workspace/bisq2-support-agent"}
 DOCKER_DIR="$INSTALL_DIR/docker"
+COMPOSE_FILE="docker-compose.yml"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -22,6 +23,26 @@ echo -e "${BLUE}======================================================"
 echo "Bisq Support Assistant - Maintenance Script"
 echo -e "======================================================${NC}"
 
+# Check for required commands
+for cmd in git docker; do
+  if ! command -v "$cmd" &> /dev/null; then
+    echo -e "${RED}Error: $cmd is not installed or not in PATH${NC}"
+    exit 1
+  fi
+done
+
+# Also check for Docker Compose plugin if not already integrated
+if ! docker compose version &> /dev/null; then
+  echo -e "${RED}Error: Docker Compose plugin is not installed or not working${NC}"
+  exit 1
+fi
+
+# Check if Docker daemon is running
+if ! docker info &> /dev/null; then
+  echo -e "${RED}Error: Docker daemon is not running${NC}"
+  exit 1
+fi
+
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
   echo -e "${YELLOW}Warning: This script may need root privileges for some operations."
@@ -29,37 +50,80 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Function to check if we need to rebuild
+# Uses git diff to determine if dependencies have changed
 needs_rebuild() {
   # Check for changes in key files that would require a rebuild
-  if git diff --name-only HEAD@{1} HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
-    return 0  # True, needs rebuild
+  # Fallback for CI/CD or environments where reflog might not be available
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    # Use git merge-base for branch comparison
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+        return 0  # True, needs rebuild
+      fi
+    else
+      # Failsafe: If we can't determine base, assume rebuild needed
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming rebuild needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no rebuild needed
+    # Standard approach for normal repositories with reflog
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+      return 0  # True, needs rebuild
+    fi
   fi
+  return 1  # False, no rebuild needed
 }
 
 # Function to check if we need to restart API
 needs_api_restart() {
-  # Check for changes in API code
-  if git diff --name-only HEAD@{1} HEAD | grep -qE '^api/'; then
-    return 0  # True, needs restart
+  # Similar fallback strategy as in needs_rebuild
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE '^api/'; then
+        return 0  # True, needs restart
+      fi
+    else
+      # Failsafe
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming API restart needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no restart needed
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^api/'; then
+      return 0  # True, needs restart
+    fi
   fi
+  return 1  # False, no restart needed
 }
 
 # Function to check if we need to restart Web
 needs_web_restart() {
-  # Check for changes in Web code
-  if git diff --name-only HEAD@{1} HEAD | grep -qE '^web/'; then
-    return 0  # True, needs restart
+  # Similar fallback strategy as in needs_rebuild
+  if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    if [ -n "$BASE" ]; then
+      if git diff --name-only "$BASE" HEAD | grep -qE '^web/'; then
+        return 0  # True, needs restart
+      fi
+    else
+      # Failsafe
+      echo -e "${YELLOW}Unable to determine git base for comparison. Assuming web restart needed.${NC}"
+      return 0
+    fi
   else
-    return 1  # False, no restart needed
+    if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^web/'; then
+      return 0  # True, needs restart
+    fi
   fi
+  return 1  # False, no restart needed
 }
 
 # Go to installation directory
-cd "$INSTALL_DIR"
+cd "$INSTALL_DIR" || {
+  echo -e "${RED}Error: Could not change to installation directory: $INSTALL_DIR${NC}"
+  exit 1
+}
 echo -e "${GREEN}Working in: $(pwd)${NC}"
 
 # Check if this is a git repo
@@ -72,7 +136,10 @@ fi
 echo -e "${BLUE}Checking for local changes...${NC}"
 if ! git diff-index --quiet HEAD --; then
   echo -e "${YELLOW}Local changes detected. Stashing changes...${NC}"
-  git stash save "Auto-stashed by update script on $(date)"
+  if ! git stash save "Auto-stashed by update script on $(date)"; then
+    echo -e "${RED}Error: Failed to stash local changes. Please commit or discard your changes before updating.${NC}"
+    exit 1
+  fi
   STASHED=true
 else
   echo -e "${GREEN}No local changes detected.${NC}"
@@ -80,12 +147,24 @@ else
 fi
 
 # Record current HEAD before pull
-echo -e "${BLUE}Recording current state...${NC}"
+echo -e "${BLUE}Recording current git HEAD hash before pull for change detection...${NC}"
 PREV_HEAD=$(git rev-parse HEAD)
+if [ -z "$PREV_HEAD" ]; then
+  echo -e "${RED}Error: Failed to get current HEAD.${NC}"
+  exit 1
+fi
 
 # Pull latest changes
 echo -e "${BLUE}Pulling latest changes from remote...${NC}"
-git pull
+if ! git pull; then
+  echo -e "${RED}Error: Failed to pull latest changes. Check your network connection or repository access.${NC}"
+  # Restore stashed changes if pull failed
+  if $STASHED; then
+    echo -e "${YELLOW}Restoring stashed changes...${NC}"
+    git stash pop
+  fi
+  exit 1
+fi
 
 # Check if anything was updated
 if [ "$PREV_HEAD" == "$(git rev-parse HEAD)" ]; then
@@ -94,7 +173,10 @@ if [ "$PREV_HEAD" == "$(git rev-parse HEAD)" ]; then
   # Pop stash if we stashed changes
   if $STASHED; then
     echo -e "${BLUE}Restoring local changes...${NC}"
-    git stash pop
+    if ! git stash pop; then
+      echo -e "${RED}Warning: Failed to restore stashed changes. Your changes are still in the stash.${NC}"
+      echo -e "${YELLOW}Run 'git stash list' and 'git stash apply' manually.${NC}"
+    fi
   fi
   
   echo -e "${GREEN}No updates needed.${NC}"
@@ -104,7 +186,7 @@ fi
 # Show what was updated
 echo -e "${GREEN}Updates pulled successfully!${NC}"
 echo -e "${BLUE}Changes in this update:${NC}"
-git log --oneline --no-merges ${PREV_HEAD}..HEAD
+git log --oneline --no-merges --max-count=10 "${PREV_HEAD}..HEAD"
 
 # Determine if we need to rebuild or just restart
 echo -e "${BLUE}Analyzing changes to determine rebuild/restart requirements...${NC}"
@@ -133,38 +215,59 @@ fi
 # Pop stash after analyzing but before rebuilding
 if $STASHED; then
   echo -e "${BLUE}Restoring local changes...${NC}"
-  if git stash pop; then
-    echo -e "${GREEN}Local changes restored successfully.${NC}"
-  else
+  if ! git stash pop; then
     echo -e "${RED}Warning: There were conflicts when restoring local changes."
     echo -e "Please resolve them manually before proceeding.${NC}"
+    echo -e "${YELLOW}Your changes are in the stash. Run 'git stash list' to check.${NC}"
     exit 1
+  else
+    echo -e "${GREEN}Local changes restored successfully.${NC}"
   fi
 fi
 
 # Navigate to docker directory
-cd "$DOCKER_DIR"
+cd "$DOCKER_DIR" || {
+  echo -e "${RED}Error: Could not change to Docker directory: $DOCKER_DIR${NC}"
+  exit 1
+}
 echo -e "${BLUE}Navigating to Docker directory: $(pwd)${NC}"
 
 # Apply updates based on what changed
 if $REBUILD_NEEDED; then
   echo -e "${BLUE}Performing full rebuild...${NC}"
-  docker-compose -f docker-compose.yml down
-  docker-compose -f docker-compose.yml build --no-cache
-  docker-compose -f docker-compose.yml up -d
+  if ! docker compose -f "$COMPOSE_FILE" down; then
+    echo -e "${RED}Error: Failed to stop containers.${NC}"
+    exit 1
+  fi
+  
+  if ! docker compose -f "$COMPOSE_FILE" build --no-cache; then
+    echo -e "${RED}Error: Failed to rebuild containers.${NC}"
+    exit 1
+  fi
+  
+  if ! docker compose -f "$COMPOSE_FILE" up -d; then
+    echo -e "${RED}Error: Failed to start containers.${NC}"
+    exit 1
+  fi
   
   echo -e "${GREEN}Full rebuild completed successfully!${NC}"
 else
   # Selective restarts
   if $API_RESTART_NEEDED; then
     echo -e "${BLUE}Restarting API service...${NC}"
-    docker-compose -f docker-compose.yml restart api
+    if ! docker compose -f "$COMPOSE_FILE" restart api; then
+      echo -e "${RED}Error: Failed to restart API service.${NC}"
+      exit 1
+    fi
     echo -e "${GREEN}API service restarted successfully!${NC}"
   fi
   
   if $WEB_RESTART_NEEDED; then
     echo -e "${BLUE}Restarting Web service...${NC}"
-    docker-compose -f docker-compose.yml restart web
+    if ! docker compose -f "$COMPOSE_FILE" restart web; then
+      echo -e "${RED}Error: Failed to restart Web service.${NC}"
+      exit 1
+    fi
     echo -e "${GREEN}Web service restarted successfully!${NC}"
   fi
   
@@ -179,6 +282,6 @@ echo -e "${GREEN}Update completed successfully!"
 echo -e "${BLUE}======================================================${NC}"
 echo ""
 echo -e "Services status:"
-docker-compose -f docker-compose.yml ps
+docker compose -f "$COMPOSE_FILE" ps
 
 exit 0 
