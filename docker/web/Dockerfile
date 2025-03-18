@@ -4,6 +4,10 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
+# Suppress npm update notices
+RUN npm config set update-notifier false && \
+    npm config set fund false
+
 # Copy package.json and package-lock.json
 COPY web/package*.json ./
 

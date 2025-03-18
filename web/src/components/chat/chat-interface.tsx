@@ -9,6 +9,9 @@ import {Rating} from "@/components/ui/rating"
 import Image from "next/image"
 import { v4 as uuidv4 } from 'uuid'
 
+// Constants
+const MAX_CHAT_HISTORY_LENGTH = 8; // Configurable: Adjust this to include more or less context
+
 // Utility function to generate UUID with fallback
 const generateUUID = (): string => {
   try {
@@ -235,9 +238,12 @@ const ChatInterface = () => {
       const chatHistory = updatedMessages.map(msg => ({
         role: msg.role,
         content: msg.content
-      })).slice(-8); // Only send the last 8 messages to keep context manageable
+      })).slice(-MAX_CHAT_HISTORY_LENGTH); // Only send limited messages to keep context manageable
       
-      console.log("Sending chat history:", chatHistory);
+      // For production, remove or customize this logging
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("Sending chat history:", chatHistory);
+      }
       
       try {
         const response = await fetch(`${apiUrl}/chat/query`, {
