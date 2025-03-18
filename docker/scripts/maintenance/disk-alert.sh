@@ -59,14 +59,17 @@ check_disk_usage() {
   log "Checking disk usage"
   
   # Get disk usage percentage
-  local disk_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+  local disk_usage
+  disk_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   
   log "Current disk usage: ${disk_usage}%"
   
   # Critical alert (highest priority)
   if [ "$disk_usage" -ge "$CRITICAL_THRESHOLD" ]; then
-    local subject="CRITICAL: Disk Usage at ${disk_usage}% on $HOSTNAME"
-    local message="
+    local subject
+    subject="CRITICAL: Disk Usage at ${disk_usage}% on $HOSTNAME"
+    local message
+    message="
 CRITICAL ALERT: Disk usage has reached ${disk_usage}% on $HOSTNAME
 Timestamp: $(date)
 
@@ -93,8 +96,10 @@ $(df -h)
   
   # Warning alert
   elif [ "$disk_usage" -ge "$WARNING_THRESHOLD" ]; then
-    local subject="WARNING: Disk Usage at ${disk_usage}% on $HOSTNAME"
-    local message="
+    local subject
+    subject="WARNING: Disk Usage at ${disk_usage}% on $HOSTNAME"
+    local message
+    message="
 WARNING: Disk usage has reached ${disk_usage}% on $HOSTNAME
 Timestamp: $(date)
 

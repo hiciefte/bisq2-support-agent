@@ -19,7 +19,8 @@ log() {
 # Check if cleanup is needed (>75% disk usage)
 check_disk_usage() {
   local threshold=75
-  local usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+  local usage
+  usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   
   if [ "$usage" -gt "$threshold" ]; then
     log "Disk usage is at ${usage}%, above threshold of ${threshold}%. Proceeding with cleanup."
@@ -32,7 +33,7 @@ check_disk_usage() {
 
 # Start logging
 log "Starting Docker cleanup process"
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || { log "ERROR: Failed to change to project directory"; exit 1; }
 
 # Stop containers if disk space is critical (>90%)
 critical_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
@@ -78,6 +79,7 @@ if check_disk_usage; then
   fi
   
   # Check disk usage after cleanup
+  local after_usage
   after_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   log "Disk usage after aggressive cleanup: ${after_usage}%"
 else
