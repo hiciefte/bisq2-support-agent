@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # Security
     CORS_ORIGINS: List[str]
+    
+    # Web configuration (added to prevent validation errors)
+    SERVER_IP: str = "127.0.0.1"
+    NEXT_PUBLIC_API_URL: str = "/api"
 
     # OpenAI Configuration
     OPENAI_API_KEY: str = ""

@@ -28,6 +28,38 @@ from app.core.config import Settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Add these constants near the top of the file with imports
+MAX_CHAT_HISTORY_LENGTH = 10  # Configurable maximum chat history length to use
+MAX_CONTEXT_LENGTH = 10000  # Maximum length of context to include in prompt
+MAX_SAMPLE_LOG_LENGTH = 200  # Maximum length to log in samples
+
+
+def redact_pii(text: str) -> str:
+    """Redact potential PII from text for logging purposes.
+    
+    Redacts:
+    - Email addresses
+    - IP addresses
+    - Numeric sequences that might be IDs
+    - Long alphanumeric strings that might be keys/passwords
+    """
+    if not text:
+        return text
+
+    # Redact email addresses
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[REDACTED_EMAIL]', text)
+
+    # Redact IP addresses
+    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]', text)
+
+    # Redact long numeric sequences (potentially IDs)
+    text = re.sub(r'\b\d{8,}\b', '[REDACTED_ID]', text)
+
+    # Redact alphanumeric strings that look like API keys (30+ chars)
+    text = re.sub(r'\b[a-zA-Z0-9_\-.]{30,}\b', '[REDACTED_KEY]', text)
+
+    return text
+
 
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
@@ -401,7 +433,7 @@ class SimplifiedRAGService:
 
         # Define a function to retrieve documents
         def retrieve_and_format(question):
-            logger.info(f"Retrieving documents for question: {question}")
+            logger.info(f"Retrieving documents for question: {redact_pii(question[:50])}...")
             docs = self.retriever.invoke(question)
             logger.info(f"Retrieved {len(docs)} documents")
             formatted_docs = self._format_docs(docs)
@@ -410,9 +442,9 @@ class SimplifiedRAGService:
 
         # Create a custom prompt based on the hub template but with improvements
         logger.info("Creating custom prompt for RAG chain...")
-        
+
         # Custom system template with proper sections for context, chat history, and question
-        system_template = """You are an assistant for question-answering tasks about Bisq 2.
+        system_template = f"""You are an assistant for question-answering tasks about Bisq 2.
 
 IMPORTANT: You are a Bisq 2 support assistant.
 Pay special attention to content marked with [VERSION: Bisq 2] as it is specifically about Bisq 2.
@@ -424,33 +456,50 @@ Always prioritize Bisq 2 specific information in your answers.
 If you don't know the answer, just say that you don't know.
 Use three sentences maximum and keep the answer concise.
 
-Question: {question}
+Question: {{question}}
 
-Chat History: {chat_history}
+Chat History: {{chat_history}}
 
-Context: {context}
+Context: {{context}}
 
 Answer:"""
 
         # Create the prompt template
         custom_prompt = ChatPromptTemplate.from_template(system_template)
-        logger.info("Custom RAG prompt created successfully")
+        logger.info(f"Custom RAG prompt created with {len(system_template)} characters")
 
         # Create a simple RAG chain
         def generate_response(question, chat_history=None):
             try:
+                # Start timing response generation
+                response_start_time = time.time()
+
                 # Get context from retriever
                 context = retrieve_and_format(question)
 
-                # Log a sample of the context to verify it's being retrieved properly
-                context_sample = context[:500] + "..." if len(context) > 500 else context
-                logger.info(f"Context sample: {context_sample}")
-                
-                # Format chat history if provided
+                # Truncate context if too long to save tokens
+                if len(context) > MAX_CONTEXT_LENGTH:
+                    logger.info(f"Truncating context from {len(context)} to {MAX_CONTEXT_LENGTH} characters")
+                    context = context[:MAX_CONTEXT_LENGTH]
+
+                # Create safe sample for logging
+                if os.environ.get('NODE_ENV', '').lower() != 'production':
+                    context_sample = context[:MAX_SAMPLE_LOG_LENGTH] + "..." if len(
+                        context) > MAX_SAMPLE_LOG_LENGTH else context
+                    logger.info(f"Context sample: {redact_pii(context_sample)}")
+
+                # Format chat history if provided - with safety limits
                 chat_history_str = ""
                 if chat_history and len(chat_history) > 0:
+                    # Apply history length limits
+                    if len(chat_history) > MAX_CHAT_HISTORY_LENGTH:
+                        logger.info(
+                            f"Limiting chat history from {len(chat_history)} to {MAX_CHAT_HISTORY_LENGTH} messages")
+                        chat_history = chat_history[-MAX_CHAT_HISTORY_LENGTH:]
+
                     logger.info(f"Using chat history with {len(chat_history)} messages")
                     formatted_history = []
+
                     for msg in chat_history:
                         try:
                             # Handle both dictionary and Pydantic model formats
@@ -462,15 +511,21 @@ Answer:"""
                                 # This is a dictionary
                                 role = msg.get('role', '')
                                 content = msg.get('content', '')
-                                
+
                             if role and content:
                                 formatted_history.append(f"{role.capitalize()}: {content}")
                         except Exception as e:
                             logger.warning(f"Error formatting chat message: {str(e)}")
-                    
+
                     if formatted_history:
                         chat_history_str = "\n".join(formatted_history)
-                        logger.info(f"Formatted chat history: {chat_history_str[:200]}...")
+
+                        # Only log in non-production or at debug level
+                        is_production = os.environ.get('NODE_ENV', '').lower() == 'production'
+                        if not is_production:
+                            sample = chat_history_str[:MAX_SAMPLE_LOG_LENGTH] + "..." if len(
+                                chat_history_str) > MAX_SAMPLE_LOG_LENGTH else chat_history_str
+                            logger.info(f"Formatted chat history: {redact_pii(sample)}")
 
                 # Format the prompt with the question, context and chat history
                 messages = custom_prompt.format_messages(
@@ -480,36 +535,39 @@ Answer:"""
                 )
 
                 logger.info(f"Formatted {len(messages)} messages")
-                logger.info(f"Prompt content sample: {str(messages[0].content)[:200]}...")
 
                 # Get response from LLM
                 logger.info("Sending request to LLM...")
                 response = self.llm.invoke(messages)
 
-                # Log response details
-                logger.info(f"Response type: {type(response)}")
-
                 # Extract content from response
+                content = ""
                 if hasattr(response, "content"):
                     content = response.content
-                    logger.info(f"Content found (first 100 chars): {content[:100] if content else 'EMPTY CONTENT'}...")
-                    logger.info(f"Total content length: {len(content) if content else 0}")
-                    if not content or not content.strip():
-                        logger.warning("Empty content received from LLM")
-                        return "I apologize, but I couldn't generate a proper response based on the available information."
-                    return content
                 else:
                     # Try to convert to string
-                    str_response = str(response)
-                    logger.info(
-                        f"No content attribute, using str(): {str_response[:100] if str_response else 'EMPTY STRING'}...")
-                    if not str_response or not str_response.strip():
-                        logger.warning("Empty string response received from LLM")
-                        return "I apologize, but I couldn't generate a proper response based on the available information."
-                    return str_response
+                    content = str(response)
+
+                # Log response information with privacy protection
+                if content:
+                    # Calculate response time
+                    response_time = time.time() - response_start_time
+                    logger.info(f"Response generated in {response_time:.2f}s, length: {len(content)}")
+
+                    # Log sample in non-production
+                    is_production = os.environ.get('NODE_ENV', '').lower() == 'production'
+                    if not is_production:
+                        sample = content[:MAX_SAMPLE_LOG_LENGTH] + "..." if len(
+                            content) > MAX_SAMPLE_LOG_LENGTH else content
+                        logger.info(f"Content sample: {redact_pii(sample)}")
+                else:
+                    logger.warning("Empty response received from LLM")
+                    return "I apologize, but I couldn't generate a proper response based on the available information."
+
+                return content
             except Exception as e:
-                logger.error(f"Error invoking LLM: {str(e)}", exc_info=True)
-                return f"Error generating response: {str(e)}"
+                logger.error(f"Error generating response: {str(e)}", exc_info=True)
+                return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
 
         # Store the generate_response function as our RAG chain
         self.rag_chain = generate_response
@@ -551,7 +609,12 @@ Answer:"""
             Dictionary with answer, sources, and response time
         """
         start_time = time.time()
-        logger.info(f"Processing query: {question}")
+        is_production = os.environ.get('NODE_ENV', '').lower() == 'production'
+        debug_level = logging.INFO if not is_production else logging.DEBUG
+
+        # Log question with PII protection
+        if debug_level <= logging.INFO:
+            logger.info(f"Processing query: {redact_pii(question[:50])}...")
 
         try:
             # Generate response using the simplified RAG chain with chat history
@@ -559,37 +622,41 @@ Answer:"""
             if chat_history:
                 logger.info(f"Using chat history with {len(chat_history)} messages")
                 # Log first and last messages for debugging purposes
-                if len(chat_history) > 0:
+                if len(chat_history) > 0 and debug_level <= logging.INFO:
                     # Handle both dictionary and Pydantic model formats
                     try:
                         if hasattr(chat_history[0], 'role') and hasattr(chat_history[0], 'content'):
                             # This is a Pydantic model
                             first_role = chat_history[0].role
-                            first_content = chat_history[0].content[:30] if chat_history[0].content else ""
+                            first_content = redact_pii(chat_history[0].content[:30]) if chat_history[0].content else ""
                             last_role = chat_history[-1].role
-                            last_content = chat_history[-1].content[:30] if chat_history[-1].content else ""
+                            last_content = redact_pii(chat_history[-1].content[:30]) if chat_history[-1].content else ""
                         else:
                             # This is a dictionary
                             first_role = chat_history[0].get('role', 'unknown')
-                            first_content = chat_history[0].get('content', '')[:30]
+                            first_content = redact_pii(chat_history[0].get('content', '')[:30])
                             last_role = chat_history[-1].get('role', 'unknown')
-                            last_content = chat_history[-1].get('content', '')[:30]
-                        
+                            last_content = redact_pii(chat_history[-1].get('content', '')[:30])
+
                         logger.info(f"First message: role={first_role}, content={first_content}...")
                         logger.info(f"Last message: role={last_role}, content={last_content}...")
                     except Exception as e:
                         logger.warning(f"Error logging chat history: {str(e)}")
                 
-                    response = self.rag_chain(question, chat_history)
+                # Generate response using chat history
+                response = self.rag_chain(question, chat_history)
             else:
                 logger.info("No chat history provided")
                 response = self.rag_chain(question)
-                
-            logger.info(f"Raw response: {response}")
 
-            # Add more detailed logging for debugging
-            logger.info(f"Response type: {type(response)}")
-            logger.info(f"Response length: {len(str(response))}")
+            # Only log detailed response info at DEBUG level
+            if debug_level <= logging.DEBUG:
+                logger.debug(f"Raw response: {redact_pii(str(response)[:100])}...")
+                logger.debug(f"Response type: {type(response)}")
+                logger.debug(f"Response length: {len(str(response))}")
+            else:
+                logger.info(f"Generated response of length {len(str(response))}")
+
             if not response or (isinstance(response, str) and not response.strip()):
                 logger.warning("Received empty response from LLM")
                 response = "I apologize, but I couldn't generate a proper response. Please try asking your question again."
