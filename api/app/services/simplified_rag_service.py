@@ -2,16 +2,27 @@
 Simplified RAG-based Bisq 2 support assistant using LangChain.
 This implementation combines wiki documentation from XML dump and FAQ data
 for accurate and context-aware responses, with easy switching between OpenAI and xAI.
+
+File Naming Conventions:
+- Feedback files: feedback_YYYY-MM.jsonl (e.g., feedback_2025-03.jsonl)
+  Stored in the DATA_DIR/feedback directory
+- Legacy formats supported for reading (but not writing):
+  - feedback_YYYYMMDD.jsonl (day-based naming)
+  - feedback.jsonl (in root DATA_DIR)
+  - negative_feedback.jsonl (special purpose file)
 """
 
 import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import Request
 # Vector store and embeddings
@@ -761,56 +772,65 @@ Answer:"""
             }
 
     def load_feedback(self):
-        """Load feedback data for response improvement."""
-        feedback_dir = os.path.join(self.settings.DATA_DIR, "feedback")
+        """Load feedback data from month-based JSONL files.
+        
+        Loads feedback data from the standardized format: feedback_YYYY-MM.jsonl
+        stored in the DATA_DIR/feedback directory.
+        
+        Returns:
+            List of feedback entries as dictionaries
+        """
         all_feedback = []
+        
+        # Load from the feedback directory (standard location)
+        feedback_dir = os.path.join(self.settings.DATA_DIR, "feedback")
+        if not os.path.exists(feedback_dir) or not os.path.isdir(feedback_dir):
+            logger.info(f"Feedback directory not found: {feedback_dir}")
+            return all_feedback
+            
+        try:
+            # Process month-based files (current convention)
+            month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
+            month_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
+                          if month_pattern.match(f)]
+            
+            # Sort files chronologically (newest first) to prioritize recent feedback
+            month_files.sort(reverse=True)
+            
+            for file_path in month_files:
+                try:
+                    with open(file_path, "r") as f:
+                        file_feedback = [json.loads(line) for line in f]
+                        all_feedback.extend(file_feedback)
+                        logger.info(f"Loaded {len(file_feedback)} feedback entries from {os.path.basename(file_path)}")
+                except Exception as e:
+                    logger.error(f"Error loading feedback from {file_path}: {str(e)}")
+            
+            logger.info(f"Loaded a total of {len(all_feedback)} feedback entries")
+        except Exception as e:
+            logger.error(f"Error loading feedback data: {str(e)}")
 
-        # If the feedback directory exists, load all jsonl files in it
-        if os.path.exists(feedback_dir) and os.path.isdir(feedback_dir):
-            try:
-                # Get all jsonl files in the feedback directory
-                feedback_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
-                                  if f.endswith('.jsonl')]
-
-                # Load feedback from each file
-                for file_path in feedback_files:
-                    try:
-                        with open(file_path, 'r') as f:
-                            file_feedback = [json.loads(line) for line in f]
-                            all_feedback.extend(file_feedback)
-                            logger.info(
-                                f"Loaded {len(file_feedback)} feedback entries from {os.path.basename(file_path)}")
-                    except Exception as e:
-                        logger.error(f"Error loading feedback from {file_path}: {str(e)}")
-
-                logger.info(f"Loaded a total of {len(all_feedback)} feedback entries")
-                return all_feedback
-            except Exception as e:
-                logger.error(f"Error loading feedback data: {str(e)}")
-
-        # Fallback to the old location (for backward compatibility)
-        feedback_file = os.path.join(self.settings.DATA_DIR, "feedback.jsonl")
-        if os.path.exists(feedback_file):
-            try:
-                with open(feedback_file, 'r') as f:
-                    legacy_feedback = [json.loads(line) for line in f]
-                    logger.info(f"Loaded {len(legacy_feedback)} feedback entries from legacy location")
-                    return legacy_feedback
-            except Exception as e:
-                logger.error(f"Error loading legacy feedback data: {str(e)}")
-
-        return []
+        return all_feedback
 
     async def store_feedback(self, feedback_data):
         """Store user feedback in the feedback file."""
-        feedback_path = os.path.join(self.settings.DATA_DIR, 'feedback.jsonl')
-
-        # Add timestamp
-        feedback_data['timestamp'] = datetime.now().isoformat()
+        # Create feedback directory if it doesn't exist
+        feedback_dir = os.path.join(self.settings.DATA_DIR, 'feedback')
+        os.makedirs(feedback_dir, exist_ok=True)
+        
+        # Use current month for filename following the established convention
+        current_month = datetime.now().strftime("%Y-%m")
+        feedback_file = os.path.join(feedback_dir, f"feedback_{current_month}.jsonl")
+        
+        # Add timestamp if not already present
+        if 'timestamp' not in feedback_data:
+            feedback_data['timestamp'] = datetime.now().isoformat()
 
         # Write to the feedback file
-        with open(feedback_path, 'a') as f:
+        with open(feedback_file, 'a') as f:
             f.write(json.dumps(feedback_data) + '\n')
+            
+        logger.info(f"Stored feedback in {os.path.basename(feedback_file)}")
 
         # Apply feedback weights to improve future responses
         await self.apply_feedback_weights(feedback_data)
@@ -818,48 +838,38 @@ Answer:"""
         return True
 
     async def update_feedback_entry(self, message_id, updated_entry):
-        """Update an existing feedback entry."""
-        # First try to find the entry in the feedback directory
+        """Update an existing feedback entry in a month-based feedback file.
+        
+        Args:
+            message_id: The unique ID of the message to update
+            updated_entry: The updated feedback entry
+            
+        Returns:
+            Boolean indicating whether the update was successful
+        """
         feedback_dir = os.path.join(self.settings.DATA_DIR, 'feedback')
-
-        if os.path.exists(feedback_dir) and os.path.isdir(feedback_dir):
-            # Get all jsonl files in the feedback directory
-            feedback_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
-                              if f.endswith('.jsonl')]
-
-            # Try to update in each file
-            for file_path in feedback_files:
-                temp_path = file_path + '.tmp'
-                updated = False
-
-                # Read existing entries and update the matching one
-                with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
-                    for line in original:
-                        entry = json.loads(line.strip())
-                        if entry.get('message_id') == message_id:
-                            # Update the entry
-                            temp.write(json.dumps(updated_entry) + '\n')
-                            updated = True
-                        else:
-                            # Keep the original entry
-                            temp.write(line)
-
-                # Replace the original file with the temporary one
-                if updated:
-                    os.replace(temp_path, file_path)
-                    logger.info(f"Updated feedback entry in {os.path.basename(file_path)}")
-                    return True
-                else:
-                    os.remove(temp_path)
-
-        # Fallback to the old location (for backward compatibility)
-        feedback_path = os.path.join(self.settings.DATA_DIR, 'feedback.jsonl')
-        if os.path.exists(feedback_path):
-            temp_path = feedback_path + '.tmp'
+        if not os.path.exists(feedback_dir) or not os.path.isdir(feedback_dir):
+            logger.warning(f"Feedback directory not found: {feedback_dir}")
+            return False
+            
+        # Get all month-based files in the feedback directory
+        month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
+        feedback_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
+                        if month_pattern.match(f)]
+        
+        # Sort files chronologically (newest first) to prioritize recent files
+        feedback_files.sort(reverse=True)
+        
+        # First check current month's file as it's most likely to contain recent entries
+        current_month = datetime.now().strftime("%Y-%m")
+        current_month_file = os.path.join(feedback_dir, f"feedback_{current_month}.jsonl")
+        
+        if os.path.exists(current_month_file):
+            # Try to update in current month's file first
+            temp_path = current_month_file + '.tmp'
             updated = False
-
-            # Read existing entries and update the matching one
-            with open(feedback_path, 'r') as original, open(temp_path, 'w') as temp:
+            
+            with open(current_month_file, 'r') as original, open(temp_path, 'w') as temp:
                 for line in original:
                     entry = json.loads(line.strip())
                     if entry.get('message_id') == message_id:
@@ -869,15 +879,40 @@ Answer:"""
                     else:
                         # Keep the original entry
                         temp.write(line)
-
-            # Replace the original file with the temporary one
+            
+            # Replace the original file if updated
             if updated:
-                os.replace(temp_path, feedback_path)
-                logger.info(f"Updated feedback entry in legacy location")
+                os.replace(temp_path, current_month_file)
+                logger.info(f"Updated feedback entry in current month's file {os.path.basename(current_month_file)}")
                 return True
             else:
                 os.remove(temp_path)
-
+                # Continue checking other files
+        
+        # If not found in current month, check all other month-based files
+        for file_path in [f for f in feedback_files if f != current_month_file]:
+            temp_path = file_path + '.tmp'
+            updated = False
+            
+            with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
+                for line in original:
+                    entry = json.loads(line.strip())
+                    if entry.get('message_id') == message_id:
+                        # Update the entry
+                        temp.write(json.dumps(updated_entry) + '\n')
+                        updated = True
+                    else:
+                        # Keep the original entry
+                        temp.write(line)
+            
+            # Replace the original file if updated
+            if updated:
+                os.replace(temp_path, file_path)
+                logger.info(f"Updated feedback entry in {os.path.basename(file_path)}")
+                return True
+            else:
+                os.remove(temp_path)
+        
         # If we got here, the entry wasn't found
         logger.warning(f"Could not find feedback entry with message_id: {message_id}")
         return False
@@ -1081,6 +1116,118 @@ Answer:"""
         self._apply_feedback_weights()
 
         return True
+
+    def migrate_legacy_feedback(self):
+        """Migrate legacy feedback files to the current month-based convention.
+        
+        Note: This function has been used to migrate existing legacy feedback files, 
+        but is kept for historical purposes and in case additional legacy files are 
+        discovered in the future. Under normal operation, this should not be needed
+        as all feedback now uses the standardized month-based naming convention.
+        
+        This function:
+        1. Reads all feedback from legacy files (day-based and root feedback.jsonl)
+        2. Sorts them by timestamp
+        3. Writes them to appropriate month-based files
+        4. Backs up original files
+        5. Returns statistics about the migration
+        
+        Returns:
+            Dict with migration statistics
+        """
+        migration_stats = {
+            "total_entries_migrated": 0,
+            "legacy_files_processed": 0,
+            "entries_by_month": {},
+            "backed_up_files": []
+        }
+        
+        feedback_dir = os.path.join(self.settings.DATA_DIR, 'feedback')
+        os.makedirs(feedback_dir, exist_ok=True)
+        
+        # Setup backup directory
+        backup_dir = os.path.join(feedback_dir, 'legacy_backup')
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Collect entries from legacy files
+        legacy_entries = []
+        
+        # 1. Check day-based files
+        day_pattern = re.compile(r"feedback_\d{8}\.jsonl$")
+        day_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
+                    if day_pattern.match(f)]
+        
+        for file_path in day_files:
+            try:
+                with open(file_path, 'r') as f:
+                    for line in f:
+                        entry = json.loads(line.strip())
+                        legacy_entries.append(entry)
+                
+                # Back up the file
+                backup_path = os.path.join(backup_dir, os.path.basename(file_path))
+                shutil.copy2(file_path, backup_path)
+                migration_stats["backed_up_files"].append(os.path.basename(file_path))
+                migration_stats["legacy_files_processed"] += 1
+            except Exception as e:
+                logger.error(f"Error processing legacy file {file_path}: {str(e)}")
+        
+        # 2. Check root feedback.jsonl
+        root_feedback = os.path.join(self.settings.DATA_DIR, 'feedback.jsonl')
+        if os.path.exists(root_feedback):
+            try:
+                with open(root_feedback, 'r') as f:
+                    for line in f:
+                        entry = json.loads(line.strip())
+                        legacy_entries.append(entry)
+                
+                # Back up the file
+                backup_path = os.path.join(backup_dir, 'feedback.jsonl')
+                shutil.copy2(root_feedback, backup_path)
+                migration_stats["backed_up_files"].append('feedback.jsonl')
+                migration_stats["legacy_files_processed"] += 1
+            except Exception as e:
+                logger.error(f"Error processing root feedback file: {str(e)}")
+        
+        # Sort entries by timestamp where available
+        for entry in legacy_entries:
+            if 'timestamp' not in entry:
+                # Add a placeholder timestamp for entries without one
+                entry['timestamp'] = '2025-01-01T00:00:00'
+        
+        legacy_entries.sort(key=lambda e: e.get('timestamp', ''))
+        migration_stats["total_entries_migrated"] = len(legacy_entries)
+        
+        # Group by month and write to appropriate files
+        for entry in legacy_entries:
+            try:
+                # Extract month from timestamp
+                timestamp = entry.get('timestamp', '')
+                if timestamp:
+                    month = timestamp[:7]  # YYYY-MM format
+                else:
+                    month = '2025-01'  # Default for entries without timestamp
+                
+                # Ensure month is in proper format
+                if not re.match(r'^\d{4}-\d{2}$', month):
+                    month = '2025-01'  # Default if format is invalid
+                
+                # Update stats
+                if month not in migration_stats["entries_by_month"]:
+                    migration_stats["entries_by_month"][month] = 0
+                migration_stats["entries_by_month"][month] += 1
+                
+                # Write to month-based file
+                month_file = os.path.join(feedback_dir, f"feedback_{month}.jsonl")
+                with open(month_file, 'a') as f:
+                    f.write(json.dumps(entry) + '\n')
+            except Exception as e:
+                logger.error(f"Error writing entry to month file: {str(e)}")
+        
+        logger.info(f"Migration completed: {migration_stats['total_entries_migrated']} entries "
+                   f"from {migration_stats['legacy_files_processed']} files")
+        
+        return migration_stats
 
 
 def get_rag_service(request: Request) -> SimplifiedRAGService:
