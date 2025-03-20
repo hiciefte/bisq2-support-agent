@@ -28,14 +28,15 @@ async def main():
 
         # Process feedback to generate new FAQs
         logger.info("Generating new FAQs from feedback data")
-        service.generate_feedback_faqs()
+        # Use async version if available, or run in executor
+        await service.generate_feedback_faqs_async()
 
         # Update weights and prompts based on feedback
         logger.info("Updating source weights based on feedback")
-        service.apply_feedback_weights()
+        await service.apply_feedback_weights_async()
 
         logger.info("Updating prompt guidance based on feedback")
-        service.update_prompt_based_on_feedback()
+        await service.update_prompt_based_on_feedback_async()
 
         logger.info("Feedback processing completed successfully")
     except Exception as e:

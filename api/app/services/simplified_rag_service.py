@@ -1305,10 +1305,7 @@ Answer:"""
             try:
                 # Extract month from timestamp
                 timestamp = entry.get('timestamp', '')
-                if timestamp:
-                    month = timestamp[:7]  # YYYY-MM format
-                else:
-                    month = '2025-01'  # Default for entries without timestamp
+                month = timestamp[:7] if timestamp else '2025-01'  # YYYY-MM format
 
                 # Ensure month is in proper format
                 if not re.match(r'^\d{4}-\d{2}$', month):
@@ -1349,6 +1346,44 @@ Answer:"""
         user feedback, improving response quality by addressing common issues.
         """
         return self._update_prompt_based_on_feedback()
+
+    async def generate_feedback_faqs_async(self):
+        """
+        Generate new FAQs from collected feedback data (asynchronous version).
+        
+        This is the async-compatible version of generate_feedback_faqs.
+        It properly handles the potentially I/O-bound FAQ generation in an async context.
+        
+        Returns:
+            The result of the FAQ generation process
+        """
+        import asyncio
+        
+        # Use run_in_executor to move the I/O-bound task to a thread pool
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,  # Use default executor
+            self._generate_feedback_faqs
+        )
+        
+    async def update_prompt_based_on_feedback_async(self):
+        """
+        Update system prompts based on feedback patterns (asynchronous version).
+        
+        This is the async-compatible version of update_prompt_based_on_feedback.
+        It properly handles the potentially I/O-bound prompt update in an async context.
+        
+        Returns:
+            The result of the prompt update process
+        """
+        import asyncio
+        
+        # Use run_in_executor to move the I/O-bound task to a thread pool
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,  # Use default executor
+            self._update_prompt_based_on_feedback
+        )
 
 
 def get_rag_service(request: Request) -> SimplifiedRAGService:
