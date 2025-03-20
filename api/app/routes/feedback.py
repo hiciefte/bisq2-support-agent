@@ -4,10 +4,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Body
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.services.simplified_rag_service import get_rag_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class FeedbackRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-@router.post("/submit")
+@router.post("/feedback/submit")
 async def submit_feedback(feedback: FeedbackRequest):
     """
     Submit feedback for a chat response.
@@ -56,7 +57,7 @@ async def submit_feedback(feedback: FeedbackRequest):
         )
 
 
-@router.get("/stats")
+@router.get("/feedback/stats")
 async def get_feedback_stats():
     """
     Get aggregated feedback statistics.
@@ -100,3 +101,98 @@ async def get_feedback_stats():
             status_code=500,
             detail="An error occurred while retrieving feedback statistics"
         )
+
+
+@router.post("/feedback", response_model=Dict[str, Any])
+async def submit_chat_feedback(
+        request: Request,
+        feedback_data: Dict[str, Any] = Body(...),
+):
+    """Submit feedback for a previous chat response."""
+    rag_service = get_rag_service(request)
+
+    # Extract required fields
+    message_id = feedback_data.get("message_id")
+    rating = feedback_data.get("rating")  # 1 = helpful, 0 = unhelpful
+
+    if message_id is None or rating is None:
+        return {"success": False, "error": "Missing required fields"}
+
+    # Process the feedback
+    await rag_service.store_feedback(feedback_data)
+
+    # Add needs_feedback_followup flag for negative feedback
+    needs_followup = rating == 0
+
+    return {
+        "success": True,
+        "message": "Feedback submitted successfully",
+        "needs_feedback_followup": needs_followup
+    }
+
+
+@router.post("/feedback/explanation", response_model=Dict[str, Any])
+async def submit_feedback_explanation(
+        request: Request,
+        explanation_data: Dict[str, Any] = Body(...),
+):
+    """Submit explanation for negative feedback.
+    
+    This endpoint receives explanations about why an answer was unhelpful.
+    It updates the existing feedback with the explanation and categorizes issues.
+    """
+    rag_service = get_rag_service(request)
+
+    # Extract required fields
+    message_id = explanation_data.get("message_id")
+    explanation = explanation_data.get("explanation")
+
+    if message_id is None or not explanation:
+        return {"success": False, "error": "Missing required fields"}
+
+    # Extract any specific issues mentioned by the user
+    issues = explanation_data.get("issues", [])
+
+    # Get current feedback entry - load_feedback is synchronous, not async
+    all_feedback = rag_service.load_feedback()
+    feedback_entry = None
+
+    for item in all_feedback:
+        if item.get("message_id") == message_id:
+            feedback_entry = item
+            break
+
+    if not feedback_entry:
+        return {"success": False, "error": "Feedback entry not found"}
+
+    # Update feedback with explanation
+    if not feedback_entry.get("metadata"):
+        feedback_entry["metadata"] = {}
+
+    feedback_entry["metadata"]["explanation"] = explanation
+
+    # Add issues if explicitly provided
+    if issues:
+        if not feedback_entry["metadata"].get("issues"):
+            feedback_entry["metadata"]["issues"] = []
+
+        feedback_entry["metadata"]["issues"].extend(issues)
+
+    # Analyze explanation text for common issues if no specific issues provided
+    if not issues and explanation:
+        detected_issues = await rag_service.analyze_feedback_text(explanation)
+
+        if detected_issues:
+            if not feedback_entry["metadata"].get("issues"):
+                feedback_entry["metadata"]["issues"] = []
+
+            feedback_entry["metadata"]["issues"].extend(detected_issues)
+
+    # Update the feedback entry
+    await rag_service.update_feedback_entry(message_id, feedback_entry)
+
+    return {
+        "success": True,
+        "message": "Feedback explanation received",
+        "detected_issues": feedback_entry["metadata"].get("issues", [])
+    }

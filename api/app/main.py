@@ -7,7 +7,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import Settings
-from app.routes import chat, feedback, health
+from app.routes import chat, health, feedback, admin
 from app.services.simplified_rag_service import SimplifiedRAGService
 
 # Configure logging
@@ -74,7 +74,8 @@ async def metrics():
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
+app.include_router(feedback.router, tags=["Feedback"])
+app.include_router(admin.router, tags=["Admin"])
 
 if __name__ == "__main__":
     import uvicorn

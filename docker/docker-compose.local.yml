@@ -11,6 +11,7 @@ services:
       - CORS_ORIGINS=["http://localhost:3000", "http://0.0.0.0:3000"]
       - BISQ_API_URL=http://172.17.0.1:8090  # For Linux
       - DATA_DIR=/app/api/data
+      - ADMIN_API_KEY=test_admin_key
     ports:
       - "8000:8000"
     platform: linux/arm64
@@ -45,6 +46,23 @@ services:
       - ../api/data:/app/api/data  # Match the API service volume mount
     environment:
       - DATA_DIR=/app/api/data
+    platform: linux/arm64
+    depends_on:
+      - api
+    networks:
+      - bisq-support-network
+
+  feedback-processor:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    command: ["python", "-m", "app.scripts.process_feedback"]
+    volumes:
+      - ../api/data:/app/api/data  # Match the API service volume mount
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATA_DIR=/app/api/data
+      - ADMIN_API_KEY=test_admin_key
     platform: linux/arm64
     depends_on:
       - api

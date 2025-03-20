@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import time
+from collections import defaultdict
+from datetime import datetime
 from typing import List, Dict, Any
 
 from fastapi import Request
@@ -59,7 +61,7 @@ def redact_pii(text: str) -> str:
 
     # Redact alphanumeric strings that look like API keys (30+ chars)
     text = re.sub(r'\b[a-zA-Z0-9_\-.]{30,}\b', '[REDACTED_KEY]', text)
-    
+
     # Redact phone numbers (various formats)
     text = re.sub(r'\b(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b', '[REDACTED_PHONE]', text)
 
@@ -342,12 +344,52 @@ class SimplifiedRAGService:
             wiki_docs = self.load_wiki_data()
 
             faq_docs = self.load_faq_data()
-            all_docs = wiki_docs + faq_docs
-            logger.info(f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents")
+
+            # Load any feedback-generated FAQs if available
+            feedback_faq_file = os.path.join(self.settings.DATA_DIR, "feedback_generated_faq.jsonl")
+            feedback_faqs = []
+            if os.path.exists(feedback_faq_file):
+                logger.info("Loading feedback-generated FAQs...")
+                try:
+                    with open(feedback_faq_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                data = json.loads(line.strip())
+                                question = data.get("question", "")
+                                answer = data.get("answer", "")
+
+                                # Create a document with special metadata to indicate its source
+                                doc = Document(
+                                    page_content=f"Question: {question}\nAnswer: {answer}",
+                                    metadata={
+                                        "source": feedback_faq_file,
+                                        "title": question[:50] + "..." if len(question) > 50 else question,
+                                        "type": "faq",
+                                        "source_weight": self.source_weights.get("faq", 1.0) * 1.2,
+                                        # Prioritize feedback-based FAQs
+                                        "feedback_generated": True
+                                    }
+                                )
+                                feedback_faqs.append(doc)
+                            except json.JSONDecodeError:
+                                logger.error(f"Error parsing JSON line in feedback FAQ file: {line}")
+                    logger.info(f"Loaded {len(feedback_faqs)} feedback-generated FAQ entries")
+                except Exception as e:
+                    logger.error(f"Error loading feedback-generated FAQ file {feedback_faq_file}: {str(e)}")
+
+            # Combine all documents
+            all_docs = wiki_docs + faq_docs + feedback_faqs
+            logger.info(
+                f"Loaded {len(wiki_docs)} wiki documents, {len(faq_docs)} FAQ documents, and {len(feedback_faqs)} feedback-generated FAQ documents")
 
             if not all_docs:
                 logger.warning("No documents loaded. Check your data paths.")
                 return False
+
+            # Apply feedback-based improvements
+            logger.info("Applying feedback-based improvements...")
+            self._apply_feedback_weights()
+            self._update_prompt_based_on_feedback()
 
             # Split documents
             logger.info("Splitting documents into chunks...")
@@ -650,7 +692,7 @@ Answer:"""
                         logger.info(f"Last message: role={last_role}, content={last_content}...")
                     except Exception as e:
                         logger.warning(f"Error logging chat history: {str(e)}")
-                
+
                 # Generate response using chat history
                 response = self.rag_chain(question, chat_history)
             else:
@@ -720,14 +762,325 @@ Answer:"""
 
     def load_feedback(self):
         """Load feedback data for response improvement."""
+        feedback_dir = os.path.join(self.settings.DATA_DIR, "feedback")
+        all_feedback = []
+
+        # If the feedback directory exists, load all jsonl files in it
+        if os.path.exists(feedback_dir) and os.path.isdir(feedback_dir):
+            try:
+                # Get all jsonl files in the feedback directory
+                feedback_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
+                                  if f.endswith('.jsonl')]
+
+                # Load feedback from each file
+                for file_path in feedback_files:
+                    try:
+                        with open(file_path, 'r') as f:
+                            file_feedback = [json.loads(line) for line in f]
+                            all_feedback.extend(file_feedback)
+                            logger.info(
+                                f"Loaded {len(file_feedback)} feedback entries from {os.path.basename(file_path)}")
+                    except Exception as e:
+                        logger.error(f"Error loading feedback from {file_path}: {str(e)}")
+
+                logger.info(f"Loaded a total of {len(all_feedback)} feedback entries")
+                return all_feedback
+            except Exception as e:
+                logger.error(f"Error loading feedback data: {str(e)}")
+
+        # Fallback to the old location (for backward compatibility)
         feedback_file = os.path.join(self.settings.DATA_DIR, "feedback.jsonl")
         if os.path.exists(feedback_file):
             try:
                 with open(feedback_file, 'r') as f:
-                    return [json.loads(line) for line in f]
+                    legacy_feedback = [json.loads(line) for line in f]
+                    logger.info(f"Loaded {len(legacy_feedback)} feedback entries from legacy location")
+                    return legacy_feedback
             except Exception as e:
-                logger.error(f"Error loading feedback data: {str(e)}")
+                logger.error(f"Error loading legacy feedback data: {str(e)}")
+
         return []
+
+    async def store_feedback(self, feedback_data):
+        """Store user feedback in the feedback file."""
+        feedback_path = os.path.join(self.settings.DATA_DIR, 'feedback.jsonl')
+
+        # Add timestamp
+        feedback_data['timestamp'] = datetime.now().isoformat()
+
+        # Write to the feedback file
+        with open(feedback_path, 'a') as f:
+            f.write(json.dumps(feedback_data) + '\n')
+
+        # Apply feedback weights to improve future responses
+        await self.apply_feedback_weights(feedback_data)
+
+        return True
+
+    async def update_feedback_entry(self, message_id, updated_entry):
+        """Update an existing feedback entry."""
+        # First try to find the entry in the feedback directory
+        feedback_dir = os.path.join(self.settings.DATA_DIR, 'feedback')
+
+        if os.path.exists(feedback_dir) and os.path.isdir(feedback_dir):
+            # Get all jsonl files in the feedback directory
+            feedback_files = [os.path.join(feedback_dir, f) for f in os.listdir(feedback_dir)
+                              if f.endswith('.jsonl')]
+
+            # Try to update in each file
+            for file_path in feedback_files:
+                temp_path = file_path + '.tmp'
+                updated = False
+
+                # Read existing entries and update the matching one
+                with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
+                    for line in original:
+                        entry = json.loads(line.strip())
+                        if entry.get('message_id') == message_id:
+                            # Update the entry
+                            temp.write(json.dumps(updated_entry) + '\n')
+                            updated = True
+                        else:
+                            # Keep the original entry
+                            temp.write(line)
+
+                # Replace the original file with the temporary one
+                if updated:
+                    os.replace(temp_path, file_path)
+                    logger.info(f"Updated feedback entry in {os.path.basename(file_path)}")
+                    return True
+                else:
+                    os.remove(temp_path)
+
+        # Fallback to the old location (for backward compatibility)
+        feedback_path = os.path.join(self.settings.DATA_DIR, 'feedback.jsonl')
+        if os.path.exists(feedback_path):
+            temp_path = feedback_path + '.tmp'
+            updated = False
+
+            # Read existing entries and update the matching one
+            with open(feedback_path, 'r') as original, open(temp_path, 'w') as temp:
+                for line in original:
+                    entry = json.loads(line.strip())
+                    if entry.get('message_id') == message_id:
+                        # Update the entry
+                        temp.write(json.dumps(updated_entry) + '\n')
+                        updated = True
+                    else:
+                        # Keep the original entry
+                        temp.write(line)
+
+            # Replace the original file with the temporary one
+            if updated:
+                os.replace(temp_path, feedback_path)
+                logger.info(f"Updated feedback entry in legacy location")
+                return True
+            else:
+                os.remove(temp_path)
+
+        # If we got here, the entry wasn't found
+        logger.warning(f"Could not find feedback entry with message_id: {message_id}")
+        return False
+
+    async def analyze_feedback_text(self, explanation_text):
+        """Analyze feedback explanation text to identify common issues.
+        
+        This uses simple keyword matching for now but could be enhanced with
+        NLP or LLM-based analysis in the future.
+        """
+        detected_issues = []
+
+        # Simple keyword-based issue detection
+        if not explanation_text:
+            return detected_issues
+
+        explanation_lower = explanation_text.lower()
+
+        # Dictionary of issues and their associated keywords
+        issue_keywords = {
+            "too_verbose": ["too long", "verbose", "wordy", "rambling", "shorter", "concise"],
+            "too_technical": ["technical", "complex", "complicated", "jargon", "simpler", "simplify"],
+            "not_specific": ["vague", "unclear", "generic", "specific", "details", "elaborate", "more info"],
+            "inaccurate": ["wrong", "incorrect", "false", "error", "mistake", "accurate", "accuracy"],
+            "outdated": ["outdated", "old", "not current", "update"],
+            "not_helpful": ["useless", "unhelpful", "doesn't help", "didn't help", "not useful"],
+            "missing_context": ["context", "missing", "incomplete", "partial"],
+            "confusing": ["confusing", "confused", "unclear", "hard to understand"]
+        }
+
+        # Check for each issue
+        for issue, keywords in issue_keywords.items():
+            for keyword in keywords:
+                if keyword in explanation_lower:
+                    detected_issues.append(issue)
+                    break  # Found one match for this issue, no need to check other keywords
+
+        return detected_issues
+
+    def _apply_feedback_weights(self):
+        """Adjust source weights based on collected feedback."""
+        feedback = self.load_feedback()
+
+        if not feedback:
+            logger.info("No feedback available for weight adjustment")
+            return
+
+        # Count positive/negative responses by source type
+        source_scores = defaultdict(lambda: {'positive': 0, 'negative': 0, 'total': 0})
+
+        for item in feedback:
+            # Skip items without necessary data
+            if 'sources_used' not in item or 'helpful' not in item:
+                continue
+
+            helpful = item['helpful']
+
+            for source in item['sources_used']:
+                source_type = source.get('type', 'unknown')
+
+                if helpful:
+                    source_scores[source_type]['positive'] += 1
+                else:
+                    source_scores[source_type]['negative'] += 1
+
+                source_scores[source_type]['total'] += 1
+
+        # Calculate new weights
+        for source_type, scores in source_scores.items():
+            if scores['total'] > 10:  # Only adjust if we have enough data
+                # Calculate success rate: positive / total
+                success_rate = scores['positive'] / scores['total']
+
+                # Scale it between 0.5 and 1.5
+                new_weight = 0.5 + success_rate
+
+                # Update weight if this source type exists
+                if source_type in self.source_weights:
+                    old_weight = self.source_weights[source_type]
+                    # Apply gradual adjustment (70% old, 30% new)
+                    self.source_weights[source_type] = (0.7 * old_weight) + (0.3 * new_weight)
+                    logger.info(
+                        f"Adjusted weight for {source_type}: {old_weight:.2f} → {self.source_weights[source_type]:.2f}")
+
+        logger.info(f"Updated source weights based on feedback: {self.source_weights}")
+
+    def _update_prompt_based_on_feedback(self):
+        """Dynamically adjust the system prompt based on feedback patterns."""
+        feedback = self.load_feedback()
+
+        if not feedback or len(feedback) < 20:  # Need sufficient data
+            logger.info("Not enough feedback data to update prompt")
+            return
+
+        # Analyze common issues in negative feedback
+        common_issues = self._analyze_feedback_issues(feedback)
+
+        # Generate additional prompt guidance
+        prompt_guidance = []
+
+        if common_issues.get('too_verbose', 0) > 5:
+            prompt_guidance.append("Keep answers very concise and to the point.")
+
+        if common_issues.get('too_technical', 0) > 5:
+            prompt_guidance.append("Use simple terms and avoid technical jargon.")
+
+        if common_issues.get('not_specific', 0) > 5:
+            prompt_guidance.append("Be specific and provide concrete examples when possible.")
+
+        # Update the system template with new guidance
+        if prompt_guidance:
+            self.prompt_guidance = prompt_guidance
+            logger.info(f"Updated prompt guidance based on feedback: {prompt_guidance}")
+
+    def _analyze_feedback_issues(self, feedback: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Analyze feedback to identify common issues."""
+        issues = defaultdict(int)
+
+        for item in feedback:
+            if not item.get('helpful', True):
+                # Check for specific issue fields
+                for issue_key in ['too_verbose', 'too_technical', 'not_specific', 'inaccurate']:
+                    if item.get(issue_key):
+                        issues[issue_key] += 1
+
+                # Also check issue list if present
+                for issue in item.get('issues', []):
+                    issues[issue] += 1
+
+        return dict(issues)
+
+    def _generate_feedback_faqs(self):
+        """Generate new FAQ entries from feedback data."""
+        # Load priority improvements
+        priority_file = os.path.join(self.settings.DATA_DIR, "priority_improvements.jsonl")
+        faq_file = os.path.join(self.settings.DATA_DIR, "feedback_generated_faq.jsonl")
+
+        if not os.path.exists(priority_file):
+            logger.info("No priority improvements file found")
+            return
+
+        try:
+            improvements = []
+            with open(priority_file, 'r') as f:
+                for line in f:
+                    improvements.append(json.loads(line))
+
+            if not improvements:
+                logger.info("No priority improvements to process")
+                return
+
+            logger.info(f"Processing {len(improvements)} priority improvement items")
+
+            # For simplicity, we'll just take the most recent entries for now
+            # In a complete implementation, we would cluster similar questions
+            recent_issues = improvements[-10:]
+
+            new_faqs = []
+            for issue in recent_issues:
+                if 'original_query' in issue and 'original_response' in issue:
+                    # In a real implementation, we would generate an improved answer
+                    # Here we're just using the original question with a note
+                    question = issue['original_query']
+                    answer = f"This question was frequently asked and identified for improvement. " \
+                             f"The original answer was: {issue['original_response']}"
+
+                    new_faqs.append({
+                        "question": question,
+                        "answer": answer,
+                        "generated_from_feedback": True,
+                        "created_at": datetime.now().isoformat()
+                    })
+
+            # Save new FAQs
+            with open(faq_file, 'a') as f:
+                for faq in new_faqs:
+                    f.write(json.dumps(faq) + '\n')
+
+            logger.info(f"Generated {len(new_faqs)} new FAQ entries from feedback")
+
+            # Backup and clear processed improvements
+            os.rename(priority_file, f"{priority_file}.{datetime.now().strftime('%Y%m%d')}")
+            logger.info(f"Backed up and cleared priority improvements file")
+
+        except Exception as e:
+            logger.error(f"Error generating feedback FAQs: {str(e)}")
+
+    def _update_system_template(self, additional_guidance: str = None):
+        """Update the system template with additional guidance."""
+        # This would be called when creating the RAG chain
+        # The implementation depends on how the template is stored/used
+        logger.info(f"Added system template guidance: {additional_guidance}")
+
+    async def apply_feedback_weights(self, feedback_data):
+        """Apply feedback weights to improve future responses.
+        
+        This is an async wrapper around the synchronous _apply_feedback_weights method.
+        """
+        # For now, just call the existing method
+        # In the future, we could add more sophisticated async processing here
+        self._apply_feedback_weights()
+
+        return True
 
 
 def get_rag_service(request: Request) -> SimplifiedRAGService:

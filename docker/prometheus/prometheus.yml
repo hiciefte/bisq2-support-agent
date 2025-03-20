@@ -16,6 +16,16 @@ scrape_configs:
       - targets: ['api:8000']
     metrics_path: '/metrics'
 
+  - job_name: 'admin_feedback'
+    static_configs:
+      - targets: ['api:8000']
+    metrics_path: '/admin/metrics'
+    scrape_interval: 1m
+    scrape_timeout: 10s
+    basic_auth:
+      username: ${ADMIN_USERNAME:-admin}
+      password: ${ADMIN_PASSWORD:-test_admin_key}
+
   - job_name: 'web'
     static_configs:
       - targets: ['web:3000']

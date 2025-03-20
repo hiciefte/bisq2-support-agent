@@ -236,6 +236,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Feedback processor for weekly improvements
+  feedback-processor:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    restart: on-failure
+    command: ["python", "-m", "app.scripts.process_feedback"]
+    volumes:
+      - ../api/data:/app/api/data
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - api
+    networks:
+      - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
 volumes:
   prometheus-data:
   grafana-data:
