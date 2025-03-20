@@ -24,30 +24,29 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/feedback/submit")
-async def submit_feedback(feedback: FeedbackRequest):
+async def submit_feedback(request: Request, feedback: FeedbackRequest):
     """
     Submit feedback for a chat response.
     """
     try:
-        # Get settings for data directory
-        settings = get_settings()
-        # Use the configured DATA_DIR and store feedback in a subdirectory
-        feedback_dir = Path(settings.DATA_DIR) / "feedback"
-        feedback_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create feedback file for current month
-        current_month = datetime.now().strftime("%Y-%m")
-        feedback_file = feedback_dir / f"feedback_{current_month}.jsonl"
-
-        # Add timestamp to feedback
+        # Get the RAG service
+        rag_service = get_rag_service(request)
+        
+        # Convert Pydantic model to dict
         feedback_data = feedback.model_dump()
-        feedback_data["timestamp"] = datetime.now().isoformat()
+        
+        # Store feedback using the service
+        await rag_service.store_feedback(feedback_data)
+        
+        # Add needs_feedback_followup flag for negative feedback
+        needs_followup = feedback.rating == 0
 
-        # Append feedback to file
-        with open(feedback_file, "a") as f:
-            f.write(json.dumps(feedback_data) + "\n")
-
-        return {"status": "success", "message": "Feedback recorded successfully"}
+        return {
+            "status": "success", 
+            "message": "Feedback recorded successfully",
+            "success": True,
+            "needs_feedback_followup": needs_followup
+        }
 
     except Exception as e:
         logger.error(f"Error recording feedback: {str(e)}")
@@ -101,34 +100,6 @@ async def get_feedback_stats():
             status_code=500,
             detail="An error occurred while retrieving feedback statistics"
         )
-
-
-@router.post("/feedback", response_model=Dict[str, Any])
-async def submit_chat_feedback(
-        request: Request,
-        feedback_data: Dict[str, Any] = Body(...),
-):
-    """Submit feedback for a previous chat response."""
-    rag_service = get_rag_service(request)
-
-    # Extract required fields
-    message_id = feedback_data.get("message_id")
-    rating = feedback_data.get("rating")  # 1 = helpful, 0 = unhelpful
-
-    if message_id is None or rating is None:
-        return {"success": False, "error": "Missing required fields"}
-
-    # Process the feedback
-    await rag_service.store_feedback(feedback_data)
-
-    # Add needs_feedback_followup flag for negative feedback
-    needs_followup = rating == 0
-
-    return {
-        "success": True,
-        "message": "Feedback submitted successfully",
-        "needs_feedback_followup": needs_followup
-    }
 
 
 @router.post("/feedback/explanation", response_model=Dict[str, Any])

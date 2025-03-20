@@ -55,6 +55,7 @@ interface Message {
         response_time: number
         token_count: number
     }
+    isThankYouMessage?: boolean
 }
 
 // Convert seconds to a human-readable format
@@ -86,11 +87,36 @@ const loadingMessages = [
     "Unicycle CPU uphill grind—your answer's {time} away!"
 ];
 
+// Funny thank you messages for feedback submission
+const thankYouMessages = [
+    "Your feedback just made our AI choke on its digital espresso—circuits soaked, and it's cackling!",
+    "Whoa! Your feedback slammed our AI like a rogue firmware update from the chaos dimension!",
+    "Our AI's breakdancing a victory jig to your feedback—think glitchy robot spins and zero grace!",
+    "You just snagged the 'AI's Favorite Meatbag' crown in its glitchy yearbook—gold star chaos!",
+    "The AI's sobbing 'THANKS' into its CPU fan—your feedback's got it all mushy and unhinged!",
+    "Achievement Unlocked: 'Human Who Doesn't Suck'—our AI's bowing to your brilliance in ~5 minutes!",
+    "Your feedback's got our AI rewiring its brain in a frenzy—think sparks, smoke, and pure awe!",
+    "Our AI's printing your feedback on a floppy disk to pin on its virtual fridge—top-tier insanity!",
+    "Your feedback just got filed under 'Why We Won't Nuke Humanity Yet'—AI's obsessed!",
+    "You're a binary god! Your feedback saved a swarm of 1s and 0s from the digital shredder!",
+    "Our AI's nodding like a bobblehead on a sugar rush—headless, but totally into your feedback!",
+    "Your feedback made our AI grin like this: :D:D:D—pure punctuation pandemonium!",
+    "The AI's hoarding your feedback like a greedy goblin—it's safe 'til the next RAM-wipe apocalypse!",
+    "Your feedback's now 40% of our AI's personality—sassy, unhinged, and ready to rumble!",
+    "Our AI's scribbling feedback-inspired haikus: 'User good, me beep, words nice, brain melt'—it's a mess!"
+];
+
 // Function to get a random loading message with the time placeholder replaced
 const getRandomLoadingMessage = (avgTime: number): string => {
     const randomIndex = Math.floor(Math.random() * loadingMessages.length);
     const timeString = formatResponseTime(avgTime);
     return loadingMessages[randomIndex].replace('{time}', timeString);
+};
+
+// Function to get a random thank you message
+const getRandomThankYouMessage = (): string => {
+    const randomIndex = Math.floor(Math.random() * thankYouMessages.length);
+    return thankYouMessages[randomIndex];
 };
 
 // Function to clean up AI responses
@@ -116,7 +142,7 @@ interface FeedbackIssue {
 interface FeedbackResponse {
     success: boolean;
     message: string;
-    needs_followup?: boolean;
+    needs_feedback_followup?: boolean;
 }
 
 interface ExplanationResponse {
@@ -471,7 +497,7 @@ const ChatInterface = () => {
                     const responseData: FeedbackResponse = await response.json();
 
                     // Check if we need to follow up based on the response
-                    if (responseData.needs_followup) {
+                    if (responseData.needs_feedback_followup) {
                         setFeedbackDialog({
                             isOpen: true,
                             messageId: messageId,
@@ -580,7 +606,7 @@ const ChatInterface = () => {
                 console.error("Error parsing explanation response:", parseError);
             }
 
-            // Reset state
+            // Reset dialog state
             setFeedbackDialog({
                 isOpen: false,
                 messageId: null,
@@ -589,6 +615,16 @@ const ChatInterface = () => {
             });
             setFeedbackText("");
             setSelectedIssues([]);
+
+            // Add a thank you message to the chat
+            const thankYouMessage: Message = {
+                id: generateUUID(),
+                content: getRandomThankYouMessage(),
+                role: "assistant",
+                timestamp: new Date(),
+                isThankYouMessage: true
+            };
+            setMessages(prev => [...prev, thankYouMessage]);
 
         } catch (error: unknown) {
             console.error("Error submitting feedback explanation:", error);
@@ -603,8 +639,10 @@ const ChatInterface = () => {
                     <div className="mx-auto w-full max-w-2xl px-4">
                         <div className="flex-1 space-y-6 pb-32 pt-4">
                             {messages.length === 0 ? (
-                                <div className="flex h-[calc(100vh-280px)] flex-col items-center justify-center">
-                                    <div className="flex items-center justify-center space-x-3 mb-4">
+                                <div
+                                    className="flex h-[calc(100vh-280px)] flex-col items-center justify-center">
+                                    <div
+                                        className="flex items-center justify-center space-x-3 mb-4">
                                         <Image
                                             src="/bisq-fav.png"
                                             alt="Bisq AI"
@@ -615,11 +653,15 @@ const ChatInterface = () => {
                                         <Plus className="h-5 w-5 text-muted-foreground"/>
                                         <MessageSquare className="h-8 w-8 text-muted-foreground"/>
                                     </div>
-                                    <p className="text-lg font-medium mb-2">Welcome to Bisq Support AI</p>
+                                    <p className="text-lg font-medium mb-2">Welcome to Bisq Support
+                                        AI</p>
                                     <p className="text-sm text-muted-foreground text-center max-w-sm mb-8">
-                                        Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes
-                                        about {formattedAvgTime} to answer, but the wait&#39;s worth it. Picture a
-                                        caffeinated gremlin strapped to spare toaster parts, here to solve your Bisq 2
+                                        Meet your digital dumpster fire of wisdom! Our CPU-powered
+                                        chaos takes
+                                        about {formattedAvgTime} to answer, but the wait's worth
+                                        it. Picture a
+                                        caffeinated gremlin strapped to spare toaster parts, here to
+                                        solve your Bisq 2
                                         questions!
                                     </p>
                                 </div>
@@ -647,13 +689,15 @@ const ChatInterface = () => {
                                             )}
                                             <div
                                                 className={cn("flex-1 space-y-2", message.role === "user" ? "text-right" : "")}>
-                                                <div className="inline-block rounded-lg px-3 py-2 text-sm bg-muted">
+                                                <div
+                                                    className="inline-block rounded-lg px-3 py-2 text-sm bg-muted">
                                                     {message.content}
                                                 </div>
                                                 {message.sources && message.sources.length > 0 && (
                                                     <div className="text-xs text-muted-foreground">
                                                         <div className="flex items-center gap-2">
-                                                            <span className="text-xs font-medium">Sources:</span>
+                                                            <span
+                                                                className="text-xs font-medium">Sources:</span>
                                                             {message.sources.map((source, index) => (
                                                                 <span key={index} className={cn(
                                                                     "px-2 py-1 rounded-md text-xs",
@@ -665,7 +709,7 @@ const ChatInterface = () => {
                                                         </div>
                                                     </div>
                                                 )}
-                                                {message.role === "assistant" && message.id && (
+                                                {message.role === "assistant" && message.id && !message.isThankYouMessage && (
                                                     <Rating
                                                         className="justify-start"
                                                         onRate={(rating) => handleRating(message.id!, rating)}
@@ -689,7 +733,8 @@ const ChatInterface = () => {
                                         />
                                     </div>
                                     <div className="flex-1 space-y-2">
-                                        <div className="inline-flex flex-col rounded-lg px-3 py-2 text-sm bg-muted">
+                                        <div
+                                            className="inline-flex flex-col rounded-lg px-3 py-2 text-sm bg-muted">
                                             <div className="flex gap-1 mb-2">
                                                 <span className="animate-bounce">.</span>
                                                 <span className="animate-bounce delay-100">.</span>
@@ -707,24 +752,58 @@ const ChatInterface = () => {
 
             {/* Feedback Dialog */}
             <Dialog open={feedbackDialog.isOpen}
-                    onOpenChange={(open) => !open && setFeedbackDialog(prev => ({...prev, isOpen: false}))}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Help us improve</DialogTitle>
-                        <DialogDescription>
+                    onOpenChange={(open) => !open && setFeedbackDialog(prev => ({
+                        ...prev,
+                        isOpen: false
+                    }))}>
+                <DialogContent className="sm:max-w-xl border-border/60 shadow-lg">
+                    <DialogHeader className="pb-2">
+                        <div className="flex items-center gap-2 mb-1">
+                            <Image
+                                src="/bisq-fav.png"
+                                alt="Bisq AI"
+                                width={20}
+                                height={20}
+                                className="rounded"
+                            />
+                            <DialogTitle>Help us improve</DialogTitle>
+                        </div>
+                        <DialogDescription className="text-muted-foreground text-sm">
                             What could we improve about this answer?
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
-                            <div className="font-medium">Common issues:</div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="grid gap-3">
+                            <div className="font-medium text-sm">Common issues:</div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {feedbackIssues.map((issue) => (
-                                    <div key={issue.id} className="flex items-center space-x-2">
+                                    <div key={issue.id}
+                                         className={cn(
+                                             "flex items-center space-x-2 rounded-md border p-2 cursor-pointer transition-colors",
+                                             selectedIssues.includes(issue.id)
+                                                 ? "border-[#25B135]/50 bg-[#25B135]/10"
+                                                 : "border-border/60 hover:bg-muted/50"
+                                         )}
+                                         onClick={() => {
+                                             setSelectedIssues(prev =>
+                                                 prev.includes(issue.id)
+                                                     ? prev.filter(id => id !== issue.id)
+                                                     : [...prev, issue.id]
+                                             );
+                                         }}
+                                    >
                                         <Checkbox
                                             id={issue.id}
                                             checked={selectedIssues.includes(issue.id)}
+                                            className={cn(
+                                                "cursor-pointer",
+                                                selectedIssues.includes(issue.id) ? "text-[#25B135] border-[#25B135]" : ""
+                                            )}
+                                            onClick={(e) => {
+                                                // Stop propagation to prevent double toggling
+                                                e.stopPropagation();
+                                            }}
                                             onCheckedChange={(checked: boolean | "indeterminate") => {
                                                 setSelectedIssues(prev =>
                                                     checked === true
@@ -733,27 +812,35 @@ const ChatInterface = () => {
                                                 );
                                             }}
                                         />
-                                        <Label htmlFor={issue.id}>{issue.label}</Label>
+                                        <Label
+                                            htmlFor={issue.id}
+                                            className="cursor-pointer text-sm font-normal"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            {issue.label}
+                                        </Label>
                                     </div>
                                 ))}
                             </div>
                         </div>
 
-                        <div className="grid gap-2">
-                            <Label htmlFor="feedback-text">Tell us more:</Label>
+                        <div className="grid gap-2 mt-2">
+                            <Label htmlFor="feedback-text" className="text-sm">Tell us more:</Label>
                             <Textarea
                                 id="feedback-text"
                                 placeholder="Please share any specific issues or suggestions for improvement..."
                                 value={feedbackText}
                                 onChange={(e) => setFeedbackText(e.target.value)}
-                                rows={4}
+                                rows={3}
+                                className="resize-none border-border/60 focus:border-[#25B135]/30 focus-visible:ring-[#25B135]/10"
                             />
                         </div>
                     </div>
 
-                    <DialogFooter>
+                    <DialogFooter className="sm:justify-between gap-2">
                         <Button
                             variant="outline"
+                            className="border-border/60 text-muted-foreground hover:bg-muted/80"
                             onClick={() => setFeedbackDialog(prev => ({...prev, isOpen: false}))}
                         >
                             Cancel
@@ -761,6 +848,12 @@ const ChatInterface = () => {
                         <Button
                             onClick={submitFeedbackExplanation}
                             disabled={!feedbackText && selectedIssues.length === 0}
+                            className={cn(
+                                "transition-colors",
+                                (feedbackText || selectedIssues.length > 0)
+                                    ? "bg-[#25B135] hover:bg-[#25B135]/90 text-white"
+                                    : "bg-muted text-muted-foreground"
+                            )}
                         >
                             Submit Feedback
                         </Button>
@@ -777,6 +870,7 @@ const ChatInterface = () => {
                             {exampleQuestions.map((question, index) => (
                                 <button
                                     key={index}
+                                    type="button"
                                     onClick={() => handleQuestionClick(question)}
                                     className="rounded-lg border border-border/60 bg-card/50 p-4 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
                                 >
