@@ -1,10 +1,9 @@
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Request, Body
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -31,18 +30,18 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
     try:
         # Get the RAG service
         rag_service = get_rag_service(request)
-        
+
         # Convert Pydantic model to dict
         feedback_data = feedback.model_dump()
-        
+
         # Store feedback using the service
         await rag_service.store_feedback(feedback_data)
-        
+
         # Add needs_feedback_followup flag for negative feedback
         needs_followup = feedback.rating == 0
 
         return {
-            "status": "success", 
+            "status": "success",
             "message": "Feedback recorded successfully",
             "success": True,
             "needs_feedback_followup": needs_followup
@@ -104,11 +103,11 @@ async def get_feedback_stats():
 
 @router.post("/feedback/explanation", response_model=Dict[str, Any])
 async def submit_feedback_explanation(
-        request: Request,
-        explanation_data: Dict[str, Any] = Body(...),
+    request: Request,
+    explanation_data: Dict[str, Any],
 ):
     """Submit explanation for negative feedback.
-    
+
     This endpoint receives explanations about why an answer was unhelpful.
     It updates the existing feedback with the explanation and categorizes issues.
     """

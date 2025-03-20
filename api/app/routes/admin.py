@@ -12,7 +12,17 @@ from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 from app.core.security import verify_admin_access
 from app.services.simplified_rag_service import get_rag_service
 
-router = APIRouter(prefix="/admin")
+# Create router with better documentation of admin security requirements
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(verify_admin_access)],
+    responses={
+        401: {"description": "Unauthorized - Invalid or missing API key"},
+        403: {"description": "Forbidden - Insufficient permissions"}
+    },
+)
+
 logger = logging.getLogger(__name__)
 
 # Create Prometheus metrics
@@ -33,11 +43,13 @@ ISSUE_COUNT = Gauge('bisq_issue_count', 'Count of specific issues in feedback', 
 @router.get("/feedback", response_model=Dict[str, Any])
 async def get_feedback_analytics(
         request: Request,
-        _: bool = Depends(verify_admin_access)
 ):
     """Get analytics about user feedback.
     
-    This endpoint requires admin authentication.
+    This endpoint requires admin authentication via the API key.
+    Authentication can be provided through:
+    - Authorization header with Bearer token
+    - api_key query parameter
     """
     rag_service = get_rag_service(request)
     feedback = rag_service.load_feedback()
@@ -98,14 +110,16 @@ async def get_feedback_analytics(
 @router.get("/metrics", response_class=Response)
 async def get_metrics(
         request: Request,
-        _: bool = Depends(verify_admin_access)
 ):
     """Get feedback metrics in Prometheus format.
     
-    This endpoint requires admin authentication.
+    This endpoint requires admin authentication via the API key.
+    Authentication can be provided through:
+    - Authorization header with Bearer token
+    - api_key query parameter
     """
     # Get feedback analytics
-    analytics = await get_feedback_analytics(request, _)
+    analytics = await get_feedback_analytics(request)
 
     # Update Prometheus metrics
     FEEDBACK_TOTAL.set(analytics["total_feedback"])

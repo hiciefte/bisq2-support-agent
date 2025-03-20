@@ -79,7 +79,6 @@ if check_disk_usage; then
   fi
   
   # Check disk usage after cleanup
-  local after_usage
   after_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   log "Disk usage after aggressive cleanup: ${after_usage}%"
 else
