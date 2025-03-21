@@ -17,7 +17,7 @@ services:
     networks:
       - bisq-support-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -42,18 +42,19 @@ services:
         - BUILD_ENV=production
     restart: always
     volumes:
-      - ../api/app:/app/app  # Mount the app directory for development
-      - ../api/data:/app/api/data  # Mount the data directory
+      - ../api/app:/app/app # Mount the app directory for development
+      - ../api/data:/app/api/data # Mount the data directory
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
       - BISQ_API_URL=http://172.17.0.1:8090
+      - ENVIRONMENT=production
     ports:
       - "${EXPOSE_API_PORT:-8000}:8000"
     networks:
       - bisq-support-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -93,7 +94,7 @@ services:
     networks:
       - bisq-support-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -121,6 +122,8 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+    environment:
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
     ports:
       - "${EXPOSE_PROMETHEUS_PORT:-9090}:9090"
     networks:
@@ -195,7 +198,7 @@ services:
       context: ..
       dockerfile: docker/api/Dockerfile
     restart: on-failure
-    command: ["python", "-m", "app.scripts.extract_faqs"]
+    command: [ "python", "-m", "app.scripts.extract_faqs" ]
     volumes:
       - ../api/data:/app/api/data
     environment:
@@ -236,6 +239,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Feedback processor for weekly improvements
+  feedback-processor:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    restart: on-failure
+    command: [ "python", "-m", "app.scripts.process_feedback" ]
+    volumes:
+      - ../api/data:/app/api/data
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - api
+    networks:
+      - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
 volumes:
   prometheus-data:
   grafana-data:
@@ -244,4 +273,4 @@ volumes:
 
 networks:
   bisq-support-network:
-    driver: bridge 
+    driver: bridge

@@ -3,11 +3,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import Settings
-from app.routes import chat, feedback, health
+from app.routes import chat, health, feedback, admin
 from app.services.simplified_rag_service import SimplifiedRAGService
 
 # Configure logging
@@ -46,6 +47,49 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Custom OpenAPI with security scheme
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Add security schemes to the OpenAPI schema
+    openapi_schema["components"] = openapi_schema.get("components", {})
+    openapi_schema["components"]["securitySchemes"] = {
+        "AdminApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`"
+        },
+        "AdminApiKeyQuery": {
+            "type": "apiKey",
+            "in": "query",
+            "name": "api_key",
+            "description": "API key for admin authentication as a query parameter"
+        }
+    }
+    
+    # Apply security to admin routes
+    for path in openapi_schema["paths"]:
+        if path.startswith("/admin/"):
+            for method in openapi_schema["paths"][path]:
+                openapi_schema["paths"][path][method]["security"] = [
+                    {"AdminApiKeyAuth": []},
+                    {"AdminApiKeyQuery": []}
+                ]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,  # type: ignore
@@ -74,7 +118,8 @@ async def metrics():
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
+app.include_router(feedback.router, tags=["Feedback"])
+app.include_router(admin.router, tags=["Admin"])
 
 if __name__ == "__main__":
     import uvicorn
