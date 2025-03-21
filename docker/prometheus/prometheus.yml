@@ -22,9 +22,9 @@ scrape_configs:
     metrics_path: '/admin/metrics'
     scrape_interval: 1m
     scrape_timeout: 10s
-    basic_auth:
-      username: ${ADMIN_USERNAME:-admin}
-      password: ${ADMIN_PASSWORD:-test_admin_key}
+    authorization:
+      type: Bearer
+      credentials: "${ADMIN_API_KEY:-test_admin_key}"
 
   - job_name: 'web'
     static_configs:

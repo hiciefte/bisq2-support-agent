@@ -122,6 +122,8 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+    environment:
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
     ports:
       - "${EXPOSE_PROMETHEUS_PORT:-9090}:9090"
     networks:
