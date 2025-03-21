@@ -566,7 +566,7 @@ Answer:"""
                     context = context[:MAX_CONTEXT_LENGTH]
 
                 # Create safe sample for logging
-                if os.environ.get('NODE_ENV', '').lower() != 'production':
+                if os.environ.get('ENVIRONMENT', '').lower() != 'production':
                     context_sample = context[:MAX_SAMPLE_LOG_LENGTH] + "..." if len(
                         context) > MAX_SAMPLE_LOG_LENGTH else context
                     logger.info(f"Context sample: {redact_pii(context_sample)}")
@@ -605,8 +605,8 @@ Answer:"""
                         chat_history_str = "\n".join(formatted_history)
 
                         # Only log in non-production or at debug level
-                        is_production = os.environ.get('NODE_ENV',
-                                                       '').lower() == 'production'
+                        is_production = os.environ.get('ENVIRONMENT',
+                                                   '').lower() == 'production'
                         if not is_production:
                             sample = chat_history_str[
                                      :MAX_SAMPLE_LOG_LENGTH] + "..." if len(
@@ -642,8 +642,8 @@ Answer:"""
                         f"Response generated in {response_time:.2f}s, length: {len(content)}")
 
                     # Log sample in non-production
-                    is_production = os.environ.get('NODE_ENV',
-                                                   '').lower() == 'production'
+                    is_production = os.environ.get('ENVIRONMENT',
+                                               '').lower() == 'production'
                     if not is_production:
                         sample = content[:MAX_SAMPLE_LOG_LENGTH] + "..." if len(
                             content) > MAX_SAMPLE_LOG_LENGTH else content
@@ -697,7 +697,7 @@ Answer:"""
             Dictionary with answer, sources, and response time
         """
         start_time = time.time()
-        is_production = os.environ.get('NODE_ENV', '').lower() == 'production'
+        is_production = os.environ.get('ENVIRONMENT', '').lower() == 'production'
         debug_level = logging.INFO if not is_production else logging.DEBUG
 
         # Log question with PII protection
@@ -1096,7 +1096,7 @@ Answer:"""
 
             logger.info(f"Generated {len(new_faqs)} new FAQ entries from feedback")
 
-            # Backup and clear processed improvements
+            # Backup the existing file with date
             os.rename(priority_file,
                       f"{priority_file}.{datetime.now().strftime('%Y%m%d')}")
             logger.info(f"Backed up and cleared priority improvements file")

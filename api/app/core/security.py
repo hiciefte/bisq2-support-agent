@@ -57,21 +57,24 @@ def verify_admin_access(request: Request) -> bool:
             # Allow access but warn that key is too short
             return True
 
-    # Check for API key in query params (for easier testing)
-    api_key = request.query_params.get("api_key", "")
-    if api_key and api_key == ADMIN_API_KEY and len(api_key) >= MIN_API_KEY_LENGTH:
-        logger.debug(f"Admin access granted via query parameter from {request.client.host if request.client else 'unknown'}")
-        return True
-    elif api_key and api_key == ADMIN_API_KEY and len(api_key) < MIN_API_KEY_LENGTH:
-        logger.warning(f"Insecure admin key length: {len(api_key)} chars")
-        # Allow access but warn that key is too short
-        return True
+    # Only allow query parameter authentication in development environments
+    is_production = os.environ.get('ENVIRONMENT', '').lower() == 'production'
+    if not is_production:
+        # Check for API key in query params (for easier testing)
+        api_key = request.query_params.get("api_key", "")
+        if api_key and api_key == ADMIN_API_KEY and len(api_key) >= MIN_API_KEY_LENGTH:
+            logger.debug(f"Admin access granted via query parameter from {request.client.host if request.client else 'unknown'}")
+            return True
+        elif api_key and api_key == ADMIN_API_KEY and len(api_key) < MIN_API_KEY_LENGTH:
+            logger.warning(f"Insecure admin key length: {len(api_key)} chars")
+            # Allow access but warn that key is too short
+            return True
 
     # Log failed access attempts (but don't include the actual credentials)
     logger.warning(f"Invalid admin access attempt from {request.client.host if request.client else 'unknown'}")
     
     # Check if the user provided a key that was incorrect vs. no key at all
-    has_key_attempt = auth_header.startswith("Bearer ") or api_key != ""
+    has_key_attempt = auth_header.startswith("Bearer ") or (not is_production and request.query_params.get("api_key", "") != "")
     
     if has_key_attempt:
         # User tried to authenticate but used wrong credentials - 403 Forbidden

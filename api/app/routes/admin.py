@@ -169,7 +169,8 @@ async def get_feedback_analytics(
         "unhelpful_count": unhelpful_count,
         "source_effectiveness": source_stats,
         "common_issues": common_issues,
-        "recent_negative": [f for f in feedback if f.get('rating', 0) == 0][-5:]  # Include recent negative feedback
+        "recent_negative": [{**f, 'explanation': f.get('explanation', '')[:100] + '...' if f.get('explanation', '') and len(f.get('explanation', '')) > 100 else f.get('explanation', '')} 
+                           for f in feedback if f.get('rating', 0) == 0][-5:]  # Include recent negative feedback with truncated explanation
     }
 
 
