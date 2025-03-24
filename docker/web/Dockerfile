@@ -1,34 +1,50 @@
-# Use Node.js 20 as the base image
-FROM node:20-alpine
+# Stage 1: Dependencies & Build
+FROM node:20-alpine AS builder
 
-# Set working directory
-WORKDIR /app
+# Set working directory for build stage
+WORKDIR /build
 
-# Suppress npm update notices
+# Suppress npm notices to keep logs clean
 RUN npm config set update-notifier false && \
-    npm config set fund false
+  npm config set fund false
 
-# Copy package.json and package-lock.json
+# Copy package files
 COPY web/package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install all dependencies with clean cache
+RUN npm cache clean --force && \
+  npm install
 
-# Copy the rest of the application
+# Copy application code
 COPY web/ ./
 
-# Set build argument with default to development
-ARG BUILD_ENV=development
-
-# Set environment variable based on build arg
+# Set build argument
+ARG BUILD_ENV=production
 ENV NODE_ENV=${BUILD_ENV}
+
+# Build the application
+RUN npm run build
+
+# Stage 2: Runtime
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy built application, node_modules and next.config.js
+COPY --from=builder /build/.next ./.next
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/package.json ./package.json
+COPY --from=builder /build/public ./public
+COPY --from=builder /build/next.config.js ./next.config.js
+
+# Set environment variables
+ARG BUILD_ENV=production
+ENV NODE_ENV=${BUILD_ENV}
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
 
 # Expose the port
 EXPOSE 3000
 
-# Use different commands based on environment
-CMD if [ "$NODE_ENV" = "production" ]; then \
-      npm run build && npm run start; \
-    else \
-      npm run dev; \
-    fi 
+# Run the application
+CMD ["npm", "run", "start"] 

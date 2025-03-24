@@ -152,36 +152,66 @@ sudo ufw deny 8090
 
 ## Configuring the Support Agent to Use the Bisq API
 
-### 1. Update the .env File
+### 1. Update the Environment Files
 
-In your Bisq Support Agent project:
+#### For Docker Deployment:
+
+Edit the `docker/.env` file:
 
 ```bash
-# For local development
-BISQ_API_URL=http://localhost:8090
-
-# For Docker on the same machine
-BISQ_API_URL=http://172.17.0.1:8090
+# Copy the example file if needed
+cp docker/.env.example docker/.env
+nano docker/.env
 ```
 
-### 2. Update docker-compose.yml
+Set the Bisq API URL:
 
-Ensure the `faq-extractor` service has the correct Bisq API URL:
+```
+# For Docker on Linux
+BISQ_API_URL=http://172.17.0.1:8090
+
+# For Docker on macOS/Windows
+# BISQ_API_URL=http://host.docker.internal:8090
+```
+
+#### For Local API Development:
+
+Edit the `api/.env` file:
+
+```bash
+# Copy the example file if needed
+cp api/.env.example api/.env
+nano api/.env
+```
+
+Set the Bisq API URL:
+
+```
+# For local development
+BISQ_API_URL=http://localhost:8090
+```
+
+### 2. Environment-Specific Configuration
+
+The project includes configuration for both production and development environments:
+
+#### Production (docker-compose.yml):
 
 ```yaml
+# Already configured in docker/docker-compose.yml
 faq-extractor:
-  build:
-    context: ..
-    dockerfile: docker/api/Dockerfile
-  command: ["python", "-m", "app.scripts.extract_faqs"]
-  volumes:
-    - ../api/data:/app/data
   environment:
     - BISQ_API_URL=http://172.17.0.1:8090  # Docker host IP
-  depends_on:
-    - api
-  networks:
-    - bisq-support-network
+```
+
+#### Development (docker-compose.local.yml):
+
+```yaml
+# Already configured in docker/docker-compose.local.yml
+faq-extractor:
+  environment:
+    - DATA_DIR=/app/api/data
+    - BISQ_API_URL=http://172.17.0.1:8090  # Docker host IP
 ```
 
 ## Troubleshooting
@@ -218,12 +248,18 @@ If the FAQ extractor can't connect to the Bisq API:
    curl http://172.17.0.1:8090/api/v1/support/export/csv
    ```
 
-### 3. No Data in Export
+### 3. Error Handling Improvements
 
-If the API returns an empty CSV:
+The support agent now has improved error handling:
 
-1. Make sure you have some support chat data in your Bisq instance
-2. Check the Bisq logs for any errors:
-   ```bash
-   sudo journalctl -u bisq2-api.service | grep -i error
-   ``` 
+- Better detection and handling of different chat history formats
+- Robust recovery from temporary errors
+- More detailed logging to help diagnose issues
+
+### 4. Multiple LLM Provider Support
+
+The support agent now supports multiple LLM providers:
+
+- Configure `LLM_PROVIDER` in your `.env` files to select the provider (options: `openai`, `xai`)
+- Each provider has its own configuration settings (API keys, models, etc.)
+- This allows for flexibility in choosing the best LLM for your needs 

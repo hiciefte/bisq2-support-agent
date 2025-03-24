@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class FAQExtractor:
     """Extract FAQ entries from Bisq support chat conversations.
-    
+
     This class processes support chat exports to identify common questions
     and their corresponding answers, creating a structured FAQ dataset
     that can be used for the RAG-based support assistant.
@@ -45,9 +45,9 @@ class FAQExtractor:
         self.bisq_api = Bisq2API(self.settings)
 
         # Initialize paths using settings
-        self.existing_input_path = Path(self.settings.SUPPORT_CHAT_EXPORT_PATH)
-        self.output_path = Path(self.settings.FAQ_OUTPUT_PATH)
-        self.processed_convs_path = Path(self.settings.PROCESSED_CONVERSATIONS_PATH)
+        self.existing_input_path = Path(self.settings.CHAT_EXPORT_FILE_PATH)
+        self.output_path = Path(self.settings.FAQ_FILE_PATH)
+        self.processed_convs_path = Path(self.settings.PROCESSED_CONVS_FILE_PATH)
         self.input_path: Optional[Path] = None
 
         # Log all paths for debugging
@@ -113,22 +113,23 @@ class FAQExtractor:
                 latest_df = pd.read_csv(StringIO(csv_content))
                 logger.info(f"Fetched {len(latest_df)} messages from API")
             else:
-                logger.warning("No new messages received from API")
+                logger.info(f"No new messages received from API")
                 if existing_df.empty:
                     # Copy the sample data if no existing messages
-                    sample_path = self.existing_input_path.parent / "support_chat_export.csv"
+                    sample_path = Path(self.settings.CHAT_EXPORT_FILE_PATH)
                     if sample_path.exists():
                         logger.info(f"Using sample data from {sample_path}")
                         existing_df = pd.read_csv(sample_path)
                     else:
-                        raise Exception("No messages received from API and no existing messages found")
+                        raise Exception(
+                            "No messages received from API and no existing messages found")
                 logger.info("Continuing with existing messages")
                 latest_df = pd.DataFrame()
         except Exception as e:
             logger.error(f"Failed to fetch messages from API: {str(e)}")
             if existing_df.empty:
                 # Copy the sample data if no existing messages
-                sample_path = self.existing_input_path.parent / "support_chat_export.csv"
+                sample_path = Path(self.settings.CHAT_EXPORT_FILE_PATH)
                 if sample_path.exists():
                     logger.info(f"Using sample data from {sample_path}")
                     existing_df = pd.read_csv(sample_path)
@@ -182,17 +183,20 @@ class FAQExtractor:
                         try:
                             timestamp = pd.to_datetime(row_data['Date'])
                         except Exception as exc:
-                            logger.warning(f"Timestamp parse error for msg {msg_id}: {exc}")
+                            logger.warning(
+                                f"Timestamp parse error for msg {msg_id}: {exc}")
 
                     # Create message object
                     msg = {
                         'msg_id': msg_id,
                         'text': row_data['Message'].strip(),
-                        'author': row_data['Author'] if pd.notna(row_data['Author']) else 'unknown',
+                        'author': row_data['Author'] if pd.notna(
+                            row_data['Author']) else 'unknown',
                         'channel': row_data['Channel'],
                         'is_support': row_data['Channel'].lower() == 'support',
                         'timestamp': timestamp,
-                        'referenced_msg_id': row_data['Referenced Message ID'] if pd.notna(
+                        'referenced_msg_id': row_data[
+                            'Referenced Message ID'] if pd.notna(
                             row_data['Referenced Message ID']) else None
                     }
                     self.messages[msg_id] = msg
@@ -201,21 +205,26 @@ class FAQExtractor:
                     if msg['referenced_msg_id']:
                         self.references[msg_id] = msg['referenced_msg_id']
                         if msg['referenced_msg_id'] not in self.messages and pd.notna(
-                                row_data['Referenced Message Text']):
+                            row_data['Referenced Message Text']):
                             ref_timestamp = None
                             ref_rows = df[df['Message ID'] == msg['referenced_msg_id']]
-                            if not ref_rows.empty and pd.notna(ref_rows.iloc[0]['Date']):
+                            if not ref_rows.empty and pd.notna(
+                                ref_rows.iloc[0]['Date']):
                                 try:
-                                    ref_timestamp = pd.to_datetime(ref_rows.iloc[0]['Date'])
+                                    ref_timestamp = pd.to_datetime(
+                                        ref_rows.iloc[0]['Date'])
                                 except Exception as exc:
-                                    logger.warning(f"Ref timestamp parse error for msg {msg_id}: {exc}")
+                                    logger.warning(
+                                        f"Ref timestamp parse error for msg {msg_id}: {exc}")
                             if ref_timestamp is None and timestamp is not None:
                                 ref_timestamp = timestamp - pd.Timedelta(seconds=1)
                             ref_msg = {
                                 'msg_id': msg['referenced_msg_id'],
                                 'text': row_data['Referenced Message Text'].strip(),
-                                'author': row_data['Referenced Message Author'] if pd.notna(
-                                    row_data['Referenced Message Author']) else 'unknown',
+                                'author': row_data[
+                                    'Referenced Message Author'] if pd.notna(
+                                    row_data[
+                                        'Referenced Message Author']) else 'unknown',
                                 'channel': 'user',
                                 'is_support': False,
                                 'timestamp': ref_timestamp,
@@ -226,12 +235,14 @@ class FAQExtractor:
                     logger.error(f"Error processing row: {e}")
                     continue
 
-            logger.info(f"Loaded {len(self.messages)} messages with {len(self.references)} references")
+            logger.info(
+                f"Loaded {len(self.messages)} messages with {len(self.references)} references")
         except Exception as e:
             logger.error(f"Error loading CSV file: {e}")
             raise
 
-    def build_conversation_thread(self, start_msg_id: str, max_depth: int = 10) -> List[Dict]:
+    def build_conversation_thread(self, start_msg_id: str, max_depth: int = 10) -> List[
+        Dict]:
         """Build a conversation thread starting from a message, following references both ways."""
         thread = []
         seen_messages = set()
@@ -262,7 +273,8 @@ class FAQExtractor:
                    # Only include forward references within 30 minutes
                    self.messages[mid]['timestamp'] and
                    self.messages[current_id]['timestamp'] and
-                   (self.messages[mid]['timestamp'] - self.messages[current_id]['timestamp']) <= timedelta(minutes=30)
+                   (self.messages[mid]['timestamp'] - self.messages[current_id][
+                       'timestamp']) <= timedelta(minutes=30)
             ]
             to_process.update(forward_refs)
 
@@ -293,7 +305,8 @@ class FAQExtractor:
             return False
 
         # Check if messages are too far apart in time
-        timestamps = [msg['timestamp'] for msg in thread if msg['timestamp'] is not None]
+        timestamps = [msg['timestamp'] for msg in thread if
+                      msg['timestamp'] is not None]
         if timestamps:
             time_span = max(timestamps) - min(timestamps)
             if time_span > timedelta(hours=24):  # Reduce max time span to 24 hours
@@ -312,10 +325,11 @@ class FAQExtractor:
 
             # Check if messages are connected through references
             if (current_msg['referenced_msg_id'] != previous_msg['msg_id'] and
-                    previous_msg['referenced_msg_id'] != current_msg['msg_id']):
+                previous_msg['referenced_msg_id'] != current_msg['msg_id']):
                 # Allow if messages are within 30 minutes of each other
                 if (current_msg['timestamp'] and previous_msg['timestamp'] and
-                        (current_msg['timestamp'] - previous_msg['timestamp']) > timedelta(minutes=30)):
+                    (current_msg['timestamp'] - previous_msg['timestamp']) > timedelta(
+                        minutes=30)):
                     return False
 
         return True
@@ -361,7 +375,8 @@ class FAQExtractor:
         logger.info("Extracting FAQs using OpenAI...")
 
         # Filter out already processed conversations
-        new_conversations = [conv for conv in conversations if conv['id'] not in self.processed_conv_ids]
+        new_conversations = [conv for conv in conversations if
+                             conv['id'] not in self.processed_conv_ids]
 
         if not new_conversations:
             logger.info("No new conversations to process")
@@ -380,12 +395,14 @@ class FAQExtractor:
 
         # Split conversations into batches to avoid token limits
         batch_size = 5
-        batches = [formatted_convs[i:i + batch_size] for i in range(0, len(formatted_convs), batch_size)]
+        batches = [formatted_convs[i:i + batch_size] for i in
+                   range(0, len(formatted_convs), batch_size)]
 
         all_faqs = []
         processed_in_batch = set()
 
-        for batch_idx, batch in enumerate(tqdm(batches, desc="Processing conversation batches")):
+        for batch_idx, batch in enumerate(
+            tqdm(batches, desc="Processing conversation batches")):
             # Prepare the prompt
             prompt = """You are a language model specialized in text summarization and data extraction. Your task is to analyze these conversations and extract frequently asked questions (FAQs) along with their concise, clear answers.
 
@@ -398,7 +415,8 @@ Here are the conversations to analyze:
 
 {}
 
-Output each FAQ as a single-line JSON object. No additional text or commentary.""".format("\n\n---\n\n".join(batch))
+Output each FAQ as a single-line JSON object. No additional text or commentary.""".format(
+                "\n\n---\n\n".join(batch))
 
             max_retries = 3
             base_delay = 1
@@ -412,7 +430,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     )
                     break
                 except Exception as e:
-                    logger.error(f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
+                    logger.error(
+                        f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
                     if attempt < max_retries - 1:
                         delay = base_delay * (2 ** attempt)
                         logger.info(f"Retrying in {delay} seconds...")
@@ -425,7 +444,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             response_text = response.choices[0].message.content.strip()
 
             # Clean up the response text - remove markdown code blocks
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
+            response_text = response_text.replace('```json', '').replace('```',
+                                                                         '').strip()
 
             # Process each line as a potential JSON object
             for line in response_text.split('\n'):
@@ -447,7 +467,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         self.processed_conv_ids.update(processed_in_batch)
         self.save_processed_conv_ids()
 
-        logger.info(f"Extracted {len(all_faqs)} FAQ entries from {len(processed_in_batch)} new conversations")
+        logger.info(
+            f"Extracted {len(all_faqs)} FAQ entries from {len(processed_in_batch)} new conversations")
         return all_faqs
 
     def load_existing_faqs(self) -> List[Dict]:
@@ -507,12 +528,13 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             ]
 
             # Save all conversations to JSONL file
-            conversations_path = Path(self.settings.DATA_DIR) / "conversations.jsonl"
+            conversations_path = Path(self.settings.CONVERSATIONS_FILE_PATH)
             with conversations_path.open('w') as f:
                 for conv in conversations:
                     serialized_conv = self.serialize_conversation(conv)
                     f.write(json.dumps(serialized_conv) + '\n')
-            logger.info(f"Saved {len(conversations)} conversations to {conversations_path}")
+            logger.info(
+                f"Saved {len(conversations)} conversations to {conversations_path}")
 
             # Extract FAQs using OpenAI
             logger.info("Extracting FAQs using OpenAI...")
@@ -527,7 +549,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
                 # Save all FAQs
                 self.save_faqs(all_faqs)
-                logger.info(f"Extraction complete. Generated {len(new_faqs)} new FAQ entries.")
+                logger.info(
+                    f"Extraction complete. Generated {len(new_faqs)} new FAQ entries.")
 
                 # Update processed conversation IDs
                 for conv in new_conversations:

@@ -1,36 +1,77 @@
+"""
+FastAPI application for the Bisq Support Assistant.
+This module sets up the API server with routes, middleware, and error handling.
+"""
+
 import logging
+import os
+import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.core.config import Settings
+from app.core.config import get_settings
 from app.routes import chat, health, feedback, admin
+from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
+from app.services.wiki_service import WikiService
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger(__name__)
 
-# Load configuration
-settings = Settings()
+logger = logging.getLogger("app.main")
+
+# Log environment variables (redacting sensitive ones)
+logger.info("Environment variables:")
+for key, value in sorted(os.environ.items()):
+    if key in ["OPENAI_API_KEY", "XAI_API_KEY", "ADMIN_API_KEY"]:
+        logger.info(f"  {key}=***REDACTED***")
+    else:
+        logger.info(f"  {key}={value}")
+
+# Load settings
+logger.info("Loading settings...")
+try:
+    # Use the cached settings function
+    settings = get_settings()
+    logger.info(f"Settings loaded successfully")
+    logger.info(f"CORS_ORIGINS = {settings.CORS_ORIGINS}")
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
+except Exception as e:
+    logger.error(f"Error loading settings: {e}", exc_info=True)
+    raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize services on startup
-    logger.info("Initializing Simplified RAG service...")
-    rag_service = SimplifiedRAGService(settings=settings)
+    logger.info("Initializing WikiService...")
+    wiki_service = WikiService(settings=settings)
+
+    logger.info("Initializing FeedbackService...")
+    feedback_service = FeedbackService(settings=settings)
+
+    logger.info("Initializing SimplifiedRAGService...")
+    rag_service = SimplifiedRAGService(settings=settings,
+                                       feedback_service=feedback_service,
+                                       wiki_service=wiki_service)
+
+    # Set up services
     await rag_service.setup()
 
-    # FastAPI's app.state is dynamically typed
-    app.state.rag_service = rag_service  # type: ignore
+    # Add services to FastAPI's app.state
+    app.state.wiki_service = wiki_service
+    app.state.feedback_service = feedback_service
+    app.state.rag_service = rag_service
 
     yield
 
@@ -41,24 +82,25 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="Bisq Support Assistant API",
-    description="API for the Bisq Support Assistant chatbot using simplified RAG implementation",
-    version="1.0.0",
+    title=settings.PROJECT_NAME,
+    docs_url="/api/docs",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan
 )
+
 
 # Custom OpenAPI with security scheme
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    
+
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
         description=app.description,
         routes=app.routes,
     )
-    
+
     # Add security schemes to the OpenAPI schema
     openapi_schema["components"] = openapi_schema.get("components", {})
     openapi_schema["components"]["securitySchemes"] = {
@@ -75,7 +117,7 @@ def custom_openapi():
             "description": "API key for admin authentication as a query parameter"
         }
     }
-    
+
     # Apply security to admin routes
     for path in openapi_schema["paths"]:
         if path.startswith("/admin/"):
@@ -84,16 +126,17 @@ def custom_openapi():
                     {"AdminApiKeyAuth": []},
                     {"AdminApiKeyQuery": []}
                 ]
-    
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
 # Configure CORS
 app.add_middleware(
-    CORSMiddleware,  # type: ignore
-    allow_origins=["*"],  # Allow all origins
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -120,6 +163,21 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(admin.router, tags=["Admin"])
+
+
+@app.get("/healthcheck")
+async def healthcheck():
+    return {"status": "healthy"}
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred."},
+    )
+
 
 if __name__ == "__main__":
     import uvicorn

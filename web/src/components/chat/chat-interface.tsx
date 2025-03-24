@@ -698,13 +698,14 @@ const ChatInterface = () => {
                                                         <div className="flex items-center gap-2">
                                                             <span
                                                                 className="text-xs font-medium">Sources:</span>
-                                                            {message.sources.map((source, index) => (
+                                                            {/* Deduplicate sources by type */}
+                                                            {Array.from(new Set(message.sources.map(source => source.type))).map((sourceType, index) => (
                                                                 <span key={index} className={cn(
                                                                     "px-2 py-1 rounded-md text-xs",
-                                                                    source.type === "wiki" ? "bg-primary/10" : "bg-secondary/50"
+                                                                    sourceType === "wiki" ? "bg-primary/10" : "bg-secondary/50"
                                                                 )}>
-                                  {source.type === "wiki" ? "Wiki" : "Support Chat"}
-                                </span>
+                                                                    {sourceType === "wiki" ? "Wiki" : "Support Chat"}
+                                                                </span>
                                                             ))}
                                                         </div>
                                                     </div>
