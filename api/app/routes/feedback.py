@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.services.simplified_rag_service import get_rag_service
+from app.services.feedback_service import get_feedback_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -28,14 +28,14 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
     Submit feedback for a chat response.
     """
     try:
-        # Get the RAG service
-        rag_service = get_rag_service(request)
+        # Get the Feedback service directly
+        feedback_service = get_feedback_service(request)
 
         # Convert Pydantic model to dict
         feedback_data = feedback.model_dump()
 
-        # Store feedback using the service
-        await rag_service.store_feedback(feedback_data)
+        # Store feedback using the feedback service
+        await feedback_service.store_feedback(feedback_data)
 
         # Add needs_feedback_followup flag for negative feedback
         needs_followup = feedback.rating == 0
@@ -62,7 +62,7 @@ async def get_feedback_stats():
     """
     try:
         settings = get_settings()
-        feedback_dir = Path(settings.DATA_DIR) / "feedback"
+        feedback_dir = Path(settings.FEEDBACK_DIR_PATH)
         if not feedback_dir.exists():
             return {
                 "total_feedback": 0,
@@ -111,7 +111,7 @@ async def submit_feedback_explanation(
     This endpoint receives explanations about why an answer was unhelpful.
     It updates the existing feedback with the explanation and categorizes issues.
     """
-    rag_service = get_rag_service(request)
+    feedback_service = get_feedback_service(request)
 
     # Extract required fields
     message_id = explanation_data.get("message_id")
@@ -123,8 +123,8 @@ async def submit_feedback_explanation(
     # Extract any specific issues mentioned by the user
     issues = explanation_data.get("issues", [])
 
-    # Get current feedback entry - load_feedback is synchronous, not async
-    all_feedback = rag_service.load_feedback()
+    # Get current feedback entry
+    all_feedback = feedback_service.load_feedback()
     feedback_entry = None
 
     for item in all_feedback:
@@ -150,7 +150,7 @@ async def submit_feedback_explanation(
 
     # Analyze explanation text for common issues if no specific issues provided
     if not issues and explanation:
-        detected_issues = await rag_service.analyze_feedback_text(explanation)
+        detected_issues = await feedback_service.analyze_feedback_text(explanation)
 
         if detected_issues:
             if not feedback_entry["metadata"].get("issues"):
@@ -159,7 +159,7 @@ async def submit_feedback_explanation(
             feedback_entry["metadata"]["issues"].extend(detected_issues)
 
     # Update the feedback entry
-    await rag_service.update_feedback_entry(message_id, feedback_entry)
+    await feedback_service.update_feedback_entry(message_id, feedback_entry)
 
     return {
         "success": True,

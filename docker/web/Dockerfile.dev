@@ -1,0 +1,26 @@
+# Development-specific Dockerfile for web frontend
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Suppress npm notices
+ENV npm_config_update_notifier=false
+ENV npm_config_fund=false
+
+# Copy package files
+COPY web/package*.json ./
+
+# Install all dependencies with clean cache
+RUN npm cache clean --force && \
+    npm install
+
+# Set environment variable to development
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Expose the port
+EXPOSE 3000
+
+# Run the development server with hot reloading
+CMD ["npm", "run", "dev"] 

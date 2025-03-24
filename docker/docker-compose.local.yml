@@ -4,14 +4,23 @@ services:
       context: ..
       dockerfile: docker/api/Dockerfile
     volumes:
-      - ../api:/app
+      - ../api/app:/app/app # Mount only the app directory for development
+      - ../api/data:/app/api/data # Mount the data directory to match the DATA_DIR path in config.py
     environment:
+      # Only Docker-specific overrides here
+      - ENVIRONMENT=development # Environment-specific setting
+      # Include API keys - these need to be explicitly included to be passed to container
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CORS_ORIGINS=["http://localhost:3000", "http://0.0.0.0:3000"]
-      - BISQ_API_URL=http://172.17.0.1:8090 # For Linux
-      - DATA_DIR=/app/api/data
-      - ADMIN_API_KEY=test_admin_key
-      - ENVIRONMENT=development
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
+      - MAX_TOKENS=${MAX_TOKENS}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - XAI_API_KEY=${XAI_API_KEY}
+      - XAI_MODEL=${XAI_MODEL}
+      - XAI_API_BASE_URL=${XAI_API_BASE_URL}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - DATA_DIR=${DATA_DIR}
     ports:
       - "8000:8000"
     platform: linux/arm64
@@ -21,17 +30,19 @@ services:
   web:
     build:
       context: ..
-      dockerfile: docker/web/Dockerfile
+      dockerfile: docker/web/Dockerfile.dev
       args:
         - BUILD_ENV=development
     volumes:
       - ../web:/app
       - /app/node_modules
+      - /app/.next
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000 # Development-specific endpoint
       - NODE_ENV=development
+      - WATCHPACK_POLLING=true
     networks:
       - bisq-support-network
     depends_on:
@@ -45,7 +56,13 @@ services:
     volumes:
       - ../api/data:/app/api/data # Match the API service volume mount
     environment:
-      - DATA_DIR=/app/api/data
+      - DATA_DIR=${DATA_DIR}
+      - BISQ_API_URL=http://host.docker.internal:8090
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
+      - MAX_TOKENS=${MAX_TOKENS}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
     platform: linux/arm64
     depends_on:
       - api
@@ -60,9 +77,7 @@ services:
     volumes:
       - ../api/data:/app/api/data # Match the API service volume mount
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DATA_DIR=/app/api/data
-      - ADMIN_API_KEY=test_admin_key
+      - DATA_DIR=${DATA_DIR}
     platform: linux/arm64
     depends_on:
       - api

@@ -47,7 +47,8 @@ class Bisq2API:
             logger.error(f"Error making request to Bisq2 API: {e}")
             raise
 
-    async def export_chat_messages(self, since: Optional[datetime] = None, max_retries: int = 3,
+    async def export_chat_messages(self, since: Optional[datetime] = None,
+                                   max_retries: int = 3,
                                    retry_delay: int = 2) -> str:
         """Export chat messages from Bisq API with retries."""
         if not self._session:
@@ -62,7 +63,8 @@ class Bisq2API:
 
                 async with self._session.get(url, params=params) as response:
                     if response.status != 200:
-                        logger.warning(f"Attempt {attempt + 1}/{max_retries}: Error {response.status} from Bisq API")
+                        logger.warning(
+                            f"Attempt {attempt + 1}/{max_retries}: Error {response.status} from Bisq API")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(retry_delay)
                             continue
@@ -70,9 +72,11 @@ class Bisq2API:
                     return await response.text()
 
             except Exception as e:
-                logger.warning(f"Attempt {attempt + 1}/{max_retries}: Failed to export chat messages: {str(e)}")
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries}: Failed to export chat messages: {str(e)}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                     continue
-                logger.error(f"Failed to export chat messages after {max_retries} attempts: {str(e)}")
+                logger.error(
+                    f"Failed to export chat messages after {max_retries} attempts: {str(e)}")
                 return ""
