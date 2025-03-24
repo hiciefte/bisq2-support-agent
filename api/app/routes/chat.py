@@ -40,10 +40,10 @@ class QueryResponse(BaseModel):
 
 @router.api_route("/query", methods=["POST"])
 async def query(
-        request: Request,
-        settings: Settings = Depends(get_settings),
-        rag_service: SimplifiedRAGService = Depends(get_rag_service),
-        body_payload: dict = Body(...)
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    rag_service: SimplifiedRAGService = Depends(get_rag_service),
+    body_payload: dict = Body(...)
 ):
     """Process a query and return a response with sources."""
     logger.info("Received request to /query endpoint")
@@ -56,15 +56,18 @@ async def query(
         data = body_payload
         logger.info(f"Automatically parsed JSON data: {json.dumps(data, indent=2)}")
         logger.info(f"Parsed data type: {type(data)}")
-        logger.info(f"Parsed data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        logger.info(
+            f"Parsed data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
 
         # Validate against our model
         try:
             logger.info("Attempting to validate request data...")
             # Get field names using model_json_schema instead of model_fields.keys()
-            expected_fields = list(QueryRequest.model_json_schema()["properties"].keys())
+            expected_fields = list(
+                QueryRequest.model_json_schema()["properties"].keys())
             logger.info(f"Expected model fields: {expected_fields}")
-            logger.info(f"Received fields: {list(data.keys()) if isinstance(data, dict) else []}")
+            logger.info(
+                f"Received fields: {list(data.keys()) if isinstance(data, dict) else []}")
             logger.info(f"Model validation about to start with data: {data}")
 
             query_request = QueryRequest.model_validate(data)
@@ -74,19 +77,22 @@ async def query(
             logger.error(f"Input data: {data}")
             logger.error(f"Validation error details: {str(e)}")
             # Use model_json_schema instead of model_fields
-            logger.error(f"Model fields: {QueryRequest.model_json_schema()['properties']}")
+            logger.error(
+                f"Model fields: {QueryRequest.model_json_schema()['properties']}")
             raise HTTPException(status_code=422, detail=str(e))
 
         # Get response from simplified RAG service
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
         if query_request.chat_history:
-            logger.info(f"Number of messages in chat history: {len(query_request.chat_history)}")
+            logger.info(
+                f"Number of messages in chat history: {len(query_request.chat_history)}")
             for i, msg in enumerate(query_request.chat_history):
-                logger.info(f"Message {i}: role={msg.role}, content={msg.content[:30]}...")
+                logger.info(
+                    f"Message {i}: role={msg.role}, content={msg.content[:30]}...")
         else:
             logger.info("No chat history provided in the request")
-            
-        result = rag_service.query(query_request.question, query_request.chat_history)
+
+        result = await rag_service.query(query_request.question, query_request.chat_history)
 
         # Convert sources to the expected format
         formatted_sources = [
@@ -119,7 +125,7 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
     """Get statistics about chat responses including average response time."""
     try:
         # Get the feedback directory from settings
-        feedback_dir = Path(settings.DATA_DIR) / "feedback"
+        feedback_dir = Path(settings.FEEDBACK_DIR_PATH)
 
         # Default values if no data is available
         stats = {
@@ -151,7 +157,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
                         feedback = json.loads(line)
 
                         # Check if metadata and response_time exist
-                        if feedback.get("metadata") and feedback["metadata"].get("response_time"):
+                        if feedback.get("metadata") and feedback["metadata"].get(
+                            "response_time"):
                             total_queries += 1
                             response_time = feedback["metadata"]["response_time"]
                             total_response_time += response_time
@@ -159,7 +166,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
                             # Check if this is a recent query
                             if "timestamp" in feedback:
                                 try:
-                                    timestamp = datetime.datetime.fromisoformat(feedback["timestamp"])
+                                    timestamp = datetime.datetime.fromisoformat(
+                                        feedback["timestamp"])
                                     if timestamp > cutoff_time:
                                         recent_queries += 1
                                         recent_response_time += response_time
@@ -167,7 +175,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
                                     # If timestamp parsing fails, skip this check
                                     pass
                     except json.JSONDecodeError:
-                        logger.warning(f"Invalid JSON in feedback file: {feedback_file}")
+                        logger.warning(
+                            f"Invalid JSON in feedback file: {feedback_file}")
                         continue
 
         # Calculate averages if we have data
@@ -176,7 +185,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
             stats["average_response_time"] = total_response_time / total_queries
 
         if recent_queries > 0:
-            stats["last_24h_average_response_time"] = recent_response_time / recent_queries
+            stats[
+                "last_24h_average_response_time"] = recent_response_time / recent_queries
         else:
             # If no recent queries, use the overall average
             stats["last_24h_average_response_time"] = stats["average_response_time"]

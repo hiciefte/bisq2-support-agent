@@ -1,90 +1,128 @@
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Get the api directory path
-API_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    # API Configuration
+    # API settings
     DEBUG: bool = False
     API_V1_STR: str = "/api/v1"
-    PROJECT_NAME: str = "Bisq Support Assistant"
+    PROJECT_NAME: str = "BISQ Support"
 
-    # Security
-    CORS_ORIGINS: List[str]
-    
-    # Web configuration (added to prevent validation errors)
-    SERVER_IP: str = "127.0.0.1"
-    NEXT_PUBLIC_API_URL: str = "/api"
+    # CORS settings
+    # Start with string to avoid JSON parsing, we'll convert it in validator
+    CORS_ORIGINS: str = "*"
 
-    # OpenAI Configuration
+    # Directory settings
+    DATA_DIR: str = "api/data"
+
+    # External URLs
+    BISQ_API_URL: str = "http://localhost:8090"
+
+    # LLM Provider setting
+    LLM_PROVIDER: str = "openai"  # Can be "openai" or "xai"
+
+    # OpenAI settings
     OPENAI_API_KEY: str = ""
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MODEL: str = "o3-mini"
-    MAX_TOKENS: int = 4096  # Default max tokens for LLM response length
+    MAX_TOKENS: int = 4096
 
-    # xAI Configuration
+    # xAI settings
     XAI_API_KEY: str = ""
-    XAI_MODEL: str = "grok-1"
+    XAI_MODEL: str = "llama3-70b-8192"
 
-    # Bisq API Configuration
-    BISQ_API_URL: str = "http://localhost:8082"
+    # RAG settings
+    MAX_CHAT_HISTORY_LENGTH: int = 10  # Maximum number of chat history entries to include
+    MAX_CONTEXT_LENGTH: int = 10000  # Maximum length of context to include in prompt
+    MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
-    # Model Configuration
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # Admin settings
+    MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
 
-    # Data paths - these will be relative to DATA_DIR
-    DATA_DIR: str = "/app/api/data"  # Default for Docker, can be overridden for local dev
-    VECTOR_STORE_PATH: str = "vectorstore"
-    FAQ_OUTPUT_PATH: str = "extracted_faq.jsonl"
-    SUPPORT_CHAT_EXPORT_PATH: str = "support_chat_export.csv"
-    PROCESSED_CONVERSATIONS_PATH: str = "processed_conversations.json"
+    # Environment settings
+    ENVIRONMENT: str = "development"
 
-    # API settings
-    API_DIR: str = str(Path(__file__).parent.parent.parent)
+    # Simple config - let Pydantic handle things
+    model_config = SettingsConfigDict(
+        env_file=None,  # Disable .env file handling (Docker handles this)
+        env_parse_json=False  # Disable trying to parse values as JSON
+    )
 
-    # LLM Provider Selection
-    # Options: "openai", "xai"
-    LLM_PROVIDER: str = "openai"
+    # Path properties that return complete paths
+    @property
+    def FAQ_FILE_PATH(self) -> str:
+        """Complete path to the FAQ file"""
+        return os.path.join(self.DATA_DIR, "extracted_faq.jsonl")
 
-    model_config = {
-        "env_file": str(Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / ".env"),
-        "case_sensitive": True,
-        "validate_default": True,
-    }
+    @property
+    def CHAT_EXPORT_FILE_PATH(self) -> str:
+        """Complete path to the support chat export file"""
+        return os.path.join(self.DATA_DIR, "support_chat_export.csv")
 
-    @model_validator(mode='before')
-    def set_defaults(cls, values):
-        # Set default CORS_ORIGINS if not provided
-        if 'CORS_ORIGINS' not in values or not values['CORS_ORIGINS']:
-            values['CORS_ORIGINS'] = ["http://localhost:3000"]
-        return values
+    @property
+    def PROCESSED_CONVS_FILE_PATH(self) -> str:
+        """Complete path to the processed conversations file"""
+        return os.path.join(self.DATA_DIR, "processed_conversations.json")
+
+    @property
+    def VECTOR_STORE_DIR_PATH(self) -> str:
+        """Complete path to the vector store directory"""
+        return os.path.join(self.DATA_DIR, "vectorstore")
+
+    @property
+    def WIKI_DIR_PATH(self) -> str:
+        """Complete path to the wiki data directory"""
+        return os.path.join(self.DATA_DIR, "wiki")
+
+    @property
+    def FEEDBACK_DIR_PATH(self) -> str:
+        """Complete path to the feedback directory"""
+        return os.path.join(self.DATA_DIR, "feedback")
+
+    @property
+    def CONVERSATIONS_FILE_PATH(self) -> str:
+        """Complete path to the conversations file"""
+        return os.path.join(self.DATA_DIR, "conversations.jsonl")
+
+    def get_data_path(self, *path_parts) -> str:
+        """Utility method to construct paths within DATA_DIR
+
+        Args:
+            *path_parts: Path components to join with DATA_DIR
+
+        Returns:
+            Complete path within DATA_DIR
+        """
+        return os.path.join(self.DATA_DIR, *path_parts)
+
+    @field_validator("CORS_ORIGINS", mode="after")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Convert string CORS_ORIGINS to list of hosts"""
+        if isinstance(v, str):
+            if v == "*":
+                return ["*"]
+            return [host.strip() for host in v.split(",") if host.strip()]
+        return v
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # For local development, if DATA_DIR is a relative path, make it absolute relative to API_DIR
-        if not os.path.isabs(self.DATA_DIR):
-            self.DATA_DIR = str(Path(self.API_DIR) / self.DATA_DIR)
+        # Make paths absolute
+        self.DATA_DIR = os.path.abspath(self.DATA_DIR)
 
-        # Make data directory paths absolute
-        self.VECTOR_STORE_PATH = str(Path(self.DATA_DIR) / self.VECTOR_STORE_PATH)
-        self.FAQ_OUTPUT_PATH = str(Path(self.DATA_DIR) / self.FAQ_OUTPUT_PATH)
-        self.SUPPORT_CHAT_EXPORT_PATH = str(Path(self.DATA_DIR) / self.SUPPORT_CHAT_EXPORT_PATH)
-        self.PROCESSED_CONVERSATIONS_PATH = str(Path(self.DATA_DIR) / self.PROCESSED_CONVERSATIONS_PATH)
-
-        # Ensure data directories exist
-        os.makedirs(self.DATA_DIR, exist_ok=True)
-        for path in [self.VECTOR_STORE_PATH, self.FAQ_OUTPUT_PATH,
-                     self.SUPPORT_CHAT_EXPORT_PATH, self.PROCESSED_CONVERSATIONS_PATH]:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Create directories if they don't exist
+        Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
+        Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings():
     return Settings()

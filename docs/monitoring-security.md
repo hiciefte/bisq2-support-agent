@@ -4,16 +4,16 @@ This document explains how to secure the monitoring services (Grafana and Promet
 
 ## Grafana Security
 
-Grafana has been configured with basic authentication. The default credentials are set in the `.env` file:
+Grafana has been configured with basic authentication. The default credentials are set in the `docker/.env` file:
 
 ```
-GRAFANA_ADMIN_USER=bisqadmin
-GRAFANA_ADMIN_PASSWORD=Bisq2Secure!Monitoring
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=securepassword
 ```
 
 ### Important Security Notes for Grafana:
 
-1. **Change Default Credentials**: Always change the default credentials in the `.env` file before deploying to production.
+1. **Change Default Credentials**: Always change the default credentials in the `docker/.env` file before deploying to production.
 
 2. **Access Control**: After logging in, you can set up additional users with different permission levels:
    - Go to Configuration > Users
@@ -90,6 +90,17 @@ prometheus:
 2. Use a VPN or SSH tunneling to access Prometheus
 3. Configure firewall rules to restrict access
 
+### Option 4: Environment Variable Configuration
+
+You can set the Admin API key in the `docker/.env` file, which is used by Prometheus to secure admin endpoints:
+
+```
+# Admin API key for protected endpoints
+ADMIN_API_KEY=your_secure_admin_key
+```
+
+This key will be passed to Prometheus as an environment variable in the docker-compose.yml configuration.
+
 ## Additional Security Recommendations
 
 1. **Regular Updates**: Keep Grafana and Prometheus updated to the latest versions
@@ -97,6 +108,11 @@ prometheus:
 3. **HTTPS**: Always use HTTPS in production environments
 4. **Least Privilege**: Follow the principle of least privilege for all users and services
 5. **Monitoring**: Monitor access to your monitoring services (yes, monitor your monitoring!)
+6. **Port Exposure**: Configure exposed ports in the `docker/.env` file:
+   ```
+   EXPOSE_PROMETHEUS_PORT=9090
+   EXPOSE_GRAFANA_PORT=3001
+   ```
 
 ## References
 

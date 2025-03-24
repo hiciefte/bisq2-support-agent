@@ -18,7 +18,7 @@ This project consists of the following components:
 - Docker and Docker Compose installed
 - OpenAI API key (for the RAG model)
 - Python 3.11+ (for local development)
-- Node.js 18+ (for web frontend development)
+- Node.js 20+ (for web frontend development)
 - Bisq 2 API instance (for FAQ extraction) - see [Bisq 2 API Setup](docs/bisq2-api-setup.md)
 
 ## Project Structure
@@ -33,22 +33,25 @@ bisq-support-assistant/
 │   │   └── main.py       # Application entry point
 │   ├── data/             # Data directory
 │   │   ├── wiki/         # Wiki documents for RAG
+│   │   ├── feedback/     # User feedback storage
 │   │   └── vectorstore/  # Vector embeddings storage
 │   └── requirements.txt  # Python dependencies
 ├── web/                  # Next.js web frontend
 ├── docker/               # Docker configuration
 │   ├── api/              # API service Dockerfile
-│   ├── web/              # Web frontend Dockerfile
+│   ├── web/              # Web frontend Dockerfile and dev version
+│   ├── nginx/            # Nginx configuration for production
 │   ├── prometheus/       # Prometheus configuration
 │   ├── grafana/          # Grafana configuration
-│   └── docker-compose.yml # Docker Compose configuration
+│   ├── scripts/          # Maintenance and automation scripts
+│   ├── docker-compose.yml      # Production Docker Compose configuration
+│   └── docker-compose.local.yml # Development Docker Compose configuration
 ├── docs/                 # Documentation
 │   ├── bisq2-api-setup.md # Bisq 2 API setup guide
-│   ├── faq-automation.md # FAQ automation guide
 │   ├── troubleshooting.md # Troubleshooting guide
 │   └── monitoring-security.md # Monitoring security guide
 ├── scripts/              # Utility scripts
-└── .env.example          # Example environment variables
+└── run-local.sh, run-cloud.sh # Deployment scripts
 ```
 
 ## Setup
@@ -61,16 +64,37 @@ cd <repository-directory>
 
 ### 2. Environment Configuration:
 
-Create a `.env` file in the project root for Docker:
+Create `.env` files in the appropriate directories:
 
+#### For Docker:
 ```bash
-cp .env.example .env
+# Copy the example file
+cp docker/.env.example docker/.env
+
+# Edit with your settings
+nano docker/.env
 ```
 
-Update the `.env` file with your OpenAI API key:
-
+Required variables for Docker:
 ```
-OPENAI_API_KEY=your_openai_api_key_here
+# OpenAI API key (required for the RAG service)
+OPENAI_API_KEY=your_api_key_here
+
+# Admin API key for protected endpoints
+ADMIN_API_KEY=your_admin_key_here
+
+# Grafana credentials (for monitoring)
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=securepassword
+```
+
+#### For Local API Development:
+```bash
+# Copy the example file
+cp api/.env.example api/.env
+
+# Edit with your settings
+nano api/.env
 ```
 
 ### 3. Data Directory Structure:
@@ -79,13 +103,14 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 - `api/data/wiki/`: Contains Markdown files with documentation
 - `api/data/vectorstore/`: Contains vector embeddings for the RAG system
+- `api/data/feedback/`: Stores user feedback in monthly files
 
 For Docker, these directories are mounted into the container, so both local development and Docker setups use the same data.
 
 If these directories don't exist or are empty, you may need to:
 ```bash
 # Ensure the directories exist
-mkdir -p api/data/wiki api/data/vectorstore
+mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
 
 # Add content to the wiki directory (if needed)
 # Example: cp your-documentation.md api/data/wiki/
@@ -93,72 +118,65 @@ mkdir -p api/data/wiki api/data/vectorstore
 
 ## Deployment Options
 
-### Local Development
+### Production Deployment
 
-For local development, use the `docker-compose.local.yml` file, which mounts the local data directory into the container:
-
-```bash
-# Run the local development environment
-./run-local.sh
-```
-
-This configuration:
-- Mounts the `api/data` directory to `/app/api/data` in the container
-- Allows you to modify files locally and see changes immediately
-- Is ideal for development and testing
-
-### Cloud Deployment
-
-For cloud deployment, use the standard `docker-compose.yml` file:
+For production deployment, use the standard docker configuration:
 
 ```bash
-# Run the cloud deployment environment
+# Build and start the production environment
 ./run-cloud.sh
 ```
 
 This configuration:
-- Copies the data directory into the container during the build process
-- Does not mount local volumes for data (only for app code)
-- Is more suitable for production environments
+- Uses a two-stage build process for the web frontend to ensure proper module resolution
+- Sets up Nginx as a reverse proxy for the web frontend
+- Configures monitoring with Prometheus and Grafana
+- Includes scheduled tasks for FAQ updates and feedback processing
+- Is optimized for production use with proper resource limits and environment settings
 
-## Running with Docker
+### Local Development
 
-1. Start all services:
-```bash
-docker-compose up -d
-```
-
-2. Access the services:
-   - Web interface: http://localhost:3000
-   - API documentation: http://localhost:8000/docs
-   - Prometheus: http://localhost:9090
-   - Grafana: http://localhost:3001
-
-## Development
-
-### Environment Configuration for Local Development
-
-When developing locally, each service needs its own environment configuration:
-
-#### API Service:
-
-Create a `.env` file in the `api` directory:
+For local development, use the local configuration:
 
 ```bash
-cp .env.example api/.env
+# Build and start the local development environment
+./run-local.sh
 ```
 
-**Important**: For local development, set the `DATA_DIR` to `data` (relative path) in the API's `.env` file:
+This configuration:
+- Mounts local directories for real-time code changes
+- Uses Dockerfile.dev for the web frontend with hot reloading
+- Sets development-specific environment variables
+- Provides a simplified setup without Nginx, Prometheus, or Grafana
 
-```
-DATA_DIR=data
-```
+## Docker Configuration Details
 
-This ensures the API service uses the `api/data` directory when running locally, while still working correctly in Docker.
+### Web Frontend
 
-### Running Services Individually
+The project uses two different Dockerfiles for the web frontend:
 
-#### API Service:
+1. **Production (Dockerfile)**:
+   - Two-stage build process to ensure proper module resolution
+   - First stage installs dependencies and builds the Next.js application
+   - Second stage only includes the built artifacts
+   - Configured for optimal production performance
+
+2. **Development (Dockerfile.dev)**:
+   - Single-stage build optimized for development
+   - Mounts local directories for real-time code changes
+   - Enables hot reloading for immediate feedback during development
+
+### API Service
+
+The API service Dockerfile:
+- Uses a multi-stage build to minimize image size
+- Installs dependencies in a builder stage
+- Copies only necessary files to the final image
+- Configures proper data directories for the RAG system
+
+## Running Services Individually
+
+### API Service:
 
 1. Create and activate a virtual environment:
    ```bash
@@ -180,34 +198,20 @@ This ensures the API service uses the `api/data` directory when running locally,
    pip install -r requirements.txt
    ```
 
-3. Ensure you have a `.env` file in the api directory with the correct configuration:
-   ```
-   # OpenAI API key (required for the RAG service)
-   OPENAI_API_KEY=your_api_key_here
-   OPENAI_MODEL=o3-mini
-   
-   # Bisq API URL
-   BISQ_API_URL=http://localhost:8082
-   
-   # Model Configuration
-   EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-   
-   # Debug mode
-   DEBUG=true
-   
-   # Data paths - using relative path that works for both Docker and manual runs
-   DATA_DIR=data
-   VECTOR_STORE_PATH=vectorstore
-   FAQ_OUTPUT_PATH=extracted_faq.jsonl
-   SUPPORT_CHAT_EXPORT_PATH=support_chat_export.csv
+3. Ensure you have a `.env` file in the api directory:
+   ```bash
+   # If you haven't already created it
+   cp .env.example .env
+   # Edit as needed
+   nano .env
    ```
 
 4. Run the API service:
    ```bash
-   python -m app.main
+   python -m uvicorn app.main:app --reload
    ```
 
-#### Web Frontend:
+### Web Frontend:
 
 1. Navigate to web directory:
    ```bash
@@ -230,7 +234,7 @@ The RAG system uses documents from the following locations:
 
 - **Wiki Documents**: Place Markdown files in `api/data/wiki/`
 - **MediaWiki XML Dump**: Place a MediaWiki XML dump file named `bisq_dump.xml` in `api/data/wiki/` to load content from a MediaWiki export
-- **FAQ Data**: The system will automatically extract FAQ data from the wiki documents
+- **FAQ Data**: The system will automatically extract FAQ data from the wiki documents and Bisq support chats
 
 When adding new content:
 1. Add Markdown files to `api/data/wiki/` or add a MediaWiki XML dump file named `bisq_dump.xml` to the same directory
@@ -245,25 +249,22 @@ The system supports loading content from MediaWiki XML dumps, which can be expor
 2. Name the file `bisq_dump.xml` and place it in the `api/data/wiki/` directory
 3. Restart the API service to rebuild the vector store
 
-The system will automatically load content from the XML dump, including page titles and sections, and use it for the RAG system.
+## Automated FAQ Extraction
 
-### MediaWiki XML Namespace Issues
+The project includes automated FAQ extraction from Bisq support chats:
 
-If you encounter namespace conflict warnings when processing an existing MediaWiki XML dump:
+1. The FAQ extractor connects to the Bisq 2 API to fetch support chat conversations
+2. It processes these conversations to generate frequently asked questions and answers
+3. The extracted FAQs are added to the RAG system's knowledge base
 
-```
-WARNING:mwxml.iteration.page:Namespace id conflict detected. <title>=File:Example.png, <namespace>=0, mapped_namespace=6
-```
+## Monitoring and Security
 
-**Note**: The latest version of the `download_bisq2_media_wiki.py` script already handles namespaces correctly. This fix is only needed for existing XML files created with older versions of the download script.
+The project includes Prometheus and Grafana for monitoring:
 
-You can fix these conflicts by running:
+- **Prometheus**: Collects metrics from the API and web services
+- **Grafana**: Provides dashboards for visualizing the metrics
 
-```bash
-python3 scripts/fix_xml_namespaces.py
-```
-
-This script will fix namespace issues in your existing `api/data/wiki/bisq_dump.xml` file.
+For details on securing these services, see [Monitoring Security Guide](docs/monitoring-security.md).
 
 ## Troubleshooting
 
