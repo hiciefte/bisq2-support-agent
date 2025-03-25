@@ -206,7 +206,7 @@ services:
       - ../api/data:/app/api/data
     environment:
       - DATA_DIR=${DATA_DIR}
-      - BISQ_API_URL=http://host.docker.internal:8090 # Updated Docker network address
+      - BISQ_API_URL=http://host.docker.internal:8090
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
