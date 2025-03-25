@@ -127,7 +127,9 @@ async def get_feedback_analytics(
     # Source effectiveness
     source_stats = {}
     for item in feedback:
-        for source in item.get('sources_used', []):
+        # Try sources_used first, then fall back to sources if sources_used doesn't exist
+        sources_list = item.get('sources_used', item.get('sources', []))
+        for source in sources_list:
             source_type = source.get('type', 'unknown')
             if source_type not in source_stats:
                 source_stats[source_type] = {'total': 0, 'helpful': 0}
