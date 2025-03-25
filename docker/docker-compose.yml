@@ -45,13 +45,14 @@ services:
       - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/app/api/data # Mount the data directory
     environment:
-      -  # Only Docker-specific overrides here
+      # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
-      -  # Include API keys - these need to be explicitly included to be passed to container
+      # Include API keys - these need to be explicitly included to be passed to container
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - XAI_API_KEY=${XAI_API_KEY}
       - XAI_MODEL=${XAI_MODEL}
       - XAI_API_BASE_URL=${XAI_API_BASE_URL}
@@ -211,7 +212,6 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
     depends_on:
       - api
     networks:
@@ -231,7 +231,6 @@ services:
       - ../api/data:/app/api/data # Match the API service volume mount
     environment:
       - DATA_DIR=${DATA_DIR}
-    platform: linux/arm64
     depends_on:
       - api
     networks:
