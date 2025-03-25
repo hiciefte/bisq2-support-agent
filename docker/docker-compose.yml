@@ -43,7 +43,7 @@ services:
     restart: always
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
-      - ../api/data:/app/api/data # Mount the data directory
+      - ../api/data:/data # Mount the data directory
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
@@ -52,15 +52,14 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - XAI_API_KEY=${XAI_API_KEY}
       - XAI_MODEL=${XAI_MODEL}
       - XAI_API_BASE_URL=${XAI_API_BASE_URL}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR}
-    ports:
-      - "${EXPOSE_API_PORT:-8000}:8000"
+    expose:
+      - "8000"
     networks:
       - bisq-support-network
     healthcheck:
