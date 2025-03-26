@@ -26,13 +26,3 @@ scrape_configs:
     static_configs:
       - targets: ['web:3000']
     metrics_path: '/api/metrics'
-
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-          # - alertmanager:9093
-
-# Alert rules can be added here
-rule_files:
-  # - "alert_rules.yml" 

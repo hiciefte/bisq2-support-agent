@@ -21,10 +21,10 @@ Environment variables:
 """
 
 import logging
+from typing import List, Dict, Any, Optional
+
 import asyncio
 from asyncio import get_event_loop
-import time
-from typing import List, Dict, Any, Optional
 
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API
@@ -45,78 +45,87 @@ RETRY_BACKOFF_FACTOR = 2  # exponential backoff
 
 async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
     """Run the FAQ extraction process using FAQService.
-    
+
     This function orchestrates the full extraction process:
     1. Initialize the required services
     2. Fetch and process support chat messages
     3. Extract FAQs using OpenAI
     4. Save the results
-    
+
     Args:
         force_reprocess: If True, ignores the processed_conv_ids and reprocesses all conversations.
             This is useful for regenerating FAQs after prompt improvements.
-    
+
     Returns:
         List of new FAQ entries if successful, None otherwise
     """
     retry_count = 0
     new_faqs = None
     last_error = None
-    
+
     while retry_count < MAX_RETRIES:
         try:
             # Get application settings
             settings = get_settings()
-            
+
             # Initialize Bisq API for data fetching
             bisq_api = Bisq2API(settings)
-            
+
             # Initialize the FAQ Service
             faq_service = FAQService(settings)
-            
+
             # Clear processed conversation IDs if force_reprocess is True
             if force_reprocess:
                 logger.info("Force reprocessing all conversations")
                 faq_service.processed_conv_ids.clear()
-            
+
             # Run the extraction process using the service
             if retry_count > 0:
                 logger.info(f"Retry attempt {retry_count}/{MAX_RETRIES}...")
-            
+
             logger.info("Starting FAQ extraction process...")
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
-            
-            logger.info(f"FAQ extraction completed. Generated {len(new_faqs)} new FAQ entries.")
+
+            logger.info(
+                f"FAQ extraction completed. Generated {len(new_faqs)} new FAQ entries.")
             return new_faqs
-            
+
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
             # Transient network errors - good candidates for retry
             retry_count += 1
             last_error = e
             if retry_count < MAX_RETRIES:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (retry_count - 1))
-                logger.warning(f"Transient error occurred: {str(e)}. Retrying in {wait_time} seconds...")
+                logger.warning(
+                    f"Transient error occurred: {str(e)}. Retrying in {wait_time} seconds...")
                 await asyncio.sleep(wait_time)
             else:
-                logger.error(f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}", exc_info=True)
+                logger.error(
+                    f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}",
+                    exc_info=True)
                 break
-                
+
         except Exception as e:
             # For other exceptions, we'll retry once but log as error
             retry_count += 1
             last_error = e
             if retry_count < MAX_RETRIES:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (retry_count - 1))
-                logger.error(f"Error during FAQ extraction: {str(e)}. Retrying in {wait_time} seconds...", exc_info=True)
+                logger.error(
+                    f"Error during FAQ extraction: {str(e)}. Retrying in {wait_time} seconds...",
+                    exc_info=True)
                 await asyncio.sleep(wait_time)
             else:
-                logger.error(f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}", exc_info=True)
+                logger.error(
+                    f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}",
+                    exc_info=True)
                 break
-    
+
     # If we reached here, all retries failed
     if last_error:
-        logger.error(f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}")
-    
+        logger.error(
+            f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}")
+
     return None
 
 
@@ -125,7 +134,7 @@ if __name__ == "__main__":
     # To force reprocessing all conversations, run:
     # python -m app.scripts.extract_faqs force_reprocess=True
     force_reprocess = False
-    
+
     loop = get_event_loop()
     try:
         loop.run_until_complete(main(force_reprocess=force_reprocess))

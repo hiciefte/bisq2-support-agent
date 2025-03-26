@@ -14,7 +14,7 @@ import time
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional, cast, Tuple
+from typing import Dict, List, Set, Any, Optional, cast
 
 import pandas as pd
 from fastapi import Request
@@ -48,24 +48,24 @@ class FAQService:
             self.processed_convs_path = Path(settings.PROCESSED_CONVS_FILE_PATH)
             self.existing_input_path = Path(settings.CHAT_EXPORT_FILE_PATH)
             self.conversations_path = Path(settings.CONVERSATIONS_FILE_PATH)
-            
+
             # Ensure data directories exist
             self.faq_file_path.parent.mkdir(parents=True, exist_ok=True)
             self.processed_convs_path.parent.mkdir(parents=True, exist_ok=True)
             self.existing_input_path.parent.mkdir(parents=True, exist_ok=True)
             self.conversations_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
             # Initialize OpenAI client if settings are provided
             if hasattr(settings, 'OPENAI_API_KEY'):
                 self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
             else:
                 self.openai_client = None
-                
+
         # Store messages and their relationships for FAQ extraction
         self.messages: Dict[str, Dict[str, Any]] = {}  # msg_id -> message data
         self.references: Dict[str, str] = {}  # msg_id -> referenced_msg_id
         self.conversations: List[Dict[str, Any]] = []  # List of conversation threads
-        
+
         # Load processed conversation IDs
         self.processed_conv_ids = self.load_processed_conv_ids()
 
@@ -136,14 +136,14 @@ class FAQService:
         except Exception as e:
             logger.error(f"Error loading FAQ data: {str(e)}", exc_info=True)
             return []
-            
+
     # FAQ Extraction Methods from extract_faqs.py
-    
+
     def load_processed_conv_ids(self) -> Set[str]:
         """Load the set of conversation IDs that have already been processed."""
         if not hasattr(self, 'processed_convs_path'):
             return set()
-            
+
         if self.processed_convs_path.exists():
             try:
                 with open(self.processed_convs_path, 'r') as f:
@@ -158,20 +158,20 @@ class FAQService:
         if not hasattr(self, 'processed_convs_path'):
             logger.warning("Cannot save processed conversation IDs: path not set")
             return
-            
+
         with open(self.processed_convs_path, 'w') as f:
             json.dump(list(self.processed_conv_ids), cast(Any, f))
-            
+
     async def merge_csv_files(self, bisq_api=None):
         """Fetch latest messages from API and merge with existing ones.
-        
+
         Args:
             bisq_api: Optional Bisq2API instance to fetch data from
         """
         if not hasattr(self, 'existing_input_path'):
             logger.warning("Cannot merge CSV files: paths not set")
             return
-            
+
         logger.info("Fetching latest messages from Bisq 2 API...")
 
         # Read existing CSV if it exists
@@ -272,7 +272,7 @@ class FAQService:
                     if msg['referenced_msg_id']:
                         self.references[msg_id] = msg['referenced_msg_id']
                         if msg['referenced_msg_id'] not in self.messages and pd.notna(
-                            row_data['Referenced Message Text']):
+                                row_data['Referenced Message Text']):
                             ref_timestamp = None
                             ref_rows = df[df['Message ID'] == msg['referenced_msg_id']]
                             if not ref_rows.empty and pd.notna(ref_rows.iloc[0]['Date']):
@@ -306,7 +306,7 @@ class FAQService:
         """Build a conversation thread starting from a message, following references both ways."""
         if not self.messages:
             return []
-            
+
         thread = []
         seen_messages = set()
         to_process = {start_msg_id}
@@ -382,7 +382,7 @@ class FAQService:
 
             # Check if messages are connected through references
             if (current_msg['referenced_msg_id'] != previous_msg['msg_id'] and
-                previous_msg['referenced_msg_id'] != current_msg['msg_id']):
+                    previous_msg['referenced_msg_id'] != current_msg['msg_id']):
                 # Messages must be within 30 minutes of each other if not connected through references
                 if not (current_msg['timestamp'] and previous_msg['timestamp'] and
                         (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)):
@@ -394,7 +394,7 @@ class FAQService:
         """Group messages into conversations."""
         if not self.messages:
             return []
-            
+
         logger.info("Grouping messages into conversations...")
 
         # Start with support messages that have references
@@ -432,10 +432,10 @@ class FAQService:
 
     def _format_conversation_for_prompt(self, conversation: Dict) -> str:
         """Format a single conversation for inclusion in the prompt.
-        
+
         Args:
             conversation: A conversation dictionary with messages
-            
+
         Returns:
             Formatted conversation text
         """
@@ -444,13 +444,13 @@ class FAQService:
             role = "Support" if msg['is_support'] else "User"
             conv_text.append(f"{role}: {msg['text']}")
         return "\n".join(conv_text)
-        
+
     def _create_extraction_prompt(self, formatted_conversations: List[str]) -> str:
         """Create the prompt for FAQ extraction.
-        
+
         Args:
             formatted_conversations: List of formatted conversation texts
-            
+
         Returns:
             Complete prompt for the OpenAI API
         """
@@ -467,23 +467,23 @@ Here are the conversations to analyze:
 
 Output each FAQ as a single-line JSON object. No additional text or commentary.""".format(
             "\n\n---\n\n".join(formatted_conversations))
-            
+
     def _call_openai_api(self, prompt: str) -> Optional[str]:
         """Call the OpenAI API with retries and error handling.
-        
+
         Args:
             prompt: The prompt to send to the API
-            
+
         Returns:
             Response text if successful, None otherwise
         """
         if not self.openai_client:
             logger.error("OpenAI client not initialized")
             return None
-            
+
         max_retries = 3
         base_delay = 1
-        
+
         for attempt in range(max_retries):
             try:
                 response = self.openai_client.chat.completions.create(
@@ -492,12 +492,12 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     max_completion_tokens=2000
                 )
                 return response.choices[0].message.content.strip()
-                
+
             except Exception as e:
                 is_rate_limit = "rate limit" in str(e).lower()
                 error_level = logging.WARNING if is_rate_limit else logging.ERROR
                 logger.log(error_level, f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
-                
+
                 if attempt < max_retries - 1:
                     # Add jitter to prevent thundering herd
                     jitter = random.uniform(0, 0.1 * (2 ** attempt))
@@ -509,26 +509,26 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     time.sleep(delay)
                 else:
                     logger.error("Max retries reached for OpenAI API call")
-        
+
         return None
-        
+
     def _process_api_response(self, response_text: str) -> List[Dict]:
         """Process the API response and extract FAQs.
-        
+
         Args:
             response_text: The response text from the API
-            
+
         Returns:
             List of extracted FAQ dictionaries
         """
         faqs = []
-        
+
         if not response_text:
             return faqs
-            
+
         # Clean up the response text - remove markdown code blocks
         response_text = response_text.replace('```json', '').replace('```', '').strip()
-        
+
         # Process each line as a potential JSON object
         for line in response_text.split('\n'):
             line = line.strip()
@@ -543,22 +543,22 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 faqs.append(faq)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
-                
+
         return faqs
 
     def extract_faqs_with_openai(self, conversations: List[Dict]) -> List[Dict]:
         """Extract FAQs from conversations using OpenAI.
-        
+
         Args:
             conversations: List of conversation dictionaries
-            
+
         Returns:
             List of extracted FAQ dictionaries
         """
         if not self.openai_client:
             logger.error("OpenAI client not initialized. Cannot extract FAQs.")
             return []
-            
+
         logger.info("Extracting FAQs using OpenAI...")
 
         # Filter out already processed conversations
@@ -585,15 +585,15 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         for batch_idx, batch in enumerate(batches):
             # Create the prompt
             prompt = self._create_extraction_prompt(batch)
-            
+
             # Call the OpenAI API
             response_text = self._call_openai_api(prompt)
-            
+
             if response_text:
                 # Process the response
                 batch_faqs = self._process_api_response(response_text)
                 all_faqs.extend(batch_faqs)
-            
+
             # Mark conversations as processed
             start_idx = batch_idx * batch_size
             for conv in new_conversations[start_idx:start_idx + len(batch)]:
@@ -613,7 +613,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         """Load existing FAQ entries if they exist."""
         if not hasattr(self, 'faq_file_path'):
             return []
-            
+
         if self.faq_file_path.exists():
             try:
                 faqs = []
@@ -632,7 +632,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         if not hasattr(self, 'faq_file_path'):
             logger.warning("Cannot save FAQs: path not set")
             return
-            
+
         if not faqs and self.faq_file_path.exists():
             logger.info("No new FAQs to save, preserving existing entries")
             return
@@ -656,10 +656,10 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
     async def extract_and_save_faqs(self, bisq_api=None) -> List[Dict]:
         """Run the complete FAQ extraction process.
-        
+
         Args:
             bisq_api: Optional Bisq2API instance to fetch data
-            
+
         Returns:
             List of extracted FAQ dictionaries
         """
@@ -710,7 +710,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 self.save_processed_conv_ids()
             else:
                 logger.info("No new conversations to process")
-                
+
             return new_faqs
 
         except Exception as e:
@@ -720,4 +720,4 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
 def get_faq_service(request: Request) -> FAQService:
     """Get the FAQ service from the request state."""
-    return request.app.state.faq_service 
+    return request.app.state.faq_service
