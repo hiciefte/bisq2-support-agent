@@ -12,7 +12,6 @@ File Naming Conventions:
   - negative_feedback.jsonl (special purpose file)
 """
 
-import json
 import logging
 import os
 import re
@@ -32,6 +31,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 # Remove the constants that are now in config.py
 # They'll be accessed through the settings object
@@ -77,17 +77,20 @@ def redact_pii(text: str) -> str:
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
 
-    def __init__(self, settings=None, feedback_service=None, wiki_service=None):
+    def __init__(self, settings=None, feedback_service=None, wiki_service=None,
+                 faq_service=None):
         """Initialize the RAG service.
 
         Args:
             settings: Application settings
             feedback_service: Optional FeedbackService instance for feedback operations
             wiki_service: Optional WikiService instance for wiki operations
+            faq_service: Optional FAQService instance for FAQ operations
         """
         self.settings = settings
         self.feedback_service = feedback_service
         self.wiki_service = wiki_service
+        self.faq_service = faq_service
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
@@ -123,54 +126,6 @@ class SimplifiedRAGService:
             }
 
         logger.info("Simplified RAG service initialized")
-
-    def load_faq_data(self, faq_file=None):
-        """Load FAQ data from JSONL file.
-
-        Args:
-            faq_file: Path to the FAQ JSONL file
-
-        Returns:
-            List of Document objects
-        """
-        if faq_file is None:
-            faq_file = self.settings.FAQ_FILE_PATH
-
-        logger.info(f"Using FAQ file path: {faq_file}")
-
-        if not os.path.exists(faq_file):
-            logger.warning(f"FAQ file not found: {faq_file}")
-            return []
-
-        documents = []
-        try:
-            with open(faq_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        data = json.loads(line.strip())
-                        question = data.get("question", "")
-                        answer = data.get("answer", "")
-                        category = data.get("category", "General")
-
-                        doc = Document(
-                            page_content=f"Question: {question}\nAnswer: {answer}",
-                            metadata={
-                                "source": faq_file,
-                                "title": question[:50] + "..." if len(
-                                    question) > 50 else question,
-                                "type": "faq",
-                                "source_weight": self.source_weights.get("faq", 1.0),
-                                "category": category
-                            }
-                        )
-                        documents.append(doc)
-                    except json.JSONDecodeError:
-                        logger.error(f"Error parsing JSON line in FAQ file: {line}")
-            logger.info(f"Loaded {len(documents)} FAQ documents")
-            return documents
-        except Exception as e:
-            logger.error(f"Error loading FAQ data: {str(e)}", exc_info=True)
-            return []
 
     def initialize_embeddings(self):
         """Initialize the OpenAI embedding model."""
@@ -311,7 +266,12 @@ class SimplifiedRAGService:
             else:
                 logger.warning("WikiService not provided, skipping wiki data loading")
 
-            faq_docs = self.load_faq_data()
+            # Load FAQ data from FAQService
+            faq_docs = []
+            if self.faq_service:
+                faq_docs = self.faq_service.load_faq_data()
+            else:
+                logger.warning("FAQService not provided, skipping FAQ data loading")
 
             # Combine all documents
             all_docs = wiki_docs + faq_docs
@@ -330,9 +290,11 @@ class SimplifiedRAGService:
                 logger.info(
                     f"Updated source weights from feedback service: {self.source_weights}")
 
-                # If we have a wiki service, update its source weights too
+                # Update service weights
                 if self.wiki_service:
                     self.wiki_service.update_source_weights(self.source_weights)
+                if self.faq_service:
+                    self.faq_service.update_source_weights(self.source_weights)
 
             # Split documents
             logger.info("Splitting documents into chunks...")
@@ -445,7 +407,7 @@ Answer:"""
         def generate_response(question, chat_history=None):
             # Initialize response_start_time at the beginning to avoid reference before assignment
             response_start_time = time.time()
-            
+
             try:
                 if not question:
                     return "I'm sorry, I didn't receive a question. How can I help you with Bisq 2?"
@@ -466,7 +428,8 @@ Answer:"""
                     # Format each exchange in chat history
                     formatted_history = []
                     # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
-                    recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH:]
+                    recent_history = chat_history[
+                                     -self.settings.MAX_CHAT_HISTORY_LENGTH:]
                     for exchange in recent_history:
                         # Check if this is a ChatMessage or a dictionary
                         if hasattr(exchange, 'role') and hasattr(exchange, 'content'):
@@ -486,7 +449,8 @@ Answer:"""
                             if ai_msg:
                                 formatted_history.append(f"Assistant: {ai_msg}")
                         else:
-                            logger.warning(f"Unknown exchange type in chat history: {type(exchange)}")
+                            logger.warning(
+                                f"Unknown exchange type in chat history: {type(exchange)}")
 
                     chat_history_str = "\n".join(formatted_history)
 
@@ -527,7 +491,8 @@ Answer:"""
                     # Log sample in non-production
                     is_production = self.settings.ENVIRONMENT.lower() == 'production'
                     if not is_production:
-                        sample = content[:self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
+                        sample = content[
+                                 :self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
                             content) > self.settings.MAX_SAMPLE_LOG_LENGTH else content
                         logger.info(f"Content sample: {redact_pii(sample)}")
                 else:
@@ -563,7 +528,7 @@ Answer:"""
         """
         # Initialize start_time at the beginning to avoid reference before assignment
         start_time = time.time()
-        
+
         try:
             if not self.rag_chain:
                 logger.error("RAG chain not initialized. Call setup() first.")
@@ -579,35 +544,28 @@ Answer:"""
             except AttributeError as ae:
                 # Handle specific attribute errors that might occur when processing chat_history
                 logger.error(f"Attribute error in rag_chain: {str(ae)}", exc_info=True)
-                
+
                 # Check if it's specifically related to ChatMessage objects
                 if "ChatMessage" in str(ae) and "get" in str(ae):
-                    logger.warning("Detected ChatMessage handling error. Attempting to format chat history...")
-                    
-                    # Try to convert ChatMessage objects to dictionaries if that's the issue
-                    formatted_chat_history = []
-                    if chat_history and isinstance(chat_history, list):
-                        for msg in chat_history:
-                            if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                                # This is a ChatMessage object, convert to dict format 
-                                if msg.role == "user":
-                                    formatted_chat_history.append({"user": msg.content, "assistant": ""})
-                                elif msg.role == "assistant":
-                                    # Find the previous item and add this content
-                                    if formatted_chat_history:
-                                        formatted_chat_history[-1]["assistant"] = msg.content
-                                    else:
-                                        formatted_chat_history.append({"user": "", "assistant": msg.content})
-                    
-                    # Try again with the formatted history
+                    # Try to adapt chat_history by converting it to a more compatible format
                     try:
-                        content = self.rag_chain(question, formatted_chat_history)
-                    except Exception as e2:
-                        logger.error(f"Second attempt also failed: {str(e2)}", exc_info=True)
-                        content = "I apologize, but I'm having technical difficulties processing your request. Please try again later."
+                        adapted_chat_history = []
+                        for message in chat_history:
+                            # Convert to a simple dict format with direct access
+                            if hasattr(message, 'role') and hasattr(message, 'content'):
+                                adapted_chat_history.append({
+                                    "role": message.role,
+                                    "content": message.content
+                                })
+                        # Retry with the adapted chat history
+                        content = self.rag_chain(question, adapted_chat_history)
+                    except Exception as conversion_error:
+                        logger.error(
+                            f"Error converting chat history: {str(conversion_error)}",
+                            exc_info=True)
+                        content = "I'm sorry, I encountered an error processing your conversation history. Please try again with a simpler question."
                 else:
-                    # For other attribute errors, return a generic message
-                    content = "I apologize, but there was a problem processing your request. Please try again."
+                    content = "I'm sorry, I encountered an unexpected error. Please try again or rephrase your question."
             except Exception as e:
                 # Handle any other exceptions in the rag_chain
                 logger.error(f"Error in rag_chain: {str(e)}", exc_info=True)
@@ -627,6 +585,9 @@ Answer:"""
                     }
                     for doc in docs
                 ]
+
+                # Deduplicate sources to prevent multiple identical sources
+                sources_used = self._deduplicate_sources(sources_used)
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -649,6 +610,35 @@ Answer:"""
                 "response_time": error_time,
                 "error": str(e)
             }
+
+    def _deduplicate_sources(self, sources):
+        """Deduplicate sources to prevent multiple identical or very similar sources.
+
+        Args:
+            sources: List of source dictionaries
+
+        Returns:
+            List of deduplicated sources
+        """
+        if not sources:
+            return []
+
+        # Use a set to track unique sources
+        seen_sources = set()
+        unique_sources = []
+
+        for source in sources:
+            # Create a key based on title and type (primary deduplication)
+            source_key = f"{source['title']}:{source['type']}"
+
+            # Only include the source if we haven't seen this key before
+            if source_key not in seen_sources:
+                seen_sources.add(source_key)
+                unique_sources.append(source)
+
+        logger.info(
+            f"Deduplicated sources from {len(sources)} to {len(unique_sources)}")
+        return unique_sources
 
 
 def get_rag_service(request: Request) -> SimplifiedRAGService:
