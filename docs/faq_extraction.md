@@ -75,19 +75,23 @@ The FAQ extraction process follows these steps:
 
 The FAQ extraction process relies on several environment variables:
 
-- `BISQ_API_URL`: URL to the Bisq API (e.g., `http://host.docker.internal:8090`)
-- `OPENAI_API_KEY`: API key for OpenAI
-- `OPENAI_MODEL`: OpenAI model to use (e.g., `o3-mini`)
-- `DATA_DIR`: Directory for storing data files
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `BISQ_API_URL` | URL to the Bisq API | `http://host.docker.internal:8090` |
+| `OPENAI_API_KEY` | API key for OpenAI | - |
+| `OPENAI_MODEL` | OpenAI model to use | `o3-mini` |
+| `DATA_DIR` | Directory for storing data files | - |
 
 ### File Paths
 
 The following file paths are used:
 
-- `FAQ_FILE_PATH`: Path to the FAQ JSONL file (default: `{DATA_DIR}/extracted_faq.jsonl`)
-- `CHAT_EXPORT_FILE_PATH`: Path to the support chat export CSV (default: `{DATA_DIR}/support_chat_export.csv`)
-- `PROCESSED_CONVS_FILE_PATH`: Path to the processed conversations JSON (default: `{DATA_DIR}/processed_conversations.json`)
-- `CONVERSATIONS_FILE_PATH`: Path to the conversations JSONL (default: `{DATA_DIR}/conversations.jsonl`)
+| Path | Description | Default Location |
+|------|-------------|------------------|
+| `FAQ_FILE_PATH` | Path to the FAQ JSONL file | `{DATA_DIR}/extracted_faq.jsonl` |
+| `CHAT_EXPORT_FILE_PATH` | Path to the support chat export CSV | `{DATA_DIR}/support_chat_export.csv` |
+| `PROCESSED_CONVS_FILE_PATH` | Path to the processed conversations JSON | `{DATA_DIR}/processed_conversations.json` |
+| `CONVERSATIONS_FILE_PATH` | Path to the conversations JSONL | `{DATA_DIR}/conversations.jsonl` |
 
 ## Running the Extraction Process
 
@@ -161,17 +165,17 @@ docker logs docker-faq-extractor-1
 
 To improve the quality of the extracted FAQs:
 
-1. **Prompt Engineering**: Adjust the prompt used for OpenAI to improve extraction quality
-2. **Filtering**: Add more sophisticated filtering of low-quality or duplicative FAQs
-3. **Human Review**: Implement a review process for FAQs before adding them to the knowledge base
+1. **Prompt Engineering** *(Implemented)*: Adjust the prompt used for OpenAI to improve extraction quality
+2. **Filtering** *(Planned Q2 2025)*: Add more sophisticated filtering of low-quality or duplicative FAQs
+3. **Human Review** *(Under Consideration)*: Implement a review process for FAQs before adding them to the knowledge base
 
 ### Performance Improvements
 
 For better performance:
 
-1. **Batch Processing**: Adjust batch sizes for OpenAI requests
-2. **Parallel Processing**: Implement parallel processing of conversation batches
-3. **Caching**: Cache OpenAI responses to avoid redundant processing
+1. **Batch Processing** *(Implemented)*: Adjust batch sizes for OpenAI requests
+2. **Parallel Processing** *(Planned Q3 2025)*: Implement parallel processing of conversation batches
+3. **Caching** *(Under Investigation)*: Cache OpenAI responses to avoid redundant processing
 
 ## Conclusion
 

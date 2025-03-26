@@ -9,11 +9,12 @@ and extracting new FAQs from support chat conversations.
 import json
 import logging
 import os
+import random
 import time
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional, cast
+from typing import Dict, List, Set, Any, Optional, cast, Tuple
 
 import pandas as pd
 from fastapi import Request
@@ -110,6 +111,11 @@ class FAQService:
                         question = data.get("question", "")
                         answer = data.get("answer", "")
                         category = data.get("category", "General")
+
+                        # Validate required fields
+                        if not question.strip() or not answer.strip():
+                            logger.warning(f"Skipping FAQ entry with missing question or answer: {data}")
+                            continue
 
                         doc = Document(
                             page_content=f"Question: {question}\nAnswer: {answer}",
@@ -370,11 +376,6 @@ class FAQService:
 
         # Check if all messages are properly connected through references
         msg_ids = {msg['msg_id'] for msg in thread}
-        for msg in thread:
-            if msg['referenced_msg_id'] and msg['referenced_msg_id'] not in msg_ids:
-                return False
-
-        # Verify message continuity by checking references
         for i in range(1, len(thread)):
             current_msg = thread[i]
             previous_msg = thread[i - 1]
@@ -382,9 +383,9 @@ class FAQService:
             # Check if messages are connected through references
             if (current_msg['referenced_msg_id'] != previous_msg['msg_id'] and
                 previous_msg['referenced_msg_id'] != current_msg['msg_id']):
-                # Allow if messages are within 30 minutes of each other
-                if (current_msg['timestamp'] and previous_msg['timestamp'] and
-                    (current_msg['timestamp'] - previous_msg['timestamp']) > timedelta(minutes=30)):
+                # Messages must be within 30 minutes of each other if not connected through references
+                if not (current_msg['timestamp'] and previous_msg['timestamp'] and
+                        (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)):
                     return False
 
         return True
@@ -429,6 +430,122 @@ class FAQService:
         self.conversations = conversations
         return conversations
 
+    def _format_conversation_for_prompt(self, conversation: Dict) -> str:
+        """Format a single conversation for inclusion in the prompt.
+        
+        Args:
+            conversation: A conversation dictionary with messages
+            
+        Returns:
+            Formatted conversation text
+        """
+        conv_text = []
+        for msg in conversation['messages']:
+            role = "Support" if msg['is_support'] else "User"
+            conv_text.append(f"{role}: {msg['text']}")
+        return "\n".join(conv_text)
+        
+    def _create_extraction_prompt(self, formatted_conversations: List[str]) -> str:
+        """Create the prompt for FAQ extraction.
+        
+        Args:
+            formatted_conversations: List of formatted conversation texts
+            
+        Returns:
+            Complete prompt for the OpenAI API
+        """
+        return """You are a language model specialized in text summarization and data extraction. Your task is to analyze these conversations and extract frequently asked questions (FAQs) along with their concise, clear answers.
+
+For each FAQ you identify, output a single-line JSON object in this format:
+{{"question": "A clear, self-contained question extracted or synthesized from the support chats", "answer": "A concise, informative answer derived from the support chat responses", "category": "A one- or two-word category label that best describes the FAQ topic", "source": "Bisq Support Chat"}}
+
+IMPORTANT: Each JSON object must be on a single line, with no line breaks or pretty printing.
+
+Here are the conversations to analyze:
+
+{}
+
+Output each FAQ as a single-line JSON object. No additional text or commentary.""".format(
+            "\n\n---\n\n".join(formatted_conversations))
+            
+    def _call_openai_api(self, prompt: str) -> Optional[str]:
+        """Call the OpenAI API with retries and error handling.
+        
+        Args:
+            prompt: The prompt to send to the API
+            
+        Returns:
+            Response text if successful, None otherwise
+        """
+        if not self.openai_client:
+            logger.error("OpenAI client not initialized")
+            return None
+            
+        max_retries = 3
+        base_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model=self.settings.OPENAI_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=2000
+                )
+                return response.choices[0].message.content.strip()
+                
+            except Exception as e:
+                is_rate_limit = "rate limit" in str(e).lower()
+                error_level = logging.WARNING if is_rate_limit else logging.ERROR
+                logger.log(error_level, f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
+                
+                if attempt < max_retries - 1:
+                    # Add jitter to prevent thundering herd
+                    jitter = random.uniform(0, 0.1 * (2 ** attempt))
+                    delay = base_delay * (2 ** attempt) + jitter
+                    # Use longer delays for rate limits
+                    if is_rate_limit:
+                        delay = max(delay, 5.0 * (attempt + 1))
+                    logger.info(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    logger.error("Max retries reached for OpenAI API call")
+        
+        return None
+        
+    def _process_api_response(self, response_text: str) -> List[Dict]:
+        """Process the API response and extract FAQs.
+        
+        Args:
+            response_text: The response text from the API
+            
+        Returns:
+            List of extracted FAQ dictionaries
+        """
+        faqs = []
+        
+        if not response_text:
+            return faqs
+            
+        # Clean up the response text - remove markdown code blocks
+        response_text = response_text.replace('```json', '').replace('```', '').strip()
+        
+        # Process each line as a potential JSON object
+        for line in response_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                faq = json.loads(line)
+                # Basic validation
+                if not faq.get('question', '').strip() or not faq.get('answer', '').strip():
+                    logger.warning(f"Skipping FAQ with missing question or answer: {line}")
+                    continue
+                faqs.append(faq)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
+                
+        return faqs
+
     def extract_faqs_with_openai(self, conversations: List[Dict]) -> List[Dict]:
         """Extract FAQs from conversations using OpenAI.
         
@@ -455,13 +572,7 @@ class FAQService:
         logger.info(f"Found {len(new_conversations)} new conversations to process")
 
         # Prepare conversations for the prompt
-        formatted_convs = []
-        for conv in new_conversations:
-            conv_text = []
-            for msg in conv['messages']:
-                role = "Support" if msg['is_support'] else "User"
-                conv_text.append(f"{role}: {msg['text']}")
-            formatted_convs.append("\n".join(conv_text))
+        formatted_convs = [self._format_conversation_for_prompt(conv) for conv in new_conversations]
 
         # Split conversations into batches to avoid token limits
         batch_size = 5
@@ -472,66 +583,25 @@ class FAQService:
         processed_in_batch = set()
 
         for batch_idx, batch in enumerate(batches):
-            # Prepare the prompt
-            prompt = """You are a language model specialized in text summarization and data extraction. Your task is to analyze these conversations and extract frequently asked questions (FAQs) along with their concise, clear answers.
-
-For each FAQ you identify, output a single-line JSON object in this format:
-{{"question": "A clear, self-contained question extracted or synthesized from the support chats", "answer": "A concise, informative answer derived from the support chat responses", "category": "A one- or two-word category label that best describes the FAQ topic", "source": "Bisq Support Chat"}}
-
-IMPORTANT: Each JSON object must be on a single line, with no line breaks or pretty printing.
-
-Here are the conversations to analyze:
-
-{}
-
-Output each FAQ as a single-line JSON object. No additional text or commentary.""".format(
-                "\n\n---\n\n".join(batch))
-
-            max_retries = 3
-            base_delay = 1
-            response = None
-            for attempt in range(max_retries):
-                try:
-                    response = self.openai_client.chat.completions.create(
-                        model=self.settings.OPENAI_MODEL,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_completion_tokens=2000
-                    )
-                    break
-                except Exception as e:
-                    logger.error(
-                        f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
-                    if attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt)
-                        logger.info(f"Retrying in {delay} seconds...")
-                        time.sleep(delay)
-                    else:
-                        logger.error("Max retries reached, skipping this batch.")
-            if response is None:
-                continue
-
-            response_text = response.choices[0].message.content.strip()
-
-            # Clean up the response text - remove markdown code blocks
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-
-            # Process each line as a potential JSON object
-            for line in response_text.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    faq = json.loads(line)
-                    all_faqs.append(faq)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
-
+            # Create the prompt
+            prompt = self._create_extraction_prompt(batch)
+            
+            # Call the OpenAI API
+            response_text = self._call_openai_api(prompt)
+            
+            if response_text:
+                # Process the response
+                batch_faqs = self._process_api_response(response_text)
+                all_faqs.extend(batch_faqs)
+            
+            # Mark conversations as processed
             start_idx = batch_idx * batch_size
             for conv in new_conversations[start_idx:start_idx + len(batch)]:
                 processed_in_batch.add(conv['id'])
 
-            time.sleep(1)
+            time.sleep(1)  # Small delay between batches
 
+        # Update processed conversation IDs
         self.processed_conv_ids.update(processed_in_batch)
         self.save_processed_conv_ids()
 
