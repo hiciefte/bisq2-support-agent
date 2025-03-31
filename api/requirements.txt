@@ -1,29 +1,30 @@
-# API Framework
+# Web framework
 fastapi
-uvicorn[standard]
+uvicorn
+
+# Data handling
 pydantic
 pydantic-settings
 
-# RAG Components
-langchain
-langchain-community
-langchain-core
+# LLM and RAG
+langchain>=0.1.9
+langchain-community>=0.0.24
+langchain-core>=0.1.27
 langchain-chroma
-chromadb
+chromadb>=0.4.22
 
-# LLM Integration - Core
+# LLM providers
 openai
-langchain-openai
+langchain-openai>=0.0.8
 langchain-huggingface
-
-# LLM Integration - xAI
+langchain-text-splitters
 langchain-xai
 
-# Web Scraping
+# Web scraping and parsing
 beautifulsoup4
 requests
 
-# Data Processing
+# Data processing
 pandas
 numpy
 tqdm
@@ -32,17 +33,17 @@ asyncio
 mwxml
 mwparserfromhell
 
-# Monitoring & Logging
+# Monitoring
 psutil
 prometheus-client
 python-json-logger
 
-# Development Tools
+# Testing and development
 pytest
 pytest-asyncio
 black
 isort
 mypy
 
-# Prometheus FastAPI Instrumentator
+# Metrics
 prometheus-fastapi-instrumentator 
