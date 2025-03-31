@@ -43,11 +43,11 @@ services:
     restart: always
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
-      - ../api/data:/app/api/data # Mount the data directory
+      - ../api/data:/data # Mount the data directory
     environment:
-      -  # Only Docker-specific overrides here
+      # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
-      -  # Include API keys - these need to be explicitly included to be passed to container
+      # Include API keys - these need to be explicitly included to be passed to container
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
@@ -58,8 +58,8 @@ services:
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR}
-    ports:
-      - "${EXPOSE_API_PORT:-8000}:8000"
+    expose:
+      - "8000"
     networks:
       - bisq-support-network
     healthcheck:
@@ -206,12 +206,11 @@ services:
       - ../api/data:/app/api/data
     environment:
       - DATA_DIR=${DATA_DIR}
-      - BISQ_API_URL=http://host.docker.internal:8090 # Updated Docker network address
+      - BISQ_API_URL=http://host.docker.internal:8090
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
     depends_on:
       - api
     networks:
@@ -231,7 +230,6 @@ services:
       - ../api/data:/app/api/data # Match the API service volume mount
     environment:
       - DATA_DIR=${DATA_DIR}
-    platform: linux/arm64
     depends_on:
       - api
     networks:
@@ -248,8 +246,6 @@ services:
     command: >
       sh -c "
         apk add --no-cache docker-cli docker-compose bash coreutils &&
-        chmod +x /scripts/update-faqs.sh &&
-        chmod +x /scripts/process-feedback.sh &&
         mkdir -p /var/log/cron &&
         echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
