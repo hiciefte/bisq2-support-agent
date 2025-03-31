@@ -21,6 +21,7 @@ services:
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - DATA_DIR=${DATA_DIR}
+      - BISQ_API_URL=http://host.docker.internal:8090
     ports:
       - "8000:8000"
     platform: linux/arm64

@@ -127,7 +127,9 @@ async def get_feedback_analytics(
     # Source effectiveness
     source_stats = {}
     for item in feedback:
-        for source in item.get('sources_used', []):
+        # Try sources_used first, then fall back to sources if sources_used doesn't exist
+        sources_list = item.get('sources_used', item.get('sources', []))
+        for source in sources_list:
             source_type = source.get('type', 'unknown')
             if source_type not in source_stats:
                 source_stats[source_type] = {'total': 0, 'helpful': 0}
@@ -183,12 +185,13 @@ async def get_feedback_analytics(
         "unhelpful_count": unhelpful_count,
         "source_effectiveness": source_stats,
         "common_issues": common_issues,
-        "recent_negative": [{**f, 'explanation': f.get('explanation', '')[
-                                                 :100] + '...' if f.get('explanation',
-                                                                        '') and len(
-            f.get('explanation', '')) > 100 else f.get('explanation', '')}
-                            for f in feedback if f.get('rating', 0) == 0][-5:]
-        # Include recent negative feedback with truncated explanation
+        "recent_negative": [{
+            **f,
+            'explanation': f.get('metadata', {}).get('explanation', '')[
+                :100] + '...' if f.get('metadata', {}).get('explanation', '') and len(
+                f.get('metadata', {}).get('explanation', '')) > 100 else f.get('metadata', {}).get('explanation', '')
+        } for f in feedback if f.get('rating', 0) == 0][-5:]
+        # Include recent negative feedback with truncated explanation from metadata
     }
 
 

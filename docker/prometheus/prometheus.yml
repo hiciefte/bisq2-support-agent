@@ -7,10 +7,6 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: 'bisq'
-    static_configs:
-      - targets: ['bisq:8082']
-
   - job_name: 'api'
     static_configs:
       - targets: ['api:8000']
@@ -24,19 +20,9 @@ scrape_configs:
     scrape_timeout: 10s
     authorization:
       type: Bearer
-      credentials: "${ADMIN_API_KEY:-test_admin_key}"
+      credentials_file: /etc/prometheus/admin_key
 
   - job_name: 'web'
     static_configs:
       - targets: ['web:3000']
     metrics_path: '/api/metrics'
-
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-          # - alertmanager:9093
-
-# Alert rules can be added here
-rule_files:
-  # - "alert_rules.yml" 
