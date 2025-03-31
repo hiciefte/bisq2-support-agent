@@ -36,12 +36,6 @@ from app.utils.logging import redact_pii
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
-
-
-# Remove the constants that are now in config.py
-# They'll be accessed through the settings object
-
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
 
@@ -55,6 +49,8 @@ class SimplifiedRAGService:
             wiki_service: Optional WikiService instance for wiki operations
             faq_service: Optional FAQService instance for FAQ operations
         """
+        if settings is None:
+            settings = get_settings()
         self.settings = settings
         self.feedback_service = feedback_service
         self.wiki_service = wiki_service
