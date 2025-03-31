@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 class FeedbackService:
     """Service responsible for handling all feedback-related operations."""
+    _instance = None
+    _feedback_cache = None
+    _last_load_time = None
+    _cache_ttl = 300  # 5 minutes cache TTL
+
+    def __new__(cls, settings=None):
+        if cls._instance is None:
+            cls._instance = super(FeedbackService, cls).__new__(cls)
+        return cls._instance
 
     def __init__(self, settings=None):
         """Initialize the feedback service.
@@ -33,18 +42,20 @@ class FeedbackService:
         Args:
             settings: Application settings
         """
-        self.settings = settings
-        logger.info("Feedback service initialized")
+        if not hasattr(self, 'initialized'):
+            self.settings = settings
+            self.initialized = True
+            logger.info("Feedback service initialized")
 
-        # Source weights to be applied to different content types
-        # These are influenced by feedback but used by RAG
-        self.source_weights = {
-            "faq": 1.2,  # Prioritize FAQ content
-            "wiki": 1.0,  # Standard weight for wiki content
-        }
+            # Source weights to be applied to different content types
+            # These are influenced by feedback but used by RAG
+            self.source_weights = {
+                "faq": 1.2,  # Prioritize FAQ content
+                "wiki": 1.0,  # Standard weight for wiki content
+            }
 
-        # Prompting guidance based on feedback
-        self.prompt_guidance = []
+            # Prompting guidance based on feedback
+            self.prompt_guidance = []
 
     def load_feedback(self) -> List[Dict[str, Any]]:
         """Load feedback data from month-based JSONL files.
@@ -55,6 +66,13 @@ class FeedbackService:
         Returns:
             List of feedback entries as dictionaries
         """
+        # Check if we have valid cached data
+        current_time = datetime.now().timestamp()
+        if (self._feedback_cache is not None and 
+            self._last_load_time is not None and 
+            current_time - self._last_load_time < self._cache_ttl):
+            return self._feedback_cache
+
         all_feedback = []
 
         # Load from the feedback directory (standard location)
@@ -90,6 +108,11 @@ class FeedbackService:
                     logger.error(f"Error loading feedback from {file_path}: {str(e)}")
 
             logger.info(f"Loaded a total of {len(all_feedback)} feedback entries")
+            
+            # Cache the loaded feedback
+            self._feedback_cache = all_feedback
+            self._last_load_time = current_time
+            
         except Exception as e:
             logger.error(f"Error loading feedback data: {str(e)}")
 

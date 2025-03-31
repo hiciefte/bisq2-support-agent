@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.config import get_settings, Settings
-from app.services.simplified_rag_service import get_rag_service, SimplifiedRAGService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ class QueryResponse(BaseModel):
 async def query(
     request: Request,
     settings: Settings = Depends(get_settings),
-    rag_service: SimplifiedRAGService = Depends(get_rag_service),
     body_payload: dict = Body(...)
 ):
     """Process a query and return a response with sources."""
@@ -52,6 +50,9 @@ async def query(
     logger.info(f"Request method: {request.method}")
 
     try:
+        # Get RAG service from app state
+        rag_service = request.app.state.rag_service
+
         # Use the automatically parsed payload from Body
         data = body_payload
         logger.info(f"Automatically parsed JSON data: {json.dumps(data, indent=2)}")

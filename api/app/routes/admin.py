@@ -5,13 +5,13 @@ Admin routes for the Bisq Support API.
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, Request, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
-from app.core.security import verify_admin_access
-from app.services.feedback_service import get_feedback_service
 from app.core.config import get_settings
+from app.core.security import verify_admin_access
+from app.services.feedback_service import FeedbackService
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -29,6 +29,9 @@ router = APIRouter(
         403: {"description": "Forbidden - Insufficient permissions"}
     },
 )
+
+# Create a singleton instance of FeedbackService
+feedback_service = FeedbackService(settings=settings)
 
 # Controlled vocabulary for issue types to prevent high-cardinality
 KNOWN_ISSUE_TYPES = {
@@ -95,9 +98,7 @@ def map_to_controlled_issue_type(issue: str) -> str:
 
 
 @router.get("/feedback", response_model=Dict[str, Any])
-async def get_feedback_analytics(
-    request: Request,
-):
+async def get_feedback_analytics():
     """Get analytics about user feedback.
 
     This endpoint requires admin authentication via the API key.
@@ -105,7 +106,6 @@ async def get_feedback_analytics(
     - Authorization header with Bearer token
     - api_key query parameter
     """
-    feedback_service = get_feedback_service(request)
     feedback = feedback_service.load_feedback()
 
     # Basic analytics
@@ -161,18 +161,19 @@ async def get_feedback_analytics(
 
     # Sort issues by count, descending
     sorted_issues = sorted(common_issues.items(), key=lambda x: x[1], reverse=True)
-    
+
     # Limit to maximum number of unique issues
     if len(common_issues) > settings.MAX_UNIQUE_ISSUES:
         logger.info(
             f"Found {len(common_issues)} issues, limiting to {settings.MAX_UNIQUE_ISSUES}")
-        
+
         # Keep the top issues based on MAX_UNIQUE_ISSUES
         top_issues = dict(
             sorted_issues[:settings.MAX_UNIQUE_ISSUES - 1])  # Leave room for "other"
-        
+
         # Combine remaining issues as "other"
-        other_count = sum(count for _, count in sorted_issues[settings.MAX_UNIQUE_ISSUES - 1:])
+        other_count = sum(
+            count for _, count in sorted_issues[settings.MAX_UNIQUE_ISSUES - 1:])
         if other_count > 0:
             top_issues["other"] = other_count
 
@@ -188,17 +189,17 @@ async def get_feedback_analytics(
         "recent_negative": [{
             **f,
             'explanation': f.get('metadata', {}).get('explanation', '')[
-                :100] + '...' if f.get('metadata', {}).get('explanation', '') and len(
-                f.get('metadata', {}).get('explanation', '')) > 100 else f.get('metadata', {}).get('explanation', '')
+                           :100] + '...' if f.get('metadata', {}).get('explanation',
+                                                                      '') and len(
+                f.get('metadata', {}).get('explanation', '')) > 100 else f.get(
+                'metadata', {}).get('explanation', '')
         } for f in feedback if f.get('rating', 0) == 0][-5:]
         # Include recent negative feedback with truncated explanation from metadata
     }
 
 
 @router.get("/metrics", response_class=Response)
-async def get_metrics(
-    request: Request,
-):
+async def get_metrics():
     """Get feedback metrics in Prometheus format.
 
     This endpoint requires admin authentication via the API key.
@@ -207,7 +208,7 @@ async def get_metrics(
     - api_key query parameter
     """
     # Get feedback analytics
-    analytics = await get_feedback_analytics(request)
+    analytics = await get_feedback_analytics()
 
     # Reset Counters if needed (in case of server restart)
     # We only do this for Counter types since they're cumulative
