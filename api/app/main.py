@@ -17,6 +17,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import get_settings
 from app.routes import chat, health, feedback, admin
+from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.wiki_service import WikiService
@@ -60,10 +61,14 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing FeedbackService...")
     feedback_service = FeedbackService(settings=settings)
 
+    logger.info("Initializing FAQService...")
+    faq_service = FAQService(settings=settings)
+
     logger.info("Initializing SimplifiedRAGService...")
     rag_service = SimplifiedRAGService(settings=settings,
                                        feedback_service=feedback_service,
-                                       wiki_service=wiki_service)
+                                       wiki_service=wiki_service,
+                                       faq_service=faq_service)
 
     # Set up services
     await rag_service.setup()
@@ -71,6 +76,7 @@ async def lifespan(app: FastAPI):
     # Add services to FastAPI's app.state
     app.state.wiki_service = wiki_service
     app.state.feedback_service = feedback_service
+    app.state.faq_service = faq_service
     app.state.rag_service = rag_service
 
     yield

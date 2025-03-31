@@ -14,11 +14,12 @@ File Naming Conventions:
 
 import logging
 import os
-import re
+import shutil
 import time
-from typing import List
+from typing import List, Dict, Any, Union
 
 from fastapi import Request
+from langchain.prompts import ChatPromptTemplate
 # Vector store and embeddings
 from langchain_chroma import Chroma
 # Core LangChain imports
@@ -28,51 +29,18 @@ from langchain_openai import OpenAIEmbeddings
 # Text splitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.core.config import get_settings
+from app.utils.logging import redact_pii
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+settings = get_settings()
+
 
 # Remove the constants that are now in config.py
 # They'll be accessed through the settings object
-
-
-def redact_pii(text: str) -> str:
-    """Redact potential PII from text for logging purposes.
-
-    Redacts:
-    - Email addresses
-    - IP addresses
-    - Numeric sequences that might be IDs
-    - Long alphanumeric strings that might be keys/passwords
-    - Phone numbers (various formats)
-    - Partial numeric sequences that might be sensitive identifiers
-    """
-    if not text:
-        return text
-
-    # Redact email addresses
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[REDACTED_EMAIL]',
-                  text)
-
-    # Redact IP addresses
-    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]', text)
-
-    # Redact long numeric sequences (potentially IDs)
-    text = re.sub(r'\b\d{8,}\b', '[REDACTED_ID]', text)
-
-    # Redact alphanumeric strings that look like API keys (30+ chars)
-    text = re.sub(r'\b[a-zA-Z0-9_\-.]{30,}\b', '[REDACTED_KEY]', text)
-
-    # Redact phone numbers (various formats)
-    text = re.sub(r'\b(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b',
-                  '[REDACTED_PHONE]', text)
-
-    # Redact potentially sensitive partial numeric sequences (e.g., SSN fragments)
-    text = re.sub(r'\b\d{3}[\s.-]?\d{2}[\s.-]?\d{4}\b', '[REDACTED_ID_PATTERN]', text)
-
-    return text
-
 
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
@@ -99,7 +67,7 @@ class SimplifiedRAGService:
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
             chunk_overlap=300,
-            separators=["\n\n", "\n", "==", "=", ". ", " ", ""],
+            separators=["\n\n", "\n", "==", "=", "'''", "{{", "*", ". ", " ", ""],
         )
 
         # Configure retriever
@@ -113,6 +81,7 @@ class SimplifiedRAGService:
         self.retriever = None
         self.llm = None
         self.rag_chain = None
+        self.prompt = None
 
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
@@ -203,58 +172,76 @@ class SimplifiedRAGService:
             self._initialize_openai_llm()
 
     def _format_docs(self, docs: List[Document]) -> str:
-        """Format documents into a single string with source attribution.
+        """Format retrieved documents with version-aware processing."""
+        if not docs:
+            return ""
 
-        Args:
-            docs: List of retrieved documents
+        # Sort documents by version weight and relevance
+        sorted_docs = sorted(
+            docs,
+            key=lambda x: (
+                x.metadata.get("source_weight", 1.0),
+                x.metadata.get("category") == "bisq2",  # Prioritize Bisq 2 content
+                x.metadata.get("category") == "bisq1",  # Then Bisq 1 content
+                x.metadata.get("category") == "general"  # Then general content
+            ),
+            reverse=True
+        )
 
-        Returns:
-            Formatted string with source attribution
-        """
-        formatted_chunks = []
+        formatted_docs = []
+        for doc in sorted_docs:
+            # Extract metadata
+            title = doc.metadata.get("title", "Unknown")
+            category = doc.metadata.get("category", "general")
+            section = doc.metadata.get("section", "")
+            source_type = doc.metadata.get("type", "wiki")
+            source_weight = doc.metadata.get("source_weight", 1.0)
 
-        for doc in docs:
-            content = doc.page_content
-            title = doc.metadata.get("title", "")
-            source_type = doc.metadata.get("type", "unknown")
+            # Determine version from metadata and content
+            bisq_version = doc.metadata.get("bisq_version", "General")
+            if bisq_version == "General":
+                # Check content for version-specific information
+                content = doc.page_content.lower()
+                if "bisq 2" in content or "bisq2" in content:
+                    bisq_version = "Bisq 2"
+                elif "bisq 1" in content or "bisq1" in content:
+                    bisq_version = "Bisq 1"
 
-            # Set proper Bisq version based on metadata or content analysis
-            bisq_version = doc.metadata.get("bisq_version", "")
+            # Format the entry with version context and source attribution
+            entry = f"[{bisq_version}] [{source_type.upper()}] {title}"
+            if section:
+                entry += f" - {section}"
+            entry += f"\n{doc.page_content}\n"
+            formatted_docs.append(entry)
 
-            # If no explicit version is set in metadata, try to determine from content
-            if not bisq_version:
-                # For wiki entries, determine version based on content
-                if "bisq2" in content.lower() or "bisq 2" in content.lower():
-                    if "bisq1" in content.lower() or "bisq 1" in content.lower():
-                        bisq_version = "Both"  # Content mentions both versions
-                    else:
-                        bisq_version = "Bisq 2"  # Content is Bisq 2 specific
-                elif "bisq1" in content.lower() or "bisq 1" in content.lower():
-                    bisq_version = "Bisq 1"  # Content is Bisq 1 specific
-                else:
-                    bisq_version = "General"  # Cannot determine version
+        return "\n\n".join(formatted_docs)
 
-            # Format the chunk with clear version labeling
-            if source_type == "faq":
-                formatted_chunks.append(
-                    f"[SOURCE: FAQ] [VERSION: {bisq_version}]\n{content}")
-            elif source_type == "wiki":
-                section = doc.metadata.get("section", "")
-
-                # Include section information
-                prefix = f"[SOURCE: Wiki - {title}"
-                if section:
-                    prefix += f" - {section}"
-                prefix += f"] [VERSION: {bisq_version}]"
-
-                formatted_chunks.append(f"{prefix}\n{content}")
-
-        return "\n\n" + "\n\n".join(formatted_chunks)
+    def _clean_vector_store(self):
+        """Clean the vector store directory."""
+        logger.info("Cleaning vector store directory...")
+        try:
+            if os.path.exists(self.db_path):
+                # Remove all files and directories in the vector store
+                for item in os.listdir(self.db_path):
+                    item_path = os.path.join(self.db_path, item)
+                    if os.path.isfile(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                logger.info("Vector store directory cleaned successfully")
+            else:
+                logger.info("Vector store directory does not exist, skipping cleanup")
+        except Exception as e:
+            logger.error(f"Error cleaning vector store: {str(e)}", exc_info=True)
+            raise
 
     async def setup(self):
         """Set up the complete system."""
         try:
             logger.info("Starting simplified RAG service setup...")
+
+            # Clean vector store
+            self._clean_vector_store()
 
             # Load documents
             logger.info("Loading documents...")
@@ -347,8 +334,11 @@ class SimplifiedRAGService:
 
             # Create retriever
             self.retriever = self.vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": self.retriever_config["k"]}
+                search_type="similarity_score_threshold",
+                search_kwargs={
+                    "k": 5,
+                    "score_threshold": 0.5,  # Lower threshold to allow more matches
+                }
             )
 
             # Initialize language model
@@ -368,8 +358,6 @@ class SimplifiedRAGService:
 
     def _create_rag_chain(self):
         """Create the RAG chain using LangChain."""
-        from langchain.prompts import ChatPromptTemplate
-
         # Get prompt guidance from the FeedbackService if available
         additional_guidance = ""
         if self.feedback_service:
@@ -400,7 +388,7 @@ Context: {{context}}
 Answer:"""
 
         # Create the prompt template
-        custom_prompt = ChatPromptTemplate.from_template(system_template)
+        self.prompt = ChatPromptTemplate.from_template(system_template)
         logger.info(f"Custom RAG prompt created with {len(system_template)} characters")
 
         # Define our chain as a simple function that handles the entire RAG process
@@ -468,38 +456,52 @@ Answer:"""
                         f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}")
                     context = context[:self.settings.MAX_CONTEXT_LENGTH]
 
-                # Invoke the LLM with the custom prompt
-                response = self.llm.invoke(
-                    custom_prompt.format(
-                        question=preprocessed_question,
-                        chat_history=chat_history_str,
-                        context=context
-                    )
+                # Log the complete prompt and context for debugging
+                logger.info("=== DEBUG: Complete Prompt and Context ===")
+                logger.info(f"Question: {preprocessed_question}")
+                logger.info(f"Chat History: {chat_history_str}")
+                logger.info("Context:")
+                logger.info(context)
+                logger.info("=== End Debug Log ===")
+
+                # Format the prompt
+                formatted_prompt = self.prompt.format(
+                    question=preprocessed_question,
+                    chat_history=chat_history_str,
+                    context=context
                 )
 
-                # Extract the content from the response
-                content = response.content if hasattr(response, "content") else str(
-                    response)
+                # Log formatted prompt at DEBUG level
+                logger.debug("=== DEBUG: Complete Formatted Prompt ===")
+                logger.debug(formatted_prompt)
+                logger.debug("=== End Debug Log ===")
+
+                # Generate response
+                response_text = self.llm.invoke(formatted_prompt)
+                response_content = response_text.content if hasattr(response_text,
+                                                                    'content') else str(
+                    response_text)
+
+                # Calculate response time
+                response_time = time.time() - response_start_time
 
                 # Log response information with privacy protection
-                if content:
-                    # Calculate response time
-                    response_time = time.time() - response_start_time
+                if response_content:
                     logger.info(
-                        f"Response generated in {response_time:.2f}s, length: {len(content)}")
+                        f"Response generated in {response_time:.2f}s, length: {len(response_content)}")
 
                     # Log sample in non-production
                     is_production = self.settings.ENVIRONMENT.lower() == 'production'
                     if not is_production:
-                        sample = content[
+                        sample = response_content[
                                  :self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
-                            content) > self.settings.MAX_SAMPLE_LOG_LENGTH else content
+                            response_content) > self.settings.MAX_SAMPLE_LOG_LENGTH else response_content
                         logger.info(f"Content sample: {redact_pii(sample)}")
                 else:
                     logger.warning("Empty response received from LLM")
                     return "I apologize, but I couldn't generate a proper response based on the available information."
 
-                return content
+                return response_content
             except Exception as e:
                 logger.error(f"Error generating response: {str(e)}", exc_info=True)
                 return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
@@ -516,17 +518,22 @@ Answer:"""
             self.vectorstore.persist()
         logger.info("Simplified RAG service cleanup complete")
 
-    async def query(self, question, chat_history=None):
-        """Process a query and return the response with sources.
+    async def query(self, question: str,
+                    chat_history: List[Union[Dict[str, str], Any]]) -> dict:
+        """Process a query and return a response with metadata.
 
         Args:
             question: The query to process
-            chat_history: Optional chat history for context
+            chat_history: List of either dictionaries containing chat messages with 'role' and 'content' keys,
+                        or objects with role and content attributes
 
         Returns:
-            Dict with response and metadata
+            Dict containing:
+                - answer: The response text
+                - sources: List of source documents used
+                - response_time: Time taken to process the query
+                - error: Error message (if any)
         """
-        # Initialize start_time at the beginning to avoid reference before assignment
         start_time = time.time()
 
         try:
@@ -535,77 +542,115 @@ Answer:"""
                 return {
                     "answer": "I apologize, but I'm not fully initialized yet. Please try again in a moment.",
                     "sources": [],
+                    "response_time": time.time() - start_time,
                     "error": "RAG chain not initialized"
                 }
 
-            try:
-                # Get response from RAG chain
-                content = self.rag_chain(question, chat_history)
-            except AttributeError as ae:
-                # Handle specific attribute errors that might occur when processing chat_history
-                logger.error(f"Attribute error in rag_chain: {str(ae)}", exc_info=True)
+            # Log the question with privacy protection
+            logger.info(f"Processing question: {redact_pii(question)}")
 
-                # Check if it's specifically related to ChatMessage objects
-                if "ChatMessage" in str(ae) and "get" in str(ae):
-                    # Try to adapt chat_history by converting it to a more compatible format
-                    try:
-                        adapted_chat_history = []
-                        for message in chat_history:
-                            # Convert to a simple dict format with direct access
-                            if hasattr(message, 'role') and hasattr(message, 'content'):
-                                adapted_chat_history.append({
-                                    "role": message.role,
-                                    "content": message.content
-                                })
-                        # Retry with the adapted chat history
-                        content = self.rag_chain(question, adapted_chat_history)
-                    except Exception as conversion_error:
-                        logger.error(
-                            f"Error converting chat history: {str(conversion_error)}",
-                            exc_info=True)
-                        content = "I'm sorry, I encountered an error processing your conversation history. Please try again with a simpler question."
-                else:
-                    content = "I'm sorry, I encountered an unexpected error. Please try again or rephrase your question."
-            except Exception as e:
-                # Handle any other exceptions in the rag_chain
-                logger.error(f"Error in rag_chain: {str(e)}", exc_info=True)
-                content = "I'm sorry, I encountered an unexpected error. Please try again or rephrase your question."
+            # Preprocess the question
+            preprocessed_question = question.strip()
 
-            # Extract sources and search results for later analysis
-            sources_used = None
-            if self.retriever:
-                # Get the relevant documents without affecting the response
-                docs = self.retriever.get_relevant_documents(question)
-                sources_used = [
-                    {
-                        "title": doc.metadata.get("title", "Unknown"),
-                        "type": doc.metadata.get("type", "unknown"),
-                        "content": doc.page_content[:200] + "..." if len(
-                            doc.page_content) > 200 else doc.page_content
-                    }
-                    for doc in docs
-                ]
+            # Get relevant documents
+            docs = self.retriever.get_relevant_documents(preprocessed_question)
+            logger.info(f"Retrieved {len(docs)} relevant documents")
 
-                # Deduplicate sources to prevent multiple identical sources
-                sources_used = self._deduplicate_sources(sources_used)
+            # Log document details at DEBUG level
+            for i, doc in enumerate(docs):
+                logger.debug(f"Document {i + 1}:")
+                logger.debug(f"  Title: {doc.metadata.get('title', 'N/A')}")
+                logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
+                logger.debug(f"  Content: {doc.page_content[:200]}...")
+
+            # Format chat history
+            chat_history_str = ""
+            if chat_history and len(chat_history) > 0:
+                # Format each exchange in chat history
+                formatted_history = []
+                # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
+                recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH:]
+                for exchange in recent_history:
+                    if hasattr(exchange, 'role') and hasattr(exchange, 'content'):
+                        role = exchange.role
+                        content = exchange.content
+                        if role == "user":
+                            formatted_history.append(f"Human: {content}")
+                        elif role == "assistant":
+                            formatted_history.append(f"Assistant: {content}")
+                chat_history_str = "\n".join(formatted_history)
+
+            # Format documents for the prompt
+            context = self._format_docs(docs)
+
+            # Check context length and truncate if necessary
+            if len(context) > self.settings.MAX_CONTEXT_LENGTH:
+                logger.warning(
+                    f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}")
+                context = context[:self.settings.MAX_CONTEXT_LENGTH]
+
+            # Log complete prompt and context at DEBUG level
+            logger.debug("=== DEBUG: Complete Prompt and Context ===")
+            logger.debug(f"Question: {preprocessed_question}")
+            logger.debug(f"Chat History: {chat_history_str}")
+            logger.debug(f"Context:\n{context}")
+            logger.debug("=== End Debug Log ===")
+
+            # Format the prompt
+            formatted_prompt = self.prompt.format(
+                question=preprocessed_question,
+                chat_history=chat_history_str,
+                context=context
+            )
+
+            # Log formatted prompt at DEBUG level
+            logger.debug("=== DEBUG: Complete Formatted Prompt ===")
+            logger.debug(formatted_prompt)
+            logger.debug("=== End Debug Log ===")
+
+            # Generate response
+            response_text = self.rag_chain(formatted_prompt)
 
             # Calculate response time
             response_time = time.time() - start_time
 
-            # Log completion of query
-            logger.info(f"Query processed successfully in {response_time:.2f}s")
+            # Log response details at INFO level
+            logger.info(
+                f"Response generated in {response_time:.2f}s, length: {len(response_text)}")
+
+            # Log sample in non-production
+            is_production = self.settings.ENVIRONMENT.lower() == 'production'
+            if not is_production:
+                sample = response_text[
+                         :self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
+                    response_text) > self.settings.MAX_SAMPLE_LOG_LENGTH else response_text
+                logger.info(f"Content sample: {redact_pii(sample)}")
+
+            # Extract sources for the response
+            sources = [
+                {
+                    "title": doc.metadata.get("title", "Unknown"),
+                    "type": doc.metadata.get("type", "unknown"),
+                    "content": doc.page_content[:200] + "..." if len(
+                        doc.page_content) > 200 else doc.page_content
+                }
+                for doc in docs
+            ]
+
+            # Deduplicate sources
+            sources = self._deduplicate_sources(sources)
 
             return {
-                "answer": content,
-                "sources": sources_used or [],
+                "answer": response_text,
+                "sources": sources,
                 "response_time": response_time
             }
+
         except Exception as e:
-            # start_time is now always defined, so we can calculate error_time directly
             error_time = time.time() - start_time
             logger.error(f"Error processing query: {str(e)}", exc_info=True)
             return {
-                "answer": f"I'm sorry, I encountered an error while processing your question. Please try again or rephrase your question.",
+                "answer": "I apologize, but I encountered an error processing your query. Please try again.",
                 "sources": [],
                 "response_time": error_time,
                 "error": str(e)

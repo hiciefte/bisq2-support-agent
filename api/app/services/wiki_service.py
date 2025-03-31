@@ -1,17 +1,17 @@
 """
 Wiki service for loading and processing MediaWiki documents for the Bisq Support Assistant.
 
-This service handles loading wiki documentation from MediaWiki XML dump files,
+This service handles loading wiki documentation from processed JSONL files,
 processing the documents, and preparing them for use in the RAG system.
 """
 
+import json
 import logging
 import os
+import re
 from typing import Dict, List
 
-from langchain_community.document_loaders import MWDumpLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class WikiService:
-    """Service for loading and processing wiki documentation from MediaWiki XML dumps."""
+    """Service for loading and processing wiki documentation from processed JSONL files."""
 
     def __init__(self, settings=None):
         """Initialize the WikiService.
@@ -34,14 +34,6 @@ class WikiService:
             "wiki": 1.0  # Standard weight for wiki content
         }
 
-        # Configure text splitter with default settings
-        # (SimplifiedRAGService will still handle the actual splitting)
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,
-            chunk_overlap=300,
-            separators=["\n\n", "\n", "==", "=", ". ", " ", ""],
-        )
-
         logger.info("Wiki service initialized")
 
     def update_source_weights(self, new_weights: Dict[str, float]) -> None:
@@ -55,10 +47,10 @@ class WikiService:
             logger.info(f"Updated wiki source weight to {self.source_weights['wiki']}")
 
     def load_wiki_data(self, wiki_dir: str = None) -> List[Document]:
-        """Load wiki documentation from MediaWiki XML dump.
+        """Load wiki documentation from processed JSONL file.
 
         Args:
-            wiki_dir: Directory containing the MediaWiki XML dump.
+            wiki_dir: Directory containing the processed wiki JSONL file.
                       If None, uses the default path from settings.
 
         Returns:
@@ -73,39 +65,53 @@ class WikiService:
             logger.warning(f"Wiki directory not found: {wiki_dir}")
             return []
 
-        # Look for the XML dump file
-        xml_dump_path = os.path.join(wiki_dir, "bisq_dump.xml")
-        if not os.path.exists(xml_dump_path):
-            logger.warning(f"MediaWiki XML dump file not found: {xml_dump_path}")
+        # Look for the processed JSONL file
+        jsonl_path = os.path.join(wiki_dir, "processed_wiki.jsonl")
+        if not os.path.exists(jsonl_path):
+            logger.warning(f"Processed wiki JSONL file not found: {jsonl_path}")
             return []
 
         try:
-            logger.info(f"Loading MediaWiki XML dump from: {xml_dump_path}")
+            logger.info(f"Loading processed wiki content from: {jsonl_path}")
+            documents = []
 
-            # Initialize the MWDumpLoader
-            loader = MWDumpLoader(
-                file_path=xml_dump_path,
-                encoding="utf-8"
-            )
+            # Load and process each entry from the JSONL file
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    entry = json.loads(line)
 
-            # Load documents
-            documents = loader.load()
-            logger.info(
-                f"Successfully loaded {len(documents)} documents using MWDumpLoader")
+                    # Extract section information from content
+                    content = entry['content']
+                    section = ""
+                    if "==" in content:
+                        # Get the first section header
+                        section_match = re.search(r'==\s*(.*?)\s*==', content)
+                        if section_match:
+                            section = section_match.group(1).strip()
 
-            # Add metadata to documents
-            for doc in documents:
-                doc.metadata.update({
-                    "source": xml_dump_path,
-                    "title": doc.metadata.get("title", "Bisq Wiki"),
-                    "type": "wiki",
-                    "source_weight": self.source_weights.get("wiki", 1.0)
-                })
+                    # Create a Document object with enhanced metadata
+                    doc = Document(
+                        page_content=content,
+                        metadata={
+                            "source": jsonl_path,
+                            "title": entry['title'],
+                            "category": entry['category'],
+                            "type": "wiki",
+                            "section": section,
+                            "source_weight": self.source_weights.get("wiki", 1.0),
+                            "bisq_version": "Bisq 2" if entry[
+                                                            'category'] == "bisq2" else
+                            "Bisq 1" if entry['category'] == "bisq1" else
+                            "General"
+                        }
+                    )
+                    documents.append(doc)
 
-            logger.info(f"Loaded {len(documents)} wiki documents from XML dump")
+            logger.info(f"Loaded {len(documents)} wiki documents from JSONL file")
             return documents
         except Exception as e:
-            logger.error(f"Error loading MediaWiki XML dump: {str(e)}", exc_info=True)
+            logger.error(f"Error loading processed wiki content: {str(e)}",
+                         exc_info=True)
             return []
 
 
