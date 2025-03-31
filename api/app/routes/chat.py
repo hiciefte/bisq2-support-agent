@@ -14,14 +14,14 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-class Source(BaseModel):
-    title: str
-    type: str
+class ChatMessage(BaseModel):
+    role: str
     content: str
 
 
-class ChatMessage(BaseModel):
-    role: str
+class Source(BaseModel):
+    title: str
+    type: str
     content: str
 
 
@@ -92,7 +92,8 @@ async def query(
         else:
             logger.info("No chat history provided in the request")
 
-        result = await rag_service.query(query_request.question, query_request.chat_history)
+        result = await rag_service.query(query_request.question,
+                                         query_request.chat_history)
 
         # Convert sources to the expected format
         formatted_sources = [

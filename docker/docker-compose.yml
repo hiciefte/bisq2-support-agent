@@ -203,7 +203,7 @@ services:
     restart: on-failure
     command: [ "python", "-m", "app.scripts.extract_faqs" ]
     volumes:
-      - ../api/data:/app/api/data
+      - ../api/data:/data
     environment:
       - DATA_DIR=${DATA_DIR}
       - BISQ_API_URL=http://host.docker.internal:8090
@@ -227,7 +227,7 @@ services:
       dockerfile: docker/api/Dockerfile
     command: [ "python", "-m", "app.scripts.process_feedback" ]
     volumes:
-      - ../api/data:/app/api/data # Match the API service volume mount
+      - ../api/data:/data # Match the API service volume mount
     environment:
       - DATA_DIR=${DATA_DIR}
     depends_on:
