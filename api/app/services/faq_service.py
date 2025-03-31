@@ -375,18 +375,21 @@ class FAQService:
                 return False
 
         # Check if all messages are properly connected through references
-        msg_ids = {msg['msg_id'] for msg in thread}
         for i in range(1, len(thread)):
             current_msg = thread[i]
             previous_msg = thread[i - 1]
 
             # Check if messages are connected through references
-            if (current_msg['referenced_msg_id'] != previous_msg['msg_id'] and
-                    previous_msg['referenced_msg_id'] != current_msg['msg_id']):
-                # Messages must be within 30 minutes of each other if not connected through references
-                if not (current_msg['timestamp'] and previous_msg['timestamp'] and
-                        (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)):
-                    return False
+            if (
+                current_msg['referenced_msg_id'] != previous_msg['msg_id']
+                and previous_msg['referenced_msg_id'] != current_msg['msg_id']
+                and not (
+                    current_msg['timestamp']
+                    and previous_msg['timestamp']
+                    and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)
+                )
+            ):
+                return False
 
         return True
 

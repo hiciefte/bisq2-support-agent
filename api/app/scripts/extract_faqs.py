@@ -12,6 +12,7 @@ For detailed documentation, see docs/faq_extraction.md.
 
 Example usage:
     $ python -m app.scripts.extract_faqs
+    $ python -m app.scripts.extract_faqs --force-reprocess
 
 Environment variables:
     BISQ_API_URL: URL to the Bisq API (required)
@@ -21,6 +22,7 @@ Environment variables:
 """
 
 import logging
+import argparse
 from typing import List, Dict, Any, Optional
 
 import asyncio
@@ -130,13 +132,31 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
 
 
 if __name__ == "__main__":
-    # Run the extraction process with force_reprocess set to False by default
-    # To force reprocessing all conversations, run:
-    # python -m app.scripts.extract_faqs force_reprocess=True
-    force_reprocess = False
+    # Set up command line argument parsing
+    parser = argparse.ArgumentParser(
+        description='Extract FAQs from Bisq support chat conversations',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        '--force-reprocess',
+        action='store_true',
+        help='Reprocess all conversations, ignoring previously processed IDs'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug logging'
+    )
+    args = parser.parse_args()
 
+    # Configure logging based on debug flag
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
+    # Run the extraction process
     loop = get_event_loop()
     try:
-        loop.run_until_complete(main(force_reprocess=force_reprocess))
+        loop.run_until_complete(main(force_reprocess=args.force_reprocess))
     finally:
         loop.close()

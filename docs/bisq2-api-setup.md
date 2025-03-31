@@ -4,7 +4,7 @@ This guide provides instructions for setting up the Bisq 2 API project both loca
 
 ## Prerequisites
 
-- Java JDK 22 or later
+- Java JDK 21 or later
 - Git
 - Docker and Docker Compose (for the support agent)
 - Linux/macOS/Windows with WSL
@@ -58,7 +58,7 @@ sudo apt update
 sudo apt upgrade -y
 
 # Install required packages
-sudo apt install -y openjdk-22-jdk git curl unzip tor
+sudo apt install -y openjdk-21-jdk git curl unzip tor
 ```
 
 ### 2. Clone the Repository
