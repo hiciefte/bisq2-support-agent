@@ -20,7 +20,11 @@ COPY web/ ./
 
 # Set build argument
 ARG BUILD_ENV=production
+ARG HOSTNAME
+ARG NEXT_PUBLIC_API_URL
 ENV NODE_ENV=${BUILD_ENV}
+ENV HOSTNAME=${HOSTNAME}
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # Build the application
 RUN npm run build
@@ -35,16 +39,16 @@ COPY --from=builder /build/.next ./.next
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package.json ./package.json
 COPY --from=builder /build/public ./public
-COPY --from=builder /build/next.config.js ./next.config.js
 
 # Set environment variables
 ARG BUILD_ENV=production
 ENV NODE_ENV=${BUILD_ENV}
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV PORT=3000
 
 # Expose the port
 EXPOSE 3000
 
 # Run the application
-CMD ["npm", "run", "start"] 
+CMD ["npm", "run", "start"]
