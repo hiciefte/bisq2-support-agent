@@ -10,6 +10,8 @@ set -e  # Exit on error
 INSTALL_DIR=${INSTALL_DIR:-"$HOME/workspace/bisq2-support-agent"}
 DOCKER_DIR="$INSTALL_DIR/docker"
 COMPOSE_FILE="docker-compose.yml"
+HEALTH_CHECK_RETRIES=30
+HEALTH_CHECK_INTERVAL=2
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -24,7 +26,7 @@ echo "Bisq Support Assistant - Maintenance Script"
 echo -e "======================================================${NC}"
 
 # Check for required commands
-for cmd in git docker; do
+for cmd in git docker jq curl; do
   if ! command -v "$cmd" &> /dev/null; then
     echo -e "${RED}Error: $cmd is not installed or not in PATH${NC}"
     exit 1
@@ -48,6 +50,145 @@ if [ "$EUID" -ne 0 ]; then
   echo -e "${YELLOW}Warning: This script may need root privileges for some operations."
   echo -e "Consider running with sudo if you encounter permission errors.${NC}"
 fi
+
+# Function to handle rollbacks
+rollback_to_previous_version() {
+    local reason=$1
+    echo -e "${RED}Initiating rollback due to: $reason${NC}"
+    
+    # Store the current failed state for debugging
+    local FAILED_DATE
+    FAILED_DATE=$(date +%Y%m%d_%H%M%S)
+    local FAILED_DIR="$INSTALL_DIR/failed_updates/${FAILED_DATE}"
+    mkdir -p "$FAILED_DIR"
+    
+    # Verify PREV_HEAD is valid
+    if [ -z "$PREV_HEAD" ] || ! git rev-parse --verify "$PREV_HEAD" >/dev/null 2>&1; then
+        echo -e "${RED}CRITICAL: Invalid or missing previous version reference${NC}"
+        echo "Current state saved in: $FAILED_DIR"
+        exit 2
+    fi
+    
+    # Ensure we're in the correct directory for git operations
+    cd "$INSTALL_DIR" || {
+        echo -e "${RED}CRITICAL: Could not change to installation directory${NC}"
+        exit 2
+    }
+    
+    # Save current state and logs
+    echo -e "${BLUE}Saving current state for debugging...${NC}"
+    {
+        echo "Failure Timestamp: $(date)"
+        echo "Failure Reason: $reason"
+        echo "Current Git Hash: $(git rev-parse HEAD)"
+        echo "Rolling back to: $PREV_HEAD"
+        echo "Working Directory: $(pwd)"
+        echo -e "\nGit Status:"
+        git status
+        echo -e "\nLast Git Logs:"
+        git log -n 5 --oneline
+    } > "$FAILED_DIR/rollback_info.txt"
+    
+    # Save docker logs and status
+    docker compose -f "$DOCKER_DIR/$COMPOSE_FILE" logs > "$FAILED_DIR/docker_logs.txt" 2>&1
+    docker compose -f "$DOCKER_DIR/$COMPOSE_FILE" ps > "$FAILED_DIR/docker_ps.txt" 2>&1
+    
+    # Stop containers
+    echo -e "${BLUE}Stopping containers...${NC}"
+    if ! docker compose -f "$DOCKER_DIR/$COMPOSE_FILE" down > "$FAILED_DIR/docker_down.log" 2>&1; then
+        echo -e "${RED}Warning: Error stopping containers. Continuing with rollback...${NC}"
+    fi
+    
+    # Reset to previous working version
+    echo -e "${BLUE}Resetting to last known working version: $PREV_HEAD${NC}"
+    if ! git reset --hard "$PREV_HEAD" > "$FAILED_DIR/git_reset.log" 2>&1; then
+        echo -e "${RED}CRITICAL: Failed to reset to previous version${NC}"
+        echo -e "${RED}Manual intervention required${NC}"
+        echo "Details saved in: $FAILED_DIR"
+        exit 2
+    fi
+    
+    # Change to docker directory for rebuild
+    cd "$DOCKER_DIR" || {
+        echo -e "${RED}CRITICAL: Could not change to docker directory${NC}"
+        exit 2
+    }
+    
+    # Rebuild and restart with previous version
+    echo -e "${BLUE}Rebuilding and restarting with previous version...${NC}"
+    if ! docker compose -f "$COMPOSE_FILE" up -d --build > "$FAILED_DIR/docker_rebuild.log" 2>&1; then
+        echo -e "${RED}CRITICAL: Failed to rebuild and restart containers${NC}"
+        echo -e "${RED}Manual intervention required${NC}"
+        echo "Details saved in: $FAILED_DIR"
+        exit 2
+    fi
+    
+    # Verify rollback was successful
+    echo -e "${BLUE}Verifying rollback...${NC}"
+    sleep 10  # Give containers time to initialize
+    
+    # Check health of rolled back services
+    local rollback_failed=false
+    for container in $(docker compose -f "$COMPOSE_FILE" ps --services); do
+        if ! check_container_health "bisq2-support-agent_${container}_1"; then
+            echo -e "${RED}CRITICAL: Rollback failed - container $container is unhealthy${NC}"
+            rollback_failed=true
+            break
+        fi
+    done
+    
+    if $rollback_failed; then
+        echo -e "${RED}CRITICAL: Rollback verification failed${NC}"
+        echo -e "${RED}Manual intervention required${NC}"
+        echo "Failed update details saved in: $FAILED_DIR"
+        exit 2
+    fi
+    
+    echo -e "${GREEN}Rollback completed successfully${NC}"
+    echo -e "${YELLOW}Failed update details saved in: $FAILED_DIR${NC}"
+}
+
+# Function to check container health
+check_container_health() {
+    local container=$1
+    local retries=$HEALTH_CHECK_RETRIES
+    
+    echo -e "${BLUE}Checking health of $container...${NC}"
+    while [ $retries -gt 0 ]; do
+        if [ "$(docker inspect --format='{{.State.Health.Status}}' $container)" == "healthy" ]; then
+            echo -e "${GREEN}$container is healthy${NC}"
+            return 0
+        fi
+        echo -e "${YELLOW}Waiting for $container to be healthy. Retries left: $retries${NC}"
+        sleep $HEALTH_CHECK_INTERVAL
+        retries=$((retries-1))
+    done
+    echo -e "${RED}Container $container failed health check${NC}"
+    return 1
+}
+
+# Function to test the chat endpoint
+test_chat_endpoint() {
+    echo -e "${BLUE}Testing chat endpoint...${NC}"
+    local response
+    response=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d '{
+            "question": "What is Bisq?",
+            "chat_history": []
+        }' \
+        http://localhost/api/chat/query)
+    
+    # Check if response contains expected fields
+    if echo "$response" | jq -e '.answer and .sources and .response_time' > /dev/null; then
+        echo -e "${GREEN}Chat endpoint test successful${NC}"
+        echo -e "${GREEN}Response time: $(echo "$response" | jq '.response_time')${NC}"
+        return 0
+    else
+        echo -e "${RED}Chat endpoint test failed. Response: $response${NC}"
+        return 1
+    fi
+}
 
 # Function to check if we need to rebuild
 # Uses git diff to determine if dependencies have changed
@@ -234,46 +375,73 @@ echo -e "${BLUE}Navigating to Docker directory: $(pwd)${NC}"
 
 # Apply updates based on what changed
 if $REBUILD_NEEDED; then
-  echo -e "${BLUE}Performing full rebuild...${NC}"
-  if ! docker compose -f "$COMPOSE_FILE" down; then
-    echo -e "${RED}Error: Failed to stop containers.${NC}"
-    exit 1
-  fi
-  
-  if ! docker compose -f "$COMPOSE_FILE" build --no-cache; then
-    echo -e "${RED}Error: Failed to rebuild containers.${NC}"
-    exit 1
-  fi
-  
-  if ! docker compose -f "$COMPOSE_FILE" up -d; then
-    echo -e "${RED}Error: Failed to start containers.${NC}"
-    exit 1
-  fi
-  
-  echo -e "${GREEN}Full rebuild completed successfully!${NC}"
+    echo -e "${BLUE}Performing full rebuild...${NC}"
+    if ! docker compose -f "$COMPOSE_FILE" down; then
+        echo -e "${RED}Error: Failed to stop containers.${NC}"
+        exit 1
+    fi
+    
+    if ! docker compose -f "$COMPOSE_FILE" build --no-cache; then
+        echo -e "${RED}Error: Failed to rebuild containers.${NC}"
+        exit 1
+    fi
+    
+    if ! docker compose -f "$COMPOSE_FILE" up -d; then
+        echo -e "${RED}Error: Failed to start containers.${NC}"
+        exit 1
+    fi
+
+    # Add health checks after containers start
+    echo -e "${BLUE}Performing health checks...${NC}"
+    for container in $(docker compose -f "$COMPOSE_FILE" ps --services); do
+        if ! check_container_health "bisq2-support-agent_${container}_1"; then
+            rollback_to_previous_version "Health check failed for $container"
+            exit 1
+        fi
+    done
+
+    # Test chat functionality
+    echo -e "${BLUE}Testing chat functionality...${NC}"
+    if ! test_chat_endpoint; then
+        rollback_to_previous_version "Chat endpoint test failed"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}Full rebuild completed successfully!${NC}"
 else
-  # Selective restarts
-  if $API_RESTART_NEEDED; then
-    echo -e "${BLUE}Restarting API service...${NC}"
-    if ! docker compose -f "$COMPOSE_FILE" restart api; then
-      echo -e "${RED}Error: Failed to restart API service.${NC}"
-      exit 1
+    # Selective restarts
+    if $API_RESTART_NEEDED; then
+        echo -e "${BLUE}Restarting API service...${NC}"
+        if ! docker compose -f "$COMPOSE_FILE" restart api; then
+            echo -e "${RED}Error: Failed to restart API service.${NC}"
+            exit 1
+        fi
+        # Check API health
+        if ! check_container_health "bisq2-support-agent_api_1"; then
+            rollback_to_previous_version "API health check failed after restart"
+            exit 1
+        fi
+        # Test chat functionality after API restart
+        if ! test_chat_endpoint; then
+            rollback_to_previous_version "Chat functionality test failed after API restart"
+            exit 1
+        fi
+        echo -e "${GREEN}API service restarted and verified successfully!${NC}"
     fi
-    echo -e "${GREEN}API service restarted successfully!${NC}"
-  fi
-  
-  if $WEB_RESTART_NEEDED; then
-    echo -e "${BLUE}Restarting Web service...${NC}"
-    if ! docker compose -f "$COMPOSE_FILE" restart web; then
-      echo -e "${RED}Error: Failed to restart Web service.${NC}"
-      exit 1
+    
+    if $WEB_RESTART_NEEDED; then
+        echo -e "${BLUE}Restarting Web service...${NC}"
+        if ! docker compose -f "$COMPOSE_FILE" restart web; then
+            echo -e "${RED}Error: Failed to restart Web service.${NC}"
+            exit 1
+        fi
+        # Check Web health
+        if ! check_container_health "bisq2-support-agent_web_1"; then
+            rollback_to_previous_version "Web health check failed after restart"
+            exit 1
+        fi
+        echo -e "${GREEN}Web service restarted and verified successfully!${NC}"
     fi
-    echo -e "${GREEN}Web service restarted successfully!${NC}"
-  fi
-  
-  if ! $API_RESTART_NEEDED && ! $WEB_RESTART_NEEDED; then
-    echo -e "${GREEN}No service restarts needed.${NC}"
-  fi
 fi
 
 # Final status
