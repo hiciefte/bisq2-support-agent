@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = 10  # Maximum number of chat history entries to include
-    MAX_CONTEXT_LENGTH: int = 10000  # Maximum length of context to include in prompt
+    MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
     # Admin settings

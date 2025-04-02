@@ -62,7 +62,7 @@ class SimplifiedRAGService:
         # Configure text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
-            chunk_overlap=300,
+            chunk_overlap=500,  # Increased from 300 to 500 for better context preservation
             separators=["\n\n", "\n", "==", "=", "'''", "{{", "*", ". ", " ", ""],
         )
 
@@ -87,7 +87,7 @@ class SimplifiedRAGService:
             # Default source weights for different document types
             self.source_weights = {
                 "faq": 1.2,  # Prioritize FAQ content
-                "wiki": 1.0,  # Standard weight for wiki content
+                "wiki": 1.1,  # Slightly increased weight for wiki content
             }
 
         logger.info("Simplified RAG service initialized")
@@ -332,8 +332,8 @@ class SimplifiedRAGService:
             self.retriever = self.vectorstore.as_retriever(
                 search_type="similarity_score_threshold",
                 search_kwargs={
-                    "k": 5,
-                    "score_threshold": 0.5,  # Lower threshold to allow more matches
+                    "k": 8,  # Increased from 5 to 8
+                    "score_threshold": 0.3,  # Lowered threshold to allow more matches
                 }
             )
 
