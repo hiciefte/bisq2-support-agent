@@ -62,7 +62,7 @@ class SimplifiedRAGService:
         # Configure text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
-            chunk_overlap=300,
+            chunk_overlap=500,  # Increased from 300 to 500 for better context preservation
             separators=["\n\n", "\n", "==", "=", "'''", "{{", "*", ". ", " ", ""],
         )
 
@@ -87,7 +87,7 @@ class SimplifiedRAGService:
             # Default source weights for different document types
             self.source_weights = {
                 "faq": 1.2,  # Prioritize FAQ content
-                "wiki": 1.0,  # Standard weight for wiki content
+                "wiki": 1.1,  # Slightly increased weight for wiki content
             }
 
         logger.info("Simplified RAG service initialized")
@@ -332,8 +332,8 @@ class SimplifiedRAGService:
             self.retriever = self.vectorstore.as_retriever(
                 search_type="similarity_score_threshold",
                 search_kwargs={
-                    "k": 5,
-                    "score_threshold": 0.5,  # Lower threshold to allow more matches
+                    "k": 8,  # Increased from 5 to 8
+                    "score_threshold": 0.3,  # Lowered threshold to allow more matches
                 }
             )
 
@@ -552,6 +552,36 @@ Answer:"""
             docs = self.retriever.get_relevant_documents(preprocessed_question)
             logger.info(f"Retrieved {len(docs)} relevant documents")
 
+            # If no documents were retrieved, create a feedback entry and return a message about forwarding to human support
+            if not docs:
+                logger.info("No relevant documents found for the query")
+                
+                # Create feedback entry for missing FAQ
+                if self.feedback_service:
+                    try:
+                        await self.feedback_service.store_feedback({
+                            "question": preprocessed_question,
+                            "answer": "",
+                            "feedback_type": "missing_faq",
+                            "explanation": "No relevant documents found for this query. This question should be added to the FAQ database.",
+                            "metadata": {
+                                "source": "rag_service",
+                                "action_required": "create_faq",
+                                "priority": "high"
+                            }
+                        })
+                        logger.info("Created feedback entry for missing FAQ")
+                    except Exception as e:
+                        logger.error(f"Error creating feedback entry: {str(e)}", exc_info=True)
+
+                return {
+                    "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
+                    "sources": [],
+                    "response_time": time.time() - start_time,
+                    "forwarded_to_human": True,
+                    "feedback_created": True
+                }
+
             # Log document details at DEBUG level
             for i, doc in enumerate(docs):
                 logger.debug(f"Document {i + 1}:")
@@ -623,15 +653,20 @@ Answer:"""
                 logger.info(f"Content sample: {redact_pii(sample)}")
 
             # Extract sources for the response
-            sources = [
-                {
-                    "title": doc.metadata.get("title", "Unknown"),
-                    "type": doc.metadata.get("type", "unknown"),
-                    "content": doc.page_content[:200] + "..." if len(
-                        doc.page_content) > 200 else doc.page_content
-                }
-                for doc in docs
-            ]
+            sources = []
+            for doc in docs:
+                if doc.metadata.get("type") == "wiki":
+                    sources.append({
+                        "title": doc.metadata.get("title", "Unknown"),
+                        "type": "wiki",
+                        "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                    })
+                elif doc.metadata.get("type") == "faq":
+                    sources.append({
+                        "title": doc.metadata.get("title", "Unknown"),
+                        "type": "faq",
+                        "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                    })
 
             # Deduplicate sources
             sources = self._deduplicate_sources(sources)
@@ -639,7 +674,9 @@ Answer:"""
             return {
                 "answer": response_text,
                 "sources": sources,
-                "response_time": response_time
+                "response_time": response_time,
+                "forwarded_to_human": False,
+                "feedback_created": False
             }
 
         except Exception as e:
@@ -649,7 +686,9 @@ Answer:"""
                 "answer": "I apologize, but I encountered an error processing your query. Please try again.",
                 "sources": [],
                 "response_time": error_time,
-                "error": str(e)
+                "error": str(e),
+                "forwarded_to_human": False,
+                "feedback_created": False
             }
 
     def _deduplicate_sources(self, sources):
