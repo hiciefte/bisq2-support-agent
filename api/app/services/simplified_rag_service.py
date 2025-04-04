@@ -575,7 +575,7 @@ Answer:"""
                         logger.error(f"Error creating feedback entry: {str(e)}", exc_info=True)
 
                 return {
-                    "answer": "I apologize, but I don't have sufficient information to answer your question. I will forward this question to the Bisq human support agents who will be able to provide you with accurate and detailed information. Thank you for your patience.",
+                    "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
                     "sources": [],
                     "response_time": time.time() - start_time,
                     "forwarded_to_human": True,
