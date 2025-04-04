@@ -9,18 +9,6 @@ services:
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=development # Environment-specific setting
-      # Include API keys - these need to be explicitly included to be passed to container
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
-      - MAX_TOKENS=${MAX_TOKENS}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - XAI_API_KEY=${XAI_API_KEY}
-      - XAI_MODEL=${XAI_MODEL}
-      - XAI_API_BASE_URL=${XAI_API_BASE_URL}
-      - ADMIN_API_KEY=${ADMIN_API_KEY}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      - DATA_DIR=${DATA_DIR}
       - BISQ_API_URL=http://host.docker.internal:8090
     ports:
       - "8000:8000"
@@ -41,9 +29,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000 # Development-specific endpoint
       - NODE_ENV=development
       - WATCHPACK_POLLING=true
+    command: npm run dev
     networks:
       - bisq-support-network
     depends_on:

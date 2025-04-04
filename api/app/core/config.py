@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = 10  # Maximum number of chat history entries to include
-    MAX_CONTEXT_LENGTH: int = 10000  # Maximum length of context to include in prompt
+    MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
     # Admin settings
@@ -51,8 +51,9 @@ class Settings(BaseSettings):
 
     # Simple config - let Pydantic handle things
     model_config = SettingsConfigDict(
-        env_file=None,  # Disable .env file handling (Docker handles this)
-        env_parse_json=False  # Disable trying to parse values as JSON
+        env_file=".env",  # Enable .env file loading
+        env_parse_json=False,  # Disable trying to parse values as JSON
+        env_file_override=True  # Ensure environment variables take precedence
     )
 
     # Path properties that return complete paths
@@ -114,7 +115,6 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
         # Make paths absolute
         self.DATA_DIR = os.path.abspath(self.DATA_DIR)
 
