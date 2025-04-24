@@ -5,8 +5,12 @@ set -e
 
 # Configuration
 REPOSITORY_URL="git@github.com:hiciefte/bisq2-support-agent.git"
+BISQ2_REPOSITORY_URL="git@github.com:hiciefte/bisq2.git"
 INSTALL_DIR="/opt/bisq-support"
+BISQ2_DIR="/opt/bisq2"
 DOCKER_DIR="$INSTALL_DIR/docker"
+SECRETS_DIR="$INSTALL_DIR/secrets"
+LOG_DIR="$INSTALL_DIR/logs"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -21,6 +25,8 @@ echo "Bisq Support Assistant - Deployment Script"
 echo "======================================================"
 echo "Repository: $REPOSITORY_URL"
 echo "Installation Directory: $INSTALL_DIR"
+echo "Bisq 2 Repository: $BISQ2_REPOSITORY_URL"
+echo "Bisq 2 Directory: $BISQ2_DIR"
 echo "------------------------------------------------------${NC}"
 
 # Function to check if a command exists
@@ -32,10 +38,17 @@ check_command() {
 }
 
 # Check for required commands
-echo -e "${BLUE}[1/5] Checking prerequisites...${NC}"
-for cmd in git docker curl; do
+echo -e "${BLUE}[1/8] Checking prerequisites...${NC}"
+for cmd in git docker curl ufw java; do
     check_command "$cmd"
 done
+
+# Check Java version
+JAVA_VERSION=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | awk -F. '{print $1}')
+if [ "$JAVA_VERSION" -lt 21 ]; then
+    echo -e "${RED}Error: Java 21 or later is required. Found Java $JAVA_VERSION${NC}"
+    exit 1
+fi
 
 # Check if Docker daemon is running
 if ! docker info &> /dev/null; then
@@ -45,24 +58,112 @@ fi
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}Warning: This script may need root privileges for some operations."
-    echo -e "Consider running with sudo if you encounter permission errors.${NC}"
+    echo -e "${RED}Error: This script must be run as root${NC}"
+    exit 1
 fi
 
 # Install dependencies
-echo -e "${BLUE}[2/5] Installing dependencies...${NC}"
-sudo apt-get update
-sudo apt-get install -y \
+echo -e "${BLUE}[2/8] Installing dependencies...${NC}"
+apt-get update
+apt-get install -y \
     docker.io \
-    git
+    git \
+    ufw \
+    auditd \
+    fail2ban \
+    apparmor \
+    apparmor-utils \
+    openjdk-21-jdk \
+    tor
 
-# Configure Docker to start on boot
-echo -e "${BLUE}[3/5] Configuring Docker...${NC}"
-sudo systemctl enable docker
-sudo systemctl start docker
+# Configure firewall
+echo -e "${BLUE}[3/8] Configuring firewall...${NC}"
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow 3000/tcp  # Web frontend
+ufw allow 8000/tcp  # API
+ufw allow 3001/tcp  # Grafana
+ufw allow 8090/tcp  # Bisq 2 API
+ufw --force enable
 
-# Clone or update repository
-echo -e "${BLUE}[4/5] Setting up repository...${NC}"
+# Configure audit logging
+echo -e "${BLUE}[4/8] Configuring audit logging...${NC}"
+cat > /etc/audit/rules.d/bisq-support.rules << EOF
+# Monitor Docker operations
+-w /var/run/docker.sock -p wa -k docker
+
+# Monitor configuration changes
+-w /opt/bisq-support/docker/.env -p wa -k config
+-w /opt/bisq-support/secrets -p wa -k secrets
+
+# Monitor system calls
+-a always,exit -S mount -S umount2 -S chmod -S chown -S setxattr -S lsetxattr -S fsetxattr -S unlink -S rmdir -S rename -S link -S symlink -k filesystem
+EOF
+
+# Restart auditd to apply rules
+systemctl restart auditd
+
+# Setup directories with proper permissions
+echo -e "${BLUE}[5/8] Setting up directories and permissions...${NC}"
+mkdir -p "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR" "$BISQ2_DIR"
+chown -R root:root "$INSTALL_DIR" "$BISQ2_DIR"
+chmod 755 "$INSTALL_DIR" "$BISQ2_DIR"
+chmod 700 "$SECRETS_DIR"
+chmod 755 "$LOG_DIR"
+
+# Create dedicated user for the application
+if ! id -u bisq-support &>/dev/null; then
+    useradd -r -s /bin/false bisq-support
+fi
+
+# Clone or update Bisq 2 repository
+echo -e "${BLUE}[6/8] Setting up Bisq 2 API...${NC}"
+if [ -d "$BISQ2_DIR" ]; then
+    echo -e "${YELLOW}Bisq 2 repository already exists. Updating...${NC}"
+    cd "$BISQ2_DIR"
+    git fetch --all
+    git reset --hard origin/add-support-api
+    git pull --recurse-submodules
+else
+    echo -e "${BLUE}Cloning Bisq 2 repository...${NC}"
+    git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b add-support-api "$BISQ2_DIR"
+fi
+
+# Create systemd service for Bisq 2 API
+echo -e "${BLUE}Creating Bisq 2 API service...${NC}"
+cat > /etc/systemd/system/bisq2-api.service << EOF
+[Unit]
+Description=Bisq2 Headless API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$BISQ2_DIR
+ExecStart=$BISQ2_DIR/gradlew :apps:http-api-app:run -Djava.awt.headless=true
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Create a specific data directory
+Environment="BISQ_DATA_DIR=$BISQ2_DIR/data"
+# Set API to listen on all interfaces (important for Docker access)
+Environment="BISQ_API_HOST=0.0.0.0"
+# Set Java memory limits
+Environment="JAVA_OPTS=-Xmx1g"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start Bisq 2 API service
+systemctl daemon-reload
+systemctl enable bisq2-api.service
+systemctl start bisq2-api.service
+
+# Clone or update support agent repository
+echo -e "${BLUE}[7/8] Setting up support agent repository...${NC}"
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}Repository already exists. Updating...${NC}"
     cd "$INSTALL_DIR"
@@ -75,17 +176,41 @@ fi
 
 cd "$INSTALL_DIR"
 
-# Setup environment
-echo -e "${BLUE}[5/5] Setting up environment...${NC}"
+# Setup environment and secrets
+echo -e "${BLUE}[8/8] Setting up environment and secrets...${NC}"
 cd "$DOCKER_DIR"
+
+# Create secrets directory if it doesn't exist
+mkdir -p "$SECRETS_DIR"
+
+# Generate random secrets if they don't exist
+if [ ! -f "$SECRETS_DIR/admin_api_key" ]; then
+    openssl rand -base64 32 > "$SECRETS_DIR/admin_api_key"
+    chmod 600 "$SECRETS_DIR/admin_api_key"
+fi
+
+if [ ! -f "$SECRETS_DIR/grafana_admin_password" ]; then
+    openssl rand -base64 32 > "$SECRETS_DIR/grafana_admin_password"
+    chmod 600 "$SECRETS_DIR/grafana_admin_password"
+fi
+
+# Setup .env file
 if [ ! -f .env ]; then
     cp .env.example .env
     echo -e "${YELLOW}Created new .env file from .env.example${NC}"
     echo -e "${YELLOW}Please review and update the .env file with your settings${NC}"
 fi
 
-# Update .env file with required settings
-echo -e "${BLUE}Updating environment variables...${NC}"
+# Update .env file with secrets
+ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
+GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
+
+sed -i "s/ADMIN_API_KEY=.*/ADMIN_API_KEY=$ADMIN_API_KEY/" .env
+sed -i "s/GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD/" .env
+
+# Set Bisq API URL in .env file
+sed -i "s|BISQ_API_URL=.*|BISQ_API_URL=http://localhost:8090|" .env
+
 # Prompt for OpenAI API key if not set
 if ! grep -q "OPENAI_API_KEY=" .env || grep -q "OPENAI_API_KEY=$" .env; then
     read -p "Enter your OpenAI API key: " OPENAI_API_KEY
@@ -100,6 +225,12 @@ sed -i "s/SERVER_IP=.*/SERVER_IP=$SERVER_IP/" .env
 echo -e "${BLUE}Creating necessary directories...${NC}"
 mkdir -p "$INSTALL_DIR/api/data/wiki"
 mkdir -p "$INSTALL_DIR/api/data/logs"
+
+# Set proper permissions
+chown -R bisq-support:bisq-support "$INSTALL_DIR/api/data"
+chmod 755 "$INSTALL_DIR/api/data"
+chmod 755 "$INSTALL_DIR/api/data/wiki"
+chmod 755 "$INSTALL_DIR/api/data/logs"
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
@@ -117,16 +248,38 @@ if ! docker compose -f docker-compose.yml ps | grep -q "Up"; then
     exit 1
 fi
 
+# Setup automatic security updates
+echo -e "${BLUE}Setting up automatic security updates...${NC}"
+apt-get install -y unattended-upgrades
+cat > /etc/apt/apt.conf.d/50unattended-upgrades << EOF
+Unattended-Upgrade::Allowed-Origins {
+    "\${distro_id}:\${distro_codename}";
+    "\${distro_id}:\${distro_codename}-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+};
+EOF
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades << EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
 echo -e "${GREEN}======================================================"
 echo "Deployment complete!"
 echo "Your Bisq Support Assistant is running on port 3000"
 echo "API is available on port 8000"
 echo "Grafana dashboard is available on port 3001"
-echo "Prometheus metrics are available on port 9090"
+echo "Prometheus metrics are available internally only"
+echo "Bisq 2 API is running on port 8090"
 echo "======================================================"
 echo -e "${YELLOW}Important:${NC}"
 echo "1. Review the .env file in $DOCKER_DIR for any necessary configuration"
 echo "2. The API data directory is at $INSTALL_DIR/api/data"
 echo "3. Logs are available in $INSTALL_DIR/api/data/logs"
-echo "4. Run './scripts/update.sh' to update the application"
+echo "4. Audit logs are available in /var/log/audit/audit.log"
+echo "5. Run './scripts/update.sh' to update the application"
+echo "6. Security updates are configured to run automatically"
+echo "7. Bisq 2 API logs are available with: journalctl -u bisq2-api.service"
 echo "======================================================"${NC} 

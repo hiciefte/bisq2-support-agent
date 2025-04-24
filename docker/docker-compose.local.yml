@@ -5,11 +5,12 @@ services:
       dockerfile: docker/api/Dockerfile
     volumes:
       - ../api/app:/app/app # Mount only the app directory for development
-      - ../api/data:/app/api/data # Mount the data directory to match the DATA_DIR path in config.py
+      - ../api/data:/app/data # Mount the entire data directory
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=development # Environment-specific setting
       - BISQ_API_URL=http://host.docker.internal:8090
+      - DATA_DIR=/app/data # Set the data directory path
     ports:
       - "8000:8000"
     platform: linux/arm64
@@ -31,47 +32,12 @@ services:
     environment:
       - NODE_ENV=development
       - WATCHPACK_POLLING=true
+      - NEXT_TELEMETRY_DISABLED=1
     command: npm run dev
     networks:
       - bisq-support-network
     depends_on:
       - api
-
-  faq-extractor:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
-    command: [ "python", "-m", "app.scripts.extract_faqs" ]
-    volumes:
-      - ../api/data:/app/api/data # Match the API service volume mount
-    environment:
-      - DATA_DIR=${DATA_DIR}
-      - BISQ_API_URL=http://host.docker.internal:8090
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
-      - MAX_TOKENS=${MAX_TOKENS}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-    platform: linux/arm64
-    depends_on:
-      - api
-    networks:
-      - bisq-support-network
-
-  feedback-processor:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
-    command: [ "python", "-m", "app.scripts.process_feedback" ]
-    volumes:
-      - ../api/data:/app/api/data # Match the API service volume mount
-    environment:
-      - DATA_DIR=${DATA_DIR}
-    platform: linux/arm64
-    depends_on:
-      - api
-    networks:
-      - bisq-support-network
 
 networks:
   bisq-support-network:
