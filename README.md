@@ -40,7 +40,7 @@ bisq-support-assistant/
 ├── docker/               # Docker configuration
 │   ├── api/              # API service Dockerfile
 │   ├── web/              # Web frontend Dockerfile and dev version
-│   ├── nginx/            # Nginx configuration for production
+│   ├── nginx/            # Nginx configuration for development and testing
 │   ├── prometheus/       # Prometheus configuration
 │   ├── grafana/          # Grafana configuration
 │   ├── scripts/          # Maintenance and automation scripts
@@ -51,88 +51,43 @@ bisq-support-assistant/
 │   ├── troubleshooting.md # Troubleshooting guide
 │   └── monitoring-security.md # Monitoring security guide
 ├── scripts/              # Utility scripts
-└── run-local.sh, run-cloud.sh # Deployment scripts
+│   ├── deploy.sh         # Production deployment script
+│   ├── update.sh         # Update script
+│   ├── download_bisq2_media_wiki.py # Wiki content downloader
+│   └── fix_xml_namespaces.py # XML namespace fixer
+└── run-local.sh         # Local development script
 ```
 
-## Setup
-
-### 1. Clone this repository:
-```bash
-git clone <repository-url>
-cd <repository-directory>
-```
-
-### 2. Environment Configuration:
-
-Create `.env` files in the appropriate directories:
-
-#### For Docker:
-```bash
-# Copy the example file
-cp docker/.env.example docker/.env
-
-# Edit with your settings
-nano docker/.env
-```
-
-Required variables for Docker:
-```
-# OpenAI API key (required for the RAG service)
-OPENAI_API_KEY=your_api_key_here
-
-# Admin API key for protected endpoints
-ADMIN_API_KEY=your_admin_key_here
-
-# Grafana credentials (for monitoring)
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=securepassword
-```
-
-#### For Local API Development:
-```bash
-# Copy the example file
-cp api/.env.example api/.env
-
-# Edit with your settings
-nano api/.env
-```
-
-### 3. Data Directory Structure:
-
-**Important**: The project uses existing data directories that contain the necessary content for the RAG system. These directories should be preserved:
-
-- `api/data/wiki/`: Contains Markdown files with documentation
-- `api/data/vectorstore/`: Contains vector embeddings for the RAG system
-- `api/data/feedback/`: Stores user feedback in monthly files
-
-For Docker, these directories are mounted into the container, so both local development and Docker setups use the same data.
-
-If these directories don't exist or are empty, you may need to:
-```bash
-# Ensure the directories exist
-mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
-
-# Add content to the wiki directory (if needed)
-# Example: cp your-documentation.md api/data/wiki/
-```
-
-## Deployment Options
+## Deployment
 
 ### Production Deployment
 
-For production deployment, use the standard docker configuration:
+For production deployment on a DigitalOcean droplet or similar cloud instance:
 
+1. Clone the repository:
 ```bash
-# Build and start the production environment
-./run-cloud.sh
+git clone git@github.com:hiciefte/bisq2-support-agent.git
+cd bisq2-support-agent
 ```
 
-This configuration:
-- Uses a two-stage build process for the web frontend to ensure proper module resolution
-- Sets up Nginx as a reverse proxy for the web frontend
-- Configures monitoring with Prometheus and Grafana
-- Includes scheduled tasks for FAQ updates and feedback processing
-- Is optimized for production use with proper resource limits and environment settings
+2. Run the deployment script:
+```bash
+sudo ./scripts/deploy.sh
+```
+
+The deployment script will:
+- Install required dependencies (Docker, git)
+- Configure Docker and enable it on boot
+- Clone or update the repository
+- Set up the environment and create necessary directories
+- Configure environment variables
+- Start all services with health checks
+
+After deployment, the following services will be available:
+- Web Frontend: http://localhost:3000
+- API Service: http://localhost:8000
+- Grafana Dashboard: http://localhost:3001
+- Prometheus Metrics: http://localhost:9090
 
 ### Local Development
 
@@ -147,32 +102,55 @@ This configuration:
 - Mounts local directories for real-time code changes
 - Uses Dockerfile.dev for the web frontend with hot reloading
 - Sets development-specific environment variables
-- Provides a simplified setup without Nginx, Prometheus, or Grafana
+- Provides a simplified setup without Prometheus or Grafana
 
-## Docker Configuration Details
+## Environment Configuration
 
-### Web Frontend
+### Production Environment
 
-The project uses two different Dockerfiles for the web frontend:
+The deployment script will create a `.env` file in the `docker` directory. You'll need to provide:
 
-1. **Production (Dockerfile)**:
-   - Two-stage build process to ensure proper module resolution
-   - First stage installs dependencies and builds the Next.js application
-   - Second stage only includes the built artifacts
-   - Configured for optimal production performance
+1. OpenAI API key during deployment
+2. Review and update other settings in `docker/.env` as needed
 
-2. **Development (Dockerfile.dev)**:
-   - Single-stage build optimized for development
-   - Mounts local directories for real-time code changes
-   - Enables hot reloading for immediate feedback during development
+### Local Development Environment
 
-### API Service
+For local development, create `.env` files in both the `api` and `docker` directories:
 
-The API service Dockerfile:
-- Uses a multi-stage build to minimize image size
-- Installs dependencies in a builder stage
-- Copies only necessary files to the final image
-- Configures proper data directories for the RAG system
+```bash
+# For API development
+cp api/.env.example api/.env
+
+# For Docker development
+cp docker/.env.example docker/.env
+```
+
+Required variables:
+```
+# OpenAI API key (required for the RAG service)
+OPENAI_API_KEY=your_api_key_here
+
+# Admin API key for protected endpoints
+ADMIN_API_KEY=your_admin_key_here
+
+# Grafana credentials (for monitoring)
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=securepassword
+```
+
+## Data Directory Structure
+
+The project uses the following data directories:
+
+- `api/data/wiki/`: Contains Markdown files with documentation
+- `api/data/vectorstore/`: Contains vector embeddings for the RAG system
+- `api/data/feedback/`: Stores user feedback in monthly files
+
+These directories are automatically created during deployment. For local development, create them manually:
+
+```bash
+mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
+```
 
 ## Running Services Individually
 
@@ -180,17 +158,9 @@ The API service Dockerfile:
 
 1. Create and activate a virtual environment:
    ```bash
-   # Navigate to API directory
    cd api
-   
-   # Create a virtual environment
    python -m venv venv
-   
-   # Activate the virtual environment
-   # On macOS/Linux:
-   source venv/bin/activate
-   # On Windows:
-   # venv\Scripts\activate
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 2. Install dependencies:
@@ -198,15 +168,7 @@ The API service Dockerfile:
    pip install -r requirements.txt
    ```
 
-3. Ensure you have a `.env` file in the api directory:
-   ```bash
-   # If you haven't already created it
-   cp .env.example .env
-   # Edit as needed
-   nano .env
-   ```
-
-4. Run the API service:
+3. Run the API service:
    ```bash
    python -m uvicorn app.main:app --reload
    ```
@@ -218,13 +180,9 @@ The API service Dockerfile:
    cd web
    ```
 
-2. Install Node.js dependencies:
+2. Install dependencies and start:
    ```bash
    npm install
-   ```
-
-3. Start the development server:
-   ```bash
    npm run dev
    ```
 
@@ -233,29 +191,13 @@ The API service Dockerfile:
 The RAG system uses documents from the following locations:
 
 - **Wiki Documents**: Place Markdown files in `api/data/wiki/`
-- **MediaWiki XML Dump**: Place a MediaWiki XML dump file named `bisq_dump.xml` in `api/data/wiki/` to load content from a MediaWiki export
-- **FAQ Data**: The system will automatically extract FAQ data from the wiki documents and Bisq support chats
+- **MediaWiki XML Dump**: Place a MediaWiki XML dump file named `bisq_dump.xml` in `api/data/wiki/`
+- **FAQ Data**: The system will automatically extract FAQ data from the wiki documents
 
 When adding new content:
-1. Add Markdown files to `api/data/wiki/` or add a MediaWiki XML dump file named `bisq_dump.xml` to the same directory
+1. Add Markdown files to `api/data/wiki/` or add a MediaWiki XML dump file
 2. Restart the API service to rebuild the vector store
 3. The system will automatically process and index the new content
-
-### Using MediaWiki XML Dumps
-
-The system supports loading content from MediaWiki XML dumps, which can be exported from any MediaWiki instance (including Wikipedia). To use this feature:
-
-1. Export the XML dump from your MediaWiki instance
-2. Name the file `bisq_dump.xml` and place it in the `api/data/wiki/` directory
-3. Restart the API service to rebuild the vector store
-
-## Automated FAQ Extraction
-
-The project includes automated FAQ extraction from Bisq support chats:
-
-1. The FAQ extractor connects to the Bisq 2 API to fetch support chat conversations
-2. It processes these conversations to generate frequently asked questions and answers
-3. The extracted FAQs are added to the RAG system's knowledge base
 
 ## Monitoring and Security
 
@@ -268,15 +210,13 @@ For details on securing these services, see [Monitoring Security Guide](docs/mon
 
 ## Troubleshooting
 
-If you encounter any issues with the Bisq 2 Support Agent, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). Common issues covered include:
+If you encounter any issues, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). Common issues covered include:
 
 - API service errors
 - Bisq API connection issues
 - Docker configuration problems
 - FAQ extractor issues
 - Monitoring setup problems
-
-For detailed solutions and step-by-step instructions, see the [Troubleshooting Guide](docs/troubleshooting.md).
 
 ## Contributing
 
