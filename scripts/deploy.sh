@@ -3,14 +3,40 @@
 # Exit on error
 set -e
 
-# Configuration
-REPOSITORY_URL="git@github.com:hiciefte/bisq2-support-agent.git"
-BISQ2_REPOSITORY_URL="git@github.com:hiciefte/bisq2.git"
-INSTALL_DIR="/opt/bisq-support"
-BISQ2_DIR="/opt/bisq2"
+# Security Notice
+echo "SECURITY NOTICE: This script contains deployment configuration for the Bisq 2 Support Agent."
+echo "While this script is designed to be secure, it's recommended to review it before execution."
+echo "Consider using environment variables for sensitive information in production environments."
+echo ""
+
+# Configuration - Use environment variables
+REPOSITORY_URL=${BISQ_SUPPORT_REPO_URL}
+BISQ2_REPOSITORY_URL=${BISQ2_REPO_URL}
+INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR}
+BISQ2_DIR=${BISQ2_INSTALL_DIR}
 DOCKER_DIR="$INSTALL_DIR/docker"
-SECRETS_DIR="$INSTALL_DIR/secrets"
-LOG_DIR="$INSTALL_DIR/logs"
+SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR}
+LOG_DIR=${BISQ_SUPPORT_LOG_DIR}
+SSH_KEY_PATH=${BISQ_SUPPORT_SSH_KEY_PATH}
+
+# Validate required environment variables
+if [ -z "$REPOSITORY_URL" ] || [ -z "$BISQ2_REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ] || [ -z "$BISQ2_DIR" ]; then
+    echo -e "${RED}Error: Required environment variables are not set${NC}"
+    echo -e "${RED}Please set the following environment variables:${NC}"
+    echo -e "${RED}  BISQ_SUPPORT_REPO_URL - URL of the Bisq Support Agent repository${NC}"
+    echo -e "${RED}  BISQ2_REPO_URL - URL of the Bisq 2 repository${NC}"
+    echo -e "${RED}  BISQ_SUPPORT_INSTALL_DIR - Installation directory for Bisq Support Agent${NC}"
+    echo -e "${RED}  BISQ2_INSTALL_DIR - Installation directory for Bisq 2${NC}"
+    echo -e "${RED}  BISQ_SUPPORT_SECRETS_DIR - Directory for secrets (optional)${NC}"
+    echo -e "${RED}  BISQ_SUPPORT_LOG_DIR - Directory for logs (optional)${NC}"
+    echo -e "${RED}  BISQ_SUPPORT_SSH_KEY_PATH - Path to SSH key for GitHub authentication (optional)${NC}"
+    exit 1
+fi
+
+# Set default values for optional variables if not provided
+SECRETS_DIR=${SECRETS_DIR:-"$INSTALL_DIR/secrets"}
+LOG_DIR=${LOG_DIR:-"$INSTALL_DIR/logs"}
+SSH_KEY_PATH=${SSH_KEY_PATH:-"$HOME/.ssh/bisq2_support_agent"}
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -27,6 +53,7 @@ echo "Repository: $REPOSITORY_URL"
 echo "Installation Directory: $INSTALL_DIR"
 echo "Bisq 2 Repository: $BISQ2_REPOSITORY_URL"
 echo "Bisq 2 Directory: $BISQ2_DIR"
+echo "SSH Key Path: $SSH_KEY_PATH"
 echo "------------------------------------------------------${NC}"
 
 # Function to check if a command exists
@@ -38,7 +65,7 @@ check_command() {
 }
 
 # Check for required commands
-echo -e "${BLUE}[1/8] Checking prerequisites...${NC}"
+echo -e "${BLUE}[1/9] Checking prerequisites...${NC}"
 for cmd in git docker curl ufw java; do
     check_command "$cmd"
 done
@@ -63,7 +90,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Install dependencies
-echo -e "${BLUE}[2/8] Installing dependencies...${NC}"
+echo -e "${BLUE}[2/9] Installing dependencies...${NC}"
 apt-get update
 apt-get install -y \
     docker.io \
@@ -77,7 +104,7 @@ apt-get install -y \
     tor
 
 # Configure firewall
-echo -e "${BLUE}[3/8] Configuring firewall...${NC}"
+echo -e "${BLUE}[3/9] Configuring firewall...${NC}"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
@@ -88,7 +115,7 @@ ufw allow 8090/tcp  # Bisq 2 API
 ufw --force enable
 
 # Configure audit logging
-echo -e "${BLUE}[4/8] Configuring audit logging...${NC}"
+echo -e "${BLUE}[4/9] Configuring audit logging...${NC}"
 cat > /etc/audit/rules.d/bisq-support.rules << EOF
 # Monitor Docker operations
 -w /var/run/docker.sock -p wa -k docker
@@ -105,7 +132,7 @@ EOF
 systemctl restart auditd
 
 # Setup directories with proper permissions
-echo -e "${BLUE}[5/8] Setting up directories and permissions...${NC}"
+echo -e "${BLUE}[5/9] Setting up directories and permissions...${NC}"
 mkdir -p "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR" "$BISQ2_DIR"
 chown -R root:root "$INSTALL_DIR" "$BISQ2_DIR"
 chmod 755 "$INSTALL_DIR" "$BISQ2_DIR"
@@ -117,8 +144,53 @@ if ! id -u bisq-support &>/dev/null; then
     useradd -r -s /bin/false bisq-support
 fi
 
+# Setup SSH key for Git authentication and signing
+echo -e "${BLUE}[6/9] Setting up SSH key for Git authentication and signing...${NC}"
+
+# Check if SSH key exists, if not generate it
+if [ ! -f "$SSH_KEY_PATH" ]; then
+    echo -e "${YELLOW}SSH key not found at $SSH_KEY_PATH. Generating new SSH key...${NC}"
+    
+    # Ensure .ssh directory exists with proper permissions
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    
+    # Generate the SSH key
+    ssh-keygen -t ed25519 -C "bisq2-support-agent@github.com" -f "$SSH_KEY_PATH" -N ""
+    chmod 600 "$SSH_KEY_PATH"
+    chmod 644 "$SSH_KEY_PATH.pub"
+    
+    echo -e "${YELLOW}SSH key generated. Please add the public key to your GitHub account:${NC}"
+    echo -e "${YELLOW}1. Go to GitHub.com > Settings > SSH and GPG keys${NC}"
+    echo -e "${YELLOW}2. Click 'New SSH key'${NC}"
+    echo -e "${YELLOW}3. Give it a title (e.g., 'Bisq 2 Support Agent Server')${NC}"
+    echo -e "${YELLOW}4. Copy and paste the following public key:${NC}"
+    echo -e "${GREEN}$(cat "$SSH_KEY_PATH.pub")${NC}"
+    echo -e "${YELLOW}5. Click 'Add SSH key'${NC}"
+    echo -e "${YELLOW}6. Repeat steps 2-5 but select 'Signing Key' as the key type${NC}"
+    echo -e "${YELLOW}Press Enter when you've added the key to GitHub...${NC}"
+    read -r
+else
+    echo -e "${GREEN}SSH key already exists at $SSH_KEY_PATH.${NC}"
+fi
+
+# Configure Git to use the SSH key
+echo -e "${BLUE}Configuring Git to use the SSH key...${NC}"
+git config --global core.sshCommand "ssh -i $SSH_KEY_PATH"
+git config --global gpg.format ssh
+git config --global user.signingkey "$SSH_KEY_PATH.pub"
+git config --global commit.gpgsign true
+
+# Test SSH connection to GitHub
+echo -e "${BLUE}Testing SSH connection to GitHub...${NC}"
+if ! ssh -i "$SSH_KEY_PATH" -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    echo -e "${RED}Error: Failed to authenticate with GitHub using the SSH key${NC}"
+    echo -e "${RED}Please make sure the SSH key is added to your GitHub account${NC}"
+    exit 1
+fi
+
 # Clone or update Bisq 2 repository
-echo -e "${BLUE}[6/8] Setting up Bisq 2 API...${NC}"
+echo -e "${BLUE}[7/9] Setting up Bisq 2 API...${NC}"
 if [ -d "$BISQ2_DIR" ]; then
     echo -e "${YELLOW}Bisq 2 repository already exists. Updating...${NC}"
     cd "$BISQ2_DIR"
@@ -163,7 +235,7 @@ systemctl enable bisq2-api.service
 systemctl start bisq2-api.service
 
 # Clone or update support agent repository
-echo -e "${BLUE}[7/8] Setting up support agent repository...${NC}"
+echo -e "${BLUE}[8/9] Setting up support agent repository...${NC}"
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}Repository already exists. Updating...${NC}"
     cd "$INSTALL_DIR"
@@ -177,7 +249,7 @@ fi
 cd "$INSTALL_DIR"
 
 # Setup environment and secrets
-echo -e "${BLUE}[8/8] Setting up environment and secrets...${NC}"
+echo -e "${BLUE}[9/9] Setting up environment and secrets...${NC}"
 cd "$DOCKER_DIR"
 
 # Create secrets directory if it doesn't exist
