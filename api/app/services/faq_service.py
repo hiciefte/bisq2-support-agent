@@ -11,6 +11,8 @@ import logging
 import os
 import random
 import time
+import re
+import unicodedata
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
@@ -68,8 +70,72 @@ class FAQService:
 
         # Load processed conversation IDs
         self.processed_conv_ids = self.load_processed_conv_ids()
+        
+        # Store normalized FAQ keys for deduplication
+        self.normalized_faq_keys = set()
 
         logger.info("FAQ service initialized")
+
+    def normalize_text(self, text: str) -> str:
+        """Normalize text by converting to lowercase, normalizing Unicode characters,
+        and standardizing whitespace.
+        
+        Args:
+            text: The text to normalize
+            
+        Returns:
+            Normalized text
+        """
+        if not text:
+            return ""
+            
+        # Convert to lowercase
+        text = text.lower()
+        
+        # Normalize Unicode characters (e.g., convert different apostrophe types to standard)
+        text = unicodedata.normalize('NFKC', text)
+        
+        # Replace common Unicode apostrophes with standard ASCII apostrophe
+        text = text.replace('\u2019', "'")  # Right single quotation mark
+        text = text.replace('\u2018', "'")  # Left single quotation mark
+        text = text.replace('\u201B', "'")  # Single high-reversed-9 quotation mark
+        text = text.replace('\u2032', "'")  # Prime
+        
+        # Standardize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Trim leading/trailing whitespace
+        text = text.strip()
+        
+        return text
+        
+    def get_normalized_faq_key(self, faq: Dict) -> str:
+        """Generate a normalized key for a FAQ to identify duplicates.
+        
+        Args:
+            faq: The FAQ dictionary
+            
+        Returns:
+            A normalized key string
+        """
+        question = self.normalize_text(faq.get('question', ''))
+        answer = self.normalize_text(faq.get('answer', ''))
+        return f"{question}|{answer}"
+        
+    def is_duplicate_faq(self, faq: Dict) -> bool:
+        """Check if a FAQ is a duplicate based on normalized content.
+        
+        Args:
+            faq: The FAQ dictionary to check
+            
+        Returns:
+            True if the FAQ is a duplicate, False otherwise
+        """
+        key = self.get_normalized_faq_key(faq)
+        if key in self.normalized_faq_keys:
+            return True
+        self.normalized_faq_keys.add(key)
+        return False
 
     def update_source_weights(self, new_weights: Dict[str, float]) -> None:
         """Update source weights for FAQ content.
@@ -543,6 +609,12 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 if not faq.get('question', '').strip() or not faq.get('answer', '').strip():
                     logger.warning(f"Skipping FAQ with missing question or answer: {line}")
                     continue
+                    
+                # Check for duplicates
+                if self.is_duplicate_faq(faq):
+                    logger.info(f"Skipping duplicate FAQ: {faq.get('question', '')[:50]}...")
+                    continue
+                    
                 faqs.append(faq)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
@@ -620,9 +692,12 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         if self.faq_file_path.exists():
             try:
                 faqs = []
-                with self.faq_file_path.open('r') as f:
+                with self.faq_file_path.open('r', encoding='utf-8') as f:
                     for line in f:
-                        faqs.append(json.loads(line))
+                        faq = json.loads(line)
+                        # Add to normalized keys set for deduplication
+                        self.normalized_faq_keys.add(self.get_normalized_faq_key(faq))
+                        faqs.append(faq)
                 logger.info(f"Loaded {len(faqs)} existing FAQ entries")
                 return faqs
             except Exception as e:
@@ -640,9 +715,16 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             logger.info("No new FAQs to save, preserving existing entries")
             return
 
-        with self.faq_file_path.open('w') as f:
+        with self.faq_file_path.open('w', encoding='utf-8') as f:
             for faq in faqs:
-                f.write(json.dumps(faq) + '\n')
+                # Ensure consistent encoding by normalizing before saving
+                normalized_faq = {
+                    'question': faq.get('question', ''),
+                    'answer': faq.get('answer', ''),
+                    'category': faq.get('category', 'General'),
+                    'source': faq.get('source', 'Bisq Support Chat')
+                }
+                f.write(json.dumps(normalized_faq, ensure_ascii=False) + '\n')
         logger.info(f"Saved {len(faqs)} FAQ entries to {self.faq_file_path}")
 
     def serialize_conversation(self, conv: Dict) -> Dict:
@@ -667,6 +749,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             List of extracted FAQ dictionaries
         """
         try:
+            # Reset normalized FAQ keys for this extraction run
+            self.normalized_faq_keys = set()
+            
             # Merge existing and new messages
             await self.merge_csv_files(bisq_api)
 
@@ -684,10 +769,10 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
             # Save all conversations to JSONL file
             if hasattr(self, 'conversations_path'):
-                with self.conversations_path.open('w') as f:
+                with self.conversations_path.open('w', encoding='utf-8') as f:
                     for conv in conversations:
                         serialized_conv = self.serialize_conversation(conv)
-                        f.write(json.dumps(serialized_conv) + '\n')
+                        f.write(json.dumps(serialized_conv, ensure_ascii=False) + '\n')
                 logger.info(
                     f"Saved {len(conversations)} conversations to {self.conversations_path}")
 

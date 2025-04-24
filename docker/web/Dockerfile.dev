@@ -8,12 +8,24 @@ WORKDIR /app
 ENV npm_config_update_notifier=false
 ENV npm_config_fund=false
 
+# Configure npm for better network resilience
+ENV npm_config_fetch_retries=5
+ENV npm_config_fetch_retry_mintimeout=20000
+ENV npm_config_fetch_retry_maxtimeout=120000
+ENV npm_config_registry=https://registry.npmjs.org/
+
 # Copy package files
 COPY web/package*.json ./
 
-# Install all dependencies with clean cache
+# Install all dependencies with clean cache and retry logic
 RUN npm cache clean --force && \
-    npm install
+    npm install --network-timeout=100000 --prefer-offline=false || \
+    (echo "First npm install attempt failed, retrying..." && \
+    sleep 10 && \
+    npm install --network-timeout=100000 --prefer-offline=false) || \
+    (echo "Second npm install attempt failed, retrying one more time..." && \
+    sleep 20 && \
+    npm install --network-timeout=100000 --prefer-offline=false)
 
 # Set environment variable to development
 ENV NODE_ENV=development
