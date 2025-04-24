@@ -139,8 +139,8 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
-    ports:
-      - "${EXPOSE_PROMETHEUS_PORT:-9090}:9090"
+    expose:
+      - "9090"
     networks:
       - bisq-support-network
     logging:
@@ -201,51 +201,16 @@ services:
       - "9100"
     networks:
       - bisq-support-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 128M
-
-  # Data ingestion - FAQ Extractor
-  faq-extractor:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
-    restart: on-failure
-    command: [ "python", "-m", "app.scripts.extract_faqs" ]
-    volumes:
-      - ../api/data:/data
-    environment:
-      - DATA_DIR=${DATA_DIR}
-      - BISQ_API_URL=http://host.docker.internal:8090
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
-      - MAX_TOKENS=${MAX_TOKENS}
-    depends_on:
-      - api
-    networks:
-      - bisq-support-network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-  feedback-processor:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
-    command: [ "python", "-m", "app.scripts.process_feedback" ]
-    volumes:
-      - ../api/data:/data # Match the API service volume mount
-    environment:
-      - DATA_DIR=${DATA_DIR}
-    depends_on:
-      - api
-    networks:
-      - bisq-support-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
 
   # Scheduler for periodic tasks
   scheduler:
@@ -271,7 +236,6 @@ services:
       "
     depends_on:
       - api
-      - faq-extractor
     networks:
       - bisq-support-network
     logging:
