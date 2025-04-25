@@ -66,11 +66,25 @@ For production deployment on a DigitalOcean droplet or similar cloud instance:
 
 1. Clone the repository:
 ```bash
-git clone git@github.com:hiciefte/bisq2-support-agent.git
+git clone <repository-url>
 cd bisq2-support-agent
 ```
 
-2. Run the deployment script:
+2. Set up environment variables:
+```bash
+# Required environment variables
+export BISQ_SUPPORT_REPO_URL="<repository-url>"
+export BISQ2_REPO_URL="<bisq2-repository-url>"
+export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
+export BISQ2_INSTALL_DIR="/opt/bisq2"
+
+# Optional environment variables
+export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
+export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
+export BISQ_SUPPORT_SSH_KEY_PATH="$HOME/.ssh/bisq2_support_agent"
+```
+
+3. Run the deployment script:
 ```bash
 sudo ./scripts/deploy.sh
 ```
@@ -88,6 +102,23 @@ After deployment, the following services will be available:
 - API Service: http://localhost:8000
 - Grafana Dashboard: http://localhost:3001
 - Prometheus Metrics: http://localhost:9090
+
+### Environment Variables
+
+The deployment script uses the following environment variables:
+
+#### Required Variables
+- `BISQ_SUPPORT_REPO_URL`: URL of the Bisq Support Agent repository
+- `BISQ2_REPO_URL`: URL of the Bisq 2 repository
+- `BISQ_SUPPORT_INSTALL_DIR`: Installation directory for Bisq Support Agent
+- `BISQ2_INSTALL_DIR`: Installation directory for Bisq 2
+
+#### Optional Variables
+- `BISQ_SUPPORT_SECRETS_DIR`: Directory for secrets (default: `$INSTALL_DIR/secrets`)
+- `BISQ_SUPPORT_LOG_DIR`: Directory for logs (default: `$INSTALL_DIR/logs`)
+- `BISQ_SUPPORT_SSH_KEY_PATH`: Path to SSH key for GitHub authentication (default: `$HOME/.ssh/bisq2_support_agent`)
+
+For more information about environment variables, see [Environment Configuration](docs/environment-configuration.md).
 
 ### Local Development
 
