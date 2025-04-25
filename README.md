@@ -84,10 +84,18 @@ export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
 export BISQ_SUPPORT_SSH_KEY_PATH="$HOME/.ssh/bisq2_support_agent"
 ```
 
-3. Run the deployment script:
+3. Make the deployment script executable:
 ```bash
-sudo ./scripts/deploy.sh
+chmod +x ./scripts/deploy.sh
 ```
+
+4. Run the deployment script with sudo, preserving environment variables:
+```bash
+# Method 1: Use sudo -E to preserve environment variables
+sudo -E ./scripts/deploy.sh
+```
+
+> **Note:** When using `sudo`, environment variables are not passed to the sudo environment by default. You must either use `sudo -E` to preserve all environment variables or explicitly pass them to the sudo command as shown above.
 
 The deployment script will:
 - Install required dependencies (Docker, git)
@@ -125,6 +133,9 @@ For more information about environment variables, see [Environment Configuration
 For local development, use the local configuration:
 
 ```bash
+# Make the local development script executable
+chmod +x ./run-local.sh
+
 # Build and start the local development environment
 ./run-local.sh
 ```

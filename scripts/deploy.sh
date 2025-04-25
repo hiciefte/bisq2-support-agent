@@ -59,28 +59,77 @@ echo "------------------------------------------------------${NC}"
 # Function to check if a command exists
 check_command() {
     if ! command -v "$1" &> /dev/null; then
-        echo -e "${RED}Error: $1 is not installed or not in PATH${NC}"
-        exit 1
+        echo -e "${YELLOW}Warning: $1 is not installed or not in PATH${NC}"
+        return 1
     fi
+    return 0
 }
 
 # Check for required commands
 echo -e "${BLUE}[1/9] Checking prerequisites...${NC}"
-for cmd in git docker curl ufw java; do
-    check_command "$cmd"
-done
+
+# Check for git
+if ! check_command "git"; then
+    echo -e "${BLUE}Installing git...${NC}"
+    apt-get update
+    apt-get install -y git
+fi
+
+# Check for Docker
+if ! check_command "docker"; then
+    echo -e "${BLUE}Installing Docker...${NC}"
+    apt-get update
+    apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io
+    systemctl start docker
+    systemctl enable docker
+fi
+
+# Check for Docker Compose plugin
+if ! docker compose version &> /dev/null; then
+    echo -e "${BLUE}Installing Docker Compose plugin...${NC}"
+    apt-get update
+    apt-get install -y docker-compose-plugin
+fi
+
+# Check for curl
+if ! check_command "curl"; then
+    echo -e "${BLUE}Installing curl...${NC}"
+    apt-get update
+    apt-get install -y curl
+fi
+
+# Check for ufw
+if ! check_command "ufw"; then
+    echo -e "${BLUE}Installing ufw...${NC}"
+    apt-get update
+    apt-get install -y ufw
+fi
+
+# Check for Java
+if ! check_command "java"; then
+    echo -e "${BLUE}Installing Java 21...${NC}"
+    apt-get update
+    apt-get install -y openjdk-21-jdk
+fi
 
 # Check Java version
 JAVA_VERSION=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | awk -F. '{print $1}')
 if [ "$JAVA_VERSION" -lt 21 ]; then
     echo -e "${RED}Error: Java 21 or later is required. Found Java $JAVA_VERSION${NC}"
-    exit 1
+    echo -e "${BLUE}Installing Java 21...${NC}"
+    apt-get update
+    apt-get install -y openjdk-21-jdk
 fi
 
 # Check if Docker daemon is running
 if ! docker info &> /dev/null; then
     echo -e "${RED}Error: Docker daemon is not running${NC}"
-    exit 1
+    echo -e "${BLUE}Starting Docker daemon...${NC}"
+    systemctl start docker
 fi
 
 # Check if running as root
@@ -93,14 +142,10 @@ fi
 echo -e "${BLUE}[2/9] Installing dependencies...${NC}"
 apt-get update
 apt-get install -y \
-    docker.io \
-    git \
-    ufw \
     auditd \
     fail2ban \
     apparmor \
     apparmor-utils \
-    openjdk-21-jdk \
     tor
 
 # Configure firewall
