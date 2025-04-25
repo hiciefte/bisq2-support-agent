@@ -159,9 +159,43 @@ ufw allow 3001/tcp  # Grafana
 ufw allow 8090/tcp  # Bisq 2 API
 ufw --force enable
 
-# Configure audit logging
-echo -e "${BLUE}[4/9] Configuring audit logging...${NC}"
-cat > /etc/audit/rules.d/bisq-support.rules << EOF
+# Function to handle audit logging issues
+handle_audit_logging() {
+    echo -e "${BLUE}Configuring audit logging...${NC}"
+    
+    # Check if auditd is installed
+    if ! command -v auditd &> /dev/null; then
+        echo -e "${YELLOW}Warning: auditd is not installed. Installing...${NC}"
+        apt-get update
+        apt-get install -y auditd
+    fi
+    
+    # Check auditd service status
+    if ! systemctl is-active --quiet auditd; then
+        echo -e "${YELLOW}Warning: auditd service is not running. Attempting to start...${NC}"
+        
+        # Try to start the service
+        if ! systemctl start auditd; then
+            echo -e "${YELLOW}Warning: Failed to start auditd. Checking logs...${NC}"
+            journalctl -xe | grep auditd
+            
+            # Try to reset audit rules
+            echo -e "${YELLOW}Attempting to reset audit rules...${NC}"
+            auditctl -e 0 || true
+            auditctl -e 1 || true
+            
+            # Try starting again
+            if ! systemctl start auditd; then
+                echo -e "${YELLOW}Warning: Still unable to start auditd. Temporarily disabling...${NC}"
+                systemctl stop auditd
+                systemctl disable auditd
+                return 1
+            fi
+        fi
+    fi
+    
+    # Configure audit rules
+    cat > /etc/audit/rules.d/bisq-support.rules << EOF
 # Monitor Docker operations
 -w /var/run/docker.sock -p wa -k docker
 
@@ -172,9 +206,25 @@ cat > /etc/audit/rules.d/bisq-support.rules << EOF
 # Monitor system calls
 -a always,exit -S mount -S umount2 -S chmod -S chown -S setxattr -S lsetxattr -S fsetxattr -S unlink -S rmdir -S rename -S link -S symlink -k filesystem
 EOF
+    
+    # Restart auditd to apply rules
+    if ! systemctl restart auditd; then
+        echo -e "${YELLOW}Warning: Failed to restart auditd. Continuing without audit logging...${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}Audit logging configured successfully${NC}"
+    return 0
+}
 
-# Restart auditd to apply rules
-systemctl restart auditd
+# Configure audit logging
+if ! handle_audit_logging; then
+    echo -e "${YELLOW}Warning: Audit logging is not active. Some security features may be limited.${NC}"
+    echo -e "${YELLOW}You can troubleshoot audit logging issues after deployment using:${NC}"
+    echo -e "${YELLOW}1. sudo systemctl status auditd${NC}"
+    echo -e "${YELLOW}2. sudo journalctl -xe | grep auditd${NC}"
+    echo -e "${YELLOW}3. sudo auditctl -e 0 && sudo auditctl -e 1${NC}"
+fi
 
 # Setup directories with proper permissions
 echo -e "${BLUE}[5/9] Setting up directories and permissions...${NC}"
