@@ -749,8 +749,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             List of extracted FAQ dictionaries
         """
         try:
-            # Reset normalized FAQ keys for this extraction run
+            # Reset and pre-seed duplicate set with on-disk FAQs
             self.normalized_faq_keys = set()
+            existing_faqs = self.load_existing_faqs()   # populates the set
             
             # Merge existing and new messages
             await self.merge_csv_files(bisq_api)
@@ -781,9 +782,6 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             if new_conversations:
                 logger.info("Extracting FAQs using OpenAI...")
                 new_faqs = self.extract_faqs_with_openai(new_conversations)
-
-                # Load existing FAQs
-                existing_faqs = self.load_existing_faqs()
 
                 # Combine existing and new FAQs
                 all_faqs = existing_faqs + new_faqs
