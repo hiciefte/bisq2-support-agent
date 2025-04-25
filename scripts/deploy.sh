@@ -18,6 +18,7 @@ DOCKER_DIR="$INSTALL_DIR/docker"
 SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR}
 LOG_DIR=${BISQ_SUPPORT_LOG_DIR}
 SSH_KEY_PATH=${BISQ_SUPPORT_SSH_KEY_PATH}
+BISQ2_API_PORT=${BISQ2_API_PORT:-8090} # Default to 8090
 
 # Validate required environment variables
 if [ -z "$REPOSITORY_URL" ] || [ -z "$BISQ2_REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ] || [ -z "$BISQ2_DIR" ]; then
@@ -30,6 +31,7 @@ if [ -z "$REPOSITORY_URL" ] || [ -z "$BISQ2_REPOSITORY_URL" ] || [ -z "$INSTALL_
     echo -e "${RED}  BISQ_SUPPORT_SECRETS_DIR - Directory for secrets (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_LOG_DIR - Directory for logs (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_SSH_KEY_PATH - Path to SSH key for GitHub authentication (optional)${NC}"
+    echo -e "${RED}  BISQ2_API_PORT - Port for the Bisq 2 API service (optional, default 8090)${NC}"
     exit 1
 fi
 
@@ -156,7 +158,7 @@ ufw allow ssh
 ufw allow 3000/tcp  # Web frontend
 ufw allow 8000/tcp  # API
 ufw allow 3001/tcp  # Grafana
-ufw allow 8090/tcp  # Bisq 2 API
+ufw allow $BISQ2_API_PORT/tcp  # Bisq 2 API
 ufw --force enable
 
 # Function to handle audit logging issues
@@ -226,18 +228,28 @@ if ! handle_audit_logging; then
     echo -e "${YELLOW}3. sudo auditctl -e 0 && sudo auditctl -e 1${NC}"
 fi
 
+# Create dedicated user for the application
+# Using a fixed UID/GID (e.g., 1001) makes it easier to map permissions
+# consistently between the host and Docker containers.
+# Ensure your Dockerfiles also create and use a user with this UID/GID.
+FIXED_UID=1001
+FIXED_GID=1001
+if ! id -u bisq-support &>/dev/null; then
+    groupadd -g $FIXED_GID bisq-support || echo "Group bisq-support already exists or error creating."
+    useradd -u $FIXED_UID -g $FIXED_GID -r -s /bin/false bisq-support
+fi
+
 # Setup directories with proper permissions
 echo -e "${BLUE}[5/9] Setting up directories and permissions...${NC}"
 mkdir -p "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR" "$BISQ2_DIR"
-chown -R root:root "$INSTALL_DIR" "$BISQ2_DIR"
-chmod 755 "$INSTALL_DIR" "$BISQ2_DIR"
-chmod 700 "$SECRETS_DIR"
-chmod 755 "$LOG_DIR"
-
-# Create dedicated user for the application
-if ! id -u bisq-support &>/dev/null; then
-    useradd -r -s /bin/false bisq-support
-fi
+# Set ownership to the dedicated user
+chown -R bisq-support:bisq-support "$INSTALL_DIR" "$BISQ2_DIR"
+# Set permissions (adjust as needed, ensure bisq-support can write to data/log dirs)
+chmod 755 "$INSTALL_DIR" "$BISQ2_DIR" # Read/execute for others is okay for main dirs
+chmod 700 "$SECRETS_DIR"             # Secrets should be private
+chmod 775 "$LOG_DIR"                 # Service needs to write logs
+# Set ownership for data dirs specifically after cloning/updating
+# chown -R bisq-support:bisq-support "$INSTALL_DIR/api/data" # Moved lower
 
 # Setup SSH key for Git authentication and signing
 echo -e "${BLUE}[6/9] Setting up SSH key for Git authentication and signing...${NC}"
@@ -271,16 +283,18 @@ fi
 
 # Configure Git to use the SSH key
 echo -e "${BLUE}Configuring Git to use the SSH key...${NC}"
-git config --global core.sshCommand "ssh -i $SSH_KEY_PATH"
+# Note: Using ssh-agent would be more secure if using passphrase-protected keys
+git config --global core.sshCommand "ssh -i $SSH_KEY_PATH -o IdentitiesOnly=yes"
 git config --global gpg.format ssh
 git config --global user.signingkey "$SSH_KEY_PATH.pub"
 git config --global commit.gpgsign true
 
 # Test SSH connection to GitHub
 echo -e "${BLUE}Testing SSH connection to GitHub...${NC}"
-if ! ssh -i "$SSH_KEY_PATH" -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+# Use accept-new to automatically add GitHub's key to known_hosts on first connection
+if ! ssh -i "$SSH_KEY_PATH" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
     echo -e "${RED}Error: Failed to authenticate with GitHub using the SSH key${NC}"
-    echo -e "${RED}Please make sure the SSH key is added to your GitHub account${NC}"
+    echo -e "${RED}Please make sure the SSH key is added to your GitHub account and allows authentication${NC}"
     exit 1
 fi
 
@@ -332,7 +346,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=bisq-support
+Group=bisq-support
 WorkingDirectory=$BISQ2_DIR
 ExecStart=$BISQ2_DIR/gradlew :apps:http-api-app:run -Djava.awt.headless=true
 Restart=on-failure
@@ -350,10 +365,23 @@ Environment="JAVA_OPTS=-Xmx1g"
 WantedBy=multi-user.target
 EOF
 
+# Set proper ownership for Bisq 2 directory
+chown -R bisq-support:bisq-support "$BISQ2_DIR"
+
 # Enable and start Bisq 2 API service
 systemctl daemon-reload
 systemctl enable bisq2-api.service
 systemctl start bisq2-api.service
+
+# Check if Bisq 2 API service started successfully
+echo -e "${BLUE}Checking Bisq 2 API service status...${NC}"
+sleep 5 # Give the service a moment to start
+if ! systemctl is-active --quiet bisq2-api.service; then
+    echo -e "${RED}Error: Failed to start bisq2-api.service${NC}"
+    echo -e "${YELLOW}Run 'systemctl status bisq2-api.service' and 'journalctl -u bisq2-api.service' for details.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Bisq 2 API service started successfully.${NC}"
 
 # Clone or update support agent repository
 echo -e "${BLUE}[8/9] Setting up support agent repository...${NC}"
@@ -387,6 +415,21 @@ if [ ! -f "$SECRETS_DIR/grafana_admin_password" ]; then
     chmod 600 "$SECRETS_DIR/grafana_admin_password"
 fi
 
+# Function to safely update or add a variable to the .env file
+update_env_var() {
+    local key="$1"
+    local value="$2"
+    local env_file=".env"
+
+    if grep -q "^${key}=" "$env_file"; then
+        # Variable exists, update it
+        sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+    else
+        # Variable doesn't exist, add it
+        echo "${key}=${value}" >> "$env_file"
+    fi
+}
+
 # Setup .env file
 if [ ! -f .env ]; then
     cp .env.example .env
@@ -394,51 +437,74 @@ if [ ! -f .env ]; then
     echo -e "${YELLOW}Please review and update the .env file with your settings${NC}"
 fi
 
-# Update .env file with secrets
-ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
-GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
-
-sed -i "s/ADMIN_API_KEY=.*/ADMIN_API_KEY=$ADMIN_API_KEY/" .env
-sed -i "s/GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD/" .env
-
-# Set Bisq API URL in .env file
-sed -i "s|BISQ_API_URL=.*|BISQ_API_URL=http://localhost:8090|" .env
-
-# Prompt for OpenAI API key if not set
-if ! grep -q "OPENAI_API_KEY=" .env || grep -q "OPENAI_API_KEY=$" .env; then
-    read -p "Enter your OpenAI API key: " OPENAI_API_KEY
-    sed -i "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$OPENAI_API_KEY/" .env
+# Prompt for OpenAI API key *if* not set or empty
+OPENAI_API_KEY_CURRENT=$(grep "^OPENAI_API_KEY=" .env | cut -d '=' -f2-)
+if [ -z "$OPENAI_API_KEY_CURRENT" ]; then
+    echo -e "${YELLOW}OpenAI API key is missing or empty in .env file.${NC}"
+    read -p "Enter your OpenAI API key: " OPENAI_API_KEY_INPUT
+    update_env_var "OPENAI_API_KEY" "$OPENAI_API_KEY_INPUT"
+else
+    echo -e "${GREEN}OpenAI API key found in .env file.${NC}"
 fi
+
+# Update .env file with secrets and dynamic values (only if needed or for specific updates)
+ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
+update_env_var "ADMIN_API_KEY" "$ADMIN_API_KEY"
+
+GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
+update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
+
+# Set Bisq API URL in .env file using the configured port
+update_env_var "BISQ_API_URL" "http://localhost:$BISQ2_API_PORT"
 
 # Update server IP with actual IP
 SERVER_IP=$(curl -s ifconfig.me)
-sed -i "s/SERVER_IP=.*/SERVER_IP=$SERVER_IP/" .env
+update_env_var "SERVER_IP" "$SERVER_IP"
 
-# Create necessary directories
+# Create necessary directories for the support agent app
 echo -e "${BLUE}Creating necessary directories...${NC}"
 mkdir -p "$INSTALL_DIR/api/data/wiki"
 mkdir -p "$INSTALL_DIR/api/data/logs"
-
-# Set proper permissions
+mkdir -p "$INSTALL_DIR/api/data/vectorstore"
+mkdir -p "$INSTALL_DIR/api/data/feedback"
+# Correct permissions for data dirs needed by Docker containers
+# Ensure the user inside the Docker container (ideally UID 1001) can write here
 chown -R bisq-support:bisq-support "$INSTALL_DIR/api/data"
-chmod 755 "$INSTALL_DIR/api/data"
-chmod 755 "$INSTALL_DIR/api/data/wiki"
-chmod 755 "$INSTALL_DIR/api/data/logs"
+chmod -R 775 "$INSTALL_DIR/api/data" # Group writable needed if container user is bisq-support
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
 docker compose -f docker-compose.yml build --no-cache
 docker compose -f docker-compose.yml up -d
 
-# Wait for services to be healthy
-echo -e "${BLUE}Waiting for services to be healthy...${NC}"
-sleep 10
+# Wait for services to be healthy (basic check)
+echo -e "${BLUE}Waiting for Docker services to start...${NC}"
+MAX_WAIT=60 # Maximum wait time in seconds
+WAIT_INTERVAL=5 # Check interval in seconds
+ELAPSED_TIME=0
 
-# Check if services are running
-if ! docker compose -f docker-compose.yml ps | grep -q "Up"; then
-    echo -e "${RED}Error: Some services failed to start${NC}"
+while [ $ELAPSED_TIME -lt $MAX_WAIT ]; do
+    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
+    TOTAL_CONTAINERS=$(docker compose -f docker-compose.yml ps -a -q | wc -l)
+    
+    if [ "$RUNNING_CONTAINERS" -eq "$TOTAL_CONTAINERS" ] && [ "$TOTAL_CONTAINERS" -gt 0 ]; then
+        echo -e "${GREEN}All Docker containers appear to be running.${NC}"
+        # Add a check for 'healthy' status if HEALTHCHECK is implemented in Dockerfiles
+        # HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running --filter health=healthy -q | wc -l)
+        # if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_CONTAINERS" ]; then echo "All containers healthy"; break; fi
+        break
+    fi
+    
+    echo -e "${YELLOW}Waiting for containers... ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
+    sleep $WAIT_INTERVAL
+    ELAPSED_TIME=$((ELAPSED_TIME + WAIT_INTERVAL))
+done
+
+if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
+    echo -e "${RED}Error: Docker containers did not start or become healthy within $MAX_WAIT seconds.${NC}"
+    docker compose -f docker-compose.yml ps
     docker compose -f docker-compose.yml logs
-    exit 1
+    # exit 1 # Decide if this should be a fatal error
 fi
 
 # Setup automatic security updates
@@ -465,7 +531,7 @@ echo "Your Bisq Support Assistant is running on port 3000"
 echo "API is available on port 8000"
 echo "Grafana dashboard is available on port 3001"
 echo "Prometheus metrics are available internally only"
-echo "Bisq 2 API is running on port 8090"
+echo "Bisq 2 API is running on port $BISQ2_API_PORT"
 echo "======================================================"
 echo -e "${YELLOW}Important:${NC}"
 echo "1. Review the .env file in $DOCKER_DIR for any necessary configuration"

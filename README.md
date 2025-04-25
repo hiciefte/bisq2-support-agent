@@ -73,16 +73,18 @@ cd bisq2-support-agent
 2. Set up environment variables:
 ```bash
 # Required environment variables
-export BISQ_SUPPORT_REPO_URL="<repository-url>"
-export BISQ2_REPO_URL="<bisq2-repository-url>"
+export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
+export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
 export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
 export BISQ2_INSTALL_DIR="/opt/bisq2"
 
 # Optional environment variables
 export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
 export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
-export BISQ_SUPPORT_SSH_KEY_PATH="$HOME/.ssh/bisq2_support_agent"
+export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
 ```
+
+> **Note:** Always use absolute paths for environment variables. Do not use tilde (`~`) or relative paths as they may cause issues with systemd services.
 
 3. Make the deployment script executable:
 ```bash
