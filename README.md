@@ -111,6 +111,105 @@ After deployment, the following services will be available:
 - Grafana Dashboard: http://localhost:3001
 - Prometheus Metrics: http://localhost:9090
 
+### Handling Permission Changes in Git
+
+During deployment or updates, you may encounter Git errors related to permission changes:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        scripts/deploy.sh
+Please commit your changes or stash them before you merge.
+Aborting
+```
+
+This happens because the deployment script changes file permissions (e.g., `chmod +x ./scripts/deploy.sh`), which Git detects as changes to the files. To resolve this:
+
+1. **Option 1: Force the update** (recommended for deployment scripts)
+   ```bash
+   git fetch origin
+   git reset --hard origin/main
+   ```
+   This will discard any local changes, including permission changes.
+
+2. **Option 2: Stash your changes**
+   ```bash
+   git stash
+   git pull origin main
+   git stash pop
+   ```
+   This preserves your changes but may still cause conflicts with permission changes.
+
+3. **Option 3: Configure Git to ignore permission changes**
+   ```bash
+   git config core.fileMode false
+   ```
+   This tells Git to ignore permission changes, but should be used with caution as it may hide other important changes.
+
+For production deployments, Option 1 is usually the safest approach as it ensures you have the exact code from the repository.
+
+### Troubleshooting Deployment Issues
+
+#### Audit Logging Issues
+
+During deployment, you may encounter issues with the audit logging service:
+
+```
+A dependency job for auditd.service failed. See 'journalctl -xe' for details.
+```
+
+This is a common issue that can occur during the initial setup of audit logging. To resolve this:
+
+1. Check the audit service status:
+   ```bash
+   sudo systemctl status auditd
+   ```
+
+2. If the service is not running, try to start it manually:
+   ```bash
+   sudo systemctl start auditd
+   ```
+
+3. If the service fails to start, check the logs for more details:
+   ```bash
+   sudo journalctl -xe | grep auditd
+   ```
+
+4. In some cases, you may need to reset the audit rules:
+   ```bash
+   sudo auditctl -e 0
+   sudo auditctl -e 1
+   ```
+
+5. If the issue persists, you can temporarily disable audit logging to complete the deployment:
+   ```bash
+   sudo systemctl stop auditd
+   sudo systemctl disable auditd
+   ```
+
+After the deployment is complete, you can re-enable and troubleshoot the audit service:
+```bash
+sudo systemctl enable auditd
+sudo systemctl start auditd
+```
+
+#### Kernel Updates
+
+The deployment script may detect that your system is running an outdated kernel:
+
+```
+Pending kernel upgrade!
+Running kernel version:
+  6.11.0-9-generic
+Diagnostics:
+  The currently running kernel version is not the expected kernel version 6.11.0-24-generic.
+```
+
+While the deployment can continue, it's recommended to reboot your system after the deployment to load the new kernel:
+
+```bash
+sudo reboot
+```
+
 ### Environment Variables
 
 The deployment script uses the following environment variables:
