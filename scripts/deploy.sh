@@ -289,12 +289,38 @@ echo -e "${BLUE}[7/9] Setting up Bisq 2 API...${NC}"
 if [ -d "$BISQ2_DIR" ]; then
     echo -e "${YELLOW}Bisq 2 repository already exists. Updating...${NC}"
     cd "$BISQ2_DIR"
+    
+    # Fetch all branches
     git fetch --all
-    git reset --hard origin/add-support-api
+    
+    # Check if the add-support-api branch exists remotely
+    if git ls-remote --heads origin add-support-api | grep -q add-support-api; then
+        echo -e "${BLUE}Found add-support-api branch. Using it...${NC}"
+        # Check if we're already on the branch
+        if [ "$(git rev-parse --abbrev-ref HEAD)" != "add-support-api" ]; then
+            # Try to switch to the branch, or create it if it doesn't exist locally
+            git checkout add-support-api || git checkout -b add-support-api origin/add-support-api
+        fi
+        # Reset to the remote branch
+        git reset --hard origin/add-support-api
+    else
+        echo -e "${YELLOW}add-support-api branch not found. Using main branch...${NC}"
+        git checkout main || git checkout -b main origin/main
+        git reset --hard origin/main
+    fi
+    
+    # Pull with submodules
     git pull --recurse-submodules
 else
     echo -e "${BLUE}Cloning Bisq 2 repository...${NC}"
-    git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b add-support-api "$BISQ2_DIR"
+    # Check if the add-support-api branch exists
+    if git ls-remote --heads $BISQ2_REPOSITORY_URL add-support-api | grep -q add-support-api; then
+        echo -e "${BLUE}Cloning add-support-api branch...${NC}"
+        git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b add-support-api "$BISQ2_DIR"
+    else
+        echo -e "${YELLOW}add-support-api branch not found. Cloning main branch...${NC}"
+        git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b main "$BISQ2_DIR"
+    fi
 fi
 
 # Create systemd service for Bisq 2 API
