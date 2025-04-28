@@ -68,6 +68,9 @@ services:
       - "8000"
     networks:
       - bisq-support-network
+    # Add extra_hosts to map host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://api:8000/health" ]
       interval: 30s
@@ -233,6 +236,9 @@ services:
       - api
     networks:
       - bisq-support-network
+    # Add extra_hosts to map host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     logging:
       driver: "json-file"
       options:

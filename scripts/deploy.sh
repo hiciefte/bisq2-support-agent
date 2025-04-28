@@ -389,8 +389,8 @@ StandardOutput=journal
 StandardError=journal
 # Create a specific data directory
 Environment="BISQ_DATA_DIR=$BISQ2_DIR/data"
-# Set API to listen only on localhost (127.0.0.1) for Docker access via host.docker.internal
-Environment="BISQ_API_HOST=127.0.0.1"
+# Set API to listen on all interfaces (0.0.0.0) for Docker access via host.docker.internal
+Environment="BISQ_API_HOST=0.0.0.0"
 # Set Java memory limits
 Environment="JAVA_OPTS=-Xmx1g"
 
