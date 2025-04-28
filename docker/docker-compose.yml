@@ -220,15 +220,14 @@ services:
       sh -c "
         apk add --no-cache docker-cli docker-compose bash coreutils &&
         mkdir -p /var/log/cron &&
-        echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
+        # Add @reboot entries to run scripts once when crond starts
+        echo '@reboot /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
+        echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
+        # Add regular cron entries
+        echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
-        # Run scripts on startup
-        echo \"[$(date)] Running initial FAQ update on startup...\" &&
-        /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1 &&
-        echo \"[$(date)] Running initial feedback processing on startup...\" &&
-        /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1 &&
-        # Start cron daemon
-        crond -f -d 8
+        # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
+        crond -f -l 8 -d 8
       "
     depends_on:
       - api
