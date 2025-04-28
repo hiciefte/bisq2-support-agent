@@ -309,6 +309,9 @@ ensure_bisq2_perms() {
   chmod 755 "$BISQ2_DIR"
 }
 
+# Add repository directory to Git's safe directories for the root user
+git config --global --add safe.directory "$BISQ2_DIR"
+
 # Clone or update Bisq 2 repository
 echo -e "${BLUE}[7/9] Setting up Bisq 2 API...${NC}"
 if [ -d "$BISQ2_DIR" ] && [ -d "$BISQ2_DIR/.git" ]; then # Check for .git dir too
@@ -405,6 +408,9 @@ if ! systemctl is-active --quiet bisq2-api.service; then
     exit 1
 fi
 echo -e "${GREEN}Bisq 2 API service started successfully.${NC}"
+
+# Add repository directory to Git's safe directories for the root user
+git config --global --add safe.directory "$INSTALL_DIR"
 
 # Clone or update support agent repository
 echo -e "${BLUE}[8/9] Setting up support agent repository...${NC}"
