@@ -417,19 +417,38 @@ echo -e "${GREEN}Bisq 2 API service started successfully.${NC}"
 # Add repository directory to Git's safe directories for the root user
 git config --global --add safe.directory "$INSTALL_DIR"
 
+# Helper function to set permissions for Support Agent directory
+ensure_support_agent_perms() {
+  echo -e "${BLUE}Setting ownership and permissions for $INSTALL_DIR...${NC}"
+  chown -R bisq-support:bisq-support "$INSTALL_DIR"
+  # Adjust permissions as needed, assuming 755 is okay for the main repo dir
+  chmod 755 "$INSTALL_DIR"
+}
+
 # Clone or update support agent repository
 echo -e "${BLUE}[8/9] Setting up support agent repository...${NC}"
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then # Check for .git dir too
     echo -e "${YELLOW}Repository already exists. Updating...${NC}"
     cd "$INSTALL_DIR"
     git fetch --all
-    git reset --hard origin/main
+    git reset --hard origin/main # Assuming main branch for support agent
+    # Set permissions after update
+    ensure_support_agent_perms
 else
+    # If directory exists but is not a git repo, remove it first
+    if [ -d "$INSTALL_DIR" ]; then
+        echo -e "${YELLOW}Found existing non-repo directory at $INSTALL_DIR. Removing it...${NC}"
+        rm -rf "$INSTALL_DIR"
+    fi
+
     echo -e "${BLUE}Cloning repository...${NC}"
-    git clone $REPOSITORY_URL "$INSTALL_DIR"
+    # Quote URL/DIR, add --depth 1 for potential speedup
+    git clone --depth 1 "$REPOSITORY_URL" -b main "$INSTALL_DIR"
+    # Set permissions after clone
+    ensure_support_agent_perms
 fi
 
-cd "$INSTALL_DIR"
+cd "$INSTALL_DIR" # Ensure we are in the correct directory before Step 9
 
 # Setup environment and secrets
 echo -e "${BLUE}[9/9] Setting up environment and secrets...${NC}"
