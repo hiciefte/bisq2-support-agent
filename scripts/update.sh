@@ -6,8 +6,20 @@
 
 set -e  # Exit on error
 
-# Default installation directory using HOME for portability
-INSTALL_DIR=${INSTALL_DIR:-"$HOME/workspace/bisq2-support-agent"}
+# --- Source Environment Configuration --- #
+ENV_FILE="/etc/bisq-support/deploy.env"
+if [ -f "$ENV_FILE" ]; then
+    echo -e "${BLUE}Sourcing environment variables from $ENV_FILE...${NC}"
+    # shellcheck disable=SC1090,SC1091 # Path is variable, existence checked
+    source "$ENV_FILE"
+else
+    echo -e "${YELLOW}Warning: Environment file $ENV_FILE not found. Using script defaults or existing env vars.${NC}"
+fi
+# --- End Source Environment Configuration --- #
+
+# Define installation directory using sourced variable or default
+# Defaulting to /opt/bisq-support which aligns with deploy.sh
+INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}
 DOCKER_DIR="$INSTALL_DIR/docker"
 COMPOSE_FILE="docker-compose.yml"
 HEALTH_CHECK_RETRIES=30
@@ -24,6 +36,7 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}======================================================"
 echo "Bisq Support Assistant - Maintenance Script"
 echo -e "======================================================${NC}"
+echo "Installation Directory: $INSTALL_DIR"
 
 # Check for required commands
 for cmd in git docker jq curl; do
@@ -297,6 +310,7 @@ fi
 
 # Pull latest changes
 echo -e "${BLUE}Pulling latest changes from remote...${NC}"
+echo -e "${YELLOW}Note: If your SSH key ($SSH_KEY_PATH) has a passphrase, ensure ssh-agent is running and the key is added.${NC}"
 if ! git pull; then
   echo -e "${RED}Error: Failed to pull latest changes. Check your network connection or repository access.${NC}"
   # Restore stashed changes if pull failed
@@ -381,8 +395,10 @@ if $REBUILD_NEEDED; then
         exit 1
     fi
     
-    if ! docker compose -f "$COMPOSE_FILE" build --no-cache; then
+    echo -e "${BLUE}Building containers (pulling fresh base images)...${NC}"
+    if ! docker compose -f "$COMPOSE_FILE" build --pull; then
         echo -e "${RED}Error: Failed to rebuild containers.${NC}"
+        rollback_to_previous_version "Docker build failed"
         exit 1
     fi
     
