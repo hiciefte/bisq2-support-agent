@@ -235,8 +235,14 @@ fi
 FIXED_UID=1001
 FIXED_GID=1001
 if ! id -u bisq-support &>/dev/null; then
+    echo -e "${BLUE}Creating bisq-support group and user with UID/GID $FIXED_UID/$FIXED_GID...${NC}"
     groupadd -g $FIXED_GID bisq-support || echo "Group bisq-support already exists or error creating."
-    useradd -u $FIXED_UID -g $FIXED_GID -r -s /bin/false bisq-support
+    # Use -m to create the home directory /home/bisq-support
+    useradd -m -d /home/bisq-support -u $FIXED_UID -g $FIXED_GID -r -s /bin/false bisq-support
+    # Ensure home directory ownership just in case
+    chown bisq-support:bisq-support /home/bisq-support
+else
+    echo -e "${GREEN}User bisq-support already exists.${NC}"
 fi
 
 # Setup directories with proper permissions
