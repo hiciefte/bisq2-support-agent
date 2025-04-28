@@ -527,7 +527,7 @@ chmod -R 775 "$INSTALL_DIR/api/data" # Group writable needed if container user i
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
-docker compose -f docker-compose.yml build --pull
+docker compose -f docker-compose.yml build --pull --no-cache
 docker compose -f docker-compose.yml up -d
 
 # Wait for services to be healthy (basic check)

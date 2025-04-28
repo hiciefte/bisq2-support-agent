@@ -19,21 +19,28 @@ This is a [Next.js](https://nextjs.org) project for the Bisq 2 Support Agent web
 
 ### Running with Docker (Recommended)
 
-The easiest way to run the web frontend is using Docker Compose from the root directory:
+The easiest way to run the web frontend as part of the complete application stack is using Docker Compose from the **root directory** of the `bisq2-support-agent` project:
 
 ```bash
-# For development with hot reload
+# For local development with hot reloading (uses docker-compose.local.yml)
 ./run-local.sh
 
-# For production
-./run-cloud.sh
+# For production deployment (uses docker-compose.yml)
+# Initial deployment is done via the main deploy.sh script
+sudo /path/to/bisq2-support-agent/scripts/deploy.sh
+
+# Subsequent updates are done via the main update.sh script
+cd /opt/bisq-support # Or your installation directory
+sudo ./scripts/update.sh
 ```
 
-### Local Development
+### Local Development (Standalone Web)
 
-If you want to run the web frontend directly:
+If you want to run *only* the web frontend directly (e.g., pointing to a separately running API):
 
 ```bash
+cd web # Navigate to this directory
+
 # Install dependencies
 npm install
 
@@ -45,16 +52,14 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ### Configuration
 
-The web frontend is configured to communicate with the API service. By default, it will use the host's hostname to determine the API URL.
+The web frontend needs to know where the API service is located. This is handled automatically by the Docker Compose setup (using Nginx reverse proxy at `/api`).
 
-You can override the API URL by setting the `NEXT_PUBLIC_API_URL` environment variable:
+If running standalone (using `npm run dev`), you might need to configure the API URL via the `NEXT_PUBLIC_API_URL` environment variable if the API is not at the default location:
 
 ```bash
-# For development
+# Example for standalone development pointing to default API port
 NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
-
-In Docker, this is configured in the `docker/.env` file and Docker Compose configurations.
 
 ## Project Structure
 

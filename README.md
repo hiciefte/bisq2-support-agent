@@ -100,7 +100,7 @@ sudo -E ./scripts/deploy.sh
 > **Note:** When using `sudo`, environment variables are not passed to the sudo environment by default. You must either use `sudo -E` to preserve all environment variables or explicitly pass them to the sudo command as shown above.
 
 The deployment script will:
-- Install required dependencies (Docker, git)
+- Install required dependencies (Docker, git, Java, etc.)
 - Configure Docker and enable it on boot
 - Clone or update the repository
 - Set up the environment and create necessary directories
@@ -112,6 +112,35 @@ After deployment, the following services will be available:
 - API Service: http://localhost:8000
 - Grafana Dashboard: http://localhost:3001
 - Prometheus Metrics: http://localhost:9090
+
+### Updating the Application
+
+To update the application to the latest version from the repository after initial deployment:
+
+1.  **Log in** to your server via SSH.
+2.  **Navigate** to the installation directory:
+    ```bash
+    cd /opt/bisq-support # Or your custom BISQ_SUPPORT_INSTALL_DIR
+    ```
+3.  **(Optional) Use SSH Agent:** If your deployment SSH key (`$BISQ_SUPPORT_SSH_KEY_PATH`) is protected by a passphrase, start `ssh-agent` and add your key:
+    ```bash
+    eval $(ssh-agent -s)
+    ssh-add /path/to/your/private_key # e.g., /root/.ssh/bisq2_support_agent
+    # Enter passphrase if prompted
+    ```
+4.  **Run the update script:** Execute the script with `sudo`.
+    ```bash
+    sudo ./scripts/update.sh
+    ```
+
+The update script will:
+- Stash any local, uncommitted changes.
+- Pull the latest code from the repository.
+- Analyze changes to determine if a container rebuild or just restarts are needed.
+- Apply the updates (rebuild/restart relevant services).
+- Perform health checks and a basic chat functionality test.
+- Attempt to automatically roll back to the previous version if update checks fail.
+- Attempt to restore stashed local changes.
 
 ### Handling Permission Changes in Git
 
@@ -126,30 +155,18 @@ Aborting
 
 This happens because the deployment script changes file permissions (e.g., `chmod +x ./scripts/deploy.sh`), which Git detects as changes to the files. To resolve this:
 
-1. **Option 1: Force the update** (recommended for deployment scripts)
-   ```bash
-   git fetch origin
-   git reset --hard origin/main
-   ```
-   This will discard any local changes, including permission changes.
+1. **Option 1: Let `update.sh` handle it.** (Recommended)
+2. **Option 2: Force the update manually** (If update script stash fails)
+    ```bash
+    git fetch origin
+    git reset --hard origin/main
+    ```
+3. **Option 3: Configure Git to ignore permission changes** (Use with caution)
+    ```bash
+    git config core.fileMode false
+    ```
 
-2. **Option 2: Stash your changes**
-   ```bash
-   git stash
-   git pull origin main
-   git stash pop
-   ```
-   This preserves your changes but may still cause conflicts with permission changes.
-
-3. **Option 3: Configure Git to ignore permission changes**
-   ```bash
-   git config core.fileMode false
-   ```
-   This tells Git to ignore permission changes, but should be used with caution as it may hide other important changes.
-
-For production deployments, Option 1 is usually the safest approach as it ensures you have the exact code from the repository.
-
-### Troubleshooting Deployment Issues
+### Troubleshooting Deployment/Update Issues
 
 #### Audit Logging Issues
 
