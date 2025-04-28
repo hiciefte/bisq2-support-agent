@@ -16,16 +16,10 @@ const nextConfig = {
     experimental: {
         forceSwcTransforms: true,
     },
-    // Configure asset prefix to use the server's hostname
-    // In production, use the HOSTNAME environment variable
-    // In development, use an empty string to allow Next.js to handle assets locally
-    assetPrefix: process.env.NODE_ENV === "production"
-        ? `http://${process.env.HOSTNAME}`
-        : "",
     // Ensure proper handling of static assets
     poweredByHeader: false,
     compress: true,
     reactStrictMode: true,
-}
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;
