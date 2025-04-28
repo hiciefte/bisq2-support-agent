@@ -9,35 +9,28 @@ The `docker-cleanup.sh` script performs automatic cleanup of Docker resources to
 1. Checks current disk usage
 2. Performs basic cleanup for normal conditions
 3. Performs aggressive cleanup if disk space is critically low
-4. Logs all actions to `/var/log/bisq-support/`
+4. Logs all actions to `/var/log/bisq-support/` (Note: Ensure this directory exists and is writable by the cron user or script runner)
 
 ### Setting up Automatic Cleanup
 
-To run the cleanup script automatically, add it to the system's crontab:
+To run the cleanup script automatically, add it to the system's crontab (e.g., root's crontab):
 
 ```bash
-# Edit the system crontab
+# Edit the root crontab
 sudo crontab -e
 
 # Add this line to run cleanup at 2:00 AM every Sunday
-0 2 * * 0 /absolute/path/to/bisq2-support-agent/docker/scripts/maintenance/docker-cleanup.sh
-```
-
-Or if you prefer to use the user's crontab:
-
-```bash
-# Edit the current user's crontab
-crontab -e
-
-# Add this line to run cleanup at 2:00 AM every Sunday
-0 2 * * 0 /absolute/path/to/bisq2-support-agent/docker/scripts/maintenance/docker-cleanup.sh
+# Adjust the path to match your installation directory if different
+0 2 * * 0 /opt/bisq-support/docker/scripts/maintenance/docker-cleanup.sh
 ```
 
 ### Manual Execution
 
-You can also run the script manually when needed:
+You can also run the script manually when needed (likely requires sudo):
 
 ```bash
-cd /path/to/bisq2-support-agent/docker
-./scripts/maintenance/docker-cleanup.sh
+# Navigate to the installation directory
+cd /opt/bisq-support # Or your installation directory
+
+sudo ./docker/scripts/maintenance/docker-cleanup.sh
 ```

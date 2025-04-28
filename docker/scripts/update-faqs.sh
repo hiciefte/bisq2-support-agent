@@ -25,37 +25,6 @@ if ! docker exec $API_CONTAINER python -m app.scripts.extract_faqs; then
   exit 1
 fi
 
-# Wait briefly for files to be written
-sleep 2
-
-# Restart the API container
-log "Restarting API container to load new FAQs..."
-if ! docker restart $API_CONTAINER; then
-  log "ERROR: Failed to restart API container"
-  exit 1
-fi
-
-# Wait for API to start up
-log "Waiting for API to become available..."
-sleep 5
-
-# Health check
-log "Performing API health check..."
-MAX_RETRIES=5
-RETRY_COUNT=0
-
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-  if docker exec $API_CONTAINER curl -s http://localhost:8000/health | grep -q "healthy"; then
-    log "API health check passed"
-    log "FAQ update process completed successfully"
-    exit 0
-  else
-    RETRY_COUNT=$((RETRY_COUNT+1))
-    log "Health check attempt $RETRY_COUNT/$MAX_RETRIES failed, retrying in 5 seconds..."
-    sleep 5
-  fi
-done
-
-log "WARNING: API health check failed after $MAX_RETRIES attempts"
-log "FAQ update completed but API may not be fully operational"
-exit 1 
+log "FAQ extraction finished."
+log "API container was NOT restarted by this script. Assumes API picks up changes dynamically."
+exit 0 
