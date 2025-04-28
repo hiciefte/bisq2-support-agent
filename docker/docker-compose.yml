@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Nginx reverse proxy for web frontend only
   nginx:
@@ -95,7 +93,6 @@ services:
       args:
         - BUILD_ENV=production
         - NEXT_PUBLIC_API_URL=/api
-        - HOSTNAME=${HOSTNAME}
     restart: always
     expose:
       - "3000"
@@ -103,7 +100,6 @@ services:
       - NEXT_PUBLIC_API_URL=/api # Production-specific for Nginx routing
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
-      - HOSTNAME=${HOSTNAME}
     command: npm run start
     depends_on:
       api:
