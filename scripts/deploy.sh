@@ -296,6 +296,13 @@ if ! ssh -i "$SSH_KEY_PATH" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accep
     exit 1
 fi
 
+# Helper function to set permissions for Bisq 2 directory
+ensure_bisq2_perms() {
+  echo -e "${BLUE}Setting ownership and permissions for $BISQ2_DIR...${NC}"
+  chown -R bisq-support:bisq-support "$BISQ2_DIR"
+  chmod 755 "$BISQ2_DIR"
+}
+
 # Clone or update Bisq 2 repository
 echo -e "${BLUE}[7/9] Setting up Bisq 2 API...${NC}"
 if [ -d "$BISQ2_DIR" ] && [ -d "$BISQ2_DIR/.git" ]; then # Check for .git dir too
@@ -325,8 +332,7 @@ if [ -d "$BISQ2_DIR" ] && [ -d "$BISQ2_DIR/.git" ]; then # Check for .git dir to
     git pull --recurse-submodules
 
     # Set ownership and permissions after update
-    chown -R bisq-support:bisq-support "$BISQ2_DIR"
-    chmod 755 "$BISQ2_DIR"
+    ensure_bisq2_perms
 
 else
     # If directory exists but is not a git repo, remove it first
@@ -336,18 +342,19 @@ else
     fi
 
     echo -e "${BLUE}Cloning Bisq 2 repository...${NC}"
-    # Check if the add-support-api branch exists
-    if git ls-remote --heads $BISQ2_REPOSITORY_URL add-support-api | grep -q add-support-api; then
-        echo -e "${BLUE}Cloning add-support-api branch...${NC}"
-        git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b add-support-api "$BISQ2_DIR"
+    # Check if the add-support-api branch exists - Quote URL
+    if git ls-remote --heads "$BISQ2_REPOSITORY_URL" add-support-api | grep -q add-support-api; then
+        echo -e "${BLUE}Cloning add-support-api branch (shallow)...${NC}"
+        # Quote URL/DIR, add --depth 1
+        git clone --depth 1 --recurse-submodules "$BISQ2_REPOSITORY_URL" -b add-support-api "$BISQ2_DIR"
     else
-        echo -e "${YELLOW}add-support-api branch not found. Cloning main branch...${NC}"
-        git clone --recurse-submodules $BISQ2_REPOSITORY_URL -b main "$BISQ2_DIR"
+        echo -e "${YELLOW}add-support-api branch not found. Cloning main branch (shallow)...${NC}"
+        # Quote URL/DIR, add --depth 1
+        git clone --depth 1 --recurse-submodules "$BISQ2_REPOSITORY_URL" -b main "$BISQ2_DIR"
     fi
 
     # Set ownership and permissions after clone
-    chown -R bisq-support:bisq-support "$BISQ2_DIR"
-    chmod 755 "$BISQ2_DIR"
+    ensure_bisq2_perms
 fi
 
 # Create systemd service for Bisq 2 API
@@ -484,7 +491,7 @@ chmod -R 775 "$INSTALL_DIR/api/data" # Group writable needed if container user i
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
-docker compose -f docker-compose.yml build
+docker compose -f docker-compose.yml build --pull
 docker compose -f docker-compose.yml up -d
 
 # Wait for services to be healthy (basic check)
