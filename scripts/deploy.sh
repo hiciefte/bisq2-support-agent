@@ -158,7 +158,6 @@ ufw allow ssh
 ufw allow 3000/tcp  # Web frontend
 ufw allow 8000/tcp  # API
 ufw allow 3001/tcp  # Grafana
-ufw allow $BISQ2_API_PORT/tcp  # Bisq 2 API
 ufw --force enable
 
 # Function to handle audit logging issues
@@ -390,8 +389,8 @@ StandardOutput=journal
 StandardError=journal
 # Create a specific data directory
 Environment="BISQ_DATA_DIR=$BISQ2_DIR/data"
-# Set API to listen on all interfaces (important for Docker access)
-Environment="BISQ_API_HOST=0.0.0.0"
+# Set API to listen only on localhost (127.0.0.1) for Docker access via host.docker.internal
+Environment="BISQ_API_HOST=127.0.0.1"
 # Set Java memory limits
 Environment="JAVA_OPTS=-Xmx1g"
 
@@ -507,12 +506,13 @@ update_env_var "ADMIN_API_KEY" "$ADMIN_API_KEY"
 GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
 update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
 
-# Set Bisq API URL in .env file using the configured port
-update_env_var "BISQ_API_URL" "http://localhost:$BISQ2_API_PORT"
-
-# Update server IP with actual IP
+# Update server IP with actual IP (Still useful for other potential purposes)
 SERVER_IP=$(curl -s ifconfig.me)
 update_env_var "SERVER_IP" "$SERVER_IP"
+
+# Set Bisq API URL in .env file using host.docker.internal and configured port
+# This allows containers to reach the service bound to localhost on the host
+update_env_var "BISQ_API_URL" "http://host.docker.internal:$BISQ2_API_PORT"
 
 # Create necessary directories for the support agent app
 echo -e "${BLUE}Creating necessary directories...${NC}"
