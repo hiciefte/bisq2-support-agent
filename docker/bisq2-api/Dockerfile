@@ -44,7 +44,7 @@ RUN apt-get update && \
 
 # Configure Tor - Create directory, set ownership, basic config
 RUN mkdir -p /var/lib/tor && \
-    chown -R _tor:_tor /var/lib/tor && \
+    chown -R debian-tor:debian-tor /var/lib/tor && \
     chmod 700 /var/lib/tor && \
     echo "SocksPort 9050" > /etc/tor/torrc && \
     echo "ControlPort 9051" >> /etc/tor/torrc && \
