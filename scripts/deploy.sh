@@ -62,7 +62,7 @@ check_command() {
 }
 
 # Check for required commands
-echo -e "${BLUE}[1/7] Checking prerequisites...${NC}"
+echo -e "${BLUE}[1/6] Checking prerequisites...${NC}"
 
 # Check for git
 if ! check_command "git"; then
@@ -119,16 +119,15 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Install dependencies
-echo -e "${BLUE}[2/7] Installing dependencies...${NC}"
+echo -e "${BLUE}[2/6] Installing dependencies...${NC}"
 apt-get update
 apt-get install -y \
-    auditd \
     fail2ban \
     apparmor \
     apparmor-utils
 
 # Configure firewall
-echo -e "${BLUE}[3/7] Configuring firewall...${NC}"
+echo -e "${BLUE}[3/6] Configuring firewall...${NC}"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
@@ -137,73 +136,6 @@ ufw allow 8000/tcp  # API
 ufw allow 3001/tcp  # Grafana
 # Bisq2 API is not exposed to the internet, only accessible within Docker network
 ufw --force enable
-
-# Function to handle audit logging issues
-handle_audit_logging() {
-    echo -e "${BLUE}Configuring audit logging...${NC}"
-    
-    # Check if auditd is installed
-    if ! command -v auditd &> /dev/null; then
-        echo -e "${YELLOW}Warning: auditd is not installed. Installing...${NC}"
-        apt-get update
-        apt-get install -y auditd
-    fi
-    
-    # Check auditd service status
-    if ! systemctl is-active --quiet auditd; then
-        echo -e "${YELLOW}Warning: auditd service is not running. Attempting to start...${NC}"
-        
-        # Try to start the service
-        if ! systemctl start auditd; then
-            echo -e "${YELLOW}Warning: Failed to start auditd. Checking logs...${NC}"
-            journalctl -xe | grep auditd
-            
-            # Try to reset audit rules
-            echo -e "${YELLOW}Attempting to reset audit rules...${NC}"
-            auditctl -e 0 || true
-            auditctl -e 1 || true
-            
-            # Try starting again
-            if ! systemctl start auditd; then
-                echo -e "${YELLOW}Warning: Still unable to start auditd. Temporarily disabling...${NC}"
-                systemctl stop auditd
-                systemctl disable auditd
-                return 1
-            fi
-        fi
-    fi
-    
-    # Configure audit rules
-    cat > /etc/audit/rules.d/bisq-support.rules << EOF
-# Monitor Docker operations
--w /var/run/docker.sock -p wa -k docker
-
-# Monitor configuration changes
--w $DOCKER_DIR/.env -p wa -k config
--w $SECRETS_DIR -p wa -k secrets
-
-# Monitor system calls
--a always,exit -S mount -S umount2 -S chmod -S chown -S setxattr -S lsetxattr -S fsetxattr -S unlink -S rmdir -S rename -S link -S symlink -k filesystem
-EOF
-    
-    # Restart auditd to apply rules
-    if ! systemctl restart auditd; then
-        echo -e "${YELLOW}Warning: Failed to restart auditd. Continuing without audit logging...${NC}"
-        return 1
-    fi
-    
-    echo -e "${GREEN}Audit logging configured successfully${NC}"
-    return 0
-}
-
-# Configure audit logging
-if ! handle_audit_logging; then
-    echo -e "${YELLOW}Warning: Audit logging is not active. Some security features may be limited.${NC}"
-    echo -e "${YELLOW}You can troubleshoot audit logging issues after deployment using:${NC}"
-    echo -e "${YELLOW}1. sudo systemctl status auditd${NC}"
-    echo -e "${YELLOW}2. sudo journalctl -xe | grep auditd${NC}"
-    echo -e "${YELLOW}3. sudo auditctl -e 0 && sudo auditctl -e 1${NC}"
-fi
 
 # Create dedicated user for the application
 # Using a fixed UID/GID (e.g., 1001) makes it easier to map permissions
@@ -228,7 +160,7 @@ chown bisq-support:bisq-support /home/bisq-support
 chmod 750 /home/bisq-support # Standard home dir permissions
 
 # Setup directories with proper permissions
-echo -e "${BLUE}[4/7] Setting up directories and permissions...${NC}"
+echo -e "${BLUE}[4/6] Setting up directories and permissions...${NC}"
 mkdir -p "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR"
 # Set ownership for the main support agent dir and secrets/logs
 chown -R bisq-support:bisq-support "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR"
@@ -238,21 +170,21 @@ chmod 700 "$SECRETS_DIR"
 chmod 775 "$LOG_DIR"
 
 # Setup SSH key for Git authentication and signing
-echo -e "${BLUE}[5/7] Setting up SSH key for Git authentication and signing...${NC}"
+echo -e "${BLUE}[5/6] Setting up SSH key for Git authentication and signing...${NC}"
 
 # Check if SSH key exists, if not generate it
 if [ ! -f "$SSH_KEY_PATH" ]; then
     echo -e "${YELLOW}SSH key not found at $SSH_KEY_PATH. Generating new SSH key...${NC}"
-    
+
     # Ensure .ssh directory exists with proper permissions
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    
+
     # Generate the SSH key
     ssh-keygen -t ed25519 -C "bisq2-support-agent@github.com" -f "$SSH_KEY_PATH" -N ""
     chmod 600 "$SSH_KEY_PATH"
     chmod 644 "$SSH_KEY_PATH.pub"
-    
+
     echo -e "${YELLOW}SSH key generated. Please add the public key to your GitHub account:${NC}"
     echo -e "${YELLOW}1. Go to GitHub.com > Settings > SSH and GPG keys${NC}"
     echo -e "${YELLOW}2. Click 'New SSH key'${NC}"
@@ -296,7 +228,7 @@ ensure_support_agent_perms() {
 }
 
 # Clone or update support agent repository
-echo -e "${BLUE}[6/7] Setting up support agent repository...${NC}"
+echo -e "${BLUE}[6/6] Setting up support agent repository...${NC}"
 if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then # Check for .git dir too
     echo -e "${YELLOW}Repository already exists. Updating...${NC}"
     cd "$INSTALL_DIR"
@@ -318,10 +250,10 @@ else
     ensure_support_agent_perms
 fi
 
-cd "$INSTALL_DIR" # Ensure we are in the correct directory before Step 7
+cd "$INSTALL_DIR" # Ensure we are in the correct directory
 
 # Setup environment and secrets
-echo -e "${BLUE}[7/7] Setting up environment and secrets...${NC}"
+echo -e "${BLUE}Setting up environment and secrets...${NC}"
 cd "$DOCKER_DIR"
 
 # Create secrets directory if it doesn't exist
@@ -344,6 +276,9 @@ update_env_var() {
     local value="$2"
     local env_file=".env"
 
+    # Create .env if it doesn't exist
+    touch "$env_file"
+
     if grep -q "^${key}=" "$env_file"; then
         # Variable exists, update it
         sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
@@ -355,8 +290,13 @@ update_env_var() {
 
 # Setup .env file
 if [ ! -f .env ]; then
-    cp .env.example .env
-    echo -e "${YELLOW}Created new .env file from .env.example${NC}"
+    if [ -f .env.example ]; then
+        cp .env.example .env
+        echo -e "${YELLOW}Created new .env file from .env.example${NC}"
+    else
+        touch .env
+        echo -e "${YELLOW}Created empty .env file (missing .env.example)${NC}"
+    fi
     echo -e "${YELLOW}Please review and update the .env file with your settings${NC}"
 fi
 
@@ -378,7 +318,7 @@ GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
 update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
 
 # Update server IP with actual IP (Still useful for other potential purposes)
-SERVER_IP=$(curl -s ifconfig.me)
+SERVER_IP=$(curl -s ifconfig.me || echo "unknown") # Handle curl errors
 update_env_var "SERVER_IP" "$SERVER_IP"
 
 # Set Bisq API URL in .env file using the Docker service name
@@ -401,34 +341,41 @@ echo -e "${BLUE}Starting services in production mode...${NC}"
 docker compose -f docker-compose.yml build --pull --no-cache
 docker compose -f docker-compose.yml up -d
 
-# Wait for services to be healthy (basic check)
-echo -e "${BLUE}Waiting for Docker services to start...${NC}"
-MAX_WAIT=60 # Maximum wait time in seconds
-WAIT_INTERVAL=5 # Check interval in seconds
+# Wait for services to be healthy
+echo -e "${BLUE}Waiting for Docker services to become healthy...${NC}"
+MAX_WAIT=180 # Increased wait time
+WAIT_INTERVAL=10 # Increased check interval
 ELAPSED_TIME=0
 
 while [ $ELAPSED_TIME -lt $MAX_WAIT ]; do
-    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
-    TOTAL_CONTAINERS=$(docker compose -f docker-compose.yml ps -a -q | wc -l)
-    
-    if [ "$RUNNING_CONTAINERS" -eq "$TOTAL_CONTAINERS" ] && [ "$TOTAL_CONTAINERS" -gt 0 ]; then
-        echo -e "${GREEN}All Docker containers appear to be running.${NC}"
-        # Add a check for 'healthy' status if HEALTHCHECK is implemented in Dockerfiles
-        # HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running --filter health=healthy -q | wc -l)
-        # if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_CONTAINERS" ]; then echo "All containers healthy"; break; fi
+    # Get total number of services defined in the compose file
+    SERVICE_NAMES=$(docker compose -f docker-compose.yml config --services)
+    TOTAL_SERVICES=$(echo "$SERVICE_NAMES" | wc -l)
+    HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter health=healthy -q | wc -l) # Count healthy
+
+    if [ "$TOTAL_SERVICES" -eq 0 ]; then
+      echo -e "${YELLOW}No services defined in docker-compose.yml?${NC}"
+      break
+    fi
+
+    if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_SERVICES" ]; then
+        echo -e "${GREEN}All $TOTAL_SERVICES Docker services are healthy.${NC}"
         break
     fi
-    
-    echo -e "${YELLOW}Waiting for containers... ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
+
+    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
+    echo -e "${YELLOW}Waiting for services... ($HEALTHY_CONTAINERS/$TOTAL_SERVICES healthy, $RUNNING_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
     sleep $WAIT_INTERVAL
     ELAPSED_TIME=$((ELAPSED_TIME + WAIT_INTERVAL))
 done
 
 if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
-    echo -e "${RED}Error: Docker containers did not start or become healthy within $MAX_WAIT seconds.${NC}"
+    echo -e "${RED}Error: Docker services did not become healthy within $MAX_WAIT seconds.${NC}"
+    # Show status and logs for debugging
     docker compose -f docker-compose.yml ps
-    docker compose -f docker-compose.yml logs
-    # exit 1 # Decide if this should be a fatal error
+    echo "--- Last logs --- "
+    docker compose -f docker-compose.yml logs --tail=50
+    # Consider exiting: exit 1
 fi
 
 # Setup automatic security updates
@@ -460,9 +407,8 @@ echo "======================================================"
 echo -e "${YELLOW}Important:${NC}"
 echo "1. Review the .env file in $DOCKER_DIR for any necessary configuration"
 echo "2. The API data directory is at $INSTALL_DIR/api/data"
-echo "3. Logs are available in $INSTALL_DIR/api/data/logs"
-echo "4. Audit logs are available in /var/log/audit/audit.log"
-echo "5. Run './scripts/update.sh' to update the application"
-echo "6. Security updates are configured to run automatically"
-echo "7. Bisq 2 API logs are available with: docker logs bisq2-api"
+echo "3. Logs are available in $INSTALL_DIR/api/data/logs and via 'docker compose logs'"
+echo "4. Run './scripts/update.sh' to update the application"
+echo "5. Security updates are configured to run automatically"
+echo "6. Bisq 2 API logs are available with: docker logs bisq2-api"
 echo "======================================================"${NC} 
