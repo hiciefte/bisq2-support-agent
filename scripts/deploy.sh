@@ -16,7 +16,6 @@ DOCKER_DIR="$INSTALL_DIR/docker"
 SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR}
 LOG_DIR=${BISQ_SUPPORT_LOG_DIR}
 SSH_KEY_PATH=${BISQ_SUPPORT_SSH_KEY_PATH}
-BISQ2_API_PORT=${BISQ2_API_PORT:-8090} # Default to 8090
 
 # Validate required environment variables
 if [ -z "$REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ]; then
@@ -27,7 +26,6 @@ if [ -z "$REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ]; then
     echo -e "${RED}  BISQ_SUPPORT_SECRETS_DIR - Directory for secrets (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_LOG_DIR - Directory for logs (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_SSH_KEY_PATH - Path to SSH key for GitHub authentication (optional)${NC}"
-    echo -e "${RED}  BISQ2_API_PORT - Port for the Bisq 2 API service (optional, default 8090)${NC}"
     exit 1
 fi
 
@@ -402,7 +400,7 @@ echo "Your Bisq Support Assistant is running on port 3000"
 echo "API is available on port 8000"
 echo "Grafana dashboard is available on port 3001"
 echo "Prometheus metrics are available internally only"
-echo "Bisq 2 API is running in Docker on port $BISQ2_API_PORT"
+echo "Bisq 2 API is running in Docker on port 8090"
 echo "======================================================"
 echo -e "${YELLOW}Important:${NC}"
 echo "1. Review the .env file in $DOCKER_DIR for any necessary configuration"
