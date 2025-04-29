@@ -47,9 +47,11 @@ services:
     restart: always
     volumes:
       - bisq2-data:/opt/bisq2/data
+      - tor-data:/var/lib/tor
     environment:
       - BISQ_DATA_DIR=/opt/bisq2/data
       - JAVA_OPTS=-Xmx1g
+      - TOR_BINARY_PATH=/usr/bin/tor
     expose:
       - "8090"
     networks:
@@ -58,8 +60,8 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:8090/api/v1/support/export/csv" ]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 20s
+      retries: 10
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
@@ -70,6 +72,10 @@ services:
         limits:
           cpus: '2'
           memory: 4G
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
 
   # API backend
   api:
