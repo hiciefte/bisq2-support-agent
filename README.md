@@ -168,49 +168,6 @@ This happens because the deployment script changes file permissions (e.g., `chmo
 
 ### Troubleshooting Deployment/Update Issues
 
-#### Audit Logging Issues
-
-During deployment, you may encounter issues with the audit logging service:
-
-```
-A dependency job for auditd.service failed. See 'journalctl -xe' for details.
-```
-
-This is a common issue that can occur during the initial setup of audit logging. To resolve this:
-
-1. Check the audit service status:
-   ```bash
-   sudo systemctl status auditd
-   ```
-
-2. If the service is not running, try to start it manually:
-   ```bash
-   sudo systemctl start auditd
-   ```
-
-3. If the service fails to start, check the logs for more details:
-   ```bash
-   sudo journalctl -xe | grep auditd
-   ```
-
-4. In some cases, you may need to reset the audit rules:
-   ```bash
-   sudo auditctl -e 0
-   sudo auditctl -e 1
-   ```
-
-5. If the issue persists, you can temporarily disable audit logging to complete the deployment:
-   ```bash
-   sudo systemctl stop auditd
-   sudo systemctl disable auditd
-   ```
-
-After the deployment is complete, you can re-enable and troubleshoot the audit service:
-```bash
-sudo systemctl enable auditd
-sudo systemctl start auditd
-```
-
 #### Kernel Updates
 
 The deployment script may detect that your system is running an outdated kernel:
@@ -348,16 +305,110 @@ mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
 
 ## Adding Content for the RAG System
 
-The RAG system uses documents from the following locations:
+The RAG system uses two main sources of content:
 
-- **Wiki Documents**: Place Markdown files in `api/data/wiki/`
-- **MediaWiki XML Dump**: Place a MediaWiki XML dump file named `bisq_dump.xml` in `api/data/wiki/`
-- **FAQ Data**: The system will automatically extract FAQ data from the wiki documents
+### 1. Wiki Documents
+- **Location**: `api/data/wiki/`
+- **Purpose**: 
+  - Primary knowledge base for the RAG system
+  - Provides structured documentation about Bisq 1 and Bisq 2
+  - Used to generate accurate and context-aware responses to user queries
+- **Supported Formats**:
+  - MediaWiki XML dump file (`bisq_dump.xml`) for bulk import
+- **Processing Pipeline**:
+  1. **Initial Processing**:
+     - XML dumps are processed by `process_wiki_dump.py`
+     - Content is cleaned and categorized (Bisq 1, Bisq 2, or general)
+     - Documents are converted to JSONL format with metadata
+  2. **Document Preparation**:
+     - Documents are loaded by `WikiService`
+     - Each document is tagged with metadata (category, version, section)
+     - Content is split into chunks for better retrieval
+     - Source weights are assigned (wiki content has a weight of 1.1)
+  3. **RAG Integration**:
+     - Processed documents are converted to embeddings
+     - Stored in a Chroma vector database
+     - Used alongside FAQ data for comprehensive responses
+     - Documents are prioritized based on version relevance (Bisq 2 > Bisq 1 > general)
+- **Metadata Structure**:
+  ```json
+  {
+    "title": "Document Title",
+    "content": "Document Content",
+    "category": "bisq2|bisq1|general",
+    "type": "wiki",
+    "section": "Section Name",
+    "source_weight": 1.1,
+    "bisq_version": "Bisq 2|Bisq 1|General"
+  }
+  ```
 
-When adding new content:
-1. Add Markdown files to `api/data/wiki/` or add a MediaWiki XML dump file
-2. Restart the API service to rebuild the vector store
-3. The system will automatically process and index the new content
+### 2. FAQ Data
+- **Automatic Extraction**:
+  - FAQs are automatically extracted from support chat conversations
+  - The system uses OpenAI to identify and format FAQs
+  - Extracted FAQs are stored in `api/data/extracted_faq.jsonl`
+- **Manual Addition**:
+  - You can manually add FAQs by appending to the JSONL file
+  - Each FAQ entry should follow this format:
+    ```json
+    {"question": "Your question here", "answer": "Your answer here", "category": "Category name", "source": "Bisq Support Chat"}
+    ```
+
+### Content Processing Flow
+
+1. **Initial Setup**:
+   - Wiki documents are loaded and processed by `WikiService`
+   - FAQ data is loaded and processed by `FAQService`
+   - Both services prepare documents for the RAG system
+
+2. **Vector Store**:
+   - Documents are converted to embeddings using OpenAI
+   - Stored in a Chroma vector database
+   - The vector store is automatically updated when new content is added
+
+3. **FAQ Extraction Process**:
+   - Runs automatically via the `scheduler` service
+   - Fetches new support chat messages from Bisq API
+   - Processes conversations and extracts FAQs
+   - Updates the FAQ database
+   - The RAG system automatically picks up new FAQs
+
+### Adding New Content
+
+1. **Wiki Documents**:
+   ```bash
+   # Add new Markdown files
+   cp your_document.md api/data/wiki/
+   
+   # Or add a MediaWiki XML dump
+   cp bisq_dump.xml api/data/wiki/
+   ```
+
+2. **Manual FAQ Addition**:
+   ```bash
+   # Append to the FAQ file
+   echo '{"question": "New question", "answer": "New answer", "category": "Category", "source": "Bisq Support Chat"}' >> api/data/extracted_faq.jsonl
+   ```
+
+3. **Rebuilding the Vector Store**:
+   ```bash
+   # Restart the API service to rebuild the vector store
+   docker compose -f docker/docker-compose.yml restart api
+   ```
+
+### Monitoring Content
+
+- Check the API logs for content processing status:
+  ```bash
+  docker logs docker-api-1
+  ```
+- Monitor FAQ extraction:
+  ```bash
+  docker logs docker-faq-extractor-1
+  ```
+
+For more details about the FAQ extraction process, see [FAQ Extraction Documentation](docs/faq_extraction.md).
 
 ## Monitoring and Security
 

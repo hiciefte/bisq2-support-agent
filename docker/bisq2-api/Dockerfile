@@ -57,25 +57,27 @@ ARG APP_GID=1001
 RUN groupadd -g ${APP_GID} bisq-support && \
     useradd -m -d /home/bisq-support -u ${APP_UID} -g ${APP_GID} -s /bin/bash bisq-support
 
-# Create data directory and set ownership before copying app files
-RUN mkdir -p /opt/bisq2/data && \
-    chown ${APP_UID}:${APP_GID} /opt/bisq2/data
+# Create essential directories
+RUN mkdir -p /opt/bisq2/data /opt/bisq2/config
 
 # Copy built application artifacts from the builder stage
 # The installDist task typically puts outputs in build/install/<appName>
 COPY --from=builder /opt/bisq2/apps/http-api-app/build/install/http-api-app /opt/bisq2/app
 
-# Copy custom configuration file into a dedicated config directory
-# The start.sh script might need to point the app to this config file
-RUN mkdir /opt/bisq2/config
-COPY --chown=${APP_UID}:${APP_GID} config/http_api_app.conf /opt/bisq2/config/http_api_app.conf
+# Copy custom configuration file
+COPY config/http_api_app.conf /opt/bisq2/config/http_api_app.conf
 
-# Copy the startup script that will manage Tor and the Bisq2 app
-COPY --chown=${APP_UID}:${APP_GID} start.sh /opt/bisq2/start.sh
-RUN chmod +x /opt/bisq2/start.sh
+# Copy the startup script
+COPY start.sh /opt/bisq2/start.sh
 
-# Set final ownership for the entire application directory
-RUN chown -R ${APP_UID}:${APP_GID} /opt/bisq2
+# Set ownership and permissions for application files and directories
+# Ensure the non-root user can access/execute necessary files
+RUN chown ${APP_UID}:${APP_GID} /opt/bisq2/data && \
+    chown ${APP_UID}:${APP_GID} /opt/bisq2/config && \
+    chown ${APP_UID}:${APP_GID} /opt/bisq2/config/http_api_app.conf && \
+    chown -R ${APP_UID}:${APP_GID} /opt/bisq2/app && \
+    chown ${APP_UID}:${APP_GID} /opt/bisq2/start.sh && \
+    chmod +x /opt/bisq2/start.sh
 
 # Switch to the non-root user
 USER bisq-support
@@ -83,7 +85,6 @@ USER bisq-support
 # Set environment variables for the runtime
 ENV BISQ_DATA_DIR=/opt/bisq2/data
 ENV JAVA_OPTS="-Xmx1g"
-# TOR_BINARY_PATH might not be needed if start.sh finds it in the PATH or uses /usr/bin/tor
 
 # Expose the API port (no changes needed here)
 EXPOSE 8090
