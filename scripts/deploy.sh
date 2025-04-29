@@ -11,27 +11,21 @@ echo ""
 
 # Configuration - Use environment variables
 REPOSITORY_URL=${BISQ_SUPPORT_REPO_URL}
-BISQ2_REPOSITORY_URL=${BISQ2_REPO_URL}
 INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR}
-BISQ2_DIR=${BISQ2_INSTALL_DIR}
 DOCKER_DIR="$INSTALL_DIR/docker"
 SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR}
 LOG_DIR=${BISQ_SUPPORT_LOG_DIR}
 SSH_KEY_PATH=${BISQ_SUPPORT_SSH_KEY_PATH}
-BISQ2_API_PORT=${BISQ2_API_PORT:-8090} # Default to 8090
 
 # Validate required environment variables
-if [ -z "$REPOSITORY_URL" ] || [ -z "$BISQ2_REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ] || [ -z "$BISQ2_DIR" ]; then
+if [ -z "$REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ]; then
     echo -e "${RED}Error: Required environment variables are not set${NC}"
     echo -e "${RED}Please set the following environment variables:${NC}"
     echo -e "${RED}  BISQ_SUPPORT_REPO_URL - URL of the Bisq Support Agent repository${NC}"
-    echo -e "${RED}  BISQ2_REPO_URL - URL of the Bisq 2 repository${NC}"
     echo -e "${RED}  BISQ_SUPPORT_INSTALL_DIR - Installation directory for Bisq Support Agent${NC}"
-    echo -e "${RED}  BISQ2_INSTALL_DIR - Installation directory for Bisq 2${NC}"
     echo -e "${RED}  BISQ_SUPPORT_SECRETS_DIR - Directory for secrets (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_LOG_DIR - Directory for logs (optional)${NC}"
     echo -e "${RED}  BISQ_SUPPORT_SSH_KEY_PATH - Path to SSH key for GitHub authentication (optional)${NC}"
-    echo -e "${RED}  BISQ2_API_PORT - Port for the Bisq 2 API service (optional, default 8090)${NC}"
     exit 1
 fi
 
@@ -53,8 +47,6 @@ echo "Bisq Support Assistant - Deployment Script"
 echo "======================================================"
 echo "Repository: $REPOSITORY_URL"
 echo "Installation Directory: $INSTALL_DIR"
-echo "Bisq 2 Repository: $BISQ2_REPOSITORY_URL"
-echo "Bisq 2 Directory: $BISQ2_DIR"
 echo "SSH Key Path: $SSH_KEY_PATH"
 echo "------------------------------------------------------${NC}"
 
@@ -68,7 +60,7 @@ check_command() {
 }
 
 # Check for required commands
-echo -e "${BLUE}[1/9] Checking prerequisites...${NC}"
+echo -e "${BLUE}[1/6] Checking prerequisites...${NC}"
 
 # Check for git
 if ! check_command "git"; then
@@ -111,22 +103,6 @@ if ! check_command "ufw"; then
     apt-get install -y ufw
 fi
 
-# Check for Java
-if ! check_command "java"; then
-    echo -e "${BLUE}Installing Java 21...${NC}"
-    apt-get update
-    apt-get install -y openjdk-21-jdk
-fi
-
-# Check Java version
-JAVA_VERSION=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | awk -F. '{print $1}')
-if [ "$JAVA_VERSION" -lt 21 ]; then
-    echo -e "${RED}Error: Java 21 or later is required. Found Java $JAVA_VERSION${NC}"
-    echo -e "${BLUE}Installing Java 21...${NC}"
-    apt-get update
-    apt-get install -y openjdk-21-jdk
-fi
-
 # Check if Docker daemon is running
 if ! docker info &> /dev/null; then
     echo -e "${RED}Error: Docker daemon is not running${NC}"
@@ -141,91 +117,23 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Install dependencies
-echo -e "${BLUE}[2/9] Installing dependencies...${NC}"
+echo -e "${BLUE}[2/6] Installing dependencies...${NC}"
 apt-get update
 apt-get install -y \
-    auditd \
     fail2ban \
     apparmor \
-    apparmor-utils \
-    tor
+    apparmor-utils
 
 # Configure firewall
-echo -e "${BLUE}[3/9] Configuring firewall...${NC}"
+echo -e "${BLUE}[3/6] Configuring firewall...${NC}"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
 ufw allow 3000/tcp  # Web frontend
 ufw allow 8000/tcp  # API
 ufw allow 3001/tcp  # Grafana
+# Bisq2 API is not exposed to the internet, only accessible within Docker network
 ufw --force enable
-
-# Function to handle audit logging issues
-handle_audit_logging() {
-    echo -e "${BLUE}Configuring audit logging...${NC}"
-    
-    # Check if auditd is installed
-    if ! command -v auditd &> /dev/null; then
-        echo -e "${YELLOW}Warning: auditd is not installed. Installing...${NC}"
-        apt-get update
-        apt-get install -y auditd
-    fi
-    
-    # Check auditd service status
-    if ! systemctl is-active --quiet auditd; then
-        echo -e "${YELLOW}Warning: auditd service is not running. Attempting to start...${NC}"
-        
-        # Try to start the service
-        if ! systemctl start auditd; then
-            echo -e "${YELLOW}Warning: Failed to start auditd. Checking logs...${NC}"
-            journalctl -xe | grep auditd
-            
-            # Try to reset audit rules
-            echo -e "${YELLOW}Attempting to reset audit rules...${NC}"
-            auditctl -e 0 || true
-            auditctl -e 1 || true
-            
-            # Try starting again
-            if ! systemctl start auditd; then
-                echo -e "${YELLOW}Warning: Still unable to start auditd. Temporarily disabling...${NC}"
-                systemctl stop auditd
-                systemctl disable auditd
-                return 1
-            fi
-        fi
-    fi
-    
-    # Configure audit rules
-    cat > /etc/audit/rules.d/bisq-support.rules << EOF
-# Monitor Docker operations
--w /var/run/docker.sock -p wa -k docker
-
-# Monitor configuration changes
--w $DOCKER_DIR/.env -p wa -k config
--w $SECRETS_DIR -p wa -k secrets
-
-# Monitor system calls
--a always,exit -S mount -S umount2 -S chmod -S chown -S setxattr -S lsetxattr -S fsetxattr -S unlink -S rmdir -S rename -S link -S symlink -k filesystem
-EOF
-    
-    # Restart auditd to apply rules
-    if ! systemctl restart auditd; then
-        echo -e "${YELLOW}Warning: Failed to restart auditd. Continuing without audit logging...${NC}"
-        return 1
-    fi
-    
-    echo -e "${GREEN}Audit logging configured successfully${NC}"
-    return 0
-}
-
-# Configure audit logging
-if ! handle_audit_logging; then
-    echo -e "${YELLOW}Warning: Audit logging is not active. Some security features may be limited.${NC}"
-    echo -e "${YELLOW}You can troubleshoot audit logging issues after deployment using:${NC}"
-    echo -e "${YELLOW}1. sudo systemctl status auditd${NC}"
-    echo -e "${YELLOW}2. sudo journalctl -xe | grep auditd${NC}"
-    echo -e "${YELLOW}3. sudo auditctl -e 0 && sudo auditctl -e 1${NC}"
-fi
 
 # Create dedicated user for the application
 # Using a fixed UID/GID (e.g., 1001) makes it easier to map permissions
@@ -250,7 +158,7 @@ chown bisq-support:bisq-support /home/bisq-support
 chmod 750 /home/bisq-support # Standard home dir permissions
 
 # Setup directories with proper permissions
-echo -e "${BLUE}[5/9] Setting up directories and permissions...${NC}"
+echo -e "${BLUE}[4/6] Setting up directories and permissions...${NC}"
 mkdir -p "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR"
 # Set ownership for the main support agent dir and secrets/logs
 chown -R bisq-support:bisq-support "$INSTALL_DIR" "$SECRETS_DIR" "$LOG_DIR"
@@ -260,21 +168,21 @@ chmod 700 "$SECRETS_DIR"
 chmod 775 "$LOG_DIR"
 
 # Setup SSH key for Git authentication and signing
-echo -e "${BLUE}[6/9] Setting up SSH key for Git authentication and signing...${NC}"
+echo -e "${BLUE}[5/6] Setting up SSH key for Git authentication and signing...${NC}"
 
 # Check if SSH key exists, if not generate it
 if [ ! -f "$SSH_KEY_PATH" ]; then
     echo -e "${YELLOW}SSH key not found at $SSH_KEY_PATH. Generating new SSH key...${NC}"
-    
+
     # Ensure .ssh directory exists with proper permissions
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    
+
     # Generate the SSH key
     ssh-keygen -t ed25519 -C "bisq2-support-agent@github.com" -f "$SSH_KEY_PATH" -N ""
     chmod 600 "$SSH_KEY_PATH"
     chmod 644 "$SSH_KEY_PATH.pub"
-    
+
     echo -e "${YELLOW}SSH key generated. Please add the public key to your GitHub account:${NC}"
     echo -e "${YELLOW}1. Go to GitHub.com > Settings > SSH and GPG keys${NC}"
     echo -e "${YELLOW}2. Click 'New SSH key'${NC}"
@@ -306,113 +214,6 @@ if ! ssh -i "$SSH_KEY_PATH" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accep
     exit 1
 fi
 
-# Helper function to set permissions for Bisq 2 directory
-ensure_bisq2_perms() {
-  echo -e "${BLUE}Setting ownership and permissions for $BISQ2_DIR...${NC}"
-  chown -R bisq-support:bisq-support "$BISQ2_DIR"
-  chmod 755 "$BISQ2_DIR"
-}
-
-# Add repository directory to Git's safe directories for the root user
-git config --global --add safe.directory "$BISQ2_DIR"
-
-# Clone or update Bisq 2 repository
-echo -e "${BLUE}[7/9] Setting up Bisq 2 API...${NC}"
-if [ -d "$BISQ2_DIR" ] && [ -d "$BISQ2_DIR/.git" ]; then # Check for .git dir too
-    echo -e "${YELLOW}Bisq 2 repository already exists. Updating...${NC}"
-    cd "$BISQ2_DIR"
-
-    # Fetch all branches
-    git fetch --all
-
-    # Check if the add-support-api branch exists remotely
-    if git ls-remote --heads origin add-support-api | grep -q add-support-api; then
-        echo -e "${BLUE}Found add-support-api branch. Using it...${NC}"
-        # Check if we're already on the branch
-        if [ "$(git rev-parse --abbrev-ref HEAD)" != "add-support-api" ]; then
-            # Try to switch to the branch, or create it if it doesn't exist locally
-            git checkout add-support-api || git checkout -b add-support-api origin/add-support-api
-        fi
-        # Reset to the remote branch
-        git reset --hard origin/add-support-api
-    else
-        echo -e "${YELLOW}add-support-api branch not found. Using main branch...${NC}"
-        git checkout main || git checkout -b main origin/main
-        git reset --hard origin/main
-    fi
-
-    # Pull with submodules
-    git pull --recurse-submodules
-
-    # Set ownership and permissions after update
-    ensure_bisq2_perms
-
-else
-    # If directory exists but is not a git repo, remove it first
-    if [ -d "$BISQ2_DIR" ]; then
-        echo -e "${YELLOW}Found existing non-repo directory at $BISQ2_DIR. Removing it...${NC}"
-        rm -rf "$BISQ2_DIR"
-    fi
-
-    echo -e "${BLUE}Cloning Bisq 2 repository...${NC}"
-    # Check if the add-support-api branch exists - Quote URL
-    if git ls-remote --heads "$BISQ2_REPOSITORY_URL" add-support-api | grep -q add-support-api; then
-        echo -e "${BLUE}Cloning add-support-api branch (shallow)...${NC}"
-        # Quote URL/DIR, add --depth 1
-        git clone --depth 1 --recurse-submodules "$BISQ2_REPOSITORY_URL" -b add-support-api "$BISQ2_DIR"
-    else
-        echo -e "${YELLOW}add-support-api branch not found. Cloning main branch (shallow)...${NC}"
-        # Quote URL/DIR, add --depth 1
-        git clone --depth 1 --recurse-submodules "$BISQ2_REPOSITORY_URL" -b main "$BISQ2_DIR"
-    fi
-
-    # Set ownership and permissions after clone
-    ensure_bisq2_perms
-fi
-
-# Create systemd service for Bisq 2 API
-echo -e "${BLUE}Creating Bisq 2 API service...${NC}"
-cat > /etc/systemd/system/bisq2-api.service << EOF
-[Unit]
-Description=Bisq2 Headless API
-After=network.target
-
-[Service]
-Type=simple
-User=bisq-support
-Group=bisq-support
-WorkingDirectory=$BISQ2_DIR
-ExecStart=$BISQ2_DIR/gradlew :apps:http-api-app:run -Djava.awt.headless=true
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-# Create a specific data directory
-Environment="BISQ_DATA_DIR=$BISQ2_DIR/data"
-# Set API to listen on all interfaces (0.0.0.0) for Docker access via host.docker.internal
-Environment="BISQ_API_HOST=0.0.0.0"
-# Set Java memory limits
-Environment="JAVA_OPTS=-Xmx1g"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable and start Bisq 2 API service
-systemctl daemon-reload
-systemctl enable bisq2-api.service
-systemctl start bisq2-api.service
-
-# Check if Bisq 2 API service started successfully
-echo -e "${BLUE}Checking Bisq 2 API service status...${NC}"
-sleep 5 # Give the service a moment to start
-if ! systemctl is-active --quiet bisq2-api.service; then
-    echo -e "${RED}Error: Failed to start bisq2-api.service${NC}"
-    echo -e "${YELLOW}Run 'systemctl status bisq2-api.service' and 'journalctl -u bisq2-api.service' for details.${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Bisq 2 API service started successfully.${NC}"
-
 # Add repository directory to Git's safe directories for the root user
 git config --global --add safe.directory "$INSTALL_DIR"
 
@@ -425,7 +226,7 @@ ensure_support_agent_perms() {
 }
 
 # Clone or update support agent repository
-echo -e "${BLUE}[8/9] Setting up support agent repository...${NC}"
+echo -e "${BLUE}[6/6] Setting up support agent repository...${NC}"
 if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then # Check for .git dir too
     echo -e "${YELLOW}Repository already exists. Updating...${NC}"
     cd "$INSTALL_DIR"
@@ -447,10 +248,10 @@ else
     ensure_support_agent_perms
 fi
 
-cd "$INSTALL_DIR" # Ensure we are in the correct directory before Step 9
+cd "$INSTALL_DIR" # Ensure we are in the correct directory
 
 # Setup environment and secrets
-echo -e "${BLUE}[9/9] Setting up environment and secrets...${NC}"
+echo -e "${BLUE}Setting up environment and secrets...${NC}"
 cd "$DOCKER_DIR"
 
 # Create secrets directory if it doesn't exist
@@ -473,6 +274,9 @@ update_env_var() {
     local value="$2"
     local env_file=".env"
 
+    # Create .env if it doesn't exist
+    touch "$env_file"
+
     if grep -q "^${key}=" "$env_file"; then
         # Variable exists, update it
         sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
@@ -484,8 +288,13 @@ update_env_var() {
 
 # Setup .env file
 if [ ! -f .env ]; then
-    cp .env.example .env
-    echo -e "${YELLOW}Created new .env file from .env.example${NC}"
+    if [ -f .env.example ]; then
+        cp .env.example .env
+        echo -e "${YELLOW}Created new .env file from .env.example${NC}"
+    else
+        touch .env
+        echo -e "${YELLOW}Created empty .env file (missing .env.example)${NC}"
+    fi
     echo -e "${YELLOW}Please review and update the .env file with your settings${NC}"
 fi
 
@@ -507,12 +316,12 @@ GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
 update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
 
 # Update server IP with actual IP (Still useful for other potential purposes)
-SERVER_IP=$(curl -s ifconfig.me)
+SERVER_IP=$(curl -s ifconfig.me || echo "unknown") # Handle curl errors
 update_env_var "SERVER_IP" "$SERVER_IP"
 
-# Set Bisq API URL in .env file using host.docker.internal and configured port
-# This allows containers to reach the service bound to localhost on the host
-update_env_var "BISQ_API_URL" "http://host.docker.internal:$BISQ2_API_PORT"
+# Set Bisq API URL in .env file using the Docker service name
+# This allows containers to reach the Bisq2 API service within the Docker network
+update_env_var "BISQ_API_URL" "http://bisq2-api:8090"
 
 # Create necessary directories for the support agent app
 echo -e "${BLUE}Creating necessary directories...${NC}"
@@ -530,34 +339,41 @@ echo -e "${BLUE}Starting services in production mode...${NC}"
 docker compose -f docker-compose.yml build --pull --no-cache
 docker compose -f docker-compose.yml up -d
 
-# Wait for services to be healthy (basic check)
-echo -e "${BLUE}Waiting for Docker services to start...${NC}"
-MAX_WAIT=60 # Maximum wait time in seconds
-WAIT_INTERVAL=5 # Check interval in seconds
+# Wait for services to be healthy
+echo -e "${BLUE}Waiting for Docker services to become healthy...${NC}"
+MAX_WAIT=180 # Increased wait time
+WAIT_INTERVAL=10 # Increased check interval
 ELAPSED_TIME=0
 
 while [ $ELAPSED_TIME -lt $MAX_WAIT ]; do
-    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
-    TOTAL_CONTAINERS=$(docker compose -f docker-compose.yml ps -a -q | wc -l)
-    
-    if [ "$RUNNING_CONTAINERS" -eq "$TOTAL_CONTAINERS" ] && [ "$TOTAL_CONTAINERS" -gt 0 ]; then
-        echo -e "${GREEN}All Docker containers appear to be running.${NC}"
-        # Add a check for 'healthy' status if HEALTHCHECK is implemented in Dockerfiles
-        # HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running --filter health=healthy -q | wc -l)
-        # if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_CONTAINERS" ]; then echo "All containers healthy"; break; fi
+    # Get total number of services defined in the compose file
+    SERVICE_NAMES=$(docker compose -f docker-compose.yml config --services)
+    TOTAL_SERVICES=$(echo "$SERVICE_NAMES" | wc -l)
+    HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter health=healthy -q | wc -l) # Count healthy
+
+    if [ "$TOTAL_SERVICES" -eq 0 ]; then
+      echo -e "${YELLOW}No services defined in docker-compose.yml?${NC}"
+      break
+    fi
+
+    if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_SERVICES" ]; then
+        echo -e "${GREEN}All $TOTAL_SERVICES Docker services are healthy.${NC}"
         break
     fi
-    
-    echo -e "${YELLOW}Waiting for containers... ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
+
+    RUNNING_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter status=running -q | wc -l)
+    echo -e "${YELLOW}Waiting for services... ($HEALTHY_CONTAINERS/$TOTAL_SERVICES healthy, $RUNNING_CONTAINERS running) [${ELAPSED_TIME}s/${MAX_WAIT}s]${NC}"
     sleep $WAIT_INTERVAL
     ELAPSED_TIME=$((ELAPSED_TIME + WAIT_INTERVAL))
 done
 
 if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
-    echo -e "${RED}Error: Docker containers did not start or become healthy within $MAX_WAIT seconds.${NC}"
+    echo -e "${RED}Error: Docker services did not become healthy within $MAX_WAIT seconds.${NC}"
+    # Show status and logs for debugging
     docker compose -f docker-compose.yml ps
-    docker compose -f docker-compose.yml logs
-    # exit 1 # Decide if this should be a fatal error
+    echo "--- Last logs --- "
+    docker compose -f docker-compose.yml logs --tail=50
+    # Consider exiting: exit 1
 fi
 
 # Setup automatic security updates
@@ -584,14 +400,13 @@ echo "Your Bisq Support Assistant is running on port 3000"
 echo "API is available on port 8000"
 echo "Grafana dashboard is available on port 3001"
 echo "Prometheus metrics are available internally only"
-echo "Bisq 2 API is running on port $BISQ2_API_PORT"
+echo "Bisq 2 API is running in Docker on port 8090"
 echo "======================================================"
 echo -e "${YELLOW}Important:${NC}"
 echo "1. Review the .env file in $DOCKER_DIR for any necessary configuration"
 echo "2. The API data directory is at $INSTALL_DIR/api/data"
-echo "3. Logs are available in $INSTALL_DIR/api/data/logs"
-echo "4. Audit logs are available in /var/log/audit/audit.log"
-echo "5. Run './scripts/update.sh' to update the application"
-echo "6. Security updates are configured to run automatically"
-echo "7. Bisq 2 API logs are available with: journalctl -u bisq2-api.service"
+echo "3. Logs are available in $INSTALL_DIR/api/data/logs and via 'docker compose logs'"
+echo "4. Run './scripts/update.sh' to update the application"
+echo "5. Security updates are configured to run automatically"
+echo "6. Bisq 2 API logs are available with: docker logs bisq2-api"
 echo "======================================================"${NC} 
