@@ -39,6 +39,38 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  # Bisq2 API service
+  bisq2-api:
+    build:
+      context: ./bisq2-api
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - bisq2-data:/opt/bisq2/data
+    environment:
+      - BISQ_DATA_DIR=/opt/bisq2/data
+      - JAVA_OPTS=-Xmx1g
+    expose:
+      - "8090"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8090/api/v1/support/export/csv" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
   # API backend
   api:
     build:
@@ -68,10 +100,8 @@ services:
       - "8000"
     networks:
       - bisq-support-network
-    # Add extra_hosts to map host.docker.internal
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     healthcheck:
+      # Reverted healthcheck to use service name
       test: [ "CMD", "curl", "-f", "http://api:8000/health" ]
       interval: 30s
       timeout: 10s
@@ -236,9 +266,6 @@ services:
       - api
     networks:
       - bisq-support-network
-    # Add extra_hosts to map host.docker.internal
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     logging:
       driver: "json-file"
       options:
@@ -250,6 +277,8 @@ volumes:
   grafana-data:
   web_node_modules:
     name: bisq2-web-node-modules
+  bisq2-data:
+    name: bisq2-data
 
 networks:
   bisq-support-network:
