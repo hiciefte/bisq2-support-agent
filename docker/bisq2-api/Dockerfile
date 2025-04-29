@@ -1,53 +1,95 @@
-# Use JDK 21 as base image
-FROM eclipse-temurin:21-jdk
+# ---- Builder Stage ----
+FROM eclipse-temurin:21-jdk AS builder
 
-# Set working directory
+# Define build arguments with defaults
+ARG BISQ2_BRANCH=add-support-api
+ARG BISQ2_REPO_URL=https://github.com/hiciefte/bisq2.git
+
 WORKDIR /opt/bisq2
 
-# Install git, tor, and other dependencies
+# Install git using --no-install-recommends
 RUN apt-get update && \
-    apt-get install -y git tor && \
+    apt-get install -y --no-install-recommends git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Configure Tor
-RUN mkdir -p /var/lib/tor && \
-    chown -R debian-tor:debian-tor /var/lib/tor && \
-    chmod 700 /var/lib/tor
+# Clone repository (shallow clone)
+# Using ARG values for branch and repo URL
+RUN git clone --depth 1 --recurse-submodules -b ${BISQ2_BRANCH} ${BISQ2_REPO_URL} .
 
-# Create a basic Tor configuration
-RUN echo "SocksPort 9050" > /etc/tor/torrc && \
+# Leverage Docker cache for dependencies: Copy only necessary files first
+COPY build.gradle.kts settings.gradle.kts gradlew ./
+COPY gradle ./gradle
+# Attempt to download dependencies to cache them. Continue even if it fails.
+RUN ./gradlew :apps:http-api-app:dependencies --no-daemon || echo "Dependency download step failed or project has no dependencies task, continuing build..."
+
+# Copy the rest of the source code
+COPY . .
+
+# Build the application using installDist to create a distribution package
+# Use --no-daemon to avoid leaving a Gradle daemon running
+RUN ./gradlew :apps:http-api-app:installDist --no-daemon
+
+# ---- Final Stage ----
+# Use a smaller JRE image for the runtime environment
+FROM eclipse-temurin:21-jre
+
+WORKDIR /opt/bisq2
+
+# Install runtime dependencies: tor for networking and tini as an init process
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tor tini && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure Tor - Create directory, set ownership, basic config
+RUN mkdir -p /var/lib/tor && \
+    chown -R _tor:_tor /var/lib/tor && \
+    chmod 700 /var/lib/tor && \
+    echo "SocksPort 9050" > /etc/tor/torrc && \
     echo "ControlPort 9051" >> /etc/tor/torrc && \
     echo "DataDirectory /var/lib/tor" >> /etc/tor/torrc && \
     echo "Log notice stdout" >> /etc/tor/torrc
 
-# Clone the specific branch from the forked repository
-RUN git clone --recurse-submodules -b add-support-api https://github.com/hiciefte/bisq2.git .
+# Create a non-root user and group with fixed UID/GID (matches deploy.sh recommendation)
+ARG APP_UID=1001
+ARG APP_GID=1001
+RUN groupadd -g ${APP_GID} bisq-support && \
+    useradd -m -d /home/bisq-support -u ${APP_UID} -g ${APP_GID} -s /bin/bash bisq-support
 
-# Build the application
-RUN ./gradlew :apps:http-api-app:build
+# Create data directory and set ownership before copying app files
+RUN mkdir -p /opt/bisq2/data && \
+    chown ${APP_UID}:${APP_GID} /opt/bisq2/data
 
-# Create a non-root user
-RUN useradd -m -s /bin/bash bisq-support && \
-    chown -R bisq-support:bisq-support /opt/bisq2
+# Copy built application artifacts from the builder stage
+# The installDist task typically puts outputs in build/install/<appName>
+COPY --from=builder /opt/bisq2/apps/http-api-app/build/install/http-api-app /opt/bisq2/app
 
-# Switch to non-root user
-USER bisq-support
+# Copy custom configuration file into a dedicated config directory
+# The start.sh script might need to point the app to this config file
+RUN mkdir /opt/bisq2/config
+COPY --chown=${APP_UID}:${APP_GID} config/http_api_app.conf /opt/bisq2/config/http_api_app.conf
 
-# Set environment variables
-ENV BISQ_DATA_DIR=/opt/bisq2/data
-ENV JAVA_OPTS="-Xmx1g"
-ENV TOR_BINARY_PATH=/usr/bin/tor
-
-# Copy custom configuration
-COPY --chown=bisq-support:bisq-support config/http_api_app.conf /opt/bisq2/apps/http-api-app/src/main/resources/http_api_app.conf
-
-# Expose the API port
-EXPOSE 8090
-
-# Create a startup script
-COPY --chown=bisq-support:bisq-support start.sh /opt/bisq2/start.sh
+# Copy the startup script that will manage Tor and the Bisq2 app
+COPY --chown=${APP_UID}:${APP_GID} start.sh /opt/bisq2/start.sh
 RUN chmod +x /opt/bisq2/start.sh
 
-# Start the API service using the script
+# Set final ownership for the entire application directory
+RUN chown -R ${APP_UID}:${APP_GID} /opt/bisq2
+
+# Switch to the non-root user
+USER bisq-support
+
+# Set environment variables for the runtime
+ENV BISQ_DATA_DIR=/opt/bisq2/data
+ENV JAVA_OPTS="-Xmx1g"
+# TOR_BINARY_PATH might not be needed if start.sh finds it in the PATH or uses /usr/bin/tor
+
+# Expose the API port (no changes needed here)
+EXPOSE 8090
+
+# Use tini as the entrypoint to properly handle process signals (like SIGTERM)
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Set the default command to run the startup script
 CMD ["/opt/bisq2/start.sh"] 

@@ -44,6 +44,12 @@ services:
     build:
       context: ./bisq2-api
       dockerfile: Dockerfile
+      args:
+        # Optional: uncomment and set if you need a different branch/repo
+        # BISQ2_BRANCH: add-support-api
+        # BISQ2_REPO_URL: https://github.com/hiciefte/bisq2.git
+        APP_UID: 1001 # Match host user UID if needed for volume permissions
+        APP_GID: 1001 # Match host user GID if needed for volume permissions
     restart: always
     volumes:
       - bisq2-data:/opt/bisq2/data
