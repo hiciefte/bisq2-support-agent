@@ -11,15 +11,9 @@ These variables are typically set in the shell or sourced from `/etc/bisq-suppor
 *   **`BISQ_SUPPORT_REPO_URL`**
     *   Description: The Git repository URL for the Bisq Support Agent project.
     *   Example: `git@github.com:user/bisq2-support-agent.git`
-*   **`BISQ2_REPO_URL`**
-    *   Description: The Git repository URL for the Bisq 2 project.
-    *   Example: `git@github.com:user/bisq2.git`
 *   **`BISQ_SUPPORT_INSTALL_DIR`**
     *   Description: The absolute path on the server where the Bisq Support Agent code will be cloned/installed.
     *   Example: `/opt/bisq-support`
-*   **`BISQ2_INSTALL_DIR`**
-    *   Description: The absolute path on the server where the Bisq 2 code will be cloned/installed.
-    *   Example: `/opt/bisq2`
 
 ### Optional Script Variables
 
@@ -32,9 +26,6 @@ These variables are typically set in the shell or sourced from `/etc/bisq-suppor
 *   **`BISQ_SUPPORT_SSH_KEY_PATH`**
     *   Description: The absolute path to the private SSH key used for authenticating with Git repositories.
     *   Default: `$HOME/.ssh/bisq2_support_agent` (Note: `$HOME` resolves to the home directory of the user running the script, typically `/root` when using `sudo`)
-*   **`BISQ2_API_PORT`**
-    *   Description: The port on the host machine that the Bisq 2 API service (running natively via systemd) will listen on. This port also needs to be opened in the firewall (`ufw`).
-    *   Default: `8090`
 
 ## Docker Container Variables (`docker/.env`)
 

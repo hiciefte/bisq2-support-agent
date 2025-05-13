@@ -36,22 +36,6 @@ This is caused by a compatibility issue with the Chroma DB version. To fix it:
    docker compose -f docker/docker-compose.yml restart api
    ```
 
-### Chat History Format Error
-
-If you encounter 500 errors when using the chat interface, especially after sending multiple messages, it might be due to the chat history format handling:
-
-1. Check the API logs for errors like:
-   ```
-   ERROR: AttributeError: 'ChatMessage' object has no attribute 'get'
-   ```
-
-2. This occurs because the API service might be trying to handle different chat history formats. The system now properly handles both Pydantic model objects and dictionary representations of chat history.
-
-3. If you're still experiencing issues, restart the API service:
-   ```bash
-   docker compose -f docker/docker-compose.yml restart api
-   ```
-
 ## Bisq API Connection Issues
 
 ### Cannot Connect to Bisq API
@@ -64,16 +48,7 @@ Failed to export chat messages: Cannot connect to host host.docker.internal:8090
 
 This can be fixed by updating the Bisq API URL in the appropriate environment file:
 
-1. For Docker deployment (`docker/.env`):
-   ```
-   # For Docker on Linux:
-   BISQ_API_URL=http://172.17.0.1:8090
-   
-   # For Docker on macOS/Windows:
-   # BISQ_API_URL=http://host.docker.internal:8090
-   ```
-
-2. For local API development (`api/.env`):
+For local API development (`api/.env`):
    ```
    # For local development:
    BISQ_API_URL=http://localhost:8090
@@ -90,53 +65,8 @@ If the Bisq API is running but not listening on the expected port:
 
 2. Update the environment file with the correct port:
    ```
-   # For Docker in docker/.env:
-   BISQ_API_URL=http://172.17.0.1:<actual-port>
-   
    # For local API development in api/.env:
    BISQ_API_URL=http://localhost:<actual-port>
-   ```
-
-### Tor Not Installed Error
-
-If the Bisq API fails to start with a Tor error:
-
-```
-Caused by: bisq.network.tor.TorNotInstalledException
-```
-
-Install Tor and restart the service:
-
-```bash
-sudo apt install tor
-sudo systemctl restart bisq2-api.service
-```
-
-## Docker Issues
-
-### Docker Compose Configuration Invalid
-
-If you see an error like:
-
-```
-ERROR: Docker Compose configuration is invalid
-```
-
-Check that:
-
-1. The Docker Compose file exists:
-   ```bash
-   ls -la /path/to/bisq2-support-agent/docker/docker-compose.yml
-   ```
-
-2. The Docker environment file exists:
-   ```bash
-   ls -la /path/to/bisq2-support-agent/docker/.env
-   ```
-
-3. The Docker Compose file is valid:
-   ```bash
-   docker compose -f /path/to/bisq2-support-agent/docker/docker-compose.yml config
    ```
 
 ### Environment File Issues
@@ -187,29 +117,6 @@ If you encounter CORS errors when the web frontend communicates with the API:
    docker compose -f docker/docker-compose.yml restart api
    ```
 
-### Docker Compose Command Not Found
-
-If you see an error like:
-
-```
-docker-compose: command not found
-```
-
-This could be because:
-
-1. Docker Compose is not installed
-2. You're using Docker Compose V2 which uses `docker compose` instead of `docker-compose`
-
-Update your scripts to use the correct command:
-
-```bash
-# Change this line
-docker-compose -f /path/to/docker-compose.yml up -d
-
-# To this
-docker compose -f /path/to/docker-compose.yml up -d
-```
-
 ## Web UI Issues
 
 ### API Connection Timeout
@@ -239,17 +146,6 @@ If the web UI shows a timeout when connecting to the API:
    
    # For local development in docker-compose.local.yml:
    NEXT_PUBLIC_API_URL=http://localhost:8000
-   ```
-
-### Duplicate Source Labels
-
-If the chat interface shows duplicate source labels (like "Wiki Wiki Wiki"):
-
-1. This has been fixed in the latest version - the sources are now deduplicated.
-
-2. If you still encounter this issue, check that you're running the latest version of the web frontend:
-   ```bash
-   docker compose -f docker/docker-compose.yml restart web
    ```
 
 ## FAQ Extractor Issues
@@ -307,9 +203,6 @@ If you encounter errors related to missing modules or dependencies:
 
 1. For web frontend issues, check the Docker configuration:
    ```bash
-   # For production deployment, use:
-   ./run-cloud.sh
-   
    # For local development with hot reloading, use:
    ./run-local.sh
    ```
