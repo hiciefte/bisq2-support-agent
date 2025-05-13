@@ -108,6 +108,7 @@ services:
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR}
+      - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
     expose:
       - "8000"
     networks:
