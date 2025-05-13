@@ -3,14 +3,6 @@
 # Exit on error
 set -e
 
-# Ensure /var/lib/tor has correct ownership at runtime.
-# Although the Java app manages embedded Tor in its own data dir (/opt/bisq2/data/tor),
-# the /var/lib/tor volume is still mounted and Tor might write other state here.
-# Keeping this ensures the debian-tor user (if Tor process switches to it) can write.
-echo "Ensuring correct ownership for /var/lib/tor..."
-chown -R debian-tor:debian-tor /var/lib/tor
-chmod 700 /var/lib/tor
-
 # Ensure the base data directory exists for the Java app
 mkdir -p /opt/bisq2/data
 chown bisq-support:bisq-support /opt/bisq2/data
@@ -32,6 +24,5 @@ fi
 # Tor startup/wait/config logic removed - Java application will handle embedded Tor.
 
 echo "Starting Bisq2 API Application as user bisq-support..."
-# Pass the config file via system property
-# Keep --data-dir as it seems to affect logging.
-exec gosu bisq-support /opt/bisq2/app/bin/http-api-app -Dconfig.file=/opt/bisq2/config/http_api_app.conf --data-dir=$BISQ_DATA_DIR
+# Keep --data-dir as it seems to affect logging and is used by ApplicationService to find bisq.conf.
+exec gosu bisq-support /opt/bisq2/app/bin/http-api-app --data-dir=$BISQ_DATA_DIR
