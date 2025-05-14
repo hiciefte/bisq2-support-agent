@@ -312,16 +312,33 @@ fi
 ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
 update_env_var "ADMIN_API_KEY" "$ADMIN_API_KEY"
 
-GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
-update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
-
-# Update server IP with actual IP (Still useful for other potential purposes)
-SERVER_IP=$(curl -s ifconfig.me || echo "unknown") # Handle curl errors
-update_env_var "SERVER_IP" "$SERVER_IP"
-
 # Set Bisq API URL in .env file using the Docker service name
 # This allows containers to reach the Bisq2 API service within the Docker network
 update_env_var "BISQ_API_URL" "http://bisq2-api:8090"
+
+# Create a dedicated directory for runtime secrets if it doesn't exist
+RUNTIME_SECRETS_DIR="$INSTALL_DIR/runtime_secrets"
+mkdir -p "$RUNTIME_SECRETS_DIR"
+chown bisq-support:bisq-support "$RUNTIME_SECRETS_DIR"
+chmod 700 "$RUNTIME_SECRETS_DIR" # Secure the directory
+
+# Sync ADMIN_API_KEY to the new runtime secrets location for Prometheus
+PROMETHEUS_RUNTIME_ADMIN_KEY_PATH="$RUNTIME_SECRETS_DIR/prometheus_admin_key"
+if [ -n "$ADMIN_API_KEY" ]; then # ADMIN_API_KEY is already sourced from $SECRETS_DIR/admin_api_key
+    echo -n "$ADMIN_API_KEY" > "$PROMETHEUS_RUNTIME_ADMIN_KEY_PATH"
+    chmod 644 "$PROMETHEUS_RUNTIME_ADMIN_KEY_PATH" # Readable by Prometheus user in container
+    chown bisq-support:bisq-support "$PROMETHEUS_RUNTIME_ADMIN_KEY_PATH" # Ensure correct ownership
+    echo -e "${GREEN}Synced ADMIN_API_KEY to $PROMETHEUS_RUNTIME_ADMIN_KEY_PATH for Prometheus.${NC}"
+else
+    echo -e "${YELLOW}Warning: ADMIN_API_KEY not found. Prometheus admin metrics may not work.${NC}"
+fi
+
+# Remove the old prometheus admin key file if it exists within the docker directory structure
+OLD_PROMETHEUS_ADMIN_KEY_IN_DOCKER_DIR="$DOCKER_DIR/prometheus/admin_key"
+if [ -f "$OLD_PROMETHEUS_ADMIN_KEY_IN_DOCKER_DIR" ]; then
+    rm -f "$OLD_PROMETHEUS_ADMIN_KEY_IN_DOCKER_DIR"
+    echo -e "${YELLOW}Removed old Prometheus admin key from $OLD_PROMETHEUS_ADMIN_KEY_IN_DOCKER_DIR.${NC}"
+fi
 
 # Create necessary directories for the support agent app
 echo -e "${BLUE}Creating necessary directories...${NC}"
