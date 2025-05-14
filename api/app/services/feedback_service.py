@@ -15,7 +15,7 @@ import re
 import shutil
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import Request
 
@@ -151,12 +151,16 @@ class FeedbackService:
         return True
 
     async def update_feedback_entry(self, message_id: str,
-                                    updated_entry: Dict[str, Any]) -> bool:
+                                    updated_entry: Optional[Dict[str, Any]] = None,
+                                    explanation: Optional[str] = None,
+                                    issues: Optional[List[str]] = None) -> bool:
         """Update an existing feedback entry in a month-based feedback file.
 
         Args:
             message_id: The unique ID of the message to update
-            updated_entry: The updated feedback entry
+            updated_entry: The full updated feedback entry (used if explanation/issues are not provided)
+            explanation: The explanation text to add/update
+            issues: The list of issues to add/extend
 
         Returns:
             Boolean indicating whether the update was successful
@@ -191,7 +195,21 @@ class FeedbackService:
                     entry = json.loads(line.strip())
                     if entry.get('message_id') == message_id:
                         # Update the entry
-                        temp.write(json.dumps(updated_entry) + '\n')
+                        if explanation is not None or issues is not None:
+                            entry.setdefault("metadata", {})
+                            if explanation is not None:
+                                entry["metadata"]["explanation"] = explanation
+                            if issues is not None:
+                                entry["metadata"].setdefault("issues", [])
+                                # Extend issues, could add logic to avoid duplicates if needed
+                                for issue in issues:
+                                    if issue not in entry["metadata"]["issues"]:
+                                        entry["metadata"]["issues"].append(issue)
+                            temp.write(json.dumps(entry) + '\n')
+                        elif updated_entry is not None: # Fallback to using updated_entry if no specific fields given
+                            temp.write(json.dumps(updated_entry) + '\n')
+                        else: # Should not happen if called correctly, but keep original if no update data
+                            temp.write(line)
                         updated = True
                     else:
                         # Keep the original entry
@@ -217,7 +235,21 @@ class FeedbackService:
                     entry = json.loads(line.strip())
                     if entry.get('message_id') == message_id:
                         # Update the entry
-                        temp.write(json.dumps(updated_entry) + '\n')
+                        if explanation is not None or issues is not None:
+                            entry.setdefault("metadata", {})
+                            if explanation is not None:
+                                entry["metadata"]["explanation"] = explanation
+                            if issues is not None:
+                                entry["metadata"].setdefault("issues", [])
+                                # Extend issues, could add logic to avoid duplicates if needed
+                                for issue in issues:
+                                    if issue not in entry["metadata"]["issues"]:
+                                        entry["metadata"]["issues"].append(issue)
+                            temp.write(json.dumps(entry) + '\n')
+                        elif updated_entry is not None: # Fallback to using updated_entry if no specific fields given
+                            temp.write(json.dumps(updated_entry) + '\n')
+                        else: # Should not happen if called correctly, but keep original if no update data
+                            temp.write(line)
                         updated = True
                     else:
                         # Keep the original entry

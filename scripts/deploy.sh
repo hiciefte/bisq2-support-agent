@@ -312,6 +312,17 @@ fi
 ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
 update_env_var "ADMIN_API_KEY" "$ADMIN_API_KEY"
 
+# --- Sync ADMIN_API_KEY to Prometheus admin_key file ---
+# This ensures Prometheus can scrape the /admin/metrics endpoint
+PROMETHEUS_ADMIN_KEY_PATH="docker/prometheus/admin_key"
+if [ -n "$ADMIN_API_KEY" ]; then
+    echo -n "$ADMIN_API_KEY" > "$PROMETHEUS_ADMIN_KEY_PATH"
+    chmod 600 "$PROMETHEUS_ADMIN_KEY_PATH"
+    echo -e "${GREEN}Synced ADMIN_API_KEY to $PROMETHEUS_ADMIN_KEY_PATH for Prometheus.${NC}"
+else
+    echo -e "${YELLOW}Warning: ADMIN_API_KEY not found. Prometheus admin metrics may not work.${NC}"
+fi
+
 GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
 update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
 
