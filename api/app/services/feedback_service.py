@@ -13,9 +13,11 @@ import logging
 import os
 import re
 import shutil
+import asyncio
+import portalocker
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import Request
 
@@ -30,10 +32,12 @@ class FeedbackService:
     _feedback_cache = None
     _last_load_time = None
     _cache_ttl = 300  # 5 minutes cache TTL
+    _update_lock = None
 
     def __new__(cls, settings=None):
         if cls._instance is None:
             cls._instance = super(FeedbackService, cls).__new__(cls)
+            cls._update_lock = asyncio.Lock()
         return cls._instance
 
     def __init__(self, settings=None):
@@ -45,6 +49,8 @@ class FeedbackService:
         if not hasattr(self, 'initialized'):
             self.settings = settings
             self.initialized = True
+            if self._update_lock is None:
+                self._update_lock = asyncio.Lock()
             logger.info("Feedback service initialized")
 
             # Source weights to be applied to different content types
@@ -150,90 +156,160 @@ class FeedbackService:
 
         return True
 
+    def _apply_partial_update(self, entry: Dict[str, Any],
+                              explanation: Optional[str] = None,
+                              issues: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Helper to apply explanation and issues to a feedback entry's metadata."""
+        if explanation is None and issues is None:
+            return entry # No partial update to apply
+        
+        entry.setdefault("metadata", {})
+        if explanation is not None:
+            entry["metadata"]["explanation"] = explanation
+        if issues is not None:
+            entry["metadata"].setdefault("issues", [])
+            for issue in issues:
+                if issue not in entry["metadata"]["issues"]:
+                    entry["metadata"]["issues"].append(issue)
+        return entry
+
     async def update_feedback_entry(self, message_id: str,
-                                    updated_entry: Dict[str, Any]) -> bool:
+                                    updated_entry: Optional[Dict[str, Any]] = None,
+                                    explanation: Optional[str] = None,
+                                    issues: Optional[List[str]] = None) -> bool:
         """Update an existing feedback entry in a month-based feedback file.
 
+        This method is concurrency-safe for intra-process calls due to an asyncio.Lock.
+        It reads a feedback file, updates the entry if found, and writes to a temporary
+        file before replacing the original.
+
         Args:
-            message_id: The unique ID of the message to update
-            updated_entry: The updated feedback entry
+            message_id: The unique ID of the message to update.
+            updated_entry: The full updated feedback entry. If provided and explanation/issues
+                           are None, this will be used to replace the entire entry.
+            explanation: The explanation text to add/update in the entry's metadata.
+            issues: The list of issues to add/extend in the entry's metadata.
 
         Returns:
-            Boolean indicating whether the update was successful
+            bool: True if the entry was found and an update was made (or attempted with data),
+                  False if the entry was not found, or if no update data (explanation, issues,
+                  or updated_entry) was provided for a found entry, resulting in no change.
         """
-        feedback_dir = self.settings.FEEDBACK_DIR_PATH
-        if not os.path.exists(feedback_dir) or not os.path.isdir(feedback_dir):
-            logger.warning(f"Feedback directory not found: {feedback_dir}")
-            return False
+        if self._update_lock is None:
+            logger.error("FeedbackService update_lock is not initialized!")
+            self._update_lock = asyncio.Lock()
 
-        # Get all month-based files in the feedback directory
-        month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
-        feedback_files = [os.path.join(feedback_dir, f) for f in
-                          os.listdir(feedback_dir)
-                          if month_pattern.match(f)]
+        async with self._update_lock:
+            feedback_dir = self.settings.FEEDBACK_DIR_PATH
+            if not os.path.exists(feedback_dir) or not os.path.isdir(feedback_dir):
+                logger.warning(f"Feedback directory not found: {feedback_dir}")
+                return False
 
-        # Sort files chronologically (newest first) to prioritize recent files
-        feedback_files.sort(reverse=True)
+            month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
+            feedback_files = [os.path.join(feedback_dir, f) for f in
+                              os.listdir(feedback_dir)
+                              if month_pattern.match(f)]
+            feedback_files.sort(reverse=True)
 
-        # First check current month's file as it's most likely to contain recent entries
-        current_month = datetime.now().strftime("%Y-%m")
-        current_month_file = os.path.join(feedback_dir,
-                                          f"feedback_{current_month}.jsonl")
+            current_month = datetime.now().strftime("%Y-%m")
+            current_month_file = os.path.join(feedback_dir,
+                                              f"feedback_{current_month}.jsonl")
 
-        if os.path.exists(current_month_file):
-            # Try to update in current month's file first
-            temp_path = current_month_file + '.tmp'
-            updated = False
+            # Ensure current month file is processed first if it exists, then others
+            ordered_files_to_check = []
+            if os.path.exists(current_month_file):
+                ordered_files_to_check.append(current_month_file)
+            for f_path in feedback_files:
+                if f_path != current_month_file:
+                    ordered_files_to_check.append(f_path)
+            
+            if not ordered_files_to_check and not os.path.exists(current_month_file):
+                 # Attempt to create current month file if no files exist and an update is requested.
+                 # This handles the case where the first feedback interaction might be an update call.
+                 try:
+                     # The outer condition already ensures current_month_file does not exist here.
+                     open(current_month_file, 'a').close() # Create if not exists
+                     logger.info(f"Created empty feedback file for current month: {current_month_file}")
+                     # Explicitly check again after creation attempt before appending
+                     if os.path.exists(current_month_file):
+                         ordered_files_to_check.append(current_month_file)
+                 except IOError as e:
+                     logger.error(f"Could not create feedback file {current_month_file}: {e}")
 
-            with open(current_month_file, 'r') as original, open(temp_path,
-                                                                 'w') as temp:
-                for line in original:
-                    entry = json.loads(line.strip())
-                    if entry.get('message_id') == message_id:
-                        # Update the entry
-                        temp.write(json.dumps(updated_entry) + '\n')
-                        updated = True
+            overall_updated_made = False
+
+            for file_path in ordered_files_to_check:
+                if not os.path.exists(file_path):
+                    continue
+
+                temp_path = file_path + '.tmp'
+                file_updated_locally = False
+                entry_found_in_file = False
+
+                try:
+                    # Acquire an exclusive cross-process lock on the file
+                    with portalocker.Lock(file_path, mode='r+', timeout=10) as locked_file_handle:
+                        # Note: portalocker.Lock opens the file, so we use its handle or reopen carefully.
+                        # For simplicity and to maintain existing open logic, we will re-open 
+                        # after lock acquisition, ensuring portalocker primarily handles the lock file mechanism.
+                        # A more integrated approach would use locked_file_handle directly if its mode matches.
+                        # However, the temp file pattern means we mostly need the lock for the duration of this block.
+                        # Re-opening inside the lock context after portalocker creates/validates the lock file:
+                        with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
+                            for line in original:
+                                try:
+                                    entry = json.loads(line.strip())
+                                except json.JSONDecodeError:
+                                    temp.write(line) # Write invalid line as is
+                                    continue
+
+                                if entry.get('message_id') == message_id:
+                                    entry_found_in_file = True
+                                    if explanation is not None or issues is not None:
+                                        entry = self._apply_partial_update(entry, explanation=explanation, issues=issues)
+                                        temp.write(json.dumps(entry) + '\n')
+                                        file_updated_locally = True
+                                    elif updated_entry is not None:
+                                        temp.write(json.dumps(updated_entry) + '\n')
+                                        file_updated_locally = True
+                                    else:
+                                        # No update data for this specific entry, write original
+                                        temp.write(line)
+                                else:
+                                    temp.write(line)
+
+                    if file_updated_locally:
+                        os.replace(temp_path, file_path)
+                        logger.info(f"Updated feedback entry in {os.path.basename(file_path)}")
+                        overall_updated_made = True
+                        # Invalidate cache since a file was changed
+                        FeedbackService._feedback_cache = None
+                        FeedbackService._last_load_time = None
+                        return True # Found and updated
                     else:
-                        # Keep the original entry
-                        temp.write(line)
+                        os.remove(temp_path) # No changes made to this file, or entry not found with update data
+                        if entry_found_in_file:
+                            # Entry was found, but no data was provided to update it. This is not an error but not an update.
+                            logger.info(f"Feedback entry {message_id} found in {os.path.basename(file_path)} but no update data provided.")
+                            # Still, we consider the message_id handled, so return based on whether any change was made
+                            return overall_updated_made # Which would be False if this was the only file with the entry
 
-            # Replace the original file if updated
-            if updated:
-                os.replace(temp_path, current_month_file)
-                logger.info(
-                    f"Updated feedback entry in current month's file {os.path.basename(current_month_file)}")
-                return True
-            else:
-                os.remove(temp_path)
-                # Continue checking other files
+                except IOError as e:
+                    logger.error(f"IOError during feedback update for {file_path}: {e}")
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    # Potentially return False or re-raise depending on desired error handling
+                    return False # Stop processing if a file operation fails catastrophically
+            
+            if not overall_updated_made:
+                 logger.warning(f"Could not find feedback entry with message_id: {message_id} in any feedback file, or no update was performed.")
 
-        # If not found in current month, check all other month-based files
-        for file_path in [f for f in feedback_files if f != current_month_file]:
-            temp_path = file_path + '.tmp'
-            updated = False
+            # Invalidate cache if any update might have occurred or if file structure changed
+            if overall_updated_made : # Invalidate only if an actual change was made
+                FeedbackService._feedback_cache = None
+                FeedbackService._last_load_time = None
 
-            with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
-                for line in original:
-                    entry = json.loads(line.strip())
-                    if entry.get('message_id') == message_id:
-                        # Update the entry
-                        temp.write(json.dumps(updated_entry) + '\n')
-                        updated = True
-                    else:
-                        # Keep the original entry
-                        temp.write(line)
-
-            # Replace the original file if updated
-            if updated:
-                os.replace(temp_path, file_path)
-                logger.info(f"Updated feedback entry in {os.path.basename(file_path)}")
-                return True
-            else:
-                os.remove(temp_path)
-
-        # If we got here, the entry wasn't found
-        logger.warning(f"Could not find feedback entry with message_id: {message_id}")
-        return False
+            return overall_updated_made
 
     async def analyze_feedback_text(self, explanation_text: str) -> List[str]:
         """Analyze feedback explanation text to identify common issues.

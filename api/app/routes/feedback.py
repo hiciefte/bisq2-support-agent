@@ -121,48 +121,30 @@ async def submit_feedback_explanation(
         return {"success": False, "error": "Missing required fields"}
 
     # Extract any specific issues mentioned by the user
-    issues = explanation_data.get("issues", [])
+    user_provided_issues = explanation_data.get("issues", [])
 
-    # Get current feedback entry
-    all_feedback = feedback_service.load_feedback()
-    feedback_entry = None
+    # Analyze explanation text for common issues ONLY if no specific issues provided by user
+    detected_issues_from_text = []
+    if explanation and not user_provided_issues:
+        detected_issues_from_text = await feedback_service.analyze_feedback_text(explanation)
 
-    for item in all_feedback:
-        if item.get("message_id") == message_id:
-            feedback_entry = item
-            break
+    # Combine user-provided issues and detected issues. Prioritize user-provided ones.
+    all_issues_to_pass = list(user_provided_issues)
+    for detected_issue in detected_issues_from_text:
+        if detected_issue not in all_issues_to_pass:
+            all_issues_to_pass.append(detected_issue)
 
-    if not feedback_entry:
-        return {"success": False, "error": "Feedback entry not found"}
+    success = await feedback_service.update_feedback_entry(
+        message_id=message_id,
+        explanation=explanation,
+        issues=all_issues_to_pass
+    )
 
-    # Update feedback with explanation
-    if not feedback_entry.get("metadata"):
-        feedback_entry["metadata"] = {}
-
-    feedback_entry["metadata"]["explanation"] = explanation
-
-    # Add issues if explicitly provided
-    if issues:
-        if not feedback_entry["metadata"].get("issues"):
-            feedback_entry["metadata"]["issues"] = []
-
-        feedback_entry["metadata"]["issues"].extend(issues)
-
-    # Analyze explanation text for common issues if no specific issues provided
-    if not issues and explanation:
-        detected_issues = await feedback_service.analyze_feedback_text(explanation)
-
-        if detected_issues:
-            if not feedback_entry["metadata"].get("issues"):
-                feedback_entry["metadata"]["issues"] = []
-
-            feedback_entry["metadata"]["issues"].extend(detected_issues)
-
-    # Update the feedback entry
-    await feedback_service.update_feedback_entry(message_id, feedback_entry)
+    if not success:
+        return {"success": False, "error": "Feedback entry not found or update failed"}
 
     return {
         "success": True,
         "message": "Feedback explanation received",
-        "detected_issues": feedback_entry["metadata"].get("issues", [])
+        "issues": all_issues_to_pass
     }
