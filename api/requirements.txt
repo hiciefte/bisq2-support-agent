@@ -46,4 +46,7 @@ isort
 mypy
 
 # Metrics
-prometheus-fastapi-instrumentator 
+prometheus-fastapi-instrumentator
+
+# Added for cross-process file locking
+portalocker 
