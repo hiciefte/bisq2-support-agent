@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import asyncio
+import portalocker
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -223,17 +224,17 @@ class FeedbackService:
                     ordered_files_to_check.append(f_path)
             
             if not ordered_files_to_check and not os.path.exists(current_month_file):
-                 # Attempt to create and check current month file if no files exist at all
-                 # but an update is requested for an entry that should be in the current month.
-                 # This handles the case where the first feedback might be an update call.
-                 if not os.path.exists(current_month_file):
-                     try:
-                         open(current_month_file, 'a').close() # Create if not exists
-                         logger.info(f"Created empty feedback file for current month: {current_month_file}")
-                         if os.path.exists(current_month_file):
-                             ordered_files_to_check.append(current_month_file)
-                     except IOError as e:
-                         logger.error(f"Could not create feedback file {current_month_file}: {e}")
+                 # Attempt to create current month file if no files exist and an update is requested.
+                 # This handles the case where the first feedback interaction might be an update call.
+                 try:
+                     # The outer condition already ensures current_month_file does not exist here.
+                     open(current_month_file, 'a').close() # Create if not exists
+                     logger.info(f"Created empty feedback file for current month: {current_month_file}")
+                     # Explicitly check again after creation attempt before appending
+                     if os.path.exists(current_month_file):
+                         ordered_files_to_check.append(current_month_file)
+                 except IOError as e:
+                     logger.error(f"Could not create feedback file {current_month_file}: {e}")
 
             overall_updated_made = False
 
@@ -246,28 +247,36 @@ class FeedbackService:
                 entry_found_in_file = False
 
                 try:
-                    with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
-                        for line in original:
-                            try:
-                                entry = json.loads(line.strip())
-                            except json.JSONDecodeError:
-                                temp.write(line) # Write invalid line as is
-                                continue
+                    # Acquire an exclusive cross-process lock on the file
+                    with portalocker.Lock(file_path, mode='r+', timeout=10) as locked_file_handle:
+                        # Note: portalocker.Lock opens the file, so we use its handle or reopen carefully.
+                        # For simplicity and to maintain existing open logic, we will re-open 
+                        # after lock acquisition, ensuring portalocker primarily handles the lock file mechanism.
+                        # A more integrated approach would use locked_file_handle directly if its mode matches.
+                        # However, the temp file pattern means we mostly need the lock for the duration of this block.
+                        # Re-opening inside the lock context after portalocker creates/validates the lock file:
+                        with open(file_path, 'r') as original, open(temp_path, 'w') as temp:
+                            for line in original:
+                                try:
+                                    entry = json.loads(line.strip())
+                                except json.JSONDecodeError:
+                                    temp.write(line) # Write invalid line as is
+                                    continue
 
-                            if entry.get('message_id') == message_id:
-                                entry_found_in_file = True
-                                if explanation is not None or issues is not None:
-                                    entry = self._apply_partial_update(entry, explanation=explanation, issues=issues)
-                                    temp.write(json.dumps(entry) + '\n')
-                                    file_updated_locally = True
-                                elif updated_entry is not None:
-                                    temp.write(json.dumps(updated_entry) + '\n')
-                                    file_updated_locally = True
+                                if entry.get('message_id') == message_id:
+                                    entry_found_in_file = True
+                                    if explanation is not None or issues is not None:
+                                        entry = self._apply_partial_update(entry, explanation=explanation, issues=issues)
+                                        temp.write(json.dumps(entry) + '\n')
+                                        file_updated_locally = True
+                                    elif updated_entry is not None:
+                                        temp.write(json.dumps(updated_entry) + '\n')
+                                        file_updated_locally = True
+                                    else:
+                                        # No update data for this specific entry, write original
+                                        temp.write(line)
                                 else:
-                                    # No update data for this specific entry, write original
                                     temp.write(line)
-                            else:
-                                temp.write(line)
 
                     if file_updated_locally:
                         os.replace(temp_path, file_path)
