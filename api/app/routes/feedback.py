@@ -121,15 +121,15 @@ async def submit_feedback_explanation(
         return {"success": False, "error": "Missing required fields"}
 
     # Extract any specific issues mentioned by the user
-    issues = explanation_data.get("issues", [])
+    user_provided_issues = explanation_data.get("issues", [])
 
-    # Analyze explanation text for common issues if no specific issues provided by user
+    # Analyze explanation text for common issues ONLY if no specific issues provided by user
     detected_issues_from_text = []
-    if explanation:
+    if explanation and not user_provided_issues:
         detected_issues_from_text = await feedback_service.analyze_feedback_text(explanation)
 
     # Combine user-provided issues and detected issues. Prioritize user-provided ones.
-    all_issues_to_pass = list(issues) # Start with user-provided issues
+    all_issues_to_pass = list(user_provided_issues)
     for detected_issue in detected_issues_from_text:
         if detected_issue not in all_issues_to_pass:
             all_issues_to_pass.append(detected_issue)
@@ -146,5 +146,5 @@ async def submit_feedback_explanation(
     return {
         "success": True,
         "message": "Feedback explanation received",
-        "detected_issues": all_issues_to_pass
+        "issues": all_issues_to_pass
     }

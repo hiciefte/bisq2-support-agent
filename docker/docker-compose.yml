@@ -175,7 +175,7 @@ services:
     volumes:
       - ./prometheus:/etc/prometheus
       - prometheus-data:/prometheus
-      - ./prometheus/admin_key:/etc/prometheus/admin_key:ro
+      - ../runtime_secrets/prometheus_admin_key:/etc/prometheus/admin_key:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
