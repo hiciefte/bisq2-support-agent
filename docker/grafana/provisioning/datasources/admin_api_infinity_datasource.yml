@@ -1,0 +1,15 @@
+# nonk8s
+# docker/grafana/provisioning/datasources/admin_api_infinity_datasource.yml
+apiVersion: 1
+
+datasources:
+  - name: Admin API (Infinity)
+    uid: eely3rjvazp4wd
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    url: http://api:8000/admin/feedback
+    jsonData:
+      httpMethod: 'GET'
+      headers:
+        - key: 'Authorization'
+          value: 'Bearer ${ADMIN_API_KEY_FOR_GRAFANA}'

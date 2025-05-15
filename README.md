@@ -19,7 +19,6 @@ This project consists of the following components:
 - OpenAI API key (for the RAG model)
 - Python 3.11+ (for local development)
 - Node.js 20+ (for web frontend development)
-- Bisq 2 API instance (for FAQ extraction) - see [Bisq 2 API Setup](docs/bisq2-api-setup.md)
 
 ## Project Structure
 
@@ -85,6 +84,38 @@ export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
 ```
 
 > **Note:** Always use absolute paths for environment variables. Do not use tilde (`~`) or relative paths as they may cause issues with systemd services.
+
+**Making Environment Variables Persistent (Recommended):**
+
+To avoid having to `export` these variables every time you open a new shell session, 
+it is recommended to store them in a dedicated environment file. For example, you 
+can create a file named `/etc/bisq-support/deploy.env` (you may need `sudo` to create 
+and edit this file in `/etc`):
+
+```bash
+# /etc/bisq-support/deploy.env
+
+# Required environment variables
+export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
+export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
+export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
+export BISQ2_INSTALL_DIR="/opt/bisq2"
+
+# Optional environment variables (uncomment and set as needed)
+# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
+# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
+# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
+```
+
+Make sure this file is secured if it contains sensitive information. Then, before 
+running the deployment or update scripts, you can load these variables into your 
+current shell session by sourcing the file:
+
+```bash
+source /etc/bisq-support/deploy.env
+```
+
+After sourcing, you can proceed to run the deployment script (e.g., `sudo -E ./scripts/deploy.sh`).
 
 3. Make the deployment script executable:
 ```bash
