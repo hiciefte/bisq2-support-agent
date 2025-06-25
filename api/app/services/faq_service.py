@@ -81,7 +81,7 @@ class FAQService:
                             data = json.loads(line)
                             faq_item = FAQItem(**data)
                             faq_id = self._generate_stable_id(faq_item)
-                            faqs.append(FAQIdentifiedItem(id=faq_id, **faq_item.dict()))
+                            faqs.append(FAQIdentifiedItem(id=faq_id, **faq_item.model_dump()))
                         except (json.JSONDecodeError, TypeError) as e:
                             logger.warning(f"Skipping malformed line in FAQ file: {e}")
             return faqs
@@ -97,7 +97,7 @@ class FAQService:
         try:
             with self._lock, open(self._faq_file_path, 'w') as f:
                 for faq in faqs:
-                    f.write(json.dumps(faq.dict()) + '\n')
+                    f.write(json.dumps(faq.model_dump()) + '\n')
         except IOError as e:
             logger.error(f"Failed to write FAQs to disk: {e}")
 
@@ -109,10 +109,10 @@ class FAQService:
         """Adds a new FAQ to the JSONL file."""
         try:
             with self._lock, open(self._faq_file_path, 'a') as f:
-                f.write(json.dumps(faq_item.dict()) + '\n')
+                f.write(json.dumps(faq_item.model_dump()) + '\n')
             new_id = self._generate_stable_id(faq_item)
             logger.info(f"Added new FAQ with ID: {new_id}")
-            return FAQIdentifiedItem(id=new_id, **faq_item.dict())
+            return FAQIdentifiedItem(id=new_id, **faq_item.model_dump())
         except IOError as e:
             logger.error(f"Failed to add FAQ: {e}")
             raise
@@ -131,10 +131,10 @@ class FAQService:
                 core_faqs_to_write.append(updated_data)
                 new_id = self._generate_stable_id(updated_data)
                 updated_faq_with_id = FAQIdentifiedItem(id=new_id,
-                                                        **updated_data.dict())
+                                                        **updated_data.model_dump())
                 updated = True
             else:
-                core_faqs_to_write.append(FAQItem(**faq.dict(exclude={'id'})))
+                core_faqs_to_write.append(FAQItem(**faq.model_dump(exclude={'id'})))
 
         if updated:
             self._write_all_faqs(core_faqs_to_write)
@@ -154,7 +154,7 @@ class FAQService:
 
         if len(faqs_to_keep) < len(all_faqs_with_ids):
             # We need to strip the IDs before writing.
-            core_faqs_to_write = [FAQItem(**faq.dict(exclude={'id'})) for faq in
+            core_faqs_to_write = [FAQItem(**faq.model_dump(exclude={'id'})) for faq in
                                   faqs_to_keep]
             self._write_all_faqs(core_faqs_to_write)
             logger.info(f"Deleted FAQ with ID: {faq_id}")
