@@ -274,7 +274,7 @@ async def add_new_faq_route(faq_item: FAQItem):
         return new_faq
     except Exception as e:
         logger.error(f"Failed to add FAQ: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to add FAQ.")
+        raise HTTPException(status_code=500, detail="Failed to add FAQ.") from e
 
 
 @router.put("/faqs/{faq_id}", response_model=FAQIdentifiedItem)

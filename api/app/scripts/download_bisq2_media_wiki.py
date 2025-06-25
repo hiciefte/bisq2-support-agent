@@ -117,6 +117,95 @@ def validate_xml(file_path):
         return False
 
 
+def fetch_page_content(page_title: str) -> dict | None:
+    """Fetches the content of a single wiki page via the MediaWiki API."""
+    api_url = "https://bisq.wiki/api.php"
+    params = {
+        'action': 'query',
+        'prop': 'revisions',
+        'rvprop': 'content|ids|timestamp',
+        'titles': page_title,
+        'format': 'json'
+    }
+    try:
+        response = requests.get(api_url, params=params)
+        logging.debug(f"HTTP status for page '{page_title}': {response.status_code}")
+        if response.status_code != 200:
+            logging.error(f"Failed to fetch {page_title}: HTTP {response.status_code}")
+            return None
+        return response.json()
+    except Exception as e:
+        logging.error(f"Error fetching {page_title}: {e}")
+        return None
+
+
+def process_page_data(page_title: str, data: dict) -> dict | None:
+    """Processes the JSON data from the API for a single page."""
+    pages = data.get("query", {}).get("pages", {})
+    if not pages:
+        logging.warning(f"No page data returned for {page_title}")
+        return None
+
+    for pageid, pageinfo in pages.items():
+        if "missing" in pageinfo:
+            logging.warning(f"Page '{page_title}' is missing (might be a redirect or non-existent).")
+            continue
+
+        revisions = pageinfo.get("revisions", [])
+        if not revisions:
+            logging.warning(f"No revisions found for page '{page_title}'")
+            continue
+
+        content = revisions[0].get("*", "")
+        if not content:
+            logging.warning(f"Empty content for page '{page_title}'")
+            continue
+
+        title = pageinfo.get("title", "")
+        bisq_version = classify_bisq_version(title, content)
+        metadata_header = f"""
+<!-- BISQ VERSION: {bisq_version} -->
+<!-- This page is classified as {bisq_version} content -->
+
+"""
+        enhanced_content = metadata_header + content
+
+        return {
+            "pageid": pageid,
+            "title": title,
+            "content": enhanced_content,
+            "revision": revisions[0],
+            "bisq_version": bisq_version,
+            "links": extract_links(content)
+        }
+    return None
+
+
+def create_page_element(root: ET.Element, page_info: dict):
+    """Creates and appends a <page> XML element to the root."""
+    page_element = ET.SubElement(root, 'page')
+    ET.SubElement(page_element, 'title').text = page_info["title"]
+    ET.SubElement(page_element, 'ns').text = "0"
+    ET.SubElement(page_element, 'id').text = str(page_info["pageid"])
+
+    revision_element = ET.SubElement(page_element, 'revision')
+    rev_info = page_info["revision"]
+    ET.SubElement(revision_element, 'id').text = str(rev_info.get("revid", ""))
+    ET.SubElement(revision_element, 'timestamp').text = rev_info.get("timestamp", "")
+
+    # Add contributor section (can be simplified if not needed)
+    contributor = ET.SubElement(revision_element, 'contributor')
+    ET.SubElement(contributor, 'username').text = "downloader"
+    ET.SubElement(contributor, 'id').text = "0"
+
+    ET.SubElement(revision_element, 'comment').text = "Downloaded by script"
+    ET.SubElement(revision_element, 'model').text = "wikitext"
+    ET.SubElement(revision_element, 'format').text = "text/x-wiki"
+
+    text_element = ET.SubElement(revision_element, 'text', attrib={"xml:space": "preserve"})
+    text_element.text = sanitize_xml_content(page_info["content"])
+
+
 def main(output_dir):
     logging.info("Connecting to Bisq Wiki via mwclient...")
     site = mwclient.Site('bisq.wiki', path='/')
@@ -170,214 +259,57 @@ def main(output_dir):
                            attrib={"key": key, "case": "first-letter"})
         ns.text = name
 
-    api_url = "https://bisq.wiki/api.php"
-
     # Process pages in a breadth-first manner
     while pages_to_process:
         current_page = pages_to_process.pop(0)
 
-        # Skip if already processed
         if current_page in processed_pages:
             continue
 
         logging.info(f"Processing page: {current_page}")
         processed_pages.add(current_page)
 
-        # Fetch page content
-        params = {
-            'action': 'query',
-            'prop': 'revisions',
-            'rvprop': 'content|ids|timestamp',
-            'titles': current_page,
-            'format': 'json'
-        }
-
-        try:
-            response = requests.get(api_url, params=params)
-            logging.debug(
-                f"HTTP status for page '{current_page}': {response.status_code}")
-            if response.status_code != 200:
-                logging.error(
-                    f"Failed to fetch {current_page}: HTTP {response.status_code}")
-                continue
-            data = response.json()
-        except Exception as e:
-            logging.error(f"Error fetching {current_page}: {e}")
+        data = fetch_page_content(current_page)
+        if not data:
             continue
 
-        pages = data.get("query", {}).get("pages", {})
-        if not pages:
-            logging.warning(f"No page data returned for {current_page}")
+        page_info = process_page_data(current_page, data)
+        if not page_info:
             continue
 
-        for pageid, pageinfo in pages.items():
-            if "missing" in pageinfo:
-                logging.warning(
-                    f"Page '{current_page}' is missing (might be a redirect or non-existent).")
-                continue
+        all_pages[current_page] = page_info
 
-            # Get content
-            revisions = pageinfo.get("revisions", [])
-            if not revisions:
-                logging.warning(f"No revisions found for page '{current_page}'")
-                continue
+        # Add new links to the processing queue
+        for link in page_info["links"]:
+            if link not in processed_pages and link not in pages_to_process:
+                pages_to_process.append(link)
 
-            content = revisions[0].get("*", "")
-            if not content:
-                logging.warning(f"Empty content for page '{current_page}'")
-                continue
+        # Allow for a small delay to avoid being blocked
+        time.sleep(1)
 
-            # Classify the page
-            title = pageinfo.get("title", "")
-            bisq_version = classify_bisq_version(title, content)
+    logging.info(f"Finished processing {len(all_pages)} unique pages.")
 
-            # Add a clear metadata header to the content
-            metadata_header = f"""
-<!-- BISQ VERSION: {bisq_version} -->
-<!-- This page is classified as {bisq_version} content -->
+    # Sort pages by title for consistent output
+    sorted_titles = sorted(all_pages.keys())
 
-"""
-            enhanced_content = metadata_header + content
+    # Add all processed pages to the XML tree
+    for title in sorted_titles:
+        page_info = all_pages[title]
+        create_page_element(mediawiki_root, page_info)
 
-            # Store page info
-            all_pages[current_page] = {
-                "pageid": pageid,
-                "title": title,
-                "content": enhanced_content,
-                "revision": revisions[0],
-                "bisq_version": bisq_version
-            }
-
-            logging.info(f"Classified '{title}' as '{bisq_version}' content")
-
-            # Extract links from content and add to processing queue
-            links = extract_links(content)
-            logging.info(f"Found {len(links)} links in page '{current_page}'")
-
-            for link in links:
-                if link not in processed_pages and link not in pages_to_process:
-                    pages_to_process.append(link)
-
-        # Short pause to avoid overwhelming the server
-        time.sleep(0.5)
-
-    # Now create XML elements for all processed pages
-    logging.info(f"Creating XML elements for {len(all_pages)} pages...")
-    bisq2_count = 0
-    bisq1_count = 0
-    both_count = 0
-    general_count = 0
-
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Define output file paths
-    full_dump_path = os.path.join(output_dir, "bisq_dump_with_metadata.xml")
-    bisq2_dump_path = os.path.join(output_dir, "bisq2_dump.xml")
-
-    for title, page_data in all_pages.items():
-        page_el = ET.Element('page')
-        ET.SubElement(page_el, 'title').text = page_data["title"]
-
-        # Set the correct namespace based on the title prefix
-        title = page_data["title"]
-        if title.startswith("File:"):
-            ET.SubElement(page_el, 'ns').text = "6"  # File namespace
-        elif title.startswith("Category:"):
-            ET.SubElement(page_el, 'ns').text = "14"  # Category namespace
-        else:
-            ET.SubElement(page_el, 'ns').text = "0"  # Main namespace
-
-        ET.SubElement(page_el, 'id').text = page_data["pageid"]
-
-        # Add custom element for Bisq version
-        bisq_version_el = ET.SubElement(page_el, 'bisq_version')
-        bisq_version_el.text = page_data["bisq_version"]
-
-        # Update counters
-        if page_data["bisq_version"] == "Bisq 2":
-            bisq2_count += 1
-        elif page_data["bisq_version"] == "Bisq 1":
-            bisq1_count += 1
-        elif page_data["bisq_version"] == "Both":
-            both_count += 1
-        else:
-            general_count += 1
-
-        rev = page_data["revision"]
-        rev_el = ET.SubElement(page_el, 'revision')
-        ET.SubElement(rev_el, 'id').text = str(rev.get("revid", ""))
-        ET.SubElement(rev_el, 'timestamp').text = rev.get("timestamp", "")
-
-        # Sanitize content
-        sanitized_content = sanitize_xml_content(page_data["content"])
-
-        text_el = ET.SubElement(rev_el, 'text', attrib={"xml:space": "preserve"})
-        text_el.text = sanitized_content
-
-        mediawiki_root.append(page_el)
-
-    # Write out the combined XML dump.
+    # Save the XML file
+    output_filename = os.path.join(output_dir, "bisq2_dump.xml")
     tree = ET.ElementTree(mediawiki_root)
-    tree.write(full_dump_path, encoding='utf-8', xml_declaration=True)
+    tree.write(output_filename, encoding='utf-8', xml_declaration=True)
 
-    logging.info(f"Dump complete. Found {len(all_pages)} total pages:")
-    logging.info(f"- Bisq 2 related: {bisq2_count}")
-    logging.info(f"- Bisq 1 related: {bisq1_count}")
-    logging.info(f"- Both versions: {both_count}")
-    logging.info(f"- General content: {general_count}")
-    logging.info(f"File saved as {full_dump_path}")
+    logging.info(f"File saved as {output_filename}")
 
     # Verify the XML file is well-formed
-    try:
-        ET.parse(full_dump_path)
+    if validate_xml(output_filename):
         logging.info(
             "XML validation successful: The generated XML file is well-formed.")
-    except ET.ParseError as e:
-        logging.error(f"XML validation failed: {str(e)}")
-        logging.error(
-            "The generated XML file has formatting issues. Please check and fix manually.")
-
-    # Also create a Bisq 2 only version
-    bisq2_root = ET.Element('mediawiki', attrib={
-        'xmlns': "http://www.mediawiki.org/xml/export-0.10/",
-        'version': "0.10",
-        'xml:lang': "en"
-    })
-
-    # Copy the siteinfo section
-    bisq2_root.append(siteinfo)
-
-    # Add only Bisq 2 and relevant general pages
-    bisq2_only_count = 0
-    for title, page_data in all_pages.items():
-        if page_data["bisq_version"] in ["Bisq 2", "Both", "General"]:
-            # For pages that cover both, add a note that this is filtered for Bisq 2
-            if page_data["bisq_version"] == "Both":
-                enhanced_content = page_data["content"].replace(
-                    "<!-- BISQ VERSION: Both -->",
-                    "<!-- BISQ VERSION: Bisq 2 (filtered from content covering both versions) -->"
-                )
-                page_data["content"] = enhanced_content
-
-            # Copy the page element
-            for page_el in mediawiki_root.findall(".//page"):
-                if page_el.find("title").text == page_data["title"]:
-                    bisq2_root.append(page_el)
-                    bisq2_only_count += 1
-                    break
-
-    # Write out the Bisq 2 only XML dump
-    bisq2_tree = ET.ElementTree(bisq2_root)
-    bisq2_tree.write(bisq2_dump_path, encoding='utf-8', xml_declaration=True)
-
-    logging.info(f"Bisq 2 only dump complete. Included {bisq2_only_count} pages.")
-    logging.info(f"File saved as {bisq2_dump_path}")
-
-    # Verify the Bisq 2 XML file is well-formed
-    if validate_xml(bisq2_dump_path):
-        logging.info(
-            "Bisq 2 XML validation successful: The generated XML file is well-formed.")
+    else:
+        logging.error("The generated XML file has formatting issues.")
 
 
 if __name__ == "__main__":

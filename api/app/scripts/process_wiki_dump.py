@@ -171,7 +171,7 @@ class WikiDumpProcessor:
                     processed_count += 1
 
             logger.info(f"Successfully processed {processed_count} pages")
-            logger.info(f"Categories breakdown:")
+            logger.info("Categories breakdown:")
             for category, entries in self.context.items():
                 logger.info(f"- {category}: {len(entries)} entries")
 
