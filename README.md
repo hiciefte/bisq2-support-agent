@@ -76,11 +76,14 @@ export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
 export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
 export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
 export BISQ2_INSTALL_DIR="/opt/bisq2"
+export ADMIN_API_KEY="your_admin_key_here"
+export OPENAI_API_KEY="your_openai_api_key_here"
+export OPENAI_MODEL="your_openai_model_here"
 
-# Optional environment variables
-export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
-export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
-export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
+# Optional environment variables (uncomment and set as needed)
+# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
+# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
+# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
 ```
 
 > **Note:** Always use absolute paths for environment variables. Do not use tilde (`~`) or relative paths as they may cause issues with systemd services.
@@ -100,6 +103,9 @@ export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
 export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
 export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
 export BISQ2_INSTALL_DIR="/opt/bisq2"
+export ADMIN_API_KEY="your_admin_key_here"
+export OPENAI_API_KEY="your_openai_api_key_here"
+export OPENAI_MODEL="your_openai_model_here"
 
 # Optional environment variables (uncomment and set as needed)
 # export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
