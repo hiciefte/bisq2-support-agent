@@ -76,6 +76,9 @@ async def lifespan(app: FastAPI):
                                        wiki_service=wiki_service,
                                        faq_service=faq_service)
 
+    # Set up the RAG service (loads data, builds vector store)
+    await rag_service.setup()
+
     # Assign services to app state
     app.state.feedback_service = feedback_service
     app.state.faq_service = faq_service

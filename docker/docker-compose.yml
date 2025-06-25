@@ -272,6 +272,7 @@ services:
         echo '@reboot /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
         echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         # Add regular cron entries
+        echo '0 1 * * 0 /scripts/update-wiki.sh >> /var/log/cron/wiki.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 0 /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
