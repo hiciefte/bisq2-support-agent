@@ -30,6 +30,7 @@ export default function ManageFaqsPage() {
   const [formData, setFormData] = useState({ question: '', answer: '', category: '', source: 'Manual' });
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [loginError, setLoginError] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -51,8 +52,11 @@ export default function ManageFaqsPage() {
       if (response.ok) {
         const data = await response.json();
         setFaqs(data.faqs);
+        setError(null);
       } else {
-        console.error('Failed to fetch FAQs');
+        const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
+        console.error(errorText);
+        setError(errorText);
         if (response.status === 401) {
           setLoginError('Invalid API Key.');
           setApiKey(null);
@@ -60,7 +64,9 @@ export default function ManageFaqsPage() {
         }
       }
     } catch (error) {
-      console.error('Error fetching FAQs:', error);
+      const errorText = 'An unexpected error occurred while fetching FAQs.';
+      console.error(errorText, error);
+      setError(errorText);
     } finally {
       setIsLoading(false);
     }
@@ -106,11 +112,16 @@ export default function ManageFaqsPage() {
         setIsFormOpen(false);
         setEditingFaq(null);
         setFormData({ question: '', answer: '', category: '', source: 'Manual' });
+        setError(null);
       } else {
-        console.error('Failed to save FAQ');
+        const errorText = `Failed to save FAQ. Status: ${response.status}`;
+        console.error(errorText);
+        setError(errorText);
       }
     } catch (error) {
-      console.error('Error saving FAQ:', error);
+      const errorText = 'An unexpected error occurred while saving the FAQ.';
+      console.error(errorText, error);
+      setError(errorText);
     } finally {
       setIsSubmitting(false);
     }
@@ -134,11 +145,16 @@ export default function ManageFaqsPage() {
 
       if (response.ok) {
         fetchFaqs(apiKey);
+        setError(null);
       } else {
-        console.error('Failed to delete FAQ');
+        const errorText = `Failed to delete FAQ. Status: ${response.status}`;
+        console.error(errorText);
+        setError(errorText);
       }
     } catch (error) {
-      console.error('Error deleting FAQ:', error);
+      const errorText = 'An unexpected error occurred while deleting the FAQ.';
+      console.error(errorText, error);
+      setError(errorText);
     } finally {
       setIsSubmitting(false);
     }
@@ -148,6 +164,7 @@ export default function ManageFaqsPage() {
     setEditingFaq(null);
     setFormData({ question: '', answer: '', category: '', source: 'Manual' });
     setIsFormOpen(true);
+    setError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -182,6 +199,13 @@ export default function ManageFaqsPage() {
         <h1 className="text-3xl font-bold">FAQ Management</h1>
         <Button onClick={handleLogout} variant="outline">Logout</Button>
       </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{error}</span>
+        </div>
+      )}
 
       {isFormOpen && (
         <Card>

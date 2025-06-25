@@ -1,0 +1,53 @@
+# Web framework
+fastapi
+uvicorn
+
+# Data handling
+pydantic
+pydantic-settings
+
+# LLM and RAG
+langchain
+langchain-community
+langchain-core
+langchain-chroma
+chromadb
+
+# LLM providers
+openai
+langchain-openai
+langchain-huggingface
+langchain-text-splitters
+langchain-xai
+
+# Web scraping and parsing
+beautifulsoup4
+requests
+mwclient
+
+# Data processing
+pandas
+tqdm
+aiohttp
+mwxml
+mwparserfromhell
+
+# Monitoring
+psutil
+prometheus-client
+python-json-logger
+prometheus-fastapi-instrumentator
+
+# Testing and development
+pytest
+pytest-asyncio
+black
+isort
+mypy
+
+# Added for cross-process file locking
+portalocker
+
+# Data science libs
+matplotlib
+scikit-learn 

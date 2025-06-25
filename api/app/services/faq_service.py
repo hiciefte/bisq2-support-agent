@@ -245,10 +245,10 @@ class FAQService:
         Returns:
             List of Document objects
         """
-        if faq_file is None and hasattr(self, 'faq_file_path'):
-            faq_file = str(self.faq_file_path)
+        if faq_file is None and hasattr(self, '_faq_file_path'):
+            faq_file = str(self._faq_file_path)
         elif faq_file is None and self.settings:
-            faq_file = self.settings.FAQ_FILE_PATH
+            faq_file = os.path.join(self.settings.DATA_DIR, "extracted_faq.jsonl")
 
         logger.info(f"Using FAQ file path: {faq_file}")
 
@@ -801,23 +801,23 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         """
         self._ensure_faq_file_exists()
         faqs = []
-        if not hasattr(self, 'faq_file_path') or not self.faq_file_path.exists():
+        if not hasattr(self, '_faq_file_path') or not self._faq_file_path.exists():
             logger.warning(
-                f"FAQ file not found at {getattr(self, 'faq_file_path', 'Not set')}, cannot load existing FAQs.")
+                f"FAQ file not found at {getattr(self, '_faq_file_path', 'Not set')}, cannot load existing FAQs.")
             return faqs
 
         try:
             # No need for aggressive locking here if this is mostly for internal RAG loading
             # which might happen at startup or less frequently than admin edits.
             # If admin edits become frequent and overlap with RAG reloads, locking here might be needed too.
-            with open(self.faq_file_path, "r", encoding="utf-8") as f:
+            with open(self._faq_file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     try:
                         faqs.append(json.loads(line.strip()))
                     except json.JSONDecodeError:
                         logger.error(
                             f"Error parsing JSON line in load_existing_faqs: {line.strip()}")
-            logger.info(f"Loaded {len(faqs)} existing FAQs from {self.faq_file_path}")
+            logger.info(f"Loaded {len(faqs)} existing FAQs from {self._faq_file_path}")
         except Exception as e:
             logger.error(f"Error in load_existing_faqs: {str(e)}", exc_info=True)
         return faqs
@@ -829,70 +829,46 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         It now uses portalocker for safe concurrent writes.
         """
         self._ensure_faq_file_exists()
-        if not hasattr(self, 'faq_file_path'):
-            logger.error("FAQ file path not configured. Cannot save FAQs.")
-            return
 
-        # Filter out duplicates before saving
-        unique_faqs_to_save = []
-        # Reset normalized keys for this save operation context
-        # This local_normalized_keys is to avoid issues if self.normalized_faq_keys is used elsewhere concurrently
-        local_normalized_keys = set()
-
-        # Load current FAQs on disk to merge and maintain existing unique ones
-        # This ensures that if the extraction process runs, it doesn't wipe out manually added FAQs
-        # that might not be in its current batch.
-        # However, for admin CRUD, we usually want to overwrite with the admin's explicit list.
-        # The new `save_faqs_to_file` is for admin. This `save_faqs` is for the extractor.
-
-        # The extractor should append, not overwrite, or merge carefully.
-        # For simplicity, let's assume the FAQ extraction process will also use the new
-        # get_all_faqs_for_admin and save_faqs_to_file for consistency, or it needs
-        # its own append_faqs method that is also lock-protected.
-
-        # Given this `save_faqs` is used by `extract_and_save_faqs`, it should handle merging.
-        # For now, to ensure the admin CRUD works correctly with a full overwrite,
-        # we'll assume this `save_faqs` needs to be refactored or the extractor needs to use the new methods.
-        # TEMPORARY: To avoid breaking existing FAQ extraction, this save_faqs will append with deduplication.
-        # A more robust solution would be needed for the extractor to truly merge or use the new CRUD flow.
-
-        existing_faqs_on_disk = self.load_existing_faqs()
-        for faq in existing_faqs_on_disk:
-            key = self.get_normalized_faq_key(faq)
-            if key not in local_normalized_keys:
-                unique_faqs_to_save.append(faq)
-                local_normalized_keys.add(key)
-
-        for faq_dict in faqs:  # faqs from the extractor
-            key = self.get_normalized_faq_key(faq_dict)
-            if key not in local_normalized_keys:
-                unique_faqs_to_save.append(faq_dict)  # Append new unique ones
-                local_normalized_keys.add(key)
-            else:
-                logger.info(
-                    f"Skipping duplicate FAQ during save: {faq_dict.get('question', '')[:50]}")
-
-        # Now save the merged and deduplicated list
         try:
-            with portalocker.Lock(str(self.faq_file_path), mode='w',
-                                  timeout=10) as f_lock:
-                with open(self.faq_file_path, "w", encoding="utf-8") as f:
-                    for faq_item_dict in unique_faqs_to_save:
-                        try:
-                            f.write(json.dumps(faq_item_dict) + '\n')
-                        except TypeError as te:
-                            logger.error(
-                                f"TypeError serializing FAQ to JSON: {faq_item_dict} - {te}")
-            logger.info(
-                f"Saved {len(unique_faqs_to_save)} unique FAQs to {self.faq_file_path}")
-        except portalocker.LockException:
-            logger.error(
-                f"Could not acquire lock for writing (in save_faqs) FAQ file: {self.faq_file_path}")
+            # Re-use the class-level lock for this operation
+            with self._lock:
+                # Load existing FAQs to check for duplicates
+                with open(self._faq_file_path, 'r+', encoding='utf-8') as f:
+                    existing_faqs = [json.loads(line) for line in f if line.strip()]
+
+                    # Create a set of normalized keys for existing FAQs
+                    normalized_faq_keys = {
+                        self.get_normalized_faq_key(faq) for faq in existing_faqs
+                    }
+
+                    # Filter out duplicates from the new faqs
+                    new_unique_faqs = [
+                        faq for faq in faqs if self.get_normalized_faq_key(faq) not in normalized_faq_keys
+                    ]
+
+                    if new_unique_faqs:
+                        # Move to the end of the file to append new content
+                        f.seek(0, os.SEEK_END)
+                        # Ensure file ends with a newline if not empty
+                        if f.tell() > 0:
+                            f.seek(f.tell() - 1)
+                            if f.read(1) != '\n':
+                                f.write('\n')
+                        
+                        for faq in new_unique_faqs:
+                            f.write(json.dumps(faq) + '\n')
+                        logger.info(f"Saved {len(new_unique_faqs)} new FAQs.")
+                    else:
+                        logger.info("No new non-duplicate FAQs to save.")
+
+        except portalocker.exceptions.LockException as e:
+            logger.error(f"Could not acquire lock on FAQ file: {e}")
         except Exception as e:
-            logger.error(f"Error saving FAQs (in save_faqs): {str(e)}", exc_info=True)
+            logger.error(f"Error saving new FAQs: {e}", exc_info=True)
 
     def serialize_conversation(self, conv: Dict) -> Dict:
-        """Convert conversation to JSON-serializable format."""
+        """Helper to serialize conversation for JSON, handling non-serializable types."""
         serialized = conv.copy()
         messages = []
         for msg in conv['messages']:
