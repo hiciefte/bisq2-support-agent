@@ -6,22 +6,25 @@ processing the documents, preparing them for use in the RAG system,
 and extracting new FAQs from support chat conversations.
 """
 
+import hashlib
 import json
 import logging
 import os
 import random
-import time
 import re
+import time
 import unicodedata
 from datetime import timedelta
 from io import StringIO
-from pathlib import Path
 from typing import Dict, List, Set, Any, Optional, cast
 
 import pandas as pd
+import portalocker
 from fastapi import Request
 from langchain_core.documents import Document
-from openai import OpenAI
+
+# Import Pydantic models
+from app.models.faq import FAQItem, FAQIdentifiedItem
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,105 +32,189 @@ logger = logging.getLogger(__name__)
 
 
 class FAQService:
-    """Service for loading, processing, and extracting FAQ data."""
+    """Service for managing FAQs using a JSONL file and stable content-based IDs."""
+    _instance: Optional['FAQService'] = None
+    _faq_file_path: str = ''
+    _lock: Optional[portalocker.Lock] = None
 
-    def __init__(self, settings=None):
-        """Initialize the FAQService.
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(FAQService, cls).__new__(cls)
+        return cls._instance
 
-        Args:
-            settings: Application settings
-        """
-        self.settings = settings
+    def __init__(self, settings: Any):
+        """Initialize the FAQ service."""
+        if not hasattr(self, 'initialized'):
+            self.settings = settings
+            self._faq_file_path = os.path.join(self.settings.DATA_DIR,
+                                               "extracted_faq.jsonl")
+            self._lock = portalocker.Lock(self._faq_file_path + ".lock", timeout=10)
+            self._ensure_faq_file_exists()
+            self.initialized = True
+            logger.info("FAQService initialized with JSONL backend.")
 
-        # Default source weight
-        self.source_weights = {
-            "faq": 1.2  # Prioritize FAQ content
-        }
+    def _ensure_faq_file_exists(self):
+        """Creates the FAQ file if it doesn't exist."""
+        if not os.path.exists(self._faq_file_path):
+            logger.warning(
+                f"FAQ file not found at {self._faq_file_path}. Creating an empty file.")
+            try:
+                # Use 'a' mode to create if it doesn't exist without truncating
+                with self._lock, open(self._faq_file_path, 'a'):
+                    pass
+            except IOError as e:
+                logger.error(f"Could not create FAQ file at {self._faq_file_path}: {e}")
 
-        # Initialize paths using settings
-        if settings:
-            self.faq_file_path = Path(settings.FAQ_FILE_PATH)
-            self.processed_convs_path = Path(settings.PROCESSED_CONVS_FILE_PATH)
-            self.existing_input_path = Path(settings.CHAT_EXPORT_FILE_PATH)
-            self.conversations_path = Path(settings.CONVERSATIONS_FILE_PATH)
+    def _generate_stable_id(self, faq_item: FAQItem) -> str:
+        """Generates a stable SHA-256 hash ID from the FAQ's content."""
+        content = f"{faq_item.question.strip()}:{faq_item.answer.strip()}"
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
-            # Ensure data directories exist
-            self.faq_file_path.parent.mkdir(parents=True, exist_ok=True)
-            self.processed_convs_path.parent.mkdir(parents=True, exist_ok=True)
-            self.existing_input_path.parent.mkdir(parents=True, exist_ok=True)
-            self.conversations_path.parent.mkdir(parents=True, exist_ok=True)
+    def _read_all_faqs_with_ids(self) -> List[FAQIdentifiedItem]:
+        """Reads all FAQs from the JSONL file and assigns stable IDs."""
+        faqs: List[FAQIdentifiedItem] = []
+        try:
+            with self._lock, open(self._faq_file_path, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            data = json.loads(line)
+                            faq_item = FAQItem(**data)
+                            faq_id = self._generate_stable_id(faq_item)
+                            faqs.append(FAQIdentifiedItem(id=faq_id, **faq_item.dict()))
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(f"Skipping malformed line in FAQ file: {e}")
+            return faqs
+        except FileNotFoundError:
+            logger.info("FAQ file not found on read, returning empty list.")
+            return []
+        except Exception as e:
+            logger.error(f"Error reading FAQ file: {e}")
+            return []
 
-            # Initialize OpenAI client if settings are provided
-            if hasattr(settings, 'OPENAI_API_KEY'):
-                self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    def _write_all_faqs(self, faqs: List[FAQItem]):
+        """Writes a list of core FAQ data to the JSONL file, overwriting existing content."""
+        try:
+            with self._lock, open(self._faq_file_path, 'w') as f:
+                for faq in faqs:
+                    f.write(json.dumps(faq.dict()) + '\n')
+        except IOError as e:
+            logger.error(f"Failed to write FAQs to disk: {e}")
+
+    def get_all_faqs(self) -> List[FAQIdentifiedItem]:
+        """Get all FAQs with their stable IDs."""
+        return self._read_all_faqs_with_ids()
+
+    def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
+        """Adds a new FAQ to the JSONL file."""
+        try:
+            with self._lock, open(self._faq_file_path, 'a') as f:
+                f.write(json.dumps(faq_item.dict()) + '\n')
+            new_id = self._generate_stable_id(faq_item)
+            logger.info(f"Added new FAQ with ID: {new_id}")
+            return FAQIdentifiedItem(id=new_id, **faq_item.dict())
+        except IOError as e:
+            logger.error(f"Failed to add FAQ: {e}")
+            raise
+
+    def update_faq(self, faq_id: str, updated_data: FAQItem) -> Optional[
+        FAQIdentifiedItem]:
+        """Updates an existing FAQ by finding it via its stable ID."""
+        all_faqs_with_ids = self._read_all_faqs_with_ids()
+        updated = False
+
+        core_faqs_to_write: List[FAQItem] = []
+        updated_faq_with_id: Optional[FAQIdentifiedItem] = None
+
+        for faq in all_faqs_with_ids:
+            if faq.id == faq_id:
+                core_faqs_to_write.append(updated_data)
+                new_id = self._generate_stable_id(updated_data)
+                updated_faq_with_id = FAQIdentifiedItem(id=new_id,
+                                                        **updated_data.dict())
+                updated = True
             else:
-                self.openai_client = None
+                core_faqs_to_write.append(FAQItem(**faq.dict(exclude={'id'})))
 
-        # Store messages and their relationships for FAQ extraction
-        self.messages: Dict[str, Dict[str, Any]] = {}  # msg_id -> message data
-        self.references: Dict[str, str] = {}  # msg_id -> referenced_msg_id
-        self.conversations: List[Dict[str, Any]] = []  # List of conversation threads
+        if updated:
+            self._write_all_faqs(core_faqs_to_write)
+            logger.info(
+                f"Updated FAQ. Old ID: {faq_id}, New ID: {updated_faq_with_id.id if updated_faq_with_id else 'N/A'}")
+            return updated_faq_with_id
 
-        # Load processed conversation IDs
-        self.processed_conv_ids = self.load_processed_conv_ids()
-        
-        # Store normalized FAQ keys for deduplication
-        self.normalized_faq_keys = set()
+        logger.warning(f"Update failed: FAQ with ID {faq_id} not found.")
+        return None
 
-        logger.info("FAQ service initialized")
+    def delete_faq(self, faq_id: str) -> bool:
+        """Deletes an FAQ by finding it via its stable ID."""
+        all_faqs_with_ids = self._read_all_faqs_with_ids()
+
+        # Keep all faqs except the one with the matching ID
+        faqs_to_keep = [faq for faq in all_faqs_with_ids if faq.id != faq_id]
+
+        if len(faqs_to_keep) < len(all_faqs_with_ids):
+            # We need to strip the IDs before writing.
+            core_faqs_to_write = [FAQItem(**faq.dict(exclude={'id'})) for faq in
+                                  faqs_to_keep]
+            self._write_all_faqs(core_faqs_to_write)
+            logger.info(f"Deleted FAQ with ID: {faq_id}")
+            return True
+
+        logger.warning(f"Delete failed: FAQ with ID {faq_id} not found.")
+        return False
 
     def normalize_text(self, text: str) -> str:
         """Normalize text by converting to lowercase, normalizing Unicode characters,
         and standardizing whitespace.
-        
+
         Args:
             text: The text to normalize
-            
+
         Returns:
             Normalized text
         """
         if not text:
             return ""
-            
+
         # Convert to lowercase
         text = text.lower()
-        
+
         # Normalize Unicode characters (e.g., convert different apostrophe types to standard)
         text = unicodedata.normalize('NFKC', text)
-        
+
         # Replace common Unicode apostrophes with standard ASCII apostrophe
         text = text.replace('\u2019', "'")  # Right single quotation mark
         text = text.replace('\u2018', "'")  # Left single quotation mark
         text = text.replace('\u201B', "'")  # Single high-reversed-9 quotation mark
         text = text.replace('\u2032', "'")  # Prime
-        
+
         # Standardize whitespace
         text = re.sub(r'\s+', ' ', text)
-        
+
         # Trim leading/trailing whitespace
         text = text.strip()
-        
+
         return text
-        
+
     def get_normalized_faq_key(self, faq: Dict) -> str:
         """Generate a normalized key for a FAQ to identify duplicates.
-        
+
         Args:
             faq: The FAQ dictionary
-            
+
         Returns:
             A normalized key string
         """
         question = self.normalize_text(faq.get('question', ''))
         answer = self.normalize_text(faq.get('answer', ''))
         return f"{question}|{answer}"
-        
+
     def is_duplicate_faq(self, faq: Dict) -> bool:
         """Check if a FAQ is a duplicate based on normalized content.
-        
+
         Args:
             faq: The FAQ dictionary to check
-            
+
         Returns:
             True if the FAQ is a duplicate, False otherwise
         """
@@ -165,8 +252,11 @@ class FAQService:
         logger.info(f"Using FAQ file path: {faq_file}")
 
         if not os.path.exists(faq_file):
-            logger.warning(f"FAQ file not found: {faq_file}")
-            return []
+            # Ensure the file exists before trying to read, especially if it can be created on demand
+            self._ensure_faq_file_exists()
+            if not os.path.exists(faq_file):  # Check again after ensure
+                logger.warning(f"FAQ file not found: {faq_file}")
+                return []
 
         documents = []
         try:
@@ -180,7 +270,8 @@ class FAQService:
 
                         # Validate required fields
                         if not question.strip() or not answer.strip():
-                            logger.warning(f"Skipping FAQ entry with missing question or answer: {data}")
+                            logger.warning(
+                                f"Skipping FAQ entry with missing question or answer: {data}")
                             continue
 
                         doc = Document(
@@ -209,6 +300,8 @@ class FAQService:
         """Load the set of conversation IDs that have already been processed."""
         if not hasattr(self, 'processed_convs_path'):
             return set()
+
+        self._ensure_faq_file_exists()  # Ensure parent dir exists, though this is for processed_convs
 
         if self.processed_convs_path.exists():
             try:
@@ -319,17 +412,20 @@ class FAQService:
                         try:
                             timestamp = pd.to_datetime(row_data['Date'])
                         except Exception as exc:
-                            logger.warning(f"Timestamp parse error for msg {msg_id}: {exc}")
+                            logger.warning(
+                                f"Timestamp parse error for msg {msg_id}: {exc}")
 
                     # Create message object
                     msg = {
                         'msg_id': msg_id,
                         'text': row_data['Message'].strip(),
-                        'author': row_data['Author'] if pd.notna(row_data['Author']) else 'unknown',
+                        'author': row_data['Author'] if pd.notna(
+                            row_data['Author']) else 'unknown',
                         'channel': row_data['Channel'],
                         'is_support': row_data['Channel'].lower() == 'support',
                         'timestamp': timestamp,
-                        'referenced_msg_id': row_data['Referenced Message ID'] if pd.notna(
+                        'referenced_msg_id': row_data[
+                            'Referenced Message ID'] if pd.notna(
                             row_data['Referenced Message ID']) else None
                     }
                     self.messages[msg_id] = msg
@@ -338,21 +434,26 @@ class FAQService:
                     if msg['referenced_msg_id']:
                         self.references[msg_id] = msg['referenced_msg_id']
                         if msg['referenced_msg_id'] not in self.messages and pd.notna(
-                                row_data['Referenced Message Text']):
+                            row_data['Referenced Message Text']):
                             ref_timestamp = None
                             ref_rows = df[df['Message ID'] == msg['referenced_msg_id']]
-                            if not ref_rows.empty and pd.notna(ref_rows.iloc[0]['Date']):
+                            if not ref_rows.empty and pd.notna(
+                                ref_rows.iloc[0]['Date']):
                                 try:
-                                    ref_timestamp = pd.to_datetime(ref_rows.iloc[0]['Date'])
+                                    ref_timestamp = pd.to_datetime(
+                                        ref_rows.iloc[0]['Date'])
                                 except Exception as exc:
-                                    logger.warning(f"Ref timestamp parse error for msg {msg_id}: {exc}")
+                                    logger.warning(
+                                        f"Ref timestamp parse error for msg {msg_id}: {exc}")
                             if ref_timestamp is None and timestamp is not None:
                                 ref_timestamp = timestamp - pd.Timedelta(seconds=1)
                             ref_msg = {
                                 'msg_id': msg['referenced_msg_id'],
                                 'text': row_data['Referenced Message Text'].strip(),
-                                'author': row_data['Referenced Message Author'] if pd.notna(
-                                    row_data['Referenced Message Author']) else 'unknown',
+                                'author': row_data[
+                                    'Referenced Message Author'] if pd.notna(
+                                    row_data[
+                                        'Referenced Message Author']) else 'unknown',
                                 'channel': 'user',
                                 'is_support': False,
                                 'timestamp': ref_timestamp,
@@ -363,12 +464,14 @@ class FAQService:
                     logger.error(f"Error processing row: {e}")
                     continue
 
-            logger.info(f"Loaded {len(self.messages)} messages with {len(self.references)} references")
+            logger.info(
+                f"Loaded {len(self.messages)} messages with {len(self.references)} references")
         except Exception as e:
             logger.error(f"Error loading CSV file: {e}")
             raise
 
-    def build_conversation_thread(self, start_msg_id: str, max_depth: int = 10) -> List[Dict]:
+    def build_conversation_thread(self, start_msg_id: str, max_depth: int = 10) -> List[
+        Dict]:
         """Build a conversation thread starting from a message, following references both ways."""
         if not self.messages:
             return []
@@ -434,7 +537,8 @@ class FAQService:
             return False
 
         # Check if messages are too far apart in time
-        timestamps = [msg['timestamp'] for msg in thread if msg['timestamp'] is not None]
+        timestamps = [msg['timestamp'] for msg in thread if
+                      msg['timestamp'] is not None]
         if timestamps:
             time_span = max(timestamps) - min(timestamps)
             if time_span > timedelta(hours=24):  # Max time span of 24 hours
@@ -450,10 +554,11 @@ class FAQService:
                 current_msg['referenced_msg_id'] != previous_msg['msg_id']
                 and previous_msg['referenced_msg_id'] != current_msg['msg_id']
                 and not (
-                    current_msg['timestamp']
-                    and previous_msg['timestamp']
-                    and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)
-                )
+                current_msg['timestamp']
+                and previous_msg['timestamp']
+                and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(
+                minutes=30)
+            )
             ):
                 return False
 
@@ -565,7 +670,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             except Exception as e:
                 is_rate_limit = "rate limit" in str(e).lower()
                 error_level = logging.WARNING if is_rate_limit else logging.ERROR
-                logger.log(error_level, f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
+                logger.log(error_level,
+                           f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}")
 
                 if attempt < max_retries - 1:
                     # Add jitter to prevent thundering herd
@@ -606,15 +712,18 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             try:
                 faq = json.loads(line)
                 # Basic validation
-                if not faq.get('question', '').strip() or not faq.get('answer', '').strip():
-                    logger.warning(f"Skipping FAQ with missing question or answer: {line}")
+                if not faq.get('question', '').strip() or not faq.get('answer',
+                                                                      '').strip():
+                    logger.warning(
+                        f"Skipping FAQ with missing question or answer: {line}")
                     continue
-                    
+
                 # Check for duplicates
                 if self.is_duplicate_faq(faq):
-                    logger.info(f"Skipping duplicate FAQ: {faq.get('question', '')[:50]}...")
+                    logger.info(
+                        f"Skipping duplicate FAQ: {faq.get('question', '')[:50]}...")
                     continue
-                    
+
                 faqs.append(faq)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
@@ -647,7 +756,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         logger.info(f"Found {len(new_conversations)} new conversations to process")
 
         # Prepare conversations for the prompt
-        formatted_convs = [self._format_conversation_for_prompt(conv) for conv in new_conversations]
+        formatted_convs = [self._format_conversation_for_prompt(conv) for conv in
+                           new_conversations]
 
         # Split conversations into batches to avoid token limits
         batch_size = 5
@@ -685,47 +795,100 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         return all_faqs
 
     def load_existing_faqs(self) -> List[Dict]:
-        """Load existing FAQ entries if they exist."""
-        if not hasattr(self, 'faq_file_path'):
-            return []
+        """Load existing FAQs from the JSONL file for processing or extraction tasks.
+           Returns a list of dictionaries.
+        """
+        self._ensure_faq_file_exists()
+        faqs = []
+        if not hasattr(self, 'faq_file_path') or not self.faq_file_path.exists():
+            logger.warning(
+                f"FAQ file not found at {getattr(self, 'faq_file_path', 'Not set')}, cannot load existing FAQs.")
+            return faqs
 
-        if self.faq_file_path.exists():
-            try:
-                faqs = []
-                with self.faq_file_path.open('r', encoding='utf-8') as f:
-                    for line in f:
-                        faq = json.loads(line)
-                        # Add to normalized keys set for deduplication
-                        self.normalized_faq_keys.add(self.get_normalized_faq_key(faq))
-                        faqs.append(faq)
-                logger.info(f"Loaded {len(faqs)} existing FAQ entries")
-                return faqs
-            except Exception as e:
-                logger.warning(f"Error loading existing FAQs: {str(e)}")
-                return []
-        return []
+        try:
+            # No need for aggressive locking here if this is mostly for internal RAG loading
+            # which might happen at startup or less frequently than admin edits.
+            # If admin edits become frequent and overlap with RAG reloads, locking here might be needed too.
+            with open(self.faq_file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        faqs.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        logger.error(
+                            f"Error parsing JSON line in load_existing_faqs: {line.strip()}")
+            logger.info(f"Loaded {len(faqs)} existing FAQs from {self.faq_file_path}")
+        except Exception as e:
+            logger.error(f"Error in load_existing_faqs: {str(e)}", exc_info=True)
+        return faqs
 
     def save_faqs(self, faqs: List[Dict]):
-        """Save FAQ entries to JSONL file."""
+        """
+        Saves a list of FAQ dictionaries to the faq_file_path.
+        This method is typically used by the FAQ extraction process.
+        It now uses portalocker for safe concurrent writes.
+        """
+        self._ensure_faq_file_exists()
         if not hasattr(self, 'faq_file_path'):
-            logger.warning("Cannot save FAQs: path not set")
+            logger.error("FAQ file path not configured. Cannot save FAQs.")
             return
 
-        if not faqs and self.faq_file_path.exists():
-            logger.info("No new FAQs to save, preserving existing entries")
-            return
+        # Filter out duplicates before saving
+        unique_faqs_to_save = []
+        # Reset normalized keys for this save operation context
+        # This local_normalized_keys is to avoid issues if self.normalized_faq_keys is used elsewhere concurrently
+        local_normalized_keys = set()
 
-        with self.faq_file_path.open('w', encoding='utf-8') as f:
-            for faq in faqs:
-                # Ensure consistent encoding by normalizing before saving
-                normalized_faq = {
-                    'question': faq.get('question', ''),
-                    'answer': faq.get('answer', ''),
-                    'category': faq.get('category', 'General'),
-                    'source': faq.get('source', 'Bisq Support Chat')
-                }
-                f.write(json.dumps(normalized_faq, ensure_ascii=False) + '\n')
-        logger.info(f"Saved {len(faqs)} FAQ entries to {self.faq_file_path}")
+        # Load current FAQs on disk to merge and maintain existing unique ones
+        # This ensures that if the extraction process runs, it doesn't wipe out manually added FAQs
+        # that might not be in its current batch.
+        # However, for admin CRUD, we usually want to overwrite with the admin's explicit list.
+        # The new `save_faqs_to_file` is for admin. This `save_faqs` is for the extractor.
+
+        # The extractor should append, not overwrite, or merge carefully.
+        # For simplicity, let's assume the FAQ extraction process will also use the new
+        # get_all_faqs_for_admin and save_faqs_to_file for consistency, or it needs
+        # its own append_faqs method that is also lock-protected.
+
+        # Given this `save_faqs` is used by `extract_and_save_faqs`, it should handle merging.
+        # For now, to ensure the admin CRUD works correctly with a full overwrite,
+        # we'll assume this `save_faqs` needs to be refactored or the extractor needs to use the new methods.
+        # TEMPORARY: To avoid breaking existing FAQ extraction, this save_faqs will append with deduplication.
+        # A more robust solution would be needed for the extractor to truly merge or use the new CRUD flow.
+
+        existing_faqs_on_disk = self.load_existing_faqs()
+        for faq in existing_faqs_on_disk:
+            key = self.get_normalized_faq_key(faq)
+            if key not in local_normalized_keys:
+                unique_faqs_to_save.append(faq)
+                local_normalized_keys.add(key)
+
+        for faq_dict in faqs:  # faqs from the extractor
+            key = self.get_normalized_faq_key(faq_dict)
+            if key not in local_normalized_keys:
+                unique_faqs_to_save.append(faq_dict)  # Append new unique ones
+                local_normalized_keys.add(key)
+            else:
+                logger.info(
+                    f"Skipping duplicate FAQ during save: {faq_dict.get('question', '')[:50]}")
+
+        # Now save the merged and deduplicated list
+        try:
+            with portalocker.Lock(str(self.faq_file_path), mode='w',
+                                  timeout=10) as f_lock:
+                with open(self.faq_file_path, "w", encoding="utf-8") as f:
+                    for faq_item_dict in unique_faqs_to_save:
+                        try:
+                            f.write(json.dumps(faq_item_dict) + '\n')
+                        except TypeError as te:
+                            logger.error(
+                                f"TypeError serializing FAQ to JSON: {faq_item_dict} - {te}")
+            logger.info(
+                f"Saved {len(unique_faqs_to_save)} unique FAQs to {self.faq_file_path}")
+        except portalocker.LockException:
+            logger.error(
+                f"Could not acquire lock for writing (in save_faqs) FAQ file: {self.faq_file_path}")
+        except Exception as e:
+            logger.error(f"Error saving FAQs (in save_faqs): {str(e)}", exc_info=True)
 
     def serialize_conversation(self, conv: Dict) -> Dict:
         """Convert conversation to JSON-serializable format."""
@@ -751,8 +914,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         try:
             # Reset and pre-seed duplicate set with on-disk FAQs
             self.normalized_faq_keys = set()
-            existing_faqs = self.load_existing_faqs()   # populates the set
-            
+            existing_faqs = self.load_existing_faqs()  # populates the set
+
             # Merge existing and new messages
             await self.merge_csv_files(bisq_api)
 
@@ -788,7 +951,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
                 # Save all FAQs
                 self.save_faqs(all_faqs)
-                logger.info(f"Extraction complete. Generated {len(new_faqs)} new FAQ entries.")
+                logger.info(
+                    f"Extraction complete. Generated {len(new_faqs)} new FAQ entries.")
 
                 # Update processed conversation IDs
                 for conv in new_conversations:

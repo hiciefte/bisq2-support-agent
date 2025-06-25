@@ -54,7 +54,13 @@ except Exception as e:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize services on startup
+    # Startup
+    logger.info("Application startup...")
+
+    # Initialize services
+    settings = get_settings()
+    app.state.settings = settings
+    
     logger.info("Initializing WikiService...")
     wiki_service = WikiService(settings=settings)
 
@@ -70,20 +76,21 @@ async def lifespan(app: FastAPI):
                                        wiki_service=wiki_service,
                                        faq_service=faq_service)
 
-    # Set up services
-    await rag_service.setup()
-
-    # Add services to FastAPI's app.state
-    app.state.wiki_service = wiki_service
+    # Assign services to app state
     app.state.feedback_service = feedback_service
     app.state.faq_service = faq_service
     app.state.rag_service = rag_service
-
+    app.state.wiki_service = wiki_service
+    
+    # Yield control to the application
     yield
-
-    # Cleanup on shutdown
-    logger.info("Shutting down services...")
-    await rag_service.cleanup()
+    
+    # Shutdown
+    logger.info("Application shutdown...")
+    # Perform any cleanup here if needed
+    # For example, rag_service might have a cleanup method
+    if hasattr(app.state.rag_service, 'cleanup'):
+        await app.state.rag_service.cleanup()
 
 
 # Create FastAPI application
