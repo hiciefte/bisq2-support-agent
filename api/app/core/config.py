@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
+    ADMIN_API_KEY: str = "dev_admin_key" # Default admin key for development
 
     # Environment settings
     ENVIRONMENT: str = "development"

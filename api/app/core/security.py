@@ -2,9 +2,8 @@
 Security utilities for the Bisq Support API.
 """
 
-import os
-import secrets
 import logging
+import secrets
 
 from fastapi import Request, HTTPException, status
 
@@ -12,10 +11,6 @@ from app.core.config import get_settings
 
 # Get settings instance
 settings = get_settings()
-
-# Admin API key for accessing protected admin endpoints
-# No default value for better security - must be set in environment
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 
 # Minimum length for secure API keys
 MIN_API_KEY_LENGTH = 24
@@ -36,7 +31,9 @@ def verify_admin_access(request: Request) -> bool:
     Raises:
         HTTPException: If access is denied with appropriate status code
     """
-    if not ADMIN_API_KEY:
+    admin_api_key = settings.ADMIN_API_KEY
+
+    if not admin_api_key:
         # If ADMIN_API_KEY is not set, deny all access to admin endpoints
         logger.warning("Admin access attempted but ADMIN_API_KEY is not configured")
         raise HTTPException(
@@ -44,61 +41,38 @@ def verify_admin_access(request: Request) -> bool:
             detail="Admin access not configured"
         )
 
-    if len(ADMIN_API_KEY) < MIN_API_KEY_LENGTH:
+    if len(admin_api_key) < MIN_API_KEY_LENGTH:
         # If ADMIN_API_KEY is too short, warn about insecure key
         logger.warning(
-            f"ADMIN_API_KEY is configured with insecure length: {len(ADMIN_API_KEY)} (min: {MIN_API_KEY_LENGTH})")
+            f"ADMIN_API_KEY is configured with insecure length: {len(admin_api_key)} (min: {MIN_API_KEY_LENGTH})")
 
-    # Check the Authorization header
-    auth_header = request.headers.get("Authorization", "")
+    # Check for API key in different locations
+    provided_key = request.headers.get("X-API-KEY") or \
+                   request.query_params.get("api_key") or \
+                   (request.headers.get("Authorization", "").replace("Bearer ", "") if request.headers.get("Authorization", "").startswith("Bearer ") else None)
 
-    # Simple API key validation
-    if auth_header.startswith("Bearer "):
-        token = auth_header.replace("Bearer ", "")
-        if token and token == ADMIN_API_KEY and len(token) >= MIN_API_KEY_LENGTH:
-            # Record successful login attempts at debug level for audit
-            logger.debug(
-                f"Admin access granted via Bearer token from {request.client.host if request.client else 'unknown'}")
+    if provided_key:
+        if secrets.compare_digest(provided_key, admin_api_key):
+            # Key is correct
+            if len(provided_key) < MIN_API_KEY_LENGTH:
+                logger.warning(f"Successful login with insecure admin key length: {len(provided_key)} chars")
+            else:
+                logger.debug(f"Admin access granted from {request.client.host if request.client else 'unknown'}")
             return True
-        elif token and token == ADMIN_API_KEY and len(token) < MIN_API_KEY_LENGTH:
-            logger.warning(f"Insecure admin key length: {len(token)} chars")
-            # Allow access but warn that key is too short
-            return True
+        else:
+            # Key is incorrect
+            logger.warning(f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid admin credentials"
+            )
 
-    # Only allow query parameter authentication in development environments
-    is_production = settings.ENVIRONMENT.lower() == 'production'
-    if not is_production:
-        # Check for API key in query params (for easier testing)
-        api_key = request.query_params.get("api_key", "")
-        if api_key and api_key == ADMIN_API_KEY and len(api_key) >= MIN_API_KEY_LENGTH:
-            logger.debug(
-                f"Admin access granted via query parameter from {request.client.host if request.client else 'unknown'}")
-            return True
-        elif api_key and api_key == ADMIN_API_KEY and len(api_key) < MIN_API_KEY_LENGTH:
-            logger.warning(f"Insecure admin key length: {len(api_key)} chars")
-            # Allow access but warn that key is too short
-            return True
-
-    # Log failed access attempts (but don't include the actual credentials)
-    logger.warning(
-        f"Invalid admin access attempt from {request.client.host if request.client else 'unknown'}")
-
-    # Check if the user provided a key that was incorrect vs. no key at all
-    has_key_attempt = auth_header.startswith("Bearer ") or (
-            not is_production and request.query_params.get("api_key", "") != "")
-
-    if has_key_attempt:
-        # User tried to authenticate but used wrong credentials - 403 Forbidden
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid admin credentials"
-        )
-    else:
-        # User didn't provide any credentials - 401 Unauthorized
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin authentication required"
-        )
+    # No key was provided
+    logger.warning(f"Missing admin API key from {request.client.host if request.client else 'unknown'}")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Admin authentication required"
+    )
 
 
 def generate_secure_key() -> str:

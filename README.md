@@ -302,33 +302,46 @@ mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
 
 ## Running Services Individually
 
+When running services outside of Docker for development, you must configure the necessary environment variables manually.
+
 ### API Service:
 
-1. Create and activate a virtual environment:
+1. Create a local environment file by copying the example:
+   ```bash
+   cp api/.env.example api/.env
+   ```
+   **Note:** Make sure to fill in your `OPENAI_API_KEY` in the newly created `api/.env` file.
+
+2. Create and activate a virtual environment:
    ```bash
    cd api
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. Install dependencies:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Run the API service:
+4. Run the API service (it will be available at `http://localhost:8000`):
    ```bash
    python -m uvicorn app.main:app --reload
    ```
 
 ### Web Frontend:
 
-1. Navigate to web directory:
+1. Navigate to the web directory:
    ```bash
    cd web
    ```
 
-2. Install dependencies and start:
+2. Create a local environment file to tell the frontend where the API is running:
+   ```bash
+   echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+   ```
+
+3. Install dependencies and start the development server (it will be available at `http://localhost:3000`):
    ```bash
    npm install
    npm run dev

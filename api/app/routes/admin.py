@@ -5,12 +5,14 @@ Admin routes for the Bisq Support API.
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 from app.core.config import get_settings
 from app.core.security import verify_admin_access
+from app.models.faq import FAQItem, FAQIdentifiedItem, FAQListResponse
+from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 
 # Setup logging
@@ -32,6 +34,9 @@ router = APIRouter(
 
 # Create a singleton instance of FeedbackService
 feedback_service = FeedbackService(settings=settings)
+
+# Create a singleton instance of FAQService
+faq_service = FAQService(settings=settings)
 
 # Controlled vocabulary for issue types to prevent high-cardinality
 KNOWN_ISSUE_TYPES = {
@@ -250,3 +255,43 @@ async def get_metrics():
 
     # Return metrics in Prometheus format
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@router.get("/faqs", response_model=FAQListResponse)
+async def get_all_faqs_for_admin_route():
+    """Get all FAQs for the admin interface."""
+    logger.info("Admin request to fetch all FAQs")
+    faqs = faq_service.get_all_faqs()
+    return FAQListResponse(faqs=faqs)
+
+
+@router.post("/faqs", response_model=FAQIdentifiedItem, status_code=201)
+async def add_new_faq_route(faq_item: FAQItem):
+    """Add a new FAQ."""
+    logger.info(f"Admin request to add new FAQ: {faq_item.question[:30]}...")
+    try:
+        new_faq = faq_service.add_faq(faq_item)
+        return new_faq
+    except Exception as e:
+        logger.error(f"Failed to add FAQ: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to add FAQ.")
+
+
+@router.put("/faqs/{faq_id}", response_model=FAQIdentifiedItem)
+async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
+    """Update an existing FAQ by its ID."""
+    logger.info(f"Admin request to update FAQ with id: {faq_id}")
+    updated_faq = faq_service.update_faq(faq_id, faq_item_update)
+    if not updated_faq:
+        raise HTTPException(status_code=404, detail="FAQ not found")
+    return updated_faq
+
+
+@router.delete("/faqs/{faq_id}", status_code=204)
+async def delete_existing_faq_route(faq_id: str):
+    """Delete an existing FAQ by its ID."""
+    logger.info(f"Admin request to delete FAQ with id: {faq_id}")
+    success = faq_service.delete_faq(faq_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="FAQ not found")
+    return Response(status_code=204)
