@@ -49,4 +49,8 @@ mypy
 prometheus-fastapi-instrumentator
 
 # Added for cross-process file locking
-portalocker 
+portalocker
+
+matplotlib==3.8.3
+scikit-learn==1.4.1.post1
+mwclient 

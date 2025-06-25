@@ -50,6 +50,7 @@ class FAQService:
                                                "extracted_faq.jsonl")
             self._lock = portalocker.Lock(self._faq_file_path + ".lock", timeout=10)
             self._ensure_faq_file_exists()
+            self.source_weights = {"faq": 1.2}  # Default weight
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
 
