@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.11'
+
+      - name: Install pip-tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-tools
+
+      - name: Check if requirements.txt is up to date
+        run: |
+          pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+          echo "git diff of requirements.txt:"
+          git diff --no-color api/requirements.txt
+          git diff --exit-code --quiet api/requirements.txt || (echo "ERROR: requirements.txt is not up to date. Please run 'pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras' and commit the changes." && exit 1)
+
+      - name: Install dependencies
+        run: pip-sync api/requirements.txt
+
+      - name: Lint with black
+        run: black --check .
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Hadolint on API Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/api/Dockerfile
+
+      - name: Run Hadolint on Web Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/web/Dockerfile
+
+      - name: Run Trivy vulnerability scanner on api image
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          image-ref: '.'
+          scan-ref: './api'
+          format: 'table'
+          trivy-config: '.trivy.yaml'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy vulnerability scanner on web image
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          image-ref: '.'
+          scan-ref: './web'
+          format: 'table'
+          trivy-config: '.trivy.yaml'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+

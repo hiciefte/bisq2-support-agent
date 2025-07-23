@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -41,7 +41,6 @@ class QueryResponse(BaseModel):
 async def query(
     request: Request,
     settings: Settings = Depends(get_settings),
-    body_payload: dict = Body(...)
 ):
     """Process a query and return a response with sources."""
     logger.info("Received request to /query endpoint")
@@ -54,21 +53,24 @@ async def query(
         rag_service = request.app.state.rag_service
 
         # Use the automatically parsed payload from Body
-        data = body_payload
+        data = await request.json()
         logger.info(f"Automatically parsed JSON data: {json.dumps(data, indent=2)}")
         logger.info(f"Parsed data type: {type(data)}")
         logger.info(
-            f"Parsed data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            f"Parsed data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}"
+        )
 
         # Validate against our model
         try:
             logger.info("Attempting to validate request data...")
             # Get field names using model_json_schema instead of model_fields.keys()
             expected_fields = list(
-                QueryRequest.model_json_schema()["properties"].keys())
+                QueryRequest.model_json_schema()["properties"].keys()
+            )
             logger.info(f"Expected model fields: {expected_fields}")
             logger.info(
-                f"Received fields: {list(data.keys()) if isinstance(data, dict) else []}")
+                f"Received fields: {list(data.keys()) if isinstance(data, dict) else []}"
+            )
             logger.info(f"Model validation about to start with data: {data}")
 
             query_request = QueryRequest.model_validate(data)
@@ -79,29 +81,31 @@ async def query(
             logger.error(f"Validation error details: {str(e)}")
             # Use model_json_schema instead of model_fields
             logger.error(
-                f"Model fields: {QueryRequest.model_json_schema()['properties']}")
-            raise HTTPException(status_code=422, detail=str(e))
+                f"Model fields: {QueryRequest.model_json_schema()['properties']}"
+            )
+            raise HTTPException(status_code=422, detail=str(e)) from e
 
         # Get response from simplified RAG service
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
         if query_request.chat_history:
             logger.info(
-                f"Number of messages in chat history: {len(query_request.chat_history)}")
+                f"Number of messages in chat history: {len(query_request.chat_history)}"
+            )
             for i, msg in enumerate(query_request.chat_history):
                 logger.info(
-                    f"Message {i}: role={msg.role}, content={msg.content[:30]}...")
+                    f"Message {i}: role={msg.role}, content={msg.content[:30]}..."
+                )
         else:
             logger.info("No chat history provided in the request")
 
-        result = await rag_service.query(query_request.question,
-                                         query_request.chat_history)
+        result = await rag_service.query(
+            query_request.question, query_request.chat_history
+        )
 
         # Convert sources to the expected format
         formatted_sources = [
             Source(
-                title=source["title"],
-                type=source["type"],
-                content=source["content"]
+                title=source["title"], type=source["type"], content=source["content"]
             )
             for source in result["sources"]
         ]
@@ -109,7 +113,7 @@ async def query(
         response_data = QueryResponse(
             answer=result["answer"],
             sources=formatted_sources,
-            response_time=result["response_time"]
+            response_time=result["response_time"],
         )
 
         return JSONResponse(content=response_data.model_dump())
@@ -117,8 +121,7 @@ async def query(
         logger.error(f"Unexpected error processing request: {str(e)}")
         logger.error("Full error details:", exc_info=True)
         return JSONResponse(
-            status_code=500,
-            content={"detail": str(e)}
+            status_code=500, content={"detail": "Internal server error"}
         )
 
 
@@ -133,7 +136,7 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
         stats = {
             "total_queries": 0,
             "average_response_time": 300,  # Default to 5 minutes
-            "last_24h_average_response_time": 300
+            "last_24h_average_response_time": 300,
         }
 
         if not feedback_dir.exists():
@@ -144,6 +147,7 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
 
         # For tracking recent queries (last 24 hours)
         import datetime
+
         recent_queries = 0
         recent_response_time = 0
         cutoff_time = datetime.datetime.now() - datetime.timedelta(hours=24)
@@ -160,7 +164,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
 
                         # Check if metadata and response_time exist
                         if feedback.get("metadata") and feedback["metadata"].get(
-                            "response_time"):
+                            "response_time"
+                        ):
                             total_queries += 1
                             response_time = feedback["metadata"]["response_time"]
                             total_response_time += response_time
@@ -169,7 +174,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
                             if "timestamp" in feedback:
                                 try:
                                     timestamp = datetime.datetime.fromisoformat(
-                                        feedback["timestamp"])
+                                        feedback["timestamp"]
+                                    )
                                     if timestamp > cutoff_time:
                                         recent_queries += 1
                                         recent_response_time += response_time
@@ -178,7 +184,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
                                     pass
                     except json.JSONDecodeError:
                         logger.warning(
-                            f"Invalid JSON in feedback file: {feedback_file}")
+                            f"Invalid JSON in feedback file: {feedback_file}"
+                        )
                         continue
 
         # Calculate averages if we have data
@@ -187,8 +194,9 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
             stats["average_response_time"] = total_response_time / total_queries
 
         if recent_queries > 0:
-            stats[
-                "last_24h_average_response_time"] = recent_response_time / recent_queries
+            stats["last_24h_average_response_time"] = (
+                recent_response_time / recent_queries
+            )
         else:
             # If no recent queries, use the overall average
             stats["last_24h_average_response_time"] = stats["average_response_time"]
@@ -200,6 +208,5 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
         logger.error(f"Error getting chat stats: {str(e)}")
         logger.exception("Full error details:")
         raise HTTPException(
-            status_code=500,
-            detail="An error occurred while retrieving chat statistics"
+            status_code=500, detail="An error occurred while retrieving chat statistics"
         )

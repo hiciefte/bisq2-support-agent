@@ -39,12 +39,15 @@ class Settings(BaseSettings):
     XAI_MODEL: str = "llama3-70b-8192"
 
     # RAG settings
-    MAX_CHAT_HISTORY_LENGTH: int = 10  # Maximum number of chat history entries to include
+    MAX_CHAT_HISTORY_LENGTH: int = (
+        10  # Maximum number of chat history entries to include
+    )
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
+    ADMIN_API_KEY: str  # No default, must be set via environment
 
     # Environment settings
     ENVIRONMENT: str = "development"
@@ -53,7 +56,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",  # Enable .env file loading
         env_parse_json=False,  # Disable trying to parse values as JSON
-        env_file_override=True  # Ensure environment variables take precedence
+        env_file_override=True,  # Ensure environment variables take precedence
     )
 
     # Path properties that return complete paths
