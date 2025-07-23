@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -41,7 +41,6 @@ class QueryResponse(BaseModel):
 async def query(
     request: Request,
     settings: Settings = Depends(get_settings),
-    body_payload: dict = Body(...),
 ):
     """Process a query and return a response with sources."""
     logger.info("Received request to /query endpoint")
@@ -54,7 +53,7 @@ async def query(
         rag_service = request.app.state.rag_service
 
         # Use the automatically parsed payload from Body
-        data = body_payload
+        data = await request.json()
         logger.info(f"Automatically parsed JSON data: {json.dumps(data, indent=2)}")
         logger.info(f"Parsed data type: {type(data)}")
         logger.info(
@@ -84,7 +83,7 @@ async def query(
             logger.error(
                 f"Model fields: {QueryRequest.model_json_schema()['properties']}"
             )
-            raise HTTPException(status_code=422, detail=str(e))
+            raise HTTPException(status_code=422, detail=str(e)) from e
 
         # Get response from simplified RAG service
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
@@ -121,7 +120,9 @@ async def query(
     except Exception as e:
         logger.error(f"Unexpected error processing request: {str(e)}")
         logger.error("Full error details:", exc_info=True)
-        return JSONResponse(status_code=500, content={"detail": str(e)})
+        return JSONResponse(
+            status_code=500, content={"detail": "Internal server error"}
+        )
 
 
 @router.get("/stats")
