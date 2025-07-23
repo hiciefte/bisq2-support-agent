@@ -34,8 +34,7 @@ from app.services.faq_service import FAQService
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,8 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
 
             logger.info(
-                f"FAQ extraction completed. Generated {len(new_faqs)} new FAQ entries.")
+                f"FAQ extraction completed. Generated {len(new_faqs)} new FAQ entries."
+            )
             return new_faqs
 
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
@@ -99,12 +99,14 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             if retry_count < MAX_RETRIES:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (retry_count - 1))
                 logger.warning(
-                    f"Transient error occurred: {str(e)}. Retrying in {wait_time} seconds...")
+                    f"Transient error occurred: {str(e)}. Retrying in {wait_time} seconds..."
+                )
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(
                     f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}",
-                    exc_info=True)
+                    exc_info=True,
+                )
                 break
 
         except Exception as e:
@@ -115,18 +117,21 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (retry_count - 1))
                 logger.error(
                     f"Error during FAQ extraction: {str(e)}. Retrying in {wait_time} seconds...",
-                    exc_info=True)
+                    exc_info=True,
+                )
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(
                     f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}",
-                    exc_info=True)
+                    exc_info=True,
+                )
                 break
 
     # If we reached here, all retries failed
     if last_error:
         logger.error(
-            f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}")
+            f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}"
+        )
 
     return None
 
@@ -134,19 +139,15 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
 if __name__ == "__main__":
     # Set up command line argument parsing
     parser = argparse.ArgumentParser(
-        description='Extract FAQs from Bisq support chat conversations',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        description="Extract FAQs from Bisq support chat conversations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        '--force-reprocess',
-        action='store_true',
-        help='Reprocess all conversations, ignoring previously processed IDs'
+        "--force-reprocess",
+        action="store_true",
+        help="Reprocess all conversations, ignoring previously processed IDs",
     )
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug logging'
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
     # Configure logging based on debug flag

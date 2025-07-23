@@ -30,9 +30,7 @@ class WikiService:
         self.settings = settings
 
         # Default source weight
-        self.source_weights = {
-            "wiki": 1.0  # Standard weight for wiki content
-        }
+        self.source_weights = {"wiki": 1.0}  # Standard weight for wiki content
 
         logger.info("Wiki service initialized")
 
@@ -76,16 +74,16 @@ class WikiService:
             documents = []
 
             # Load and process each entry from the JSONL file
-            with open(jsonl_path, 'r', encoding='utf-8') as f:
+            with open(jsonl_path, "r", encoding="utf-8") as f:
                 for line in f:
                     entry = json.loads(line)
 
                     # Extract section information from content
-                    content = entry['content']
+                    content = entry["content"]
                     section = ""
                     if "==" in content:
                         # Get the first section header
-                        section_match = re.search(r'==\s*(.*?)\s*==', content)
+                        section_match = re.search(r"==\s*(.*?)\s*==", content)
                         if section_match:
                             section = section_match.group(1).strip()
 
@@ -94,24 +92,30 @@ class WikiService:
                         page_content=content,
                         metadata={
                             "source": jsonl_path,
-                            "title": entry['title'],
-                            "category": entry['category'],
+                            "title": entry["title"],
+                            "category": entry["category"],
                             "type": "wiki",
                             "section": section,
                             "source_weight": self.source_weights.get("wiki", 1.0),
-                            "bisq_version": "Bisq 2" if entry[
-                                                            'category'] == "bisq2" else
-                            "Bisq 1" if entry['category'] == "bisq1" else
-                            "General"
-                        }
+                            "bisq_version": (
+                                "Bisq 2"
+                                if entry["category"] == "bisq2"
+                                else (
+                                    "Bisq 1"
+                                    if entry["category"] == "bisq1"
+                                    else "General"
+                                )
+                            ),
+                        },
                     )
                     documents.append(doc)
 
             logger.info(f"Loaded {len(documents)} wiki documents from JSONL file")
             return documents
         except Exception as e:
-            logger.error(f"Error loading processed wiki content: {str(e)}",
-                         exc_info=True)
+            logger.error(
+                f"Error loading processed wiki content: {str(e)}", exc_info=True
+            )
             return []
 
 

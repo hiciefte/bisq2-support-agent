@@ -9,4 +9,4 @@ setup(
         for line in open("requirements.txt")
         if line.strip() and not line.startswith("#")
     ],
-) 
+)

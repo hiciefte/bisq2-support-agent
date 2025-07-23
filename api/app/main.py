@@ -25,8 +25,8 @@ from app.services.wiki_service import WikiService
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 logger = logging.getLogger("app.main")
@@ -54,7 +54,13 @@ except Exception as e:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize services on startup
+    # Startup
+    logger.info("Application startup...")
+
+    # Initialize services
+    settings = get_settings()
+    app.state.settings = settings
+
     logger.info("Initializing WikiService...")
     wiki_service = WikiService(settings=settings)
 
@@ -65,25 +71,31 @@ async def lifespan(app: FastAPI):
     faq_service = FAQService(settings=settings)
 
     logger.info("Initializing SimplifiedRAGService...")
-    rag_service = SimplifiedRAGService(settings=settings,
-                                       feedback_service=feedback_service,
-                                       wiki_service=wiki_service,
-                                       faq_service=faq_service)
+    rag_service = SimplifiedRAGService(
+        settings=settings,
+        feedback_service=feedback_service,
+        wiki_service=wiki_service,
+        faq_service=faq_service,
+    )
 
-    # Set up services
+    # Set up the RAG service (loads data, builds vector store)
     await rag_service.setup()
 
-    # Add services to FastAPI's app.state
-    app.state.wiki_service = wiki_service
+    # Assign services to app state
     app.state.feedback_service = feedback_service
     app.state.faq_service = faq_service
     app.state.rag_service = rag_service
+    app.state.wiki_service = wiki_service
 
+    # Yield control to the application
     yield
 
-    # Cleanup on shutdown
-    logger.info("Shutting down services...")
-    await rag_service.cleanup()
+    # Shutdown
+    logger.info("Application shutdown...")
+    # Perform any cleanup here if needed
+    # For example, rag_service might have a cleanup method
+    if hasattr(app.state.rag_service, "cleanup"):
+        await app.state.rag_service.cleanup()
 
 
 # Create FastAPI application
@@ -91,7 +103,7 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     docs_url="/api/docs",
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
@@ -114,14 +126,14 @@ def custom_openapi():
             "type": "apiKey",
             "in": "header",
             "name": "Authorization",
-            "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`"
+            "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`",
         },
         "AdminApiKeyQuery": {
             "type": "apiKey",
             "in": "query",
             "name": "api_key",
-            "description": "API key for admin authentication as a query parameter"
-        }
+            "description": "API key for admin authentication as a query parameter",
+        },
     }
 
     # Apply security to admin routes
@@ -130,7 +142,7 @@ def custom_openapi():
             for method in openapi_schema["paths"][path]:
                 openapi_schema["paths"][path][method]["security"] = [
                     {"AdminApiKeyAuth": []},
-                    {"AdminApiKeyQuery": []}
+                    {"AdminApiKeyQuery": []},
                 ]
 
     app.openapi_schema = openapi_schema
@@ -188,9 +200,4 @@ async def generic_exception_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.DEBUG
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=settings.DEBUG)

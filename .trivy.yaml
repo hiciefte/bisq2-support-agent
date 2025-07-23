@@ -1,0 +1,16 @@
+scan:
+  # Scan for vulnerabilities in the OS packages and programming language dependencies
+  types:
+    - os
+    - library
+
+# Ignore vulnerabilities that are not fixed yet
+ignore-unfixed: true
+
+# Fail the build if any of these severities are found
+severity:
+  - CRITICAL
+  - HIGH
+
+# Output format
+format: table 

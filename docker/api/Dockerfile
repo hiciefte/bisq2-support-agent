@@ -1,15 +1,19 @@
-# Use Python 3.11 slim as base
-FROM python:3.11-slim AS builder
+# Use the official Python image as the base image
+# Use a specific version to ensure consistency with the CI/CD environment
+FROM python:3.11.11-slim as builder
 
-# Set working directory
+# Set the working directory
 WORKDIR /app
+
+# Upgrade pip to a specific version to ensure consistency with CI
+RUN python -m pip install --no-cache-dir pip==25.1.1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libxml2-dev \
-    libxslt-dev \
-    pkg-config \
+    build-essential=12.9 \
+    libxml2-dev=2.9.14+dfsg-1.3~deb12u2 \
+    libxslt1-dev=1.1.35-1+deb12u1 \
+    pkg-config=1.8.1-1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -21,16 +25,18 @@ RUN pip install --no-cache-dir torch==2.0.1 && \
 # Then install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Final stage
-FROM python:3.11-slim
+# Use the same slim Python version for the final image
+# This ensures a small footprint while maintaining consistency
+FROM python:3.11.11-slim as final
 
+# Set the working directory
 WORKDIR /app
 
 # Install curl for healthcheck and libxml2 runtime for mwxml
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libxml2 \
-    libxslt1.1 \
+    curl=7.88.1-10+deb12u12 \
+    libxml2=2.9.14+dfsg-1.3~deb12u2 \
+    libxslt1.1=1.1.35-1+deb12u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files from builder
@@ -53,7 +59,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Install uvicorn
-RUN pip install --no-cache-dir uvicorn
+RUN pip install --no-cache-dir "uvicorn[standard]==0.34.3"
 
 # Expose the port the app runs on
 EXPOSE 8000

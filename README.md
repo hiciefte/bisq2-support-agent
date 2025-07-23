@@ -19,7 +19,6 @@ This project consists of the following components:
 - OpenAI API key (for the RAG model)
 - Python 3.11+ (for local development)
 - Node.js 20+ (for web frontend development)
-- Bisq 2 API instance (for FAQ extraction) - see [Bisq 2 API Setup](docs/bisq2-api-setup.md)
 
 ## Project Structure
 
@@ -77,14 +76,52 @@ export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
 export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
 export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
 export BISQ2_INSTALL_DIR="/opt/bisq2"
+export ADMIN_API_KEY="your_admin_key_here"
+export OPENAI_API_KEY="your_openai_api_key_here"
+export OPENAI_MODEL="your_openai_model_here"
 
-# Optional environment variables
-export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
-export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
-export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
+# Optional environment variables (uncomment and set as needed)
+# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
+# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
+# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
 ```
 
 > **Note:** Always use absolute paths for environment variables. Do not use tilde (`~`) or relative paths as they may cause issues with systemd services.
+
+**Making Environment Variables Persistent (Recommended):**
+
+To avoid having to `export` these variables every time you open a new shell session, 
+it is recommended to store them in a dedicated environment file. For example, you 
+can create a file named `/etc/bisq-support/deploy.env` (you may need `sudo` to create 
+and edit this file in `/etc`):
+
+```bash
+# /etc/bisq-support/deploy.env
+
+# Required environment variables
+export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
+export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
+export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
+export BISQ2_INSTALL_DIR="/opt/bisq2"
+export ADMIN_API_KEY="your_admin_key_here"
+export OPENAI_API_KEY="your_openai_api_key_here"
+export OPENAI_MODEL="your_openai_model_here"
+
+# Optional environment variables (uncomment and set as needed)
+# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
+# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
+# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
+```
+
+Make sure this file is secured if it contains sensitive information. Then, before 
+running the deployment or update scripts, you can load these variables into your 
+current shell session by sourcing the file:
+
+```bash
+source /etc/bisq-support/deploy.env
+```
+
+After sourcing, you can proceed to run the deployment script (e.g., `sudo -E ./scripts/deploy.sh`).
 
 3. Make the deployment script executable:
 ```bash
@@ -271,33 +308,46 @@ mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
 
 ## Running Services Individually
 
+When running services outside of Docker for development, you must configure the necessary environment variables manually.
+
 ### API Service:
 
-1. Create and activate a virtual environment:
+1. Create a local environment file by copying the example:
+   ```bash
+   cp api/.env.example api/.env
+   ```
+   **Note:** Make sure to fill in your `OPENAI_API_KEY` in the newly created `api/.env` file.
+
+2. Create and activate a virtual environment:
    ```bash
    cd api
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-2. Install dependencies:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Run the API service:
+4. Run the API service (it will be available at `http://localhost:8000`):
    ```bash
    python -m uvicorn app.main:app --reload
    ```
 
 ### Web Frontend:
 
-1. Navigate to web directory:
+1. Navigate to the web directory:
    ```bash
    cd web
    ```
 
-2. Install dependencies and start:
+2. Create a local environment file to tell the frontend where the API is running:
+   ```bash
+   echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+   ```
+
+3. Install dependencies and start the development server (it will be available at `http://localhost:3000`):
    ```bash
    npm install
    npm run dev
