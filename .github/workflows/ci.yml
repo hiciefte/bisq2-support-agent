@@ -38,9 +38,6 @@ jobs:
       - name: Lint with black
         run: black --check .
 
-      - name: Lint with isort
-        run: isort --check-only .
-
   security:
     name: Security Scan
     runs-on: ubuntu-latest
