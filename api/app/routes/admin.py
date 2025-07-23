@@ -28,7 +28,7 @@ router = APIRouter(
     dependencies=[Depends(verify_admin_access)],
     responses={
         401: {"description": "Unauthorized - Invalid or missing API key"},
-        403: {"description": "Forbidden - Insufficient permissions"}
+        403: {"description": "Forbidden - Insufficient permissions"},
     },
 )
 
@@ -62,23 +62,30 @@ KNOWN_ISSUE_TYPES = {
 
 # Create Prometheus metrics
 # Use Gauge for metrics that can go up and down
-FEEDBACK_HELPFUL_RATE = Gauge('bisq_feedback_helpful_rate',
-                              'Percentage of helpful feedback')
-SOURCE_HELPFUL_RATE = Gauge('bisq_source_helpful_rate', 'Helpful rate by source type',
-                            ['source_type'])
+FEEDBACK_HELPFUL_RATE = Gauge(
+    "bisq_feedback_helpful_rate", "Percentage of helpful feedback"
+)
+SOURCE_HELPFUL_RATE = Gauge(
+    "bisq_source_helpful_rate", "Helpful rate by source type", ["source_type"]
+)
 
 # Use Counter for metrics that only increase
-FEEDBACK_TOTAL = Counter('bisq_feedback_total', 'Total number of feedback entries')
-FEEDBACK_HELPFUL = Counter('bisq_feedback_helpful',
-                           'Number of helpful feedback entries')
-FEEDBACK_UNHELPFUL = Counter('bisq_feedback_unhelpful',
-                             'Number of unhelpful feedback entries')
-SOURCE_TOTAL = Counter('bisq_source_total', 'Total usage count by source type',
-                       ['source_type'])
-SOURCE_HELPFUL = Counter('bisq_source_helpful', 'Helpful count by source type',
-                         ['source_type'])
-ISSUE_COUNT = Counter('bisq_issue_count', 'Count of specific issues in feedback',
-                      ['issue_type'])
+FEEDBACK_TOTAL = Counter("bisq_feedback_total", "Total number of feedback entries")
+FEEDBACK_HELPFUL = Counter(
+    "bisq_feedback_helpful", "Number of helpful feedback entries"
+)
+FEEDBACK_UNHELPFUL = Counter(
+    "bisq_feedback_unhelpful", "Number of unhelpful feedback entries"
+)
+SOURCE_TOTAL = Counter(
+    "bisq_source_total", "Total usage count by source type", ["source_type"]
+)
+SOURCE_HELPFUL = Counter(
+    "bisq_source_helpful", "Helpful count by source type", ["source_type"]
+)
+ISSUE_COUNT = Counter(
+    "bisq_issue_count", "Count of specific issues in feedback", ["issue_type"]
+)
 
 
 def map_to_controlled_issue_type(issue: str) -> str:
@@ -122,40 +129,44 @@ async def get_feedback_analytics():
             "helpful_rate": 0,
             "source_effectiveness": {},
             "common_issues": {},
-            "recent_negative": []
+            "recent_negative": [],
         }
 
     # Consider rating 1 as helpful, rating 0 as unhelpful
-    helpful_count = sum(1 for item in feedback if item.get('rating', 0) == 1)
+    helpful_count = sum(1 for item in feedback if item.get("rating", 0) == 1)
     unhelpful_count = total - helpful_count
 
     # Source effectiveness
     source_stats = {}
     for item in feedback:
         # Try sources_used first, then fall back to sources if sources_used doesn't exist
-        sources_list = item.get('sources_used', item.get('sources', []))
+        sources_list = item.get("sources_used", item.get("sources", []))
         for source in sources_list:
-            source_type = source.get('type', 'unknown')
+            source_type = source.get("type", "unknown")
             if source_type not in source_stats:
-                source_stats[source_type] = {'total': 0, 'helpful': 0}
+                source_stats[source_type] = {"total": 0, "helpful": 0}
 
-            source_stats[source_type]['total'] += 1
-            if item.get('rating', 0) == 1:  # Consider rating 1 as helpful
-                source_stats[source_type]['helpful'] += 1
+            source_stats[source_type]["total"] += 1
+            if item.get("rating", 0) == 1:  # Consider rating 1 as helpful
+                source_stats[source_type]["helpful"] += 1
 
     # Common issues in negative feedback
     raw_issues = {}
     for item in feedback:
-        if item.get('rating', 0) == 0:  # Consider rating 0 as unhelpful
+        if item.get("rating", 0) == 0:  # Consider rating 0 as unhelpful
             # Check specific issue fields
-            for issue_key in ['too_verbose', 'too_technical', 'not_specific',
-                              'inaccurate']:
+            for issue_key in [
+                "too_verbose",
+                "too_technical",
+                "not_specific",
+                "inaccurate",
+            ]:
                 if item.get(issue_key):
                     raw_issues[issue_key] = raw_issues.get(issue_key, 0) + 1
 
             # Also check metadata.issues list if present
-            if item.get('metadata') and item['metadata'].get('issues'):
-                for issue in item['metadata']['issues']:
+            if item.get("metadata") and item["metadata"].get("issues"):
+                for issue in item["metadata"]["issues"]:
                     raw_issues[issue] = raw_issues.get(issue, 0) + 1
 
     # Map to controlled vocabulary to prevent high-cardinality
@@ -170,15 +181,18 @@ async def get_feedback_analytics():
     # Limit to maximum number of unique issues
     if len(common_issues) > settings.MAX_UNIQUE_ISSUES:
         logger.info(
-            f"Found {len(common_issues)} issues, limiting to {settings.MAX_UNIQUE_ISSUES}")
+            f"Found {len(common_issues)} issues, limiting to {settings.MAX_UNIQUE_ISSUES}"
+        )
 
         # Keep the top issues based on MAX_UNIQUE_ISSUES
         top_issues = dict(
-            sorted_issues[:settings.MAX_UNIQUE_ISSUES - 1])  # Leave room for "other"
+            sorted_issues[: settings.MAX_UNIQUE_ISSUES - 1]
+        )  # Leave room for "other"
 
         # Combine remaining issues as "other"
         other_count = sum(
-            count for _, count in sorted_issues[settings.MAX_UNIQUE_ISSUES - 1:])
+            count for _, count in sorted_issues[settings.MAX_UNIQUE_ISSUES - 1 :]
+        )
         if other_count > 0:
             top_issues["other"] = other_count
 
@@ -191,14 +205,19 @@ async def get_feedback_analytics():
         "unhelpful_count": unhelpful_count,
         "source_effectiveness": source_stats,
         "common_issues": common_issues,
-        "recent_negative": [{
-            **f,
-            'explanation': f.get('metadata', {}).get('explanation', '')[
-                           :100] + '...' if f.get('metadata', {}).get('explanation',
-                                                                      '') and len(
-                f.get('metadata', {}).get('explanation', '')) > 100 else f.get(
-                'metadata', {}).get('explanation', '')
-        } for f in feedback if f.get('rating', 0) == 0][-5:]
+        "recent_negative": [
+            {
+                **f,
+                "explanation": (
+                    f.get("metadata", {}).get("explanation", "")[:100] + "..."
+                    if f.get("metadata", {}).get("explanation", "")
+                    and len(f.get("metadata", {}).get("explanation", "")) > 100
+                    else f.get("metadata", {}).get("explanation", "")
+                ),
+            }
+            for f in feedback
+            if f.get("rating", 0) == 0
+        ][-5:],
         # Include recent negative feedback with truncated explanation from metadata
     }
 
@@ -242,7 +261,8 @@ async def get_metrics():
 
         helpful_rate = stats["helpful"] / stats["total"] if stats["total"] > 0 else 0
         SOURCE_HELPFUL_RATE.labels(source_type=source_type).set(
-            helpful_rate * 100)  # Convert to percentage
+            helpful_rate * 100
+        )  # Convert to percentage
 
     # Update issue metrics with controlled vocabulary to prevent high-cardinality
     # First clear any existing metrics to ensure removed issues don't persist

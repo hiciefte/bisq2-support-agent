@@ -19,24 +19,19 @@ from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 # MediaWiki namespace
-NS = {'mw': 'http://www.mediawiki.org/xml/export-0.10/'}
+NS = {"mw": "http://www.mediawiki.org/xml/export-0.10/"}
 
 
 class WikiDumpProcessor:
     def __init__(self, input_file: str, output_file: str):
         self.input_file = input_file
         self.output_file = output_file
-        self.context = {
-            'bisq1': [],
-            'bisq2': [],
-            'general': []
-        }
+        self.context = {"bisq1": [], "bisq2": [], "general": []}
 
     def clean_text(self, text: str) -> str:
         """
@@ -59,25 +54,25 @@ class WikiDumpProcessor:
             pre_blocks[key] = f"\n```\n{content}\n```\n"
             return key
 
-        text = re.sub(r'<pre>(.*?)</pre>', pre_tag_replacer, text, flags=re.DOTALL)
+        text = re.sub(r"<pre>(.*?)</pre>", pre_tag_replacer, text, flags=re.DOTALL)
 
         # Convert headings: == Heading == -> ## Heading
-        text = re.sub(r'==\s*(.*?)\s*==', r'\n## \1\n', text)
+        text = re.sub(r"==\s*(.*?)\s*==", r"\n## \1\n", text)
 
         # Convert bold: '''bold''' -> **bold**
-        text = re.sub(r"'''(.*?)'''", r'**\1**', text)
+        text = re.sub(r"'''(.*?)'''", r"**\1**", text)
 
         # Convert internal links: [[Page Title|display text]] -> display text
-        text = re.sub(r'\[\[(?:[^|\]]+\|)?([^\]]+)\]\]', r'\1', text)
+        text = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", text)
 
         # Remove file links and thumbnails: [[File:...]]
-        text = re.sub(r'\[\[File:.*?\]\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r"\[\[File:.*?\]\]", "", text, flags=re.IGNORECASE)
 
         # Remove templates: {{template...}}
-        text = re.sub(r'{{.*?}}', '', text, flags=re.DOTALL)
+        text = re.sub(r"{{.*?}}", "", text, flags=re.DOTALL)
 
         # --- Stage 2: HTML tag stripping with BeautifulSoup ---
-        soup = BeautifulSoup(text, 'html.parser')
+        soup = BeautifulSoup(text, "html.parser")
         text = soup.get_text()
 
         # --- Stage 3: Final cleanup ---
@@ -87,18 +82,18 @@ class WikiDumpProcessor:
             text = text.replace(key, value)
 
         # Consolidate multiple newlines into a maximum of two
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         # Remove multiple spaces
-        text = re.sub(r' +', ' ', text)
+        text = re.sub(r" +", " ", text)
         # Remove leading/trailing whitespace from each line
-        text = '\n'.join(line.strip() for line in text.split('\n'))
+        text = "\n".join(line.strip() for line in text.split("\n"))
 
         return text.strip()
 
     def process_page(self, page: ET.Element) -> Optional[Dict]:
         """Process a single wiki page."""
         try:
-            title_elem = page.find('mw:title', NS)
+            title_elem = page.find("mw:title", NS)
             if title_elem is None or title_elem.text is None:
                 logger.warning("Page missing title")
                 return None
@@ -108,12 +103,12 @@ class WikiDumpProcessor:
             if title.startswith("File:"):
                 return None
 
-            revision = page.find('mw:revision', NS)
+            revision = page.find("mw:revision", NS)
             if revision is None:
                 logger.warning(f"Page '{title}' missing revision")
                 return None
 
-            text_elem = revision.find('mw:text', NS)
+            text_elem = revision.find("mw:text", NS)
             if text_elem is None or text_elem.text is None:
                 logger.warning(f"Page '{title}' missing text content")
                 return None
@@ -121,30 +116,26 @@ class WikiDumpProcessor:
             content = text_elem.text
 
             # Extract category from metadata comment
-            category = 'general'  # Default category
-            match = re.search(r'<!-- BISQ VERSION: (.*?) -->', content)
+            category = "general"  # Default category
+            match = re.search(r"<!-- BISQ VERSION: (.*?) -->", content)
             if match:
                 extracted_category = match.group(1).strip().lower()
                 # Map to the keys used in the context dictionary
-                if extracted_category == 'bisq1':
-                    category = 'bisq1'
-                elif extracted_category == 'bisq2':
-                    category = 'bisq2'
+                if extracted_category == "bisq1":
+                    category = "bisq1"
+                elif extracted_category == "bisq2":
+                    category = "bisq2"
 
             # Clean the text
             clean_content = self.clean_text(content)
 
             # Skip redirects and empty pages
-            if clean_content.startswith('#REDIRECT') or not clean_content.strip():
+            if clean_content.startswith("#REDIRECT") or not clean_content.strip():
                 logger.debug(f"Skipping redirect/empty page: {title}")
                 return None
 
             # Create page entry
-            entry = {
-                'title': title,
-                'content': clean_content,
-                'category': category
-            }
+            entry = {"title": title, "content": clean_content, "category": category}
 
             logger.debug(f"Processed page: {title} (category: {entry['category']})")
             return entry
@@ -163,7 +154,7 @@ class WikiDumpProcessor:
             root = tree.getroot()
 
             # Get all pages
-            pages = root.findall('.//mw:page', NS)
+            pages = root.findall(".//mw:page", NS)
             logger.info(f"Found {len(pages)} pages in the dump")
 
             # Process each page
@@ -171,7 +162,7 @@ class WikiDumpProcessor:
             for page in pages:
                 entry = self.process_page(page)
                 if entry:
-                    self.context[entry['category']].append(entry)
+                    self.context[entry["category"]].append(entry)
                     processed_count += 1
 
             logger.info(f"Successfully processed {processed_count} pages")
@@ -194,25 +185,25 @@ class WikiDumpProcessor:
             logger.warning("No entries to save!")
             return
 
-        with open(self.output_file, 'w', encoding='utf-8') as f:
+        with open(self.output_file, "w", encoding="utf-8") as f:
             # Write Bisq 2 content first (most relevant)
-            for entry in self.context['bisq2']:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            for entry in self.context["bisq2"]:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
             # Write Bisq 1 content
-            for entry in self.context['bisq1']:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            for entry in self.context["bisq1"]:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
             # Write general content
-            for entry in self.context['general']:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            for entry in self.context["general"]:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def main():
     # Define file paths
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    input_file = os.path.join(project_root, 'data', 'wiki', 'bisq2_dump.xml')
-    output_file = os.path.join(project_root, 'data', 'wiki', 'processed_wiki.jsonl')
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    input_file = os.path.join(project_root, "data", "wiki", "bisq2_dump.xml")
+    output_file = os.path.join(project_root, "data", "wiki", "processed_wiki.jsonl")
 
     # Check if input file exists
     if not os.path.exists(input_file):
@@ -224,5 +215,5 @@ def main():
     processor.process_dump()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

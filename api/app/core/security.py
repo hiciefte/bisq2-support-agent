@@ -38,40 +38,54 @@ def verify_admin_access(request: Request) -> bool:
         logger.warning("Admin access attempted but ADMIN_API_KEY is not configured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin access not configured"
+            detail="Admin access not configured",
         )
 
     if len(admin_api_key) < MIN_API_KEY_LENGTH:
         # If ADMIN_API_KEY is too short, warn about insecure key
         logger.warning(
-            f"ADMIN_API_KEY is configured with insecure length: {len(admin_api_key)} (min: {MIN_API_KEY_LENGTH})")
+            f"ADMIN_API_KEY is configured with insecure length: {len(admin_api_key)} (min: {MIN_API_KEY_LENGTH})"
+        )
 
     # Check for API key in different locations
-    provided_key = request.headers.get("X-API-KEY") or \
-                   request.query_params.get("api_key") or \
-                   (request.headers.get("Authorization", "").replace("Bearer ", "") if request.headers.get("Authorization", "").startswith("Bearer ") else None)
+    provided_key = (
+        request.headers.get("X-API-KEY")
+        or request.query_params.get("api_key")
+        or (
+            request.headers.get("Authorization", "").replace("Bearer ", "")
+            if request.headers.get("Authorization", "").startswith("Bearer ")
+            else None
+        )
+    )
 
     if provided_key:
         if secrets.compare_digest(provided_key, admin_api_key):
             # Key is correct
             if len(provided_key) < MIN_API_KEY_LENGTH:
-                logger.warning(f"Successful login with insecure admin key length: {len(provided_key)} chars")
+                logger.warning(
+                    f"Successful login with insecure admin key length: {len(provided_key)} chars"
+                )
             else:
-                logger.debug(f"Admin access granted from {request.client.host if request.client else 'unknown'}")
+                logger.debug(
+                    f"Admin access granted from {request.client.host if request.client else 'unknown'}"
+                )
             return True
         else:
             # Key is incorrect
-            logger.warning(f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}")
+            logger.warning(
+                f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid admin credentials"
+                detail="Invalid admin credentials",
             )
 
     # No key was provided
-    logger.warning(f"Missing admin API key from {request.client.host if request.client else 'unknown'}")
+    logger.warning(
+        f"Missing admin API key from {request.client.host if request.client else 'unknown'}"
+    )
     raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Admin authentication required"
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required"
     )
 
 

@@ -20,12 +20,16 @@ from typing import List, Dict, Any, Union
 
 from fastapi import Request
 from langchain.prompts import ChatPromptTemplate
+
 # Vector store and embeddings
 from langchain_chroma import Chroma
+
 # Core LangChain imports
 from langchain_core.documents import Document
+
 # LLM providers
 from langchain_openai import OpenAIEmbeddings
+
 # Text splitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -36,11 +40,13 @@ from app.utils.logging import redact_pii
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
 
-    def __init__(self, settings=None, feedback_service=None, wiki_service=None,
-                 faq_service=None):
+    def __init__(
+        self, settings=None, feedback_service=None, wiki_service=None, faq_service=None
+    ):
         """Initialize the RAG service.
 
         Args:
@@ -98,11 +104,12 @@ class SimplifiedRAGService:
 
         if not self.settings.OPENAI_API_KEY:
             logger.warning(
-                "OpenAI API key not provided. Embeddings will not work properly.")
+                "OpenAI API key not provided. Embeddings will not work properly."
+            )
 
         self.embeddings = OpenAIEmbeddings(
             api_key=self.settings.OPENAI_API_KEY,
-            model=self.settings.OPENAI_EMBEDDING_MODEL
+            model=self.settings.OPENAI_EMBEDDING_MODEL,
         )
 
         logger.info("OpenAI embeddings model initialized")
@@ -120,7 +127,8 @@ class SimplifiedRAGService:
             self._initialize_xai_llm()
         else:
             logger.warning(
-                f"LLM provider '{llm_provider}' not configured properly. Using OpenAI as default.")
+                f"LLM provider '{llm_provider}' not configured properly. Using OpenAI as default."
+            )
             self._initialize_openai_llm()
 
         logger.info("LLM initialization complete")
@@ -141,7 +149,8 @@ class SimplifiedRAGService:
             verbose=True,
         )
         logger.info(
-            f"OpenAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}")
+            f"OpenAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
+        )
 
     def _initialize_xai_llm(self):
         """Initialize xAI (Grok) model."""
@@ -160,10 +169,12 @@ class SimplifiedRAGService:
                 timeout=30,
             )
             logger.info(
-                f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}")
+                f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
+            )
         except ImportError:
             logger.error(
-                "langchain_xai package not installed. Please install it to use xAI models.")
+                "langchain_xai package not installed. Please install it to use xAI models."
+            )
             logger.info("Falling back to OpenAI model.")
             self._initialize_openai_llm()
 
@@ -179,9 +190,9 @@ class SimplifiedRAGService:
                 x.metadata.get("source_weight", 1.0),
                 x.metadata.get("category") == "bisq2",  # Prioritize Bisq 2 content
                 x.metadata.get("category") == "bisq1",  # Then Bisq 1 content
-                x.metadata.get("category") == "general"  # Then general content
+                x.metadata.get("category") == "general",  # Then general content
             ),
-            reverse=True
+            reverse=True,
         )
 
         formatted_docs = []
@@ -259,7 +270,8 @@ class SimplifiedRAGService:
             # Combine all documents
             all_docs = wiki_docs + faq_docs
             logger.info(
-                f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents")
+                f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents"
+            )
 
             if not all_docs:
                 logger.warning("No documents loaded. Check your data paths.")
@@ -271,7 +283,8 @@ class SimplifiedRAGService:
                 # Update source weights from feedback service
                 self.source_weights = self.feedback_service.get_source_weights()
                 logger.info(
-                    f"Updated source weights from feedback service: {self.source_weights}")
+                    f"Updated source weights from feedback service: {self.source_weights}"
+                )
 
                 # Update service weights
                 if self.wiki_service:
@@ -293,11 +306,13 @@ class SimplifiedRAGService:
 
             # Check if the vector store directory exists
             vector_store_exists = os.path.exists(self.db_path) and os.path.isdir(
-                self.db_path)
+                self.db_path
+            )
 
             # Check if we have a persisted vector store by looking for the config file
             if vector_store_exists and any(
-                f.endswith('.parquet') for f in os.listdir(self.db_path)):
+                f.endswith(".parquet") for f in os.listdir(self.db_path)
+            ):
                 # Load existing vector store
                 logger.info("Loading existing vector store...")
                 self.vectorstore = Chroma(
@@ -309,7 +324,8 @@ class SimplifiedRAGService:
                 # Update vector store with new documents
                 if splits:
                     logger.info(
-                        f"Updating vector store with {len(splits)} documents...")
+                        f"Updating vector store with {len(splits)} documents..."
+                    )
 
                     # Use add_documents to add any new documents
                     # This avoids reprocessing already embedded documents
@@ -319,8 +335,7 @@ class SimplifiedRAGService:
                 # Create new vector store
                 logger.info("Creating new vector store...")
                 self.vectorstore = Chroma(
-                    persist_directory=self.db_path,
-                    embedding_function=self.embeddings
+                    persist_directory=self.db_path, embedding_function=self.embeddings
                 )
 
                 # Add documents to the new vector store
@@ -334,7 +349,7 @@ class SimplifiedRAGService:
                 search_kwargs={
                     "k": 8,  # Increased from 5 to 8
                     "score_threshold": 0.3,  # Lowered threshold to allow more matches
-                }
+                },
             )
 
             # Initialize language model
@@ -348,8 +363,9 @@ class SimplifiedRAGService:
             logger.info("Simplified RAG service setup complete")
             return True
         except Exception as e:
-            logger.error(f"Error during simplified RAG service setup: {str(e)}",
-                         exc_info=True)
+            logger.error(
+                f"Error during simplified RAG service setup: {str(e)}", exc_info=True
+            )
             raise
 
     def _create_rag_chain(self):
@@ -359,7 +375,9 @@ class SimplifiedRAGService:
         if self.feedback_service:
             guidance = self.feedback_service.get_prompt_guidance()
             if guidance:
-                additional_guidance = f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance}"
+                additional_guidance = (
+                    f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance}"
+                )
                 logger.info(f"Added prompt guidance: {guidance}")
 
         # Custom system template with proper sections for context, chat history, and question
@@ -413,10 +431,11 @@ Answer:"""
                     formatted_history = []
                     # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
                     recent_history = chat_history[
-                                     -self.settings.MAX_CHAT_HISTORY_LENGTH:]
+                        -self.settings.MAX_CHAT_HISTORY_LENGTH :
+                    ]
                     for exchange in recent_history:
                         # Check if this is a ChatMessage or a dictionary
-                        if hasattr(exchange, 'role') and hasattr(exchange, 'content'):
+                        if hasattr(exchange, "role") and hasattr(exchange, "content"):
                             # This is a ChatMessage object
                             role = exchange.role
                             content = exchange.content
@@ -434,7 +453,8 @@ Answer:"""
                                 formatted_history.append(f"Assistant: {ai_msg}")
                         else:
                             logger.warning(
-                                f"Unknown exchange type in chat history: {type(exchange)}")
+                                f"Unknown exchange type in chat history: {type(exchange)}"
+                            )
 
                     chat_history_str = "\n".join(formatted_history)
 
@@ -449,8 +469,9 @@ Answer:"""
                 # Check context length and truncate if necessary to fit in prompt
                 if len(context) > self.settings.MAX_CONTEXT_LENGTH:
                     logger.warning(
-                        f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}")
-                    context = context[:self.settings.MAX_CONTEXT_LENGTH]
+                        f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
+                    )
+                    context = context[: self.settings.MAX_CONTEXT_LENGTH]
 
                 # Log the complete prompt and context for debugging
                 logger.info("=== DEBUG: Complete Prompt and Context ===")
@@ -464,7 +485,7 @@ Answer:"""
                 formatted_prompt = self.prompt.format(
                     question=preprocessed_question,
                     chat_history=chat_history_str,
-                    context=context
+                    context=context,
                 )
 
                 # Log formatted prompt at DEBUG level
@@ -474,9 +495,11 @@ Answer:"""
 
                 # Generate response
                 response_text = self.llm.invoke(formatted_prompt)
-                response_content = response_text.content if hasattr(response_text,
-                                                                    'content') else str(
-                    response_text)
+                response_content = (
+                    response_text.content
+                    if hasattr(response_text, "content")
+                    else str(response_text)
+                )
 
                 # Calculate response time
                 response_time = time.time() - response_start_time
@@ -484,14 +507,19 @@ Answer:"""
                 # Log response information with privacy protection
                 if response_content:
                     logger.info(
-                        f"Response generated in {response_time:.2f}s, length: {len(response_content)}")
+                        f"Response generated in {response_time:.2f}s, length: {len(response_content)}"
+                    )
 
                     # Log sample in non-production
-                    is_production = self.settings.ENVIRONMENT.lower() == 'production'
+                    is_production = self.settings.ENVIRONMENT.lower() == "production"
                     if not is_production:
-                        sample = response_content[
-                                 :self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
-                            response_content) > self.settings.MAX_SAMPLE_LOG_LENGTH else response_content
+                        sample = (
+                            response_content[: self.settings.MAX_SAMPLE_LOG_LENGTH]
+                            + "..."
+                            if len(response_content)
+                            > self.settings.MAX_SAMPLE_LOG_LENGTH
+                            else response_content
+                        )
                         logger.info(f"Content sample: {redact_pii(sample)}")
                 else:
                     logger.warning("Empty response received from LLM")
@@ -510,12 +538,13 @@ Answer:"""
         """Clean up resources."""
         logger.info("Cleaning up simplified RAG service resources...")
         # Check if vectorstore has persist method before calling it
-        if self.vectorstore and hasattr(self.vectorstore, 'persist'):
+        if self.vectorstore and hasattr(self.vectorstore, "persist"):
             self.vectorstore.persist()
         logger.info("Simplified RAG service cleanup complete")
 
-    async def query(self, question: str,
-                    chat_history: List[Union[Dict[str, str], Any]]) -> dict:
+    async def query(
+        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+    ) -> dict:
         """Process a query and return a response with metadata.
 
         Args:
@@ -539,7 +568,7 @@ Answer:"""
                     "answer": "I apologize, but I'm not fully initialized yet. Please try again in a moment.",
                     "sources": [],
                     "response_time": time.time() - start_time,
-                    "error": "RAG chain not initialized"
+                    "error": "RAG chain not initialized",
                 }
 
             # Log the question with privacy protection
@@ -555,31 +584,35 @@ Answer:"""
             # If no documents were retrieved, create a feedback entry and return a message about forwarding to human support
             if not docs:
                 logger.info("No relevant documents found for the query")
-                
+
                 # Create feedback entry for missing FAQ
                 if self.feedback_service:
                     try:
-                        await self.feedback_service.store_feedback({
-                            "question": preprocessed_question,
-                            "answer": "",
-                            "feedback_type": "missing_faq",
-                            "explanation": "No relevant documents found for this query. This question should be added to the FAQ database.",
-                            "metadata": {
-                                "source": "rag_service",
-                                "action_required": "create_faq",
-                                "priority": "high"
+                        await self.feedback_service.store_feedback(
+                            {
+                                "question": preprocessed_question,
+                                "answer": "",
+                                "feedback_type": "missing_faq",
+                                "explanation": "No relevant documents found for this query. This question should be added to the FAQ database.",
+                                "metadata": {
+                                    "source": "rag_service",
+                                    "action_required": "create_faq",
+                                    "priority": "high",
+                                },
                             }
-                        })
+                        )
                         logger.info("Created feedback entry for missing FAQ")
                     except Exception as e:
-                        logger.error(f"Error creating feedback entry: {str(e)}", exc_info=True)
+                        logger.error(
+                            f"Error creating feedback entry: {str(e)}", exc_info=True
+                        )
 
                 return {
                     "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
                     "sources": [],
                     "response_time": time.time() - start_time,
                     "forwarded_to_human": True,
-                    "feedback_created": True
+                    "feedback_created": True,
                 }
 
             # Log document details at DEBUG level
@@ -595,9 +628,9 @@ Answer:"""
                 # Format each exchange in chat history
                 formatted_history = []
                 # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
-                recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH:]
+                recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH :]
                 for exchange in recent_history:
-                    if hasattr(exchange, 'role') and hasattr(exchange, 'content'):
+                    if hasattr(exchange, "role") and hasattr(exchange, "content"):
                         role = exchange.role
                         content = exchange.content
                         if role == "user":
@@ -612,8 +645,9 @@ Answer:"""
             # Check context length and truncate if necessary
             if len(context) > self.settings.MAX_CONTEXT_LENGTH:
                 logger.warning(
-                    f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}")
-                context = context[:self.settings.MAX_CONTEXT_LENGTH]
+                    f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
+                )
+                context = context[: self.settings.MAX_CONTEXT_LENGTH]
 
             # Log complete prompt and context at DEBUG level
             logger.debug("=== DEBUG: Complete Prompt and Context ===")
@@ -626,7 +660,7 @@ Answer:"""
             formatted_prompt = self.prompt.format(
                 question=preprocessed_question,
                 chat_history=chat_history_str,
-                context=context
+                context=context,
             )
 
             # Log formatted prompt at DEBUG level
@@ -642,31 +676,46 @@ Answer:"""
 
             # Log response details at INFO level
             logger.info(
-                f"Response generated in {response_time:.2f}s, length: {len(response_text)}")
+                f"Response generated in {response_time:.2f}s, length: {len(response_text)}"
+            )
 
             # Log sample in non-production
-            is_production = self.settings.ENVIRONMENT.lower() == 'production'
+            is_production = self.settings.ENVIRONMENT.lower() == "production"
             if not is_production:
-                sample = response_text[
-                         :self.settings.MAX_SAMPLE_LOG_LENGTH] + "..." if len(
-                    response_text) > self.settings.MAX_SAMPLE_LOG_LENGTH else response_text
+                sample = (
+                    response_text[: self.settings.MAX_SAMPLE_LOG_LENGTH] + "..."
+                    if len(response_text) > self.settings.MAX_SAMPLE_LOG_LENGTH
+                    else response_text
+                )
                 logger.info(f"Content sample: {redact_pii(sample)}")
 
             # Extract sources for the response
             sources = []
             for doc in docs:
                 if doc.metadata.get("type") == "wiki":
-                    sources.append({
-                        "title": doc.metadata.get("title", "Unknown"),
-                        "type": "wiki",
-                        "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-                    })
+                    sources.append(
+                        {
+                            "title": doc.metadata.get("title", "Unknown"),
+                            "type": "wiki",
+                            "content": (
+                                doc.page_content[:200] + "..."
+                                if len(doc.page_content) > 200
+                                else doc.page_content
+                            ),
+                        }
+                    )
                 elif doc.metadata.get("type") == "faq":
-                    sources.append({
-                        "title": doc.metadata.get("title", "Unknown"),
-                        "type": "faq",
-                        "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-                    })
+                    sources.append(
+                        {
+                            "title": doc.metadata.get("title", "Unknown"),
+                            "type": "faq",
+                            "content": (
+                                doc.page_content[:200] + "..."
+                                if len(doc.page_content) > 200
+                                else doc.page_content
+                            ),
+                        }
+                    )
 
             # Deduplicate sources
             sources = self._deduplicate_sources(sources)
@@ -676,7 +725,7 @@ Answer:"""
                 "sources": sources,
                 "response_time": response_time,
                 "forwarded_to_human": False,
-                "feedback_created": False
+                "feedback_created": False,
             }
 
         except Exception as e:
@@ -688,7 +737,7 @@ Answer:"""
                 "response_time": error_time,
                 "error": str(e),
                 "forwarded_to_human": False,
-                "feedback_created": False
+                "feedback_created": False,
             }
 
     def _deduplicate_sources(self, sources):
@@ -717,7 +766,8 @@ Answer:"""
                 unique_sources.append(source)
 
         logger.info(
-            f"Deduplicated sources from {len(sources)} to {len(unique_sources)}")
+            f"Deduplicated sources from {len(sources)} to {len(unique_sources)}"
+        )
         return unique_sources
 
 
