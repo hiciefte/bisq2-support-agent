@@ -7,7 +7,6 @@ import time
 import xml.etree.ElementTree as ET
 
 import mwclient
-import requests
 
 # Set up logging to stdout with debug level
 logging.basicConfig(
@@ -163,15 +162,18 @@ def main(output_dir):
             ET.SubElement(revision_element, 'timestamp').text = formatted_ts
 
             contributor = ET.SubElement(revision_element, 'contributor')
-            ET.SubElement(contributor, 'username').text = revision.get('user', 'downloader')
+            ET.SubElement(contributor, 'username').text = revision.get('user',
+                                                                       'downloader')
             ET.SubElement(contributor, 'id').text = str(revision.get('userid', '0'))
 
-            ET.SubElement(revision_element, 'comment').text = revision.get('comment', 'Downloaded by script')
+            ET.SubElement(revision_element, 'comment').text = revision.get('comment',
+                                                                           'Downloaded by script')
             ET.SubElement(revision_element, 'model').text = "wikitext"
             ET.SubElement(revision_element, 'format').text = "text/x-wiki"
 
-            text_element = ET.SubElement(revision_element, 'text', attrib={"xml:space": "preserve"})
-            
+            text_element = ET.SubElement(revision_element, 'text',
+                                         attrib={"xml:space": "preserve"})
+
             # The text of the element must be set *after* the comment is appended.
             comment_text = f"<!-- BISQ VERSION: {bisq_version} -->"
             text_element.text = content + comment_text
