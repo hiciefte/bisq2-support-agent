@@ -5,8 +5,8 @@ FROM python:3.11.11-slim as builder
 # Set the working directory
 WORKDIR /app
 
-# Upgrade pip before installing dependencies
-RUN python -m pip install --upgrade pip
+# Upgrade pip to a specific version to ensure consistency with CI
+RUN python -m pip install --no-cache-dir pip==25.1.1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
