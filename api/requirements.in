@@ -44,10 +44,12 @@ pytest-asyncio
 black
 isort
 mypy
+pip-tools
 
 # Added for cross-process file locking
 portalocker
 
 # Data science libs
 matplotlib
-scikit-learn 
+scikit-learn
+pillow>=11.3.0 
