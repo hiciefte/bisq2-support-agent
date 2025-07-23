@@ -44,14 +44,13 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
             "status": "success",
             "message": "Feedback recorded successfully",
             "success": True,
-            "needs_feedback_followup": needs_followup
+            "needs_feedback_followup": needs_followup,
         }
 
     except Exception as e:
         logger.error(f"Error recording feedback: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail="An error occurred while recording your feedback"
+            status_code=500, detail="An error occurred while recording your feedback"
         )
 
 
@@ -64,11 +63,7 @@ async def get_feedback_stats():
         settings = get_settings()
         feedback_dir = Path(settings.FEEDBACK_DIR_PATH)
         if not feedback_dir.exists():
-            return {
-                "total_feedback": 0,
-                "average_rating": 0,
-                "positive_ratio": 0
-            }
+            return {"total_feedback": 0, "average_rating": 0, "positive_ratio": 0}
 
         total_feedback = 0
         total_rating = 0
@@ -90,14 +85,14 @@ async def get_feedback_stats():
         return {
             "total_feedback": total_feedback,
             "average_rating": average_rating,
-            "positive_ratio": positive_ratio
+            "positive_ratio": positive_ratio,
         }
 
     except Exception as e:
         logger.error(f"Error getting feedback stats: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="An error occurred while retrieving feedback statistics"
+            detail="An error occurred while retrieving feedback statistics",
         )
 
 
@@ -126,7 +121,9 @@ async def submit_feedback_explanation(
     # Analyze explanation text for common issues ONLY if no specific issues provided by user
     detected_issues_from_text = []
     if explanation and not user_provided_issues:
-        detected_issues_from_text = await feedback_service.analyze_feedback_text(explanation)
+        detected_issues_from_text = await feedback_service.analyze_feedback_text(
+            explanation
+        )
 
     # Combine user-provided issues and detected issues. Prioritize user-provided ones.
     all_issues_to_pass = list(user_provided_issues)
@@ -135,9 +132,7 @@ async def submit_feedback_explanation(
             all_issues_to_pass.append(detected_issue)
 
     success = await feedback_service.update_feedback_entry(
-        message_id=message_id,
-        explanation=explanation,
-        issues=all_issues_to_pass
+        message_id=message_id, explanation=explanation, issues=all_issues_to_pass
     )
 
     if not success:
@@ -146,5 +141,5 @@ async def submit_feedback_explanation(
     return {
         "success": True,
         "message": "Feedback explanation received",
-        "issues": all_issues_to_pass
+        "issues": all_issues_to_pass,
     }

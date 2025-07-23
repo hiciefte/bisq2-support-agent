@@ -14,7 +14,7 @@ async def health_check():
     # System metrics
     cpu_percent = psutil.cpu_percent()
     memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
+    disk = psutil.disk_usage("/")
 
     # Service status
     rag_service_status = "healthy"  # TODO: Implement actual health check
@@ -25,11 +25,9 @@ async def health_check():
         "system": {
             "cpu_percent": cpu_percent,
             "memory_percent": memory.percent,
-            "disk_percent": disk.percent
+            "disk_percent": disk.percent,
         },
-        "services": {
-            "rag": rag_service_status
-        }
+        "services": {"rag": rag_service_status},
     }
 
 
