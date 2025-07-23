@@ -14,7 +14,6 @@ API_CONTAINER_NAME="${PROJECT_NAME}-${API_SERVICE_NAME}-1"
 # Project paths inside the API container
 # The project root is mounted at /app in the api container
 PROJECT_ROOT="/app"
-SCRIPTS_DIR="$PROJECT_ROOT/scripts"
 API_APP_SCRIPTS_DIR="$PROJECT_ROOT/app/scripts"
 WIKI_DATA_DIR="/app/data/wiki"
 
@@ -36,4 +35,4 @@ echo "Wiki content update pipeline finished successfully."
 
 # Optional: Add a health check or notification here
 
-exit 0 
+exit 0

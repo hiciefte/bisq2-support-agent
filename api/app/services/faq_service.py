@@ -554,10 +554,11 @@ class FAQService:
                 current_msg['referenced_msg_id'] != previous_msg['msg_id']
                 and previous_msg['referenced_msg_id'] != current_msg['msg_id']
                 and not (
-                    current_msg['timestamp']
-                    and previous_msg['timestamp']
-                    and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)
-                )
+                current_msg['timestamp']
+                and previous_msg['timestamp']
+                and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(
+                minutes=30)
+            )
             ):
                 return False
 
@@ -830,35 +831,35 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         try:
             # Re-use the class-level lock for this operation
-            with self._lock:
+            with self._lock, open(self._faq_file_path, 'r+', encoding='utf-8') as f:
                 # Load existing FAQs to check for duplicates
-                with open(self._faq_file_path, 'r+', encoding='utf-8') as f:
-                    existing_faqs = [json.loads(line) for line in f if line.strip()]
+                existing_faqs = [json.loads(line) for line in f if line.strip()]
 
-                    # Create a set of normalized keys for existing FAQs
-                    normalized_faq_keys = {
-                        self.get_normalized_faq_key(faq) for faq in existing_faqs
-                    }
+                # Create a set of normalized keys for existing FAQs
+                normalized_faq_keys = {
+                    self.get_normalized_faq_key(faq) for faq in existing_faqs
+                }
 
-                    # Filter out duplicates from the new faqs
-                    new_unique_faqs = [
-                        faq for faq in faqs if self.get_normalized_faq_key(faq) not in normalized_faq_keys
-                    ]
+                # Filter out duplicates from the new faqs
+                new_unique_faqs = [
+                    faq for faq in faqs if
+                    self.get_normalized_faq_key(faq) not in normalized_faq_keys
+                ]
 
-                    if new_unique_faqs:
-                        # Move to the end of the file to append new content
-                        f.seek(0, os.SEEK_END)
-                        # Ensure file ends with a newline if not empty
-                        if f.tell() > 0:
-                            f.seek(f.tell() - 1)
-                            if f.read(1) != '\n':
-                                f.write('\n')
-                        
-                        for faq in new_unique_faqs:
-                            f.write(json.dumps(faq) + '\n')
-                        logger.info(f"Saved {len(new_unique_faqs)} new FAQs.")
-                    else:
-                        logger.info("No new non-duplicate FAQs to save.")
+                if new_unique_faqs:
+                    # Move to the end of the file to append new content
+                    f.seek(0, os.SEEK_END)
+                    # Ensure file ends with a newline if not empty
+                    if f.tell() > 0:
+                        f.seek(f.tell() - 1)
+                        if f.read(1) != '\n':
+                            f.write('\n')
+
+                    for faq in new_unique_faqs:
+                        f.write(json.dumps(faq) + '\n')
+                    logger.info(f"Saved {len(new_unique_faqs)} new FAQs.")
+                else:
+                    logger.info("No new non-duplicate FAQs to save.")
 
         except portalocker.exceptions.LockException as e:
             logger.error(f"Could not acquire lock on FAQ file: {e}")
