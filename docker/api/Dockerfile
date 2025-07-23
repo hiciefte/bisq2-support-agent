@@ -5,6 +5,9 @@ FROM python:3.11.11-slim as builder
 # Set the working directory
 WORKDIR /app
 
+# Upgrade pip before installing dependencies
+RUN python -m pip install --upgrade pip
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential=12.9 \
