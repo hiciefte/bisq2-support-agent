@@ -89,4 +89,9 @@ temp/
 
 # Prometheus & Grafana
 prometheus/data/
-grafana/data/ 
+grafana/data/
+/venv/
+.cursor/
+docs/llm/
+.python-version
+bisq2_dump.xml
