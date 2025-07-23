@@ -10,7 +10,7 @@ import mwclient
 
 # Set up logging to stdout with debug level
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     stream=sys.stdout,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
