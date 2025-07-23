@@ -1,5 +1,4 @@
 import argparse
-import html
 import logging
 import os
 import re
@@ -16,21 +15,6 @@ logging.basicConfig(
     stream=sys.stdout,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
-
-# Function to sanitize XML content
-def sanitize_xml_content(content):
-    if not content:
-        return ""
-
-    # Escape XML special characters
-    content = html.escape(content)
-
-    # Fix any other potential XML issues
-    # Remove control characters except for whitespace
-    content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
-
-    return content
 
 
 # Function to extract links from wiki content
@@ -95,18 +79,14 @@ def classify_bisq_version(title, content):
             re.findall(r'\b' + re.escape(indicator) + r'\b', content, re.IGNORECASE))
 
     # Determine classification based on title and content
+    if is_bisq1_in_title or (bisq1_count > 0 and bisq1_count > bisq2_count):
+        return 'bisq1'
     if is_bisq2_in_title or (bisq2_count > 0 and bisq2_count > bisq1_count):
-        return "Bisq 2"
-    elif is_bisq1_in_title or (bisq1_count > 0 and bisq1_count > bisq2_count):
-        return "Bisq 1"
-    elif bisq1_count > 0 and bisq2_count > 0:
-        return "Both"
-    else:
-        # For general pages with no clear indicators, default to "General"
-        return "General"
+        return 'bisq2'
+    return 'general'
 
 
-def validate_xml(file_path):
+def validate_xml(file_path: str) -> bool:
     """Checks if an XML file is well-formed."""
     try:
         ET.parse(file_path)
@@ -117,104 +97,10 @@ def validate_xml(file_path):
         return False
 
 
-def fetch_page_content(page_title: str) -> dict | None:
-    """Fetches the content of a single wiki page via the MediaWiki API."""
-    api_url = "https://bisq.wiki/api.php"
-    params = {
-        'action': 'query',
-        'prop': 'revisions',
-        'rvprop': 'content|ids|timestamp',
-        'titles': page_title,
-        'format': 'json'
-    }
-    try:
-        response = requests.get(api_url, params=params)
-        logging.debug(f"HTTP status for page '{page_title}': {response.status_code}")
-        if response.status_code != 200:
-            logging.error(f"Failed to fetch {page_title}: HTTP {response.status_code}")
-            return None
-        return response.json()
-    except Exception as e:
-        logging.error(f"Error fetching {page_title}: {e}")
-        return None
-
-
-def process_page_data(page_title: str, data: dict) -> dict | None:
-    """Processes the JSON data from the API for a single page."""
-    pages = data.get("query", {}).get("pages", {})
-    if not pages:
-        logging.warning(f"No page data returned for {page_title}")
-        return None
-
-    for pageid, pageinfo in pages.items():
-        if "missing" in pageinfo:
-            logging.warning(f"Page '{page_title}' is missing (might be a redirect or non-existent).")
-            continue
-
-        revisions = pageinfo.get("revisions", [])
-        if not revisions:
-            logging.warning(f"No revisions found for page '{page_title}'")
-            continue
-
-        content = revisions[0].get("*", "")
-        if not content:
-            logging.warning(f"Empty content for page '{page_title}'")
-            continue
-
-        title = pageinfo.get("title", "")
-        bisq_version = classify_bisq_version(title, content)
-        metadata_header = f"""
-<!-- BISQ VERSION: {bisq_version} -->
-<!-- This page is classified as {bisq_version} content -->
-
-"""
-        enhanced_content = metadata_header + content
-
-        return {
-            "pageid": pageid,
-            "title": title,
-            "content": enhanced_content,
-            "revision": revisions[0],
-            "bisq_version": bisq_version,
-            "links": extract_links(content)
-        }
-    return None
-
-
-def create_page_element(root: ET.Element, page_info: dict):
-    """Creates and appends a <page> XML element to the root."""
-    page_element = ET.SubElement(root, 'page')
-    ET.SubElement(page_element, 'title').text = page_info["title"]
-    ET.SubElement(page_element, 'ns').text = "0"
-    ET.SubElement(page_element, 'id').text = str(page_info["pageid"])
-
-    revision_element = ET.SubElement(page_element, 'revision')
-    rev_info = page_info["revision"]
-    ET.SubElement(revision_element, 'id').text = str(rev_info.get("revid", ""))
-    ET.SubElement(revision_element, 'timestamp').text = rev_info.get("timestamp", "")
-
-    # Add contributor section (can be simplified if not needed)
-    contributor = ET.SubElement(revision_element, 'contributor')
-    ET.SubElement(contributor, 'username').text = "downloader"
-    ET.SubElement(contributor, 'id').text = "0"
-
-    ET.SubElement(revision_element, 'comment').text = "Downloaded by script"
-    ET.SubElement(revision_element, 'model').text = "wikitext"
-    ET.SubElement(revision_element, 'format').text = "text/x-wiki"
-
-    text_element = ET.SubElement(revision_element, 'text', attrib={"xml:space": "preserve"})
-    text_element.text = sanitize_xml_content(page_info["content"])
-
-
 def main(output_dir):
+    """Main function to download and process wiki content."""
     logging.info("Connecting to Bisq Wiki via mwclient...")
     site = mwclient.Site('bisq.wiki', path='/')
-
-    # Start with the Bisq 2 page
-    start_page = "Bisq 2"
-    pages_to_process = [start_page]
-    processed_pages = set()
-    all_pages = {}
 
     # Create the root element for the XML dump.
     mediawiki_root = ET.Element('mediawiki', attrib={
@@ -231,83 +117,87 @@ def main(output_dir):
     ET.SubElement(siteinfo, 'generator').text = "MediaWiki 1.35.0"
     ET.SubElement(siteinfo, 'case').text = "first-letter"
 
-    # Add namespaces
     namespaces = ET.SubElement(siteinfo, 'namespaces')
     namespace_data = [
-        ("-2", "Media"),
-        ("-1", "Special"),
-        ("0", ""),
-        ("1", "Talk"),
-        ("2", "User"),
-        ("3", "User talk"),
-        ("4", "Project"),
-        ("5", "Project talk"),
-        ("6", "File"),
-        ("7", "File talk"),
-        ("8", "MediaWiki"),
-        ("9", "MediaWiki talk"),
-        ("10", "Template"),
-        ("11", "Template talk"),
-        ("12", "Help"),
-        ("13", "Help talk"),
-        ("14", "Category"),
-        ("15", "Category talk")
+        ("-2", "Media"), ("-1", "Special"), ("0", ""), ("1", "Talk"),
+        ("2", "User"), ("3", "User talk"), ("4", "Project"),
+        ("5", "Project talk"), ("6", "File"), ("7", "File talk"),
+        ("8", "MediaWiki"), ("9", "MediaWiki talk"), ("10", "Template"),
+        ("11", "Template talk"), ("12", "Help"), ("13", "Help talk"),
+        ("14", "Category"), ("15", "Category talk")
     ]
-
     for key, name in namespace_data:
         ns = ET.SubElement(namespaces, 'namespace',
                            attrib={"key": key, "case": "first-letter"})
         ns.text = name
 
-    # Process pages in a breadth-first manner
-    while pages_to_process:
-        current_page = pages_to_process.pop(0)
-
-        if current_page in processed_pages:
+    # Use mwclient to iterate over all pages
+    page_count = 0
+    for page in site.allpages():
+        if page.namespace != 0:  # Skip non-main pages
             continue
 
-        logging.info(f"Processing page: {current_page}")
-        processed_pages.add(current_page)
+        page_count += 1
+        logging.info(f"Processing page {page_count}: {page.name}")
 
-        data = fetch_page_content(current_page)
-        if not data:
-            continue
+        try:
+            content = page.text()
+            if not content or content.lower().startswith('#redirect'):
+                logging.debug(f"Skipping empty or redirect page: {page.name}")
+                continue
 
-        page_info = process_page_data(current_page, data)
-        if not page_info:
-            continue
+            # Classify content
+            bisq_version = classify_bisq_version(page.name, content)
 
-        all_pages[current_page] = page_info
+            # Create XML element for the page
+            page_element = ET.SubElement(mediawiki_root, 'page')
+            ET.SubElement(page_element, 'title').text = page.name
+            ET.SubElement(page_element, 'ns').text = str(page.namespace)
+            ET.SubElement(page_element, 'id').text = str(page.pageid)
 
-        # Add new links to the processing queue
-        for link in page_info["links"]:
-            if link not in processed_pages and link not in pages_to_process:
-                pages_to_process.append(link)
+            revision = page.revisions(prop='ids|timestamp|comment|user').__next__()
+            revision_element = ET.SubElement(page_element, 'revision')
+            ET.SubElement(revision_element, 'id').text = str(revision['revid'])
+            ts = revision['timestamp']
+            formatted_ts = time.strftime('%Y-%m-%dT%H:%M:%SZ', ts)
+            ET.SubElement(revision_element, 'timestamp').text = formatted_ts
 
-        # Allow for a small delay to avoid being blocked
-        time.sleep(1)
+            contributor = ET.SubElement(revision_element, 'contributor')
+            ET.SubElement(contributor, 'username').text = revision.get('user', 'downloader')
+            ET.SubElement(contributor, 'id').text = str(revision.get('userid', '0'))
 
-    logging.info(f"Finished processing {len(all_pages)} unique pages.")
+            ET.SubElement(revision_element, 'comment').text = revision.get('comment', 'Downloaded by script')
+            ET.SubElement(revision_element, 'model').text = "wikitext"
+            ET.SubElement(revision_element, 'format').text = "text/x-wiki"
 
-    # Sort pages by title for consistent output
-    sorted_titles = sorted(all_pages.keys())
+            text_element = ET.SubElement(revision_element, 'text', attrib={"xml:space": "preserve"})
+            
+            # The text of the element must be set *after* the comment is appended.
+            comment_text = f"<!-- BISQ VERSION: {bisq_version} -->"
+            text_element.text = content + comment_text
 
-    # Add all processed pages to the XML tree
-    for title in sorted_titles:
-        page_info = all_pages[title]
-        create_page_element(mediawiki_root, page_info)
+        except Exception as e:
+            logging.error(f"Error processing page {page.name}: {e}")
+
+        # Small delay to avoid overwhelming the server
+        time.sleep(0.1)
+
+    logging.info(f"Finished processing {page_count} pages.")
+
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
     # Save the XML file
     output_filename = os.path.join(output_dir, "bisq2_dump.xml")
     tree = ET.ElementTree(mediawiki_root)
+    ET.indent(tree, space="  ")  # Pretty-print the XML
     tree.write(output_filename, encoding='utf-8', xml_declaration=True)
 
     logging.info(f"File saved as {output_filename}")
 
     # Verify the XML file is well-formed
     if validate_xml(output_filename):
-        logging.info(
-            "XML validation successful: The generated XML file is well-formed.")
+        logging.info("XML validation successful.")
     else:
         logging.error("The generated XML file has formatting issues.")
 

@@ -6,10 +6,10 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libxml2-dev \
-    libxslt-dev \
-    pkg-config \
+    build-essential=12.9 \
+    libxml2-dev=2.9.14+dfsg-1.3~deb12u2 \
+    libxslt1-dev=1.1.35-1+deb12u1 \
+    pkg-config=1.8.1-1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -28,9 +28,9 @@ WORKDIR /app
 
 # Install curl for healthcheck and libxml2 runtime for mwxml
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libxml2 \
-    libxslt1.1 \
+    curl=7.88.1-10+deb12u12 \
+    libxml2=2.9.14+dfsg-1.3~deb12u2 \
+    libxslt1.1=1.1.35-1+deb12u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files from builder
@@ -53,7 +53,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Install uvicorn
-RUN pip install --no-cache-dir uvicorn
+RUN pip install --no-cache-dir "uvicorn[standard]==0.34.3"
 
 # Expose the port the app runs on
 EXPOSE 8000

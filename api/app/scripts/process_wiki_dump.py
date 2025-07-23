@@ -95,15 +95,6 @@ class WikiDumpProcessor:
 
         return text.strip()
 
-    def categorize_content(self, title: str, content: str) -> str:
-        """Categorize content into Bisq 1, Bisq 2, or general."""
-        content_lower = content.lower()
-        if 'bisq 1' in content_lower or 'bisq1' in content_lower:
-            return 'bisq1'
-        elif 'bisq 2' in content_lower or 'bisq2' in content_lower or 'bisq easy' in content_lower:
-            return 'bisq2'
-        return 'general'
-
     def process_page(self, page: ET.Element) -> Optional[Dict]:
         """Process a single wiki page."""
         try:
@@ -127,8 +118,21 @@ class WikiDumpProcessor:
                 logger.warning(f"Page '{title}' missing text content")
                 return None
 
+            content = text_elem.text
+
+            # Extract category from metadata comment
+            category = 'general'  # Default category
+            match = re.search(r'<!-- BISQ VERSION: (.*?) -->', content)
+            if match:
+                extracted_category = match.group(1).strip().lower()
+                # Map to the keys used in the context dictionary
+                if extracted_category == 'bisq1':
+                    category = 'bisq1'
+                elif extracted_category == 'bisq2':
+                    category = 'bisq2'
+
             # Clean the text
-            clean_content = self.clean_text(text_elem.text)
+            clean_content = self.clean_text(content)
 
             # Skip redirects and empty pages
             if clean_content.startswith('#REDIRECT') or not clean_content.strip():
@@ -139,7 +143,7 @@ class WikiDumpProcessor:
             entry = {
                 'title': title,
                 'content': clean_content,
-                'category': self.categorize_content(title, clean_content)
+                'category': category
             }
 
             logger.debug(f"Processed page: {title} (category: {entry['category']})")

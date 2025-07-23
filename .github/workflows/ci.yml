@@ -27,7 +27,7 @@ jobs:
 
       - name: Check if requirements.txt is up to date
         run: |
-          pip-compile api/requirements.in -o api/requirements.txt --upgrade
+          pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
           git diff --exit-code --quiet api/requirements.txt || (echo "requirements.txt is not up to date. Please run 'pip-compile api/requirements.in -o api/requirements.txt --upgrade' and commit the changes." && exit 1)
 
       - name: Install dependencies

@@ -107,7 +107,7 @@ class FAQService:
         return self._read_all_faqs_with_ids()
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
-        """Adds a new FAQ to the JSONL file."""
+        """Adds a new FAQ to the FAQ file after checking for duplicates."""
         try:
             with self._lock, open(self._faq_file_path, 'a') as f:
                 f.write(json.dumps(faq_item.model_dump()) + '\n')
@@ -118,8 +118,7 @@ class FAQService:
             logger.error(f"Failed to add FAQ: {e}")
             raise
 
-    def update_faq(self, faq_id: str, updated_data: FAQItem) -> Optional[
-        FAQIdentifiedItem]:
+    def update_faq(self, faq_id: str, updated_data: FAQItem) -> Optional[FAQIdentifiedItem]:
         """Updates an existing FAQ by finding it via its stable ID."""
         all_faqs_with_ids = self._read_all_faqs_with_ids()
         updated = False
@@ -555,11 +554,10 @@ class FAQService:
                 current_msg['referenced_msg_id'] != previous_msg['msg_id']
                 and previous_msg['referenced_msg_id'] != current_msg['msg_id']
                 and not (
-                current_msg['timestamp']
-                and previous_msg['timestamp']
-                and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(
-                minutes=30)
-            )
+                    current_msg['timestamp']
+                    and previous_msg['timestamp']
+                    and (current_msg['timestamp'] - previous_msg['timestamp']) <= timedelta(minutes=30)
+                )
             ):
                 return False
 
