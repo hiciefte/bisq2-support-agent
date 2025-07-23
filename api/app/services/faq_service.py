@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 import unicodedata
 from datetime import timedelta
@@ -34,12 +35,15 @@ logger = logging.getLogger(__name__)
 class FAQService:
     """Service for managing FAQs using a JSONL file and stable content-based IDs."""
     _instance: Optional['FAQService'] = None
+    _instance_lock = threading.Lock()
     _faq_file_path: str = ''
-    _lock: Optional[portalocker.Lock] = None
+    _file_lock: Optional[portalocker.Lock] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(FAQService, cls).__new__(cls)
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = super(FAQService, cls).__new__(cls)
         return cls._instance
 
     def __init__(self, settings: Any):
@@ -48,7 +52,7 @@ class FAQService:
             self.settings = settings
             self._faq_file_path = os.path.join(self.settings.DATA_DIR,
                                                "extracted_faq.jsonl")
-            self._lock = portalocker.Lock(self._faq_file_path + ".lock", timeout=10)
+            self._file_lock = portalocker.Lock(self._faq_file_path + ".lock", timeout=10)
             self._ensure_faq_file_exists()
             self.source_weights = {"faq": 1.2}  # Default weight
             self.initialized = True
@@ -61,7 +65,7 @@ class FAQService:
                 f"FAQ file not found at {self._faq_file_path}. Creating an empty file.")
             try:
                 # Use 'a' mode to create if it doesn't exist without truncating
-                with self._lock, open(self._faq_file_path, 'a'):
+                with self._file_lock, open(self._faq_file_path, 'a'):
                     pass
             except IOError as e:
                 logger.error(f"Could not create FAQ file at {self._faq_file_path}: {e}")
@@ -75,7 +79,7 @@ class FAQService:
         """Reads all FAQs from the JSONL file and assigns stable IDs."""
         faqs: List[FAQIdentifiedItem] = []
         try:
-            with self._lock, open(self._faq_file_path, 'r') as f:
+            with self._file_lock, open(self._faq_file_path, 'r') as f:
                 for line in f:
                     if line.strip():
                         try:
@@ -96,7 +100,7 @@ class FAQService:
     def _write_all_faqs(self, faqs: List[FAQItem]):
         """Writes a list of core FAQ data to the JSONL file, overwriting existing content."""
         try:
-            with self._lock, open(self._faq_file_path, 'w') as f:
+            with self._file_lock, open(self._faq_file_path, 'w') as f:
                 for faq in faqs:
                     f.write(json.dumps(faq.model_dump()) + '\n')
         except IOError as e:
@@ -108,10 +112,17 @@ class FAQService:
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
         """Adds a new FAQ to the FAQ file after checking for duplicates."""
+        new_id = self._generate_stable_id(faq_item)
+        
+        # Prevent duplicates
+        all_faqs = self._read_all_faqs_with_ids()
+        if any(faq.id == new_id for faq in all_faqs):
+            raise ValueError(f"Duplicate FAQ with ID: {new_id} already exists.")
+
         try:
-            with self._lock, open(self._faq_file_path, 'a') as f:
+            with self._file_lock, open(self._faq_file_path, 'a') as f:
                 f.write(json.dumps(faq_item.model_dump()) + '\n')
-            new_id = self._generate_stable_id(faq_item)
+
             logger.info(f"Added new FAQ with ID: {new_id}")
             return FAQIdentifiedItem(id=new_id, **faq_item.model_dump())
         except IOError as e:
@@ -831,7 +842,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         try:
             # Re-use the class-level lock for this operation
-            with self._lock, open(self._faq_file_path, 'r+', encoding='utf-8') as f:
+            with self._file_lock, open(self._faq_file_path, 'r+', encoding='utf-8') as f:
                 # Load existing FAQs to check for duplicates
                 existing_faqs = [json.loads(line) for line in f if line.strip()]
 

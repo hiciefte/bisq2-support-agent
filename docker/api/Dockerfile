@@ -1,7 +1,8 @@
-# Use Python 3.11 slim as base
-FROM python:3.11-slim AS builder
+# Use the official Python image as the base image
+# Use a specific version to ensure consistency with the CI/CD environment
+FROM python:3.11.11-slim as builder
 
-# Set working directory
+# Set the working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -21,9 +22,11 @@ RUN pip install --no-cache-dir torch==2.0.1 && \
 # Then install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Final stage
-FROM python:3.11-slim
+# Use the same slim Python version for the final image
+# This ensures a small footprint while maintaining consistency
+FROM python:3.11.11-slim as final
 
+# Set the working directory
 WORKDIR /app
 
 # Install curl for healthcheck and libxml2 runtime for mwxml
