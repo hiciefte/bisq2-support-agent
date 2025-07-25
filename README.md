@@ -258,6 +258,27 @@ This configuration:
 - Sets development-specific environment variables
 - Provides a simplified setup without Prometheus or Grafana
 
+## Development
+
+### Updating Python Dependencies
+
+To ensure that the Python dependency lock file (`api/requirements.txt`) is consistent across all environments (local development on macOS/Windows and production/CI on Linux), it is crucial to generate it within a Linux environment that mirrors production.
+
+We use a multi-stage `Dockerfile` and a dedicated development Docker Compose file for this purpose.
+
+**To update and regenerate `api/requirements.txt` after changing `api/requirements.in`, run the following command from the root of the project:**
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+```
+
+This command will:
+1.  Build a temporary development container based on the `development` stage in `docker/api/Dockerfile`.
+2.  Run `pip-compile` inside this container.
+3.  Save the updated `api/requirements.txt` to your local filesystem.
+
+After running this command, commit both `api/requirements.in` (if you changed it) and the newly generated `api/requirements.txt` to your repository.
+
 ## Environment Configuration
 
 ### Production Environment

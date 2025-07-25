@@ -25,6 +25,13 @@ RUN pip install --no-cache-dir torch==2.0.1 && \
 # Then install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
+# --- Development Stage ---
+# This stage is for running development commands like pip-compile
+FROM builder as development
+
+# Install pip-tools in the development stage
+RUN pip install --no-cache-dir pip-tools==7.4.1
+
 # Use the same slim Python version for the final image
 # This ensures a small footprint while maintaining consistency
 FROM python:3.11.11-slim as final
