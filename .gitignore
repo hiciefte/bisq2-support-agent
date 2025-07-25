@@ -30,8 +30,6 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
-.hypothesis/
-.pytest_cache/
 api/venv/
 
 # Node.js / Next.js
@@ -77,12 +75,10 @@ api/data/vectorstore/
 *.log
 
 # Misc
-.DS_Store
 Thumbs.db
 *.bak
 *.tmp
 *.temp
-*.log
 logs/
 tmp/
 temp/
@@ -95,3 +91,8 @@ grafana/data/
 docs/llm/
 .python-version
 bisq2_dump.xml
+secrets/
+runtime_secrets/
+failed_updates/
+rm
+docker/prometheus/admin_key
