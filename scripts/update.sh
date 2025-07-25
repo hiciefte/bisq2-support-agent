@@ -308,22 +308,32 @@ if [ -z "$PREV_HEAD" ]; then
   exit 1
 fi
 
-# Pull latest changes
-echo -e "${BLUE}Pulling latest changes from remote...${NC}"
-echo -e "${YELLOW}Note: If your SSH key ($SSH_KEY_PATH) has a passphrase, ensure ssh-agent is running and the key is added.${NC}"
-if ! git pull; then
-  echo -e "${RED}Error: Failed to pull latest changes. Check your network connection or repository access.${NC}"
-  # Restore stashed changes if pull failed
-  if $STASHED; then
-    echo -e "${YELLOW}Restoring stashed changes...${NC}"
-    git stash pop
-  fi
-  exit 1
+# Pull latest changes using a more robust method
+echo -e "${BLUE}Fetching latest changes from remote...${NC}"
+if ! git fetch --all; then
+    echo -e "${RED}Error: Failed to fetch latest changes. Check your network connection or repository access.${NC}"
+    # Restore stashed changes if fetch failed
+    if $STASHED; then
+      echo -e "${YELLOW}Restoring stashed changes...${NC}"
+      git stash pop
+    fi
+    exit 1
+fi
+
+echo -e "${BLUE}Resetting to origin/main to ensure consistency...${NC}"
+if ! git reset --hard origin/main; then
+    echo -e "${RED}Error: Failed to reset to origin/main.${NC}"
+    # Restore stashed changes if reset failed
+    if $STASHED; then
+      echo -e "${YELLOW}Restoring stashed changes...${NC}"
+      git stash pop
+    fi
+    exit 1
 fi
 
 # Check if anything was updated
 if [ "$PREV_HEAD" == "$(git rev-parse HEAD)" ]; then
-  echo -e "${GREEN}Already up to date. No changes pulled.${NC}"
+  echo -e "${GREEN}Already up to date. No changes found on origin/main.${NC}"
   
   # Pop stash if we stashed changes
   if $STASHED; then
