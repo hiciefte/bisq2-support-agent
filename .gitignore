@@ -94,5 +94,4 @@ bisq2_dump.xml
 secrets/
 runtime_secrets/
 failed_updates/
-rm
 docker/prometheus/admin_key
