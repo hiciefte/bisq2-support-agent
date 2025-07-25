@@ -1,0 +1,8 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+      target: development
+    volumes:
+      - ../api:/app/api
