@@ -25,6 +25,10 @@ COMPOSE_FILE="docker-compose.yml"
 HEALTH_CHECK_RETRIES=30
 HEALTH_CHECK_INTERVAL=2
 
+# Git configuration with defaults
+GIT_REMOTE=${GIT_REMOTE:-origin}
+GIT_BRANCH=${GIT_BRANCH:-main}
+
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -210,7 +214,7 @@ needs_rebuild() {
   # Fallback for CI/CD or environments where reflog might not be available
   if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
     # Use git merge-base for branch comparison
-    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    BASE=$(git merge-base HEAD "$GIT_REMOTE/$GIT_BRANCH" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
     if [ -n "$BASE" ]; then
       if git diff --name-only "$BASE" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
         return 0  # True, needs rebuild
@@ -233,7 +237,7 @@ needs_rebuild() {
 needs_api_restart() {
   # Similar fallback strategy as in needs_rebuild
   if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
-    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    BASE=$(git merge-base HEAD "$GIT_REMOTE/$GIT_BRANCH" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
     if [ -n "$BASE" ]; then
       if git diff --name-only "$BASE" HEAD | grep -qE '^api/'; then
         return 0  # True, needs restart
@@ -255,7 +259,7 @@ needs_api_restart() {
 needs_web_restart() {
   # Similar fallback strategy as in needs_rebuild
   if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
-    BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+    BASE=$(git merge-base HEAD "$GIT_REMOTE/$GIT_BRANCH" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
     if [ -n "$BASE" ]; then
       if git diff --name-only "$BASE" HEAD | grep -qE '^web/'; then
         return 0  # True, needs restart
@@ -308,22 +312,40 @@ if [ -z "$PREV_HEAD" ]; then
   exit 1
 fi
 
-# Pull latest changes
-echo -e "${BLUE}Pulling latest changes from remote...${NC}"
-echo -e "${YELLOW}Note: If your SSH key ($SSH_KEY_PATH) has a passphrase, ensure ssh-agent is running and the key is added.${NC}"
-if ! git pull; then
-  echo -e "${RED}Error: Failed to pull latest changes. Check your network connection or repository access.${NC}"
-  # Restore stashed changes if pull failed
-  if $STASHED; then
-    echo -e "${YELLOW}Restoring stashed changes...${NC}"
-    git stash pop
-  fi
-  exit 1
+# Pull latest changes using a more robust method
+echo -e "${BLUE}Fetching latest changes from remote...${NC}"
+if ! git fetch $GIT_REMOTE; then
+    echo -e "${RED}Error: Failed to fetch latest changes from $GIT_REMOTE. Check your network connection or repository access.${NC}"
+    # Restore stashed changes if fetch failed
+    if $STASHED; then
+      echo -e "${YELLOW}Restoring stashed changes...${NC}"
+      if ! git stash pop; then
+        echo -e "${RED}Stash restoration conflicted with upstream changes.${NC}"
+        echo -e "${YELLOW}Repository left unchanged at PREV_HEAD; please resolve conflicts manually.${NC}"
+        exit 1
+      fi
+    fi
+    exit 1
+fi
+
+echo -e "${BLUE}Resetting to $GIT_REMOTE/$GIT_BRANCH to ensure consistency...${NC}"
+if ! git reset --hard "$GIT_REMOTE/$GIT_BRANCH"; then
+    echo -e "${RED}Error: Failed to reset to $GIT_REMOTE/$GIT_BRANCH.${NC}"
+    # Restore stashed changes if reset failed
+    if $STASHED; then
+      echo -e "${YELLOW}Restoring stashed changes...${NC}"
+      if ! git stash pop; then
+        echo -e "${RED}Stash restoration conflicted with upstream changes.${NC}"
+        echo -e "${YELLOW}Repository left unchanged at PREV_HEAD; please resolve conflicts manually.${NC}"
+        exit 1
+      fi
+    fi
+    exit 1
 fi
 
 # Check if anything was updated
 if [ "$PREV_HEAD" == "$(git rev-parse HEAD)" ]; then
-  echo -e "${GREEN}Already up to date. No changes pulled.${NC}"
+  echo -e "${GREEN}Already up to date. No changes found on $GIT_REMOTE/$GIT_BRANCH.${NC}"
   
   # Pop stash if we stashed changes
   if $STASHED; then
