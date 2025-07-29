@@ -94,7 +94,7 @@ googleapis-common-protos==1.70.0
     # via opentelemetry-exporter-otlp-proto-grpc
 greenlet==3.2.3
     # via sqlalchemy
-grpcio==1.73.1
+grpcio==1.74.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -115,7 +115,7 @@ httpx==0.28.1
     #   openai
 httpx-sse==0.4.1
     # via langchain-community
-huggingface-hub==0.33.4
+huggingface-hub==0.34.0
     # via
     #   langchain-huggingface
     #   tokenizers
@@ -155,7 +155,7 @@ kiwisolver==1.4.8
     # via matplotlib
 kubernetes==33.1.0
     # via chromadb
-langchain==0.3.26
+langchain==0.3.27
     # via
     #   -r api/requirements.in
     #   langchain-community
@@ -163,7 +163,7 @@ langchain-chroma==0.2.5
     # via -r api/requirements.in
 langchain-community==0.3.27
     # via -r api/requirements.in
-langchain-core==0.3.71
+langchain-core==0.3.72
     # via
     #   -r api/requirements.in
     #   langchain
@@ -179,7 +179,7 @@ langchain-openai==0.3.28
     # via
     #   -r api/requirements.in
     #   langchain-xai
-langchain-text-splitters==0.3.8
+langchain-text-splitters==0.3.9
     # via
     #   -r api/requirements.in
     #   langchain
@@ -225,7 +225,7 @@ mypy-extensions==1.1.0
     #   black
     #   mypy
     #   typing-inspect
-numpy==2.3.1
+numpy==2.3.2
     # via
     #   chromadb
     #   contourpy
@@ -414,7 +414,7 @@ requests-oauthlib==2.0.0
     #   mwclient
 requests-toolbelt==1.0.0
     # via langsmith
-rich==14.0.0
+rich==14.1.0
     # via
     #   chromadb
     #   typer
