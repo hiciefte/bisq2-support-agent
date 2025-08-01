@@ -127,7 +127,7 @@ The support agent needs to connect to the `bisq2-api`. For this to work, the `bi
 1.  **Set the `BISQ_API_URL`:**
     The support agent's API needs to know where the `bisq2-api` is. Edit `api/.env` and set the correct URL.
 
-    ```
+    ```bash
     # api/.env
     BISQ_API_URL=http://localhost:8090
     ```
@@ -175,18 +175,6 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run
 ```
 
 This command runs `pip-compile` inside a temporary development container and saves the updated `api/requirements.txt` to your local filesystem. Commit both `api/requirements.in` (if changed) and the newly generated `api/requirements.txt`.
-
-### Manually Running Maintenance Tasks
-
-#### Updating FAQs from Bisq API
-
-To manually trigger the script that fetches the latest support chat data from the Bisq API and generates new FAQs, run the following command from the project root:
-
-```bash
-docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
-```
-
-This command executes the extraction script directly within the running `api` container. This is useful for testing the connection to the `bisq-api` or for forcing an update outside of the regular schedule.
 
 ## Deployment
 
@@ -358,7 +346,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 1.  Fork the repository
 2.  Create your feature branch (`git checkout -b feature/amazing-feature`)
-3.  Commit your changes (`git commit -m 'Add some amazing feature'`)
+3.  Commit your changes (`git commit -m 'Add <descriptive message>'`)
 4.  Push to the branch (`git push origin feature/amazing-feature`)
 5.  Open a Pull Request
 
