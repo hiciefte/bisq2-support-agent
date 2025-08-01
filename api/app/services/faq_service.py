@@ -58,7 +58,9 @@ class FAQService:
             self.conversations_path = data_dir / "conversations.jsonl"
             self.existing_input_path = data_dir / "support_chat_export.csv"
 
-            self._file_lock = portalocker.Lock(str(self._faq_file_path) + ".lock", timeout=10)
+            self._file_lock = portalocker.Lock(
+                str(self._faq_file_path) + ".lock", timeout=10
+            )
             self._ensure_faq_file_exists()
             self.source_weights = {"faq": 1.2}  # Default weight
             self.initialized = True
