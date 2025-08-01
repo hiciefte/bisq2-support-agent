@@ -56,7 +56,6 @@ services:
     environment:
       - BISQ_DATA_DIR=/opt/bisq2/data
       - JAVA_OPTS=-Xmx1g
-      - TOR_BINARY_PATH=/usr/bin/tor
     expose:
       - "8090"
     networks:
