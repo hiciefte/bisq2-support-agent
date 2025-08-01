@@ -1,4 +1,14 @@
 services:
+  nginx:
+    ports:
+      - "80:80"
+    networks:
+      - bisq-support-network
+
+  bisq2-api:
+    platform: linux/amd64
+    image: bisq2-api
+
   api:
     build:
       context: ..
@@ -27,8 +37,8 @@ services:
       - ../web:/app
       - /app/node_modules
       - /app/.next
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       - NODE_ENV=development
       - WATCHPACK_POLLING=true
