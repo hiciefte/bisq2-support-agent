@@ -17,6 +17,7 @@ import time
 import unicodedata
 from datetime import timedelta
 from io import StringIO
+from pathlib import Path
 from typing import Dict, List, Set, Any, Optional, cast
 
 import pandas as pd
@@ -37,7 +38,7 @@ class FAQService:
 
     _instance: Optional["FAQService"] = None
     _instance_lock = threading.Lock()
-    _faq_file_path: str = ""
+    _faq_file_path: Path
     _file_lock: Optional[portalocker.Lock] = None
 
     def __new__(cls, *args, **kwargs):
@@ -51,12 +52,13 @@ class FAQService:
         """Initialize the FAQ service."""
         if not hasattr(self, "initialized"):
             self.settings = settings
-            self._faq_file_path = os.path.join(
-                self.settings.DATA_DIR, "extracted_faq.jsonl"
-            )
-            self._file_lock = portalocker.Lock(
-                self._faq_file_path + ".lock", timeout=10
-            )
+            data_dir = Path(self.settings.DATA_DIR)
+            self._faq_file_path = data_dir / "extracted_faq.jsonl"
+            self.processed_convs_path = data_dir / "processed_conversations.json"
+            self.conversations_path = data_dir / "conversations.jsonl"
+            self.existing_input_path = data_dir / "support_chat_export.csv"
+
+            self._file_lock = portalocker.Lock(str(self._faq_file_path) + ".lock", timeout=10)
             self._ensure_faq_file_exists()
             self.source_weights = {"faq": 1.2}  # Default weight
             self.initialized = True
@@ -64,7 +66,7 @@ class FAQService:
 
     def _ensure_faq_file_exists(self):
         """Creates the FAQ file if it doesn't exist."""
-        if not os.path.exists(self._faq_file_path):
+        if not self._faq_file_path.exists():
             logger.warning(
                 f"FAQ file not found at {self._faq_file_path}. Creating an empty file."
             )
@@ -267,23 +269,24 @@ class FAQService:
         Returns:
             List of Document objects
         """
-        if faq_file is None and hasattr(self, "_faq_file_path"):
-            faq_file = str(self._faq_file_path)
-        elif faq_file is None and self.settings:
-            faq_file = os.path.join(self.settings.DATA_DIR, "extracted_faq.jsonl")
+        faq_path: Path
+        if faq_file:
+            faq_path = Path(faq_file)
+        else:
+            faq_path = self._faq_file_path
 
-        logger.info(f"Using FAQ file path: {faq_file}")
+        logger.info(f"Using FAQ file path: {faq_path}")
 
-        if not os.path.exists(faq_file):
+        if not faq_path.exists():
             # Ensure the file exists before trying to read, especially if it can be created on demand
             self._ensure_faq_file_exists()
-            if not os.path.exists(faq_file):  # Check again after ensure
-                logger.warning(f"FAQ file not found: {faq_file}")
+            if not faq_path.exists():  # Check again after ensure
+                logger.warning(f"FAQ file not found: {faq_path}")
                 return []
 
         documents = []
         try:
-            with open(faq_file, "r", encoding="utf-8") as f:
+            with open(faq_path, "r", encoding="utf-8") as f:
                 for line in f:
                     try:
                         data = json.loads(line.strip())
@@ -301,7 +304,7 @@ class FAQService:
                         doc = Document(
                             page_content=f"Question: {question}\nAnswer: {answer}",
                             metadata={
-                                "source": faq_file,
+                                "source": str(faq_path),
                                 "title": (
                                     question[:50] + "..."
                                     if len(question) > 50
@@ -953,6 +956,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             List of extracted FAQ dictionaries
         """
         try:
+            # Load the set of already processed conversation IDs first
+            self.processed_conv_ids = self.load_processed_conv_ids()
+
             # Reset and pre-seed duplicate set with on-disk FAQs
             self.normalized_faq_keys = set()
             existing_faqs = self.load_existing_faqs()  # populates the set

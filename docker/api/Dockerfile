@@ -1,6 +1,6 @@
 # Use the official Python image as the base image
 # Use a specific version to ensure consistency with the CI/CD environment
-FROM python:3.11.11-slim as builder
+FROM python:3.11.11-slim AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -27,14 +27,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # --- Development Stage ---
 # This stage is for running development commands like pip-compile
-FROM builder as development
+FROM builder AS development
 
 # Install pip-tools in the development stage
 RUN pip install --no-cache-dir pip-tools==7.4.1
 
 # Use the same slim Python version for the final image
 # This ensures a small footprint while maintaining consistency
-FROM python:3.11.11-slim as final
+FROM python:3.11.11-slim AS final
 
 # Set the working directory
 WORKDIR /app
