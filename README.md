@@ -13,275 +13,170 @@ This project consists of the following components:
 - **Bisq Integration**: Connection to Bisq 2 API for support chat data
 - **Monitoring**: Prometheus and Grafana for system monitoring
 
-## Prerequisites
+## Getting Started
 
-- Docker and Docker Compose installed
-- OpenAI API key (for the RAG model)
-- Python 3.11+ (for local development)
-- Node.js 20+ (for web frontend development)
+### Prerequisites
 
-## Project Structure
+- Docker and Docker Compose
+- Git
+- Python 3.11+
+- Node.js 20+
+- Java 17+ (for running the `bisq2-api` locally)
+- An OpenAI API Key
 
-```
-bisq-support-assistant/
-├── api/                  # Backend API service
-│   ├── app/              # FastAPI application
-│   │   ├── core/         # Core configuration
-│   │   ├── routes/       # API endpoints
-│   │   ├── services/     # Core services including RAG
-│   │   └── main.py       # Application entry point
-│   ├── data/             # Data directory
-│   │   ├── wiki/         # Wiki documents for RAG
-│   │   ├── feedback/     # User feedback storage
-│   │   └── vectorstore/  # Vector embeddings storage
-│   └── requirements.txt  # Python dependencies
-├── web/                  # Next.js web frontend
-├── docker/               # Docker configuration
-│   ├── api/              # API service Dockerfile
-│   ├── web/              # Web frontend Dockerfile and dev version
-│   ├── nginx/            # Nginx configuration for development and testing
-│   ├── prometheus/       # Prometheus configuration
-│   ├── grafana/          # Grafana configuration
-│   ├── scripts/          # Maintenance and automation scripts
-│   ├── docker-compose.yml      # Production Docker Compose configuration
-│   └── docker-compose.local.yml # Development Docker Compose configuration
-├── docs/                 # Documentation
-│   ├── bisq2-api-setup.md # Bisq 2 API setup guide
-│   ├── troubleshooting.md # Troubleshooting guide
-│   └── monitoring-security.md # Monitoring security guide
-├── scripts/              # Utility scripts
-│   ├── deploy.sh         # Production deployment script
-│   ├── update.sh         # Update script
-│   ├── download_bisq2_media_wiki.py # Wiki content downloader
-│   └── fix_xml_namespaces.py # XML namespace fixer
-└── run-local.sh         # Local development script
-```
+### Environment Setup
 
-## Deployment
+1.  **Clone Repositories:**
+    This project requires two repositories: the support agent itself and the `bisq2` application which provides the core API.
 
-### Production Deployment
-
-For production deployment on a DigitalOcean droplet or similar cloud instance:
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd bisq2-support-agent
-```
-
-2. Set up environment variables:
-```bash
-# Required environment variables
-export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
-export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
-export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
-export BISQ2_INSTALL_DIR="/opt/bisq2"
-export ADMIN_API_KEY="your_admin_key_here"
-export OPENAI_API_KEY="your_openai_api_key_here"
-export OPENAI_MODEL="your_openai_model_here"
-
-# Optional environment variables (uncomment and set as needed)
-# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
-# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
-# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
-```
-
-> **Note:** Always use absolute paths for environment variables. Do not use tilde (`~`) or relative paths as they may cause issues with systemd services.
-
-**Making Environment Variables Persistent (Recommended):**
-
-To avoid having to `export` these variables every time you open a new shell session, 
-it is recommended to store them in a dedicated environment file. For example, you 
-can create a file named `/etc/bisq-support/deploy.env` (you may need `sudo` to create 
-and edit this file in `/etc`):
-
-```bash
-# /etc/bisq-support/deploy.env
-
-# Required environment variables
-export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
-export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
-export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
-export BISQ2_INSTALL_DIR="/opt/bisq2"
-export ADMIN_API_KEY="your_admin_key_here"
-export OPENAI_API_KEY="your_openai_api_key_here"
-export OPENAI_MODEL="your_openai_model_here"
-
-# Optional environment variables (uncomment and set as needed)
-# export BISQ_SUPPORT_SECRETS_DIR="/opt/bisq-support/secrets"
-# export BISQ_SUPPORT_LOG_DIR="/opt/bisq-support/logs"
-# export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent"
-```
-
-Make sure this file is secured if it contains sensitive information. Then, before 
-running the deployment or update scripts, you can load these variables into your 
-current shell session by sourcing the file:
-
-```bash
-source /etc/bisq-support/deploy.env
-```
-
-After sourcing, you can proceed to run the deployment script (e.g., `sudo -E ./scripts/deploy.sh`).
-
-3. Make the deployment script executable:
-```bash
-chmod +x ./scripts/deploy.sh
-```
-
-4. Run the deployment script with sudo, preserving environment variables:
-```bash
-# Method 1: Use sudo -E to preserve environment variables
-sudo -E ./scripts/deploy.sh
-```
-
-> **Note:** When using `sudo`, environment variables are not passed to the sudo environment by default. You must either use `sudo -E` to preserve all environment variables or explicitly pass them to the sudo command as shown above.
-
-The deployment script will:
-- Install required dependencies (Docker, git, Java, etc.)
-- Configure Docker and enable it on boot
-- Clone or update the repository
-- Set up the environment and create necessary directories
-- Configure environment variables
-- Start all services with health checks
-
-After deployment, the following services will be available:
-- Web Frontend: http://localhost:3000
-- API Service: http://localhost:8000
-- Grafana Dashboard: http://localhost:3001
-- Prometheus Metrics: http://localhost:9090
-
-### Updating the Application
-
-To update the application to the latest version from the repository after initial deployment:
-
-1.  **Log in** to your server via SSH.
-2.  **Navigate** to the installation directory:
     ```bash
-    cd /opt/bisq-support # Or your custom BISQ_SUPPORT_INSTALL_DIR
-    ```
-3.  **(Optional) Use SSH Agent:** If your deployment SSH key (`$BISQ_SUPPORT_SSH_KEY_PATH`) is protected by a passphrase, start `ssh-agent` and add your key:
-    ```bash
-    eval $(ssh-agent -s)
-    ssh-add /path/to/your/private_key # e.g., /root/.ssh/bisq2_support_agent
-    # Enter passphrase if prompted
-    ```
-4.  **Run the update script:** Execute the script with `sudo`.
-    ```bash
-    sudo ./scripts/update.sh
+    # Clone the support agent
+    git clone https://github.com/bisq-network/bisq2-support-agent.git
+    cd bisq2-support-agent
+
+    # Clone the bisq2 application (in the parent directory)
+    git clone https://github.com/bisq-network/bisq2.git ../bisq2
     ```
 
-The update script will:
-- Stash any local, uncommitted changes.
-- Pull the latest code from the repository.
-- Analyze changes to determine if a container rebuild or just restarts are needed.
-- Apply the updates (rebuild/restart relevant services).
-- Perform health checks and a basic chat functionality test.
-- Attempt to automatically roll back to the previous version if update checks fail.
-- Attempt to restore stashed local changes.
+2.  **Configure Environment Variables:**
+    The project uses `.env` files for configuration. Start by copying the examples.
 
-### Handling Permission Changes in Git
-
-During deployment or updates, you may encounter Git errors related to permission changes:
-
-```
-error: Your local changes to the following files would be overwritten by merge:
-        scripts/deploy.sh
-Please commit your changes or stash them before you merge.
-Aborting
-```
-
-This happens because the deployment script changes file permissions (e.g., `chmod +x ./scripts/deploy.sh`), which Git detects as changes to the files. To resolve this:
-
-1. **Option 1: Let `update.sh` handle it.** (Recommended)
-2. **Option 2: Force the update manually** (If update script stash fails)
     ```bash
-    git fetch origin
-    git reset --hard origin/main
-    ```
-3. **Option 3: Configure Git to ignore permission changes** (Use with caution)
-    ```bash
-    git config core.fileMode false
+    # For the support agent services (API and Web)
+    cp docker/.env.example docker/.env
+
+    # For local Python development (if running API outside of Docker)
+    cp api/.env.example api/.env
     ```
 
-### Troubleshooting Deployment/Update Issues
+    Now, edit `docker/.env` and `api/.env` to add your `OPENAI_API_KEY`.
 
-#### Kernel Updates
+### Running the Full Stack with Docker (Recommended)
 
-The deployment script may detect that your system is running an outdated kernel:
+This is the easiest way to get started. It runs all services, including the `bisq2-api`, in a containerized environment.
 
-```
-Pending kernel upgrade!
-Running kernel version:
-  6.11.0-9-generic
-Diagnostics:
-  The currently running kernel version is not the expected kernel version 6.11.0-24-generic.
-```
+1.  **Build the `bisq2-api`:**
+    The `bisq2-api` Docker image needs to be built from the `bisq2` source code.
 
-While the deployment can continue, it's recommended to reboot your system after the deployment to load the new kernel:
+    ```bash
+    # From the bisq2-support-agent directory
+    docker build -t bisq2-api ../bisq2
+    ```
 
-```bash
-sudo reboot
-```
+2.  **Run the Local Environment:**
+    Use the provided script to build and start all containers.
 
-### Environment Variables
+    ```bash
+    # Make the script executable
+    chmod +x ./run-local.sh
 
-The deployment script uses the following environment variables:
+    # Build and start the local development environment
+    ./run-local.sh
+    ```
 
-#### Required Variables
-- `BISQ_SUPPORT_REPO_URL`: URL of the Bisq Support Agent repository
-- `BISQ2_REPO_URL`: URL of the Bisq 2 repository
-- `BISQ_SUPPORT_INSTALL_DIR`: Installation directory for Bisq Support Agent
-- `BISQ2_INSTALL_DIR`: Installation directory for Bisq 2
+    This script uses `docker/docker-compose.local.yml`, which is configured for hot-reloading for the `web` and `api` services.
 
-#### Optional Variables
-- `BISQ_SUPPORT_SECRETS_DIR`: Directory for secrets (default: `$INSTALL_DIR/secrets`)
-- `BISQ_SUPPORT_LOG_DIR`: Directory for logs (default: `$INSTALL_DIR/logs`)
-- `BISQ_SUPPORT_SSH_KEY_PATH`: Path to SSH key for GitHub authentication (default: `$HOME/.ssh/bisq2_support_agent`)
+    Your services will be available at:
+    - **Web App**: `http://localhost:3000`
+    - **Support Agent API**: `http://localhost:8000`
+    - **Bisq 2 API**: `http://localhost:8090` (from host) or `http://bisq2-api:8090` (from other containers)
 
-For more information about environment variables, see [Environment Configuration](docs/environment-configuration.md).
+### Running Services Individually (for Core Development)
 
-### Local Development
+If you need to work directly on the `api` or `web` services, you can run them as standalone processes. This requires running the `bisq2-api` manually.
 
-For local development, use the local configuration:
+#### Step 1: Run the `bisq2-api` Manually
 
-```bash
-# Make the local development script executable
-chmod +x ./run-local.sh
+The support agent needs to connect to the `bisq2-api`. For this to work, the `bisq2-api` must be configured to accept connections from outside its own process (i.e., bind to `0.0.0.0`).
 
-# Build and start the local development environment
-./run-local.sh
-```
+1.  **Build the `bisq2-api`:**
+    First, compile the Java application using Gradle.
 
-This configuration:
-- Mounts local directories for real-time code changes
-- Uses Dockerfile.dev for the web frontend with hot reloading
-- Sets development-specific environment variables
-- Provides a simplified setup. Note: When used in conjunction with the main `docker-compose.yml`, monitoring services like Prometheus and Grafana will also be started unless explicitly excluded.
+    ```bash
+    # From the bisq2-support-agent directory
+    cd ../bisq2
+    ./gradlew :http-api-app:installDist
+    cd ../bisq2-support-agent
+    ```
+
+2.  **Create a Configuration Override:**
+    The `bisq2-api` loads a `bisq.conf` file from its data directory to override default settings. We need to create this file to set the WebSocket host.
+
+    ```bash
+    # Create a data directory for the bisq2-api
+    mkdir -p ../bisq2/data
+
+    # Create the config override file
+    cat > ../bisq2/data/bisq.conf << EOF
+    application.websocket.server.host = "0.0.0.0"
+    EOF
+    ```
+    This ensures the API is accessible to the support agent's API service.
+
+3.  **Run the `bisq2-api`:**
+    Execute the compiled application, pointing it to the data directory.
+
+    ```bash
+    # From the bisq2-support-agent directory
+    ../bisq2/http-api-app/build/install/http-api-app/bin/http-api-app --data-dir=../bisq2/data
+    ```
+    The API will start and listen on `0.0.0.0:8090`.
+
+#### Step 2: Run the Support Agent API
+
+1.  **Set the `BISQ_API_URL`:**
+    The support agent's API needs to know where the `bisq2-api` is. Edit `api/.env` and set the correct URL.
+
+    ```
+    # api/.env
+    BISQ_API_URL=http://localhost:8090
+    ```
+
+2.  **Install Dependencies and Run:**
+    From the `api` directory, install Python dependencies and run the server.
+
+    ```bash
+    cd api
+    python -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    pip install -r requirements.txt
+    python -m uvicorn app.main:app --reload
+    ```
+    The API service will be available at `http://localhost:8000`.
+
+#### Step 3: Run the Web Frontend
+
+1.  **Set the API URL:**
+    The web app needs to know where the support agent's API is. From the `web` directory, create a `.env.local` file.
+
+    ```bash
+    cd web
+    echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+    ```
+
+2.  **Install Dependencies and Run:**
+
+    ```bash
+    npm install
+    npm run dev
+    ```
+    The web app will be available at `http://localhost:3000`.
 
 ## Development
 
 ### Updating Python Dependencies
 
-To ensure that the Python dependency lock file (`api/requirements.txt`) is consistent across all environments (local development on macOS/Windows and production/CI on Linux), it is crucial to generate it within a Linux environment that mirrors production.
+To ensure the Python dependency lock file (`api/requirements.txt`) is consistent across all environments (local, CI, production), it must be generated within a Linux environment that mirrors production.
 
-We use a multi-stage `Dockerfile` and a dedicated development Docker Compose file for this purpose.
-
-**To update and regenerate `api/requirements.txt` after changing `api/requirements.in`, run the following command from the root of the project:**
+**To update `api/requirements.txt` after changing `api/requirements.in`, run this command from the project root:**
 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
 ```
 
-This command will:
-1.  Build a temporary development container based on the `development` stage in `docker/api/Dockerfile`.
-2.  Run `pip-compile` inside this container.
-3.  Save the updated `api/requirements.txt` to your local filesystem.
-
-After running this command, commit both `api/requirements.in` (if you changed it) and the newly generated `api/requirements.txt` to your repository.
+This command runs `pip-compile` inside a temporary development container and saves the updated `api/requirements.txt` to your local filesystem. Commit both `api/requirements.in` (if changed) and the newly generated `api/requirements.txt`.
 
 ### Manually Running Maintenance Tasks
-
-Certain maintenance tasks, like updating the knowledge base from external sources, can be run manually as needed.
 
 #### Updating FAQs from Bisq API
 
@@ -293,236 +188,179 @@ docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extra
 
 This command executes the extraction script directly within the running `api` container. This is useful for testing the connection to the `bisq-api` or for forcing an update outside of the regular schedule.
 
-## Environment Configuration
+## Deployment
 
-### Production Environment
+### Production Deployment
 
-The deployment script will create a `.env` file in the `docker` directory. You'll need to provide:
+For production deployment on a cloud instance:
 
-1. OpenAI API key during deployment
-2. Review and update other settings in `docker/.env` as needed
+1.  Clone the repository:
+    ```bash
+    git clone <repository-url>
+    cd bisq2-support-agent
+    ```
 
-### Local Development Environment
+2.  **Set up environment variables:**
+    It is highly recommended to store environment variables in a dedicated, secured file, such as `/etc/bisq-support/deploy.env`.
 
-For local development, create `.env` files in both the `api` and `docker` directories:
+    Create the directory and the file:
+    ```bash
+    sudo mkdir -p /etc/bisq-support
+    sudo nano /etc/bisq-support/deploy.env
+    ```
 
-```bash
-# For API development
-cp api/.env.example api/.env
+    Add the following content, replacing placeholders with your actual values:
+    ```bash
+    # /etc/bisq-support/deploy.env
+    export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
+    export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
+    export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
+    export BISQ2_INSTALL_DIR="/opt/bisq2"
+    export ADMIN_API_KEY="your_secure_admin_key"
+    export OPENAI_API_KEY="your_openai_api_key"
+    export OPENAI_MODEL="o3-mini" # Or your preferred model
+    # export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent" # Optional
+    ```
 
-# For Docker development
-cp docker/.env.example docker/.env
-```
+3.  **Source the environment file:**
+    Load the variables into your current shell session.
 
-Required variables:
-```
-# OpenAI API key (required for the RAG service)
-OPENAI_API_KEY=your_api_key_here
+    ```bash
+    source /etc/bisq-support/deploy.env
+    ```
 
-# Admin API key for protected endpoints
-ADMIN_API_KEY=your_admin_key_here
+4.  **Run the deployment script:**
+    Make the script executable and run it with `sudo -E` to preserve the environment variables you just sourced.
 
-# Grafana credentials (for monitoring)
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=securepassword
-```
+    ```bash
+    chmod +x ./scripts/deploy.sh
+    sudo -E ./scripts/deploy.sh
+    ```
+
+The deployment script will install system dependencies, configure Docker, clone the required repositories, and start all services with health checks.
+
+### Updating the Application
+
+To update a production deployment to the latest version:
+
+1.  **Log in** to your server.
+2.  **Navigate** to the installation directory (e.g., `/opt/bisq-support`).
+3.  **Load** your environment variables: `source /etc/bisq-support/deploy.env`.
+4.  **(Optional) Use SSH Agent:** If your deployment key has a passphrase, start the agent (`eval $(ssh-agent -s)`) and add your key (`ssh-add ...`).
+5.  **Run the update script:**
+    ```bash
+    sudo ./scripts/update.sh
+    ```
+
+The script will pull the latest code, rebuild containers if necessary, and restart services, with rollback capabilities on failure.
+
+### Handling Git Permission Changes
+
+The deployment script may make scripts executable, which Git sees as a file modification. The `update.sh` script is designed to handle this by stashing changes. If you encounter issues, you can resolve them manually by resetting the branch: `git fetch origin && git reset --hard origin/main`.
+
+### Troubleshooting Deployment
+
+-   **Kernel Updates:** The script may warn about a pending kernel upgrade. It is safe to proceed, but you should `sudo reboot` after the deployment is complete.
+-   **Environment Variables:** Ensure all required variables are exported correctly before running scripts with `sudo -E`. For a full list, see the `deploy.sh` script and the [Environment Configuration](docs/environment-configuration.md) doc.
 
 ## Data Directory Structure
 
-The project uses the following data directories:
+The project uses the following data directories within `api/data/`:
 
-- `api/data/wiki/`: Contains Markdown files with documentation
-- `api/data/vectorstore/`: Contains vector embeddings for the RAG system
-- `api/data/feedback/`: Stores user feedback in monthly files
+-   `wiki/`: Contains wiki documents for the RAG knowledge base.
+-   `vectorstore/`: Stores vector embeddings for semantic search.
+-   `feedback/`: Stores user feedback.
+-   `extracted_faq.jsonl`: Stores FAQs automatically generated from support chats.
 
-These directories are automatically created during deployment. For local development, create them manually:
+These are automatically created during deployment. For local development, create them manually if needed: `mkdir -p api/data/{wiki,vectorstore,feedback}`.
 
-```bash
-mkdir -p api/data/wiki api/data/vectorstore api/data/feedback
-```
+## RAG System Content
 
-## Running Services Individually
-
-When running services outside of Docker for development, you must configure the necessary environment variables manually.
-
-### API Service:
-
-1. Create a local environment file by copying the example:
-   ```bash
-   cp api/.env.example api/.env
-   ```
-   **Note:** Make sure to fill in your `OPENAI_API_KEY` in the newly created `api/.env` file.
-
-2. Create and activate a virtual environment:
-   ```bash
-   cd api
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Run the API service (it will be available at `http://localhost:8000`):
-   ```bash
-   python -m uvicorn app.main:app --reload
-   ```
-
-### Web Frontend:
-
-1. Navigate to the web directory:
-   ```bash
-   cd web
-   ```
-
-2. Create a local environment file to tell the frontend where the API is running:
-   ```bash
-   echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
-   ```
-
-3. Install dependencies and start the development server (it will be available at `http://localhost:3000`):
-   ```bash
-   npm install
-   npm run dev
-   ```
-
-## Adding Content for the RAG System
-
-The RAG system uses two main sources of content:
+The RAG system's knowledge base is built from two sources:
 
 ### 1. Wiki Documents
-- **Location**: `api/data/wiki/`
-- **Purpose**: 
-  - Primary knowledge base for the RAG system
-  - Provides structured documentation about Bisq 1 and Bisq 2
-  - Used to generate accurate and context-aware responses to user queries
-- **Supported Formats**:
-  - MediaWiki XML dump file (`bisq_dump.xml`) for bulk import
-- **Processing Pipeline**:
-  1. **Initial Processing**:
-     - XML dumps are processed by `process_wiki_dump.py`
-     - Content is cleaned and categorized (Bisq 1, Bisq 2, or general)
-     - Documents are converted to JSONL format with metadata
-  2. **Document Preparation**:
-     - Documents are loaded by `WikiService`
-     - Each document is tagged with metadata (category, version, section)
-     - Content is split into chunks for better retrieval
-     - Source weights are assigned (wiki content has a weight of 1.1)
-  3. **RAG Integration**:
-     - Processed documents are converted to embeddings
-     - Stored in a Chroma vector database
-     - Used alongside FAQ data for comprehensive responses
-     - Documents are prioritized based on version relevance (Bisq 2 > Bisq 1 > general)
-- **Metadata Structure**:
-  ```json
-  {
-    "title": "Document Title",
-    "content": "Document Content",
-    "category": "bisq2|bisq1|general",
-    "type": "wiki",
-    "section": "Section Name",
-    "source_weight": 1.1,
-    "bisq_version": "Bisq 2|Bisq 1|General"
-  }
-  ```
-
-### 2. FAQ Data
-- **Automatic Extraction**:
-  - FAQs are automatically extracted from support chat conversations
-  - The system uses OpenAI to identify and format FAQs
-  - Extracted FAQs are stored in `api/data/extracted_faq.jsonl`
-- **Manual Addition**:
-  - You can manually add FAQs by appending to the JSONL file
-  - Each FAQ entry should follow this format:
+-   **Location**: `api/data/wiki/`
+-   **Purpose**:
+    - Primary knowledge base for the RAG system
+    - Provides structured documentation about Bisq 1 and Bisq 2
+    - Used to generate accurate and context-aware responses to user queries
+-   **Supported Formats**:
+    - MediaWiki XML dump file (`bisq_dump.xml`) for bulk import
+-   **Processing Pipeline**:
+    1. **Initial Processing**:
+       - XML dumps are processed by `process_wiki_dump.py`
+       - Content is cleaned and categorized (Bisq 1, Bisq 2, or general)
+       - Documents are converted to JSONL format with metadata
+    2. **Document Preparation**:
+       - Documents are loaded by `WikiService`
+       - Each document is tagged with metadata (category, version, section)
+       - Content is split into chunks for better retrieval
+       - Source weights are assigned (wiki content has a weight of 1.1)
+    3. **RAG Integration**:
+       - Processed documents are converted to embeddings
+       - Stored in a Chroma vector database
+       - Used alongside FAQ data for comprehensive responses
+       - Documents are prioritized based on version relevance (Bisq 2 > Bisq 1 > general)
+-   **Metadata Structure**:
     ```json
-    {"question": "Your question here", "answer": "Your answer here", "category": "Category name", "source": "Bisq Support Chat"}
+    {
+      "title": "Document Title",
+      "content": "Document Content",
+      "category": "bisq2|bisq1|general",
+      "type": "wiki",
+      "section": "Section Name",
+      "source_weight": 1.1,
+      "bisq_version": "Bisq 2|Bisq 1|General"
+    }
     ```
 
-### Content Processing Flow
+### 2. FAQ Data
+-   **Automatic Extraction**:
+    - FAQs are automatically extracted from support chat conversations
+    - The system uses OpenAI to identify and format FAQs
+    - Extracted FAQs are stored in `api/data/extracted_faq.jsonl`
+-   **Manual Addition**:
+    - You can manually add FAQs by appending to the JSONL file
+    - Each FAQ entry should follow this format:
+      ```json
+      {"question": "Your question here", "answer": "Your answer here", "category": "Category name", "source": "Bisq Support Chat"}
+      ```
 
-1. **Initial Setup**:
-   - Wiki documents are loaded and processed by `WikiService`
-   - FAQ data is loaded and processed by `FAQService`
-   - Both services prepare documents for the RAG system
+### Content Processing
 
-2. **Vector Store**:
-   - Documents are converted to embeddings using OpenAI
-   - Stored in a Chroma vector database
-   - The vector store is automatically updated when new content is added
+When the API service starts, it automatically processes all content from the `wiki` and `faq` sources, converts it into vector embeddings, and stores it in the ChromaDB vector store (`api/data/vectorstore/`).
 
-3. **FAQ Extraction Process**:
-   - Runs automatically via the `scheduler` service
-   - Fetches new support chat messages from Bisq API
-   - Processes conversations and extracts FAQs
-   - Updates the FAQ database
-   - The RAG system automatically picks up new FAQs
+To add new content, simply add files to the `api/data/wiki/` directory or add entries to the FAQ file, then restart the API service.
 
-### Adding New Content
+```bash
+# To add new wiki content and rebuild the vector store
+cp your_document.md api/data/wiki/
+docker compose -f docker/docker-compose.yml restart api
+```
 
-1. **Wiki Documents**:
-   ```bash
-   # Add new Markdown files
-   cp your_document.md api/data/wiki/
-   
-   # Or add a MediaWiki XML dump
-   cp bisq_dump.xml api/data/wiki/
-   ```
-
-2. **Manual FAQ Addition**:
-   ```bash
-   # Append to the FAQ file
-   echo '{"question": "New question", "answer": "New answer", "category": "Category", "source": "Bisq Support Chat"}' >> api/data/extracted_faq.jsonl
-   ```
-
-3. **Rebuilding the Vector Store**:
-   ```bash
-   # Restart the API service to rebuild the vector store
-   docker compose -f docker/docker-compose.yml restart api
-   ```
-
-### Monitoring Content
-
-- Check the API logs for content processing status:
-  ```bash
-  docker compose -f docker/docker-compose.yml logs api
-  ```
-- Monitor FAQ extraction (which runs on the scheduler):
-  ```bash
-  docker compose -f docker/docker-compose.yml logs scheduler
-  ```
-
-For more details about the FAQ extraction process, see [FAQ Extraction Documentation](docs/faq_extraction.md).
+For more details on the automated FAQ extraction process, see [FAQ Extraction Documentation](docs/faq_extraction.md).
 
 ## Monitoring and Security
 
-The project includes Prometheus and Grafana for monitoring:
+The project includes Prometheus and Grafana for monitoring.
+-   **Prometheus**: Collects metrics from the API and web services.
+-   **Grafana**: Provides dashboards for visualizing metrics.
 
-- **Prometheus**: Collects metrics from the API and web services
-- **Grafana**: Provides dashboards for visualizing the metrics
-
-For details on securing these services, see [Monitoring Security Guide](docs/monitoring-security.md).
+For details on securing these services, see the [Monitoring Security Guide](docs/monitoring-security.md).
 
 ## Troubleshooting
 
-If you encounter any issues, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). Common issues covered include:
-
-- API service errors
-- Bisq API connection issues
-- Docker configuration problems
-- FAQ extractor issues
-- Monitoring setup problems
+If you encounter any issues, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). It covers common problems with the API service, `bisq2-api` connection, Docker configuration, and more.
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1.  Fork the repository
+2.  Create your feature branch (`git checkout -b feature/amazing-feature`)
+3.  Commit your changes (`git commit -m 'Add some amazing feature'`)
+4.  Push to the branch (`git push origin feature/amazing-feature`)
+5.  Open a Pull Request
 
 ## License
 
