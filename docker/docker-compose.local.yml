@@ -2,9 +2,12 @@ services:
   nginx:
     ports:
       - "80:80"
+    networks:
+      - bisq-support-network
 
   bisq2-api:
     platform: linux/amd64
+    image: bisq2-api
 
   api:
     build:

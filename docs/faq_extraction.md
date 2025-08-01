@@ -97,11 +97,13 @@ The following file paths are used:
 
 ### Manual Execution
 
-To manually run the FAQ extraction process:
+To manually run the FAQ extraction process for local development or testing, first ensure your local development environment is running. You can start it with the `run-local.sh` script.
+
+Once the services are running, execute the following command from the project root. This command runs the extraction script inside the `api` service container, which has the correct environment and network access to connect to the `bisq2-api`.
 
 ```bash
 # In the project root, this command executes the script inside the 'api' service container
-docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -- api python -m app.scripts.extract_faqs
 ```
 
 ### Via Docker Compose

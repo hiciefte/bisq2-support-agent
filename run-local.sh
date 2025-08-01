@@ -16,10 +16,10 @@ if [ ! -f docker/.env ]; then
 fi
 
 echo "1. Stopping any existing containers..."
-docker compose -f docker/docker-compose.local.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down
 
 echo "2. Building and starting containers with the local configuration..."
-docker compose -f docker/docker-compose.local.yml up -d --build
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d --build
 
 echo "====================================="
 echo "Local development environment started!"
@@ -29,6 +29,6 @@ echo "API: http://localhost:8000"
 echo ""
 echo "Development Tips:"
 echo "- Frontend changes will automatically reload due to volume mounts"
-echo "- API changes require manual restart with: docker compose -f docker/docker-compose.local.yml restart api"
-echo "- View logs with: docker compose -f docker/docker-compose.local.yml logs -f"
+echo "- API changes require manual restart with: docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart api"
+echo "- View logs with: docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f"
 echo "=====================================" 

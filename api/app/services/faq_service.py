@@ -271,11 +271,7 @@ class FAQService:
         Returns:
             List of Document objects
         """
-        faq_path: Path
-        if faq_file:
-            faq_path = Path(faq_file)
-        else:
-            faq_path = self._faq_file_path
+        faq_path = Path(faq_file) if faq_file else self._faq_file_path
 
         logger.info(f"Using FAQ file path: {faq_path}")
 

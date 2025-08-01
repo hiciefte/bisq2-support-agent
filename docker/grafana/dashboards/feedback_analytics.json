@@ -495,7 +495,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (issue_type) (bisq_issue_count_total)",
+          "expr": "sum by (issue_type) (max_over_time(bisq_issue_count_total[5m]))",
           "instant": true,
           "legendFormat": "{{issue_type}}",
           "range": false,
