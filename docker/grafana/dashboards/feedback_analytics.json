@@ -495,7 +495,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "bisq_issue_count_total",
+          "expr": "sum by (issue_type) (bisq_issue_count_total)",
           "instant": true,
           "legendFormat": "{{issue_type}}",
           "range": false,
@@ -606,9 +606,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max(bisq_feedback_total)",
+          "expr": "sum(rate(bisq_feedback_total[5m]))",
           "instant": false,
-          "legendFormat": "Total Feedback",
+          "legendFormat": "Feedback Rate (per second)",
           "range": true,
           "refId": "B"
         }

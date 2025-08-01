@@ -256,7 +256,7 @@ This configuration:
 - Mounts local directories for real-time code changes
 - Uses Dockerfile.dev for the web frontend with hot reloading
 - Sets development-specific environment variables
-- Provides a simplified setup without Prometheus or Grafana
+- Provides a simplified setup. Note: When used in conjunction with the main `docker-compose.yml`, monitoring services like Prometheus and Grafana will also be started unless explicitly excluded.
 
 ## Development
 
@@ -278,6 +278,20 @@ This command will:
 3.  Save the updated `api/requirements.txt` to your local filesystem.
 
 After running this command, commit both `api/requirements.in` (if you changed it) and the newly generated `api/requirements.txt` to your repository.
+
+### Manually Running Maintenance Tasks
+
+Certain maintenance tasks, like updating the knowledge base from external sources, can be run manually as needed.
+
+#### Updating FAQs from Bisq API
+
+To manually trigger the script that fetches the latest support chat data from the Bisq API and generates new FAQs, run the following command from the project root:
+
+```bash
+docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
+```
+
+This command executes the extraction script directly within the running `api` container. This is useful for testing the connection to the `bisq-api` or for forcing an update outside of the regular schedule.
 
 ## Environment Configuration
 
@@ -472,11 +486,11 @@ The RAG system uses two main sources of content:
 
 - Check the API logs for content processing status:
   ```bash
-  docker logs docker-api-1
+  docker compose -f docker/docker-compose.yml logs api
   ```
-- Monitor FAQ extraction:
+- Monitor FAQ extraction (which runs on the scheduler):
   ```bash
-  docker logs docker-faq-extractor-1
+  docker compose -f docker/docker-compose.yml logs scheduler
   ```
 
 For more details about the FAQ extraction process, see [FAQ Extraction Documentation](docs/faq_extraction.md).

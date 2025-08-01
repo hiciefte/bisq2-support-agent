@@ -100,8 +100,8 @@ The following file paths are used:
 To manually run the FAQ extraction process:
 
 ```bash
-# In the project root
-docker exec -it docker-api-1 python -m app.scripts.extract_faqs
+# In the project root, this command executes the script inside the 'api' service container
+docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
 ```
 
 ### Via Docker Compose

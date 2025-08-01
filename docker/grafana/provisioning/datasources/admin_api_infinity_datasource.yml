@@ -10,6 +10,5 @@ datasources:
     url: http://api:8000/admin/feedback
     jsonData:
       httpMethod: 'GET'
-      headers:
-        - key: 'Authorization'
-          value: 'Bearer ${ADMIN_API_KEY_FOR_GRAFANA}'
+    secureJsonData:
+      httpHeader_Authorization: 'Bearer ${ADMIN_API_KEY_FOR_GRAFANA}'
