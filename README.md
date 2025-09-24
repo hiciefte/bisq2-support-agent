@@ -15,232 +15,54 @@ This project consists of the following components:
 
 ## Getting Started
 
-### Prerequisites
+This project includes two primary methods for getting started:
+-   **Local Development:** Use the `run-local.sh` script for a fully containerized local environment on your machine.
+-   **Production Deployment:** Use the `scripts/deploy.sh` script for initial setup on a dedicated server.
 
-- Docker and Docker Compose
-- Git
-- Python 3.11+
-- Node.js 20+
-- Java 17+ (for running the `bisq2-api` locally)
-- An OpenAI API Key
+### Local Development Environment
 
-### Environment Setup
+For developing on your local machine, the project provides a comprehensive Docker Compose setup that mirrors the production environment.
 
-1.  **Clone Repositories:**
-    This project requires two repositories: the support agent itself and the `bisq2` application which provides the core API.
+**Prerequisites:** Docker, Git, Python 3.11+, Node.js 20+, Java 17+.
 
-    ```bash
-    # Clone the support agent
-    git clone https://github.com/bisq-network/bisq2-support-agent.git
-    cd bisq2-support-agent
-
-    # Clone the bisq2 application (in the parent directory)
-    git clone https://github.com/bisq-network/bisq2.git ../bisq2
-    ```
-
-2.  **Configure Environment Variables:**
-    The project uses `.env` files for configuration. Start by copying the examples.
-
-    ```bash
-    # For the support agent services (API and Web)
-    cp docker/.env.example docker/.env
-
-    # For local Python development (if running API outside of Docker)
-    cp api/.env.example api/.env
-    ```
-
-    Now, edit `docker/.env` and `api/.env` to add your `OPENAI_API_KEY`.
-
-### Running the Full Stack with Docker (Recommended)
-
-This is the easiest way to get started. It runs all services, including the `bisq2-api`, in a containerized environment.
-
-1.  **Build the `bisq2-api`:**
-    The `bisq2-api` Docker image needs to be built from the `bisq2` source code.
-
-    ```bash
-    # From the bisq2-support-agent directory
-    docker build -t bisq2-api ../bisq2
-    ```
-
-2.  **Run the Local Environment:**
-    Use the provided script to build and start all containers.
-
-    ```bash
-    # Make the script executable
-    chmod +x ./run-local.sh
-
-    # Build and start the local development environment
-    ./run-local.sh
-    ```
-
-    This script uses `docker/docker-compose.local.yml`, which is configured for hot-reloading for the `web` and `api` services.
-
-    Your services will be available at:
-    - **Web App**: `http://localhost:3000`
-    - **Support Agent API**: `http://localhost:8000`
-    - **Bisq 2 API**: `http://localhost:8090` (from host) or `http://bisq2-api:8090` (from other containers)
-
-### Running Services Individually (for Core Development)
-
-If you need to work directly on the `api` or `web` services, you can run them as standalone processes. This requires running the `bisq2-api` manually.
-
-#### Step 1: Run the `bisq2-api` Manually
-
-The support agent needs to connect to the `bisq2-api`. For this to work, the `bisq2-api` must be configured to accept connections from outside its own process (i.e., bind to `0.0.0.0`).
-
-1.  **Build the `bisq2-api`:**
-    First, compile the Java application using Gradle.
-
-    ```bash
-    # From the bisq2-support-agent directory
-    cd ../bisq2
-    ./gradlew :http-api-app:installDist
-    cd ../bisq2-support-agent
-    ```
-
-2.  **Create a Configuration Override:**
-    The `bisq2-api` loads a `bisq.conf` file from its data directory to override default settings. We need to create this file to set the WebSocket host.
-
-    ```bash
-    # Create a data directory for the bisq2-api
-    mkdir -p ../bisq2/data
-
-    # Create the config override file
-    cat > ../bisq2/data/bisq.conf << EOF
-    application.websocket.server.host = "0.0.0.0"
-    EOF
-    ```
-    This ensures the API is accessible to the support agent's API service.
-
-3.  **Run the `bisq2-api`:**
-    Execute the compiled application, pointing it to the data directory.
-
-    ```bash
-    # From the bisq2-support-agent directory
-    ../bisq2/http-api-app/build/install/http-api-app/bin/http-api-app --data-dir=../bisq2/data
-    ```
-    The API will start and listen on `0.0.0.0:8090`.
-
-#### Step 2: Run the Support Agent API
-
-1.  **Set the `BISQ_API_URL`:**
-    The support agent's API needs to know where the `bisq2-api` is. Edit `api/.env` and set the correct URL.
-
-    ```bash
-    # api/.env
-    BISQ_API_URL=http://localhost:8090
-    ```
-
-2.  **Install Dependencies and Run:**
-    From the `api` directory, install Python dependencies and run the server.
-
-    ```bash
-    cd api
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    pip install -r requirements.txt
-    python -m uvicorn app.main:app --reload
-    ```
-    The API service will be available at `http://localhost:8000`.
-
-#### Step 3: Run the Web Frontend
-
-1.  **Set the API URL:**
-    The web app needs to know where the support agent's API is. From the `web` directory, create a `.env.local` file.
-
-    ```bash
-    cd web
-    echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
-    ```
-
-2.  **Install Dependencies and Run:**
-
-    ```bash
-    npm install
-    npm run dev
-    ```
-    The web app will be available at `http://localhost:3000`.
-
-## Development
-
-### Updating Python Dependencies
-
-To ensure the Python dependency lock file (`api/requirements.txt`) is consistent across all environments (local, CI, production), it must be generated within a Linux environment that mirrors production.
-
-**To update `api/requirements.txt` after changing `api/requirements.in`, run this command from the project root:**
-
+**To start the local environment, use the provided shell script:**
 ```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+# This script handles building all containers and starting them in the correct order.
+./run-local.sh
 ```
-
-This command runs `pip-compile` inside a temporary development container and saves the updated `api/requirements.txt` to your local filesystem. Commit both `api/requirements.in` (if changed) and the newly generated `api/requirements.txt`.
-
-## Deployment
+This is the **only** command needed for local development. It uses `docker/.env` for secrets and `docker-compose.local.yml` for development-specific configurations like hot-reloading. The scripts in the `scripts/` directory are **not** intended for local use.
 
 ### Production Deployment
 
-For production deployment on a cloud instance:
+This project is designed to be deployed via Docker on a dedicated server. The `scripts/` directory contains the necessary automation for installation, updates, and management.
 
-1.  Clone the repository:
-    ```bash
-    git clone <repository-url>
-    cd bisq2-support-agent
-    ```
+#### Initial Server Setup
 
-2.  **Set up environment variables:**
-    It is highly recommended to store environment variables in a dedicated, secured file, such as `/etc/bisq-support/deploy.env`.
+The `scripts/deploy.sh` script is the main entrypoint for setting up a new production server. It performs the following actions:
+1.  Creates a dedicated application user (`bisq-support`).
+2.  Clones the repository into `/opt/bisq-support`.
+3.  Creates all necessary data and logging directories.
+4.  Sets the correct file ownership to the `bisq-support` user.
+5.  Builds and starts all Docker containers.
 
-    Create the directory and the file:
-    ```bash
-    sudo mkdir -p /etc/bisq-support
-    sudo nano /etc/bisq-support/deploy.env
-    ```
+To run it, execute the script from your server:
+```bash
+curl -sSL https://raw.githubusercontent.com/bisq-network/bisq2-support-agent/main/scripts/deploy.sh | sudo bash
+```
 
-    Add the following content, replacing placeholders with your actual values:
-    ```bash
-    # /etc/bisq-support/deploy.env
-    export BISQ_SUPPORT_REPO_URL="git@github.com:hiciefte/bisq2-support-agent.git"
-    export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
-    export BISQ_SUPPORT_INSTALL_DIR="/opt/bisq-support"
-    export BISQ2_INSTALL_DIR="/opt/bisq2"
-    export ADMIN_API_KEY="your_secure_admin_key"
-    export OPENAI_API_KEY="your_openai_api_key"
-    export OPENAI_MODEL="o3-mini" # Or your preferred model
-    # export BISQ_SUPPORT_SSH_KEY_PATH="/root/.ssh/bisq2_support_agent" # Optional
-    ```
+#### Managing the Application
 
-3.  **Source the environment file:**
-    Load the variables into your current shell session.
+Once deployed, the production application should be managed using the following scripts located in `/opt/bisq-support/scripts/`:
 
-    ```bash
-    source /etc/bisq-support/deploy.env
-    ```
+-   **`start.sh`**: Starts the application containers using the production configuration.
+-   **`stop.sh`**: Stops and removes the application containers.
+-   **`restart.sh`**: Performs a graceful stop followed by a start.
 
-4.  **Run the deployment script:**
-    Make the script executable and run it with `sudo -E` to preserve the environment variables you just sourced.
-
-    ```bash
-    chmod +x ./scripts/deploy.sh
-    sudo -E ./scripts/deploy.sh
-    ```
-
-The deployment script will install system dependencies, configure Docker, clone the required repositories, and start all services with health checks.
+These scripts are location-aware and source their configuration from a production environment file (`/etc/bisq-support/deploy.env`). They should not be used for local development.
 
 ### Updating the Application
 
-To update a production deployment to the latest version:
-
-1.  **Log in** to your server.
-2.  **Navigate** to the installation directory (e.g., `/opt/bisq-support`).
-3.  **Load** your environment variables: `source /etc/bisq-support/deploy.env`.
-4.  **(Optional) Use SSH Agent:** If your deployment key has a passphrase, start the agent (`eval $(ssh-agent -s)`) and add your key (`ssh-add ...`).
-5.  **Run the update script:**
-    ```bash
-    sudo ./scripts/update.sh
-    ```
-
-The script will pull the latest code, rebuild containers if necessary, and restart services, with rollback capabilities on failure.
+The `scripts/update.sh` script handles pulling the latest changes from the Git repository, rebuilding Docker images, and restarting the services. It includes a rollback mechanism in case of failure.
 
 ### Handling Git Permission Changes
 
@@ -338,7 +160,8 @@ For details on securing these services, see the [Monitoring Security Guide](docs
 
 ## Troubleshooting
 
-If you encounter any issues, please refer to the [Troubleshooting Guide](docs/troubleshooting.md). It covers common problems with the API service, `bisq2-api` connection, Docker configuration, and more.
+See the [troubleshooting guide](docs/troubleshooting.md) for solutions to common problems.
+-   `bisq2-api` connection, Docker configuration, and more.
 
 ## Contributing
 

@@ -184,6 +184,15 @@ check_container_health() {
     return 1
 }
 
+# Function to dynamically get the container name
+get_container_name() {
+    local service_name=$1
+    # Use the directory name of DOCKER_DIR as the project name
+    local project_name
+    project_name=$(basename "$DOCKER_DIR")
+    echo "${project_name}_${service_name}_1"
+}
+
 # Function to test the chat endpoint
 test_chat_endpoint() {
     echo -e "${BLUE}Testing chat endpoint...${NC}"
@@ -431,9 +440,10 @@ if $REBUILD_NEEDED; then
 
     # Add health checks after containers start
     echo -e "${BLUE}Performing health checks...${NC}"
-    for container in $(docker compose -f "$COMPOSE_FILE" ps --services); do
-        if ! check_container_health "bisq2-support-agent_${container}_1"; then
-            rollback_to_previous_version "Health check failed for $container"
+    for service in $(docker compose -f "$COMPOSE_FILE" ps --services); do
+        container_name=$(get_container_name "$service")
+        if ! check_container_health "$container_name"; then
+            rollback_to_previous_version "Health check failed for $service"
             exit 1
         fi
     done
@@ -455,7 +465,8 @@ else
             exit 1
         fi
         # Check API health
-        if ! check_container_health "bisq2-support-agent_api_1"; then
+        api_container_name=$(get_container_name "api")
+        if ! check_container_health "$api_container_name"; then
             rollback_to_previous_version "API health check failed after restart"
             exit 1
         fi
@@ -474,7 +485,8 @@ else
             exit 1
         fi
         # Check Web health
-        if ! check_container_health "bisq2-support-agent_web_1"; then
+        web_container_name=$(get_container_name "web")
+        if ! check_container_health "$web_container_name"; then
             rollback_to_previous_version "Web health check failed after restart"
             exit 1
         fi
