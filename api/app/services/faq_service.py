@@ -786,11 +786,13 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         return faqs
 
-    def extract_faqs_with_openai(self, conversations: List[Dict]) -> List[Dict]:
+    def extract_faqs_with_openai(
+        self, conversations_to_process: List[Dict]
+    ) -> List[Dict]:
         """Extract FAQs from conversations using OpenAI.
 
         Args:
-            conversations: List of conversation dictionaries
+            conversations_to_process: List of new conversation dictionaries to process.
 
         Returns:
             List of extracted FAQ dictionaries
@@ -799,22 +801,18 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             logger.error("OpenAI client not initialized. Cannot extract FAQs.")
             return []
 
-        logger.info("Extracting FAQs using OpenAI...")
-
-        # Filter out already processed conversations
-        new_conversations = [
-            conv for conv in conversations if conv["id"] not in self.processed_conv_ids
-        ]
-
-        if not new_conversations:
-            logger.info("No new conversations to process")
+        if not conversations_to_process:
+            logger.info("No new conversations provided to process for OpenAI.")
             return []
 
-        logger.info(f"Found {len(new_conversations)} new conversations to process")
+        logger.info(
+            f"Extracting FAQs from {len(conversations_to_process)} conversations using OpenAI..."
+        )
 
         # Prepare conversations for the prompt
         formatted_convs = [
-            self._format_conversation_for_prompt(conv) for conv in new_conversations
+            self._format_conversation_for_prompt(conv)
+            for conv in conversations_to_process
         ]
 
         # Split conversations into batches to avoid token limits
@@ -825,9 +823,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         ]
 
         all_faqs = []
-        processed_in_batch = set()
 
-        for batch_idx, batch in enumerate(batches):
+        for batch in batches:
             # Create the prompt
             prompt = self._create_extraction_prompt(batch)
 
@@ -839,19 +836,10 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 batch_faqs = self._process_api_response(response_text)
                 all_faqs.extend(batch_faqs)
 
-            # Mark conversations as processed
-            start_idx = batch_idx * batch_size
-            for conv in new_conversations[start_idx : start_idx + len(batch)]:
-                processed_in_batch.add(conv["id"])
-
             time.sleep(1)  # Small delay between batches
 
-        # Update processed conversation IDs
-        self.processed_conv_ids.update(processed_in_batch)
-        self.save_processed_conv_ids()
-
         logger.info(
-            f"Extracted {len(all_faqs)} FAQ entries from {len(processed_in_batch)} new conversations"
+            f"Extracted {len(all_faqs)} FAQ entries from {len(conversations_to_process)} conversations"
         )
         return all_faqs
 
@@ -959,55 +947,56 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
             # Reset and pre-seed duplicate set with on-disk FAQs
             self.normalized_faq_keys = set()
-            existing_faqs = self.load_existing_faqs()  # populates the set
+            existing_faqs = self.load_existing_faqs()
 
-            # Merge existing and new messages
+            # Merge existing and new messages from the API
             await self.merge_csv_files(bisq_api)
 
-            # Load and process messages
+            # Load and process messages into memory
             self.load_messages()
 
-            # Group messages into conversations
-            conversations = self.group_conversations()
+            # Group all messages into conversation threads
+            all_conversations = self.group_conversations()
 
-            # Filter out already processed conversations
-            new_conversations = [
-                conv
-                for conv in conversations
-                if conv["id"] not in self.processed_conv_ids
-            ]
-
-            # Save all conversations to JSONL file
+            # Save all generated conversations to disk for debugging and persistence
             if hasattr(self, "conversations_path"):
                 with self.conversations_path.open("w", encoding="utf-8") as f:
-                    for conv in conversations:
+                    for conv in all_conversations:
                         serialized_conv = self.serialize_conversation(conv)
                         f.write(json.dumps(serialized_conv, ensure_ascii=False) + "\n")
                 logger.info(
-                    f"Saved {len(conversations)} conversations to {self.conversations_path}"
+                    f"Saved {len(all_conversations)} conversations to {self.conversations_path}"
                 )
 
-            # Extract FAQs using OpenAI
-            new_faqs = []
-            if new_conversations:
-                logger.info("Extracting FAQs using OpenAI...")
-                new_faqs = self.extract_faqs_with_openai(new_conversations)
+            # --- Centralized State Management ---
+            # Determine which conversations are new and need processing
+            new_conversations_to_process = [
+                conv
+                for conv in all_conversations
+                if conv["id"] not in self.processed_conv_ids
+            ]
 
-                # Combine existing and new FAQs
-                all_faqs = existing_faqs + new_faqs
+            if not new_conversations_to_process:
+                logger.info("No new conversations to process.")
+                return []
 
-                # Save all FAQs
-                self.save_faqs(all_faqs)
+            # Extract FAQs from only the new conversations
+            logger.info(
+                f"Processing {len(new_conversations_to_process)} new conversations..."
+            )
+            new_faqs = self.extract_faqs_with_openai(new_conversations_to_process)
+
+            # If new FAQs were found, save them
+            if new_faqs:
+                self.save_faqs(new_faqs)
                 logger.info(
-                    f"Extraction complete. Generated {len(new_faqs)} new FAQ entries."
+                    f"Extraction complete. Saved {len(new_faqs)} new FAQ entries."
                 )
 
-                # Update processed conversation IDs
-                for conv in new_conversations:
-                    self.processed_conv_ids.add(conv["id"])
-                self.save_processed_conv_ids()
-            else:
-                logger.info("No new conversations to process")
+            # Update and save the list of processed conversation IDs
+            for conv in new_conversations_to_process:
+                self.processed_conv_ids.add(conv["id"])
+            self.save_processed_conv_ids()
 
             return new_faqs
 

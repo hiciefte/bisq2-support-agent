@@ -1,75 +1,90 @@
-# Use the official Python image as the base image
-# Use a specific version to ensure consistency with the CI/CD environment
-FROM python:3.11.11-slim AS builder
+# --- Builder Stage ---
+FROM python:3.11-slim as builder
 
-# Set the working directory
-WORKDIR /app
-
-# Upgrade pip to a specific version to ensure consistency with CI
-RUN python -m pip install --no-cache-dir pip==25.1.1
-
-# Install system dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential=12.9 \
-    libxml2-dev=2.9.14+dfsg-1.3~deb12u2 \
-    libxslt1-dev=1.1.35-1+deb12u1 \
-    pkg-config=1.8.1-1 \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY api/requirements.txt .
-# Install PyTorch with native MPS support - with cleanup to save space
-RUN pip install --no-cache-dir torch==2.0.1 && \
-    find /usr/local/lib/python3.11/site-packages/ -name "*.pyc" -delete && \
-    find /usr/local/lib/python3.11/site-packages/ -name "__pycache__" -delete
-# Then install the rest of the requirements
+# Set up work directory
+WORKDIR /app
+
+# Copy dependency files
+COPY api/requirements.in api/requirements.txt /app/
+
+# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+
 # --- Development Stage ---
-# This stage is for running development commands like pip-compile
-FROM builder AS development
+FROM python:3.11-slim as development
 
-# Install pip-tools in the development stage
-RUN pip install --no-cache-dir pip-tools==7.4.1
-
-# Use the same slim Python version for the final image
-# This ensures a small footprint while maintaining consistency
-FROM python:3.11.11-slim AS final
-
-# Set the working directory
-WORKDIR /app
-
-# Install curl for healthcheck and libxml2 runtime for mwxml
+# Install build dependencies and tools for development
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl=7.88.1-10+deb12u12 \
-    libxml2=2.9.14+dfsg-1.3~deb12u2 \
-    libxslt1.1=1.1.35-1+deb12u1 \
+    build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only necessary files from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+# Set up work directory
+WORKDIR /app
 
-# First copy the application code
-COPY api/app /app/app
-COPY api/setup.py /app/setup.py
-COPY api/requirements.txt /app/requirements.txt
-COPY api/.env* /app/
+# Install pip-tools for requirements management
+RUN pip install --no-cache-dir pip-tools==7.5.0
 
-# Create data directory structure
-RUN mkdir -p /app/api/data
+# Copy dependency files
+COPY api/requirements.in /app/api/
+COPY api/requirements.txt /app/api/
 
-# Copy the data directory with all its contents
-COPY api/data/ /app/api/data/
+# Install dependencies in development mode
+RUN pip install --no-cache-dir -r api/requirements.txt
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Install uvicorn
-RUN pip install --no-cache-dir "uvicorn[standard]==0.34.3"
 
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Run the application using Uvicorn
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command for development (can be overridden)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+
+# --- Final Stage ---
+FROM python:3.11-slim as final
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Arguments for user and group IDs
+ARG APP_UID=1001
+ARG APP_GID=1001
+
+# Create a non-root user
+RUN groupadd -g "${APP_GID}" bisq-support && \
+    useradd -l -u "${APP_UID}" -g bisq-support -s /bin/false -m bisq-support
+
+# Set up work directory
+WORKDIR /app
+
+# Copy dependencies from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY api /app/api
+
+# Set ownership of the app directory
+RUN chown -R bisq-support:bisq-support /app
+
+# Switch to the non-root user
+USER bisq-support
+
+# Set environment variables
+ENV PYTHONPATH=/app
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

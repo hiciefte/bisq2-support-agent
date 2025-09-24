@@ -88,6 +88,8 @@ services:
       dockerfile: docker/api/Dockerfile
       args:
         - BUILD_ENV=production
+        - APP_UID=${APP_UID:-1001}
+        - APP_GID=${APP_GID:-1001}
     restart: always
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
