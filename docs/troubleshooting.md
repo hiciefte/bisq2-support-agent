@@ -17,7 +17,7 @@ This is caused by a compatibility issue with the Chroma DB version. To fix it:
 
 1. Edit the RAG service file:
    ```bash
-   nano /path/to/bisq2-support-agent/api/app/services/rag_service.py
+   nano /path/to/bisq2-support-agent/api/app/services/simplified_rag_service.py
    ```
 
 2. Find the `cleanup` method (around line 285) and modify it to check if the vectorstore has the persist method before calling it:

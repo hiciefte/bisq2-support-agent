@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # OpenAI settings
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_MODEL: str = "o3-mini"
+    OPENAI_MODEL: str = "gpt-4o-mini"
     MAX_TOKENS: int = 4096
 
     # xAI settings
