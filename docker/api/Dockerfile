@@ -1,5 +1,5 @@
 # --- Builder Stage ---
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 # --- Development Stage ---
-FROM python:3.11-slim as development
+FROM python:3.11-slim AS development
 
 # Install build dependencies and tools for development
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -49,7 +49,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 
 
 # --- Final Stage ---
-FROM python:3.11-slim as final
+FROM python:3.11-slim AS final
 
 # Install curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
