@@ -158,6 +158,31 @@ The project includes Prometheus and Grafana for monitoring.
 
 For details on securing these services, see the [Monitoring Security Guide](docs/monitoring-security.md).
 
+## Development
+
+### Updating Python Dependencies
+
+When you need to update Python dependencies or if GitHub Actions fails with "requirements.txt is not up to date":
+
+**❌ Don't do this (creates platform-specific dependencies):**
+```bash
+pip-compile api/requirements.in -o api/requirements.txt
+```
+
+**✅ Do this instead (creates cross-platform compatible dependencies):**
+```bash
+# Use Docker to generate requirements.txt in the same Linux environment as CI
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+```
+
+This ensures the generated `requirements.txt` is compatible with both your local development environment and the Linux-based GitHub Actions CI environment.
+
+### Adding New Dependencies
+
+1. Add the package to `api/requirements.in`
+2. Regenerate `requirements.txt` using the Docker command above
+3. Restart the API service: `./run-local.sh` or restart containers manually
+
 ## Troubleshooting
 
 See the [troubleshooting guide](docs/troubleshooting.md) for solutions to common problems.
