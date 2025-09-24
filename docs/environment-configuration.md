@@ -35,7 +35,7 @@ These variables configure the application services running inside Docker contain
     *   Description: (Required) Your API key from OpenAI, used for the primary RAG and embedding models.
 *   **`OPENAI_MODEL`**
     *   Description: The OpenAI model ID to use for generating chat responses.
-    *   Default: `o3-mini`
+  *   Default: `gpt-4o-mini`
 *   **`OPENAI_EMBEDDING_MODEL`**
     *   Description: The OpenAI model ID to use for creating text embeddings.
     *   Default: `text-embedding-3-small`

@@ -3,36 +3,48 @@
 # Exit on error
 set -e
 
-# Security Notice
-echo "SECURITY NOTICE: This script contains deployment configuration for the Bisq 2 Support Agent."
-echo "While this script is designed to be secure, it's recommended to review it before execution."
-echo "Consider using environment variables for sensitive information in production environments."
-echo ""
+# --- Source Environment Configuration --- #
+ENV_FILE="/etc/bisq-support/deploy.env"
+if [ -f "$ENV_FILE" ]; then
+    echo "Sourcing environment variables from $ENV_FILE..."
+    # shellcheck disable=SC1090,SC1091
+    source "$ENV_FILE"
+fi
+# --- End Source Environment Configuration --- #
 
-# Configuration - Use environment variables
-REPOSITORY_URL=${BISQ_SUPPORT_REPO_URL}
-INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR}
+# Define installation directory, user, and other constants
+INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}
 DOCKER_DIR="$INSTALL_DIR/docker"
-SECRETS_DIR=${BISQ_SUPPORT_SECRETS_DIR}
-LOG_DIR=${BISQ_SUPPORT_LOG_DIR}
-SSH_KEY_PATH=${BISQ_SUPPORT_SSH_KEY_PATH}
+COMPOSE_FILE="docker-compose.yml"
+APP_USER="bisq-support"
+APP_GROUP="bisq-support"
+APP_UID=1001
+APP_GID=1001
 
-# Validate required environment variables
-if [ -z "$REPOSITORY_URL" ] || [ -z "$INSTALL_DIR" ]; then
-    echo -e "${RED}Error: Required environment variables are not set${NC}"
-    echo -e "${RED}Please set the following environment variables:${NC}"
-    echo -e "${RED}  BISQ_SUPPORT_REPO_URL - URL of the Bisq Support Agent repository${NC}"
-    echo -e "${RED}  BISQ_SUPPORT_INSTALL_DIR - Installation directory for Bisq Support Agent${NC}"
-    echo -e "${RED}  BISQ_SUPPORT_SECRETS_DIR - Directory for secrets (optional)${NC}"
-    echo -e "${RED}  BISQ_SUPPORT_LOG_DIR - Directory for logs (optional)${NC}"
-    echo -e "${RED}  BISQ_SUPPORT_SSH_KEY_PATH - Path to SSH key for GitHub authentication (optional)${NC}"
-    exit 1
+# --- Create Application User and Group --- #
+echo "--- Ensuring application user and group ($APP_USER:$APP_GROUP) exist... ---"
+if ! getent group "$APP_GROUP" >/dev/null; then
+    echo "Creating group '$APP_GROUP' with GID $APP_GID..."
+    groupadd -r -g "$APP_GID" "$APP_GROUP"
+else
+    echo "Group '$APP_GROUP' already exists."
 fi
 
-# Set default values for optional variables if not provided
-SECRETS_DIR=${SECRETS_DIR:-"$INSTALL_DIR/secrets"}
-LOG_DIR=${LOG_DIR:-"$INSTALL_DIR/logs"}
-SSH_KEY_PATH=${SSH_KEY_PATH:-"$HOME/.ssh/bisq2_support_agent"}
+if ! id -u "$APP_USER" >/dev/null 2>&1; then
+    echo "Creating user '$APP_USER' with UID $APP_UID..."
+    useradd -r -u "$APP_UID" -g "$APP_GROUP" -s /bin/false -d "$INSTALL_DIR" "$APP_USER"
+else
+    echo "User '$APP_USER' already exists."
+fi
+# --- End User and Group Creation --- #
+
+# Security Notice
+echo "SECURITY NOTICE: This script contains deployment configuration for the Bisq 2 Support Agent."
+
+echo "======================================================"
+echo "Bisq Support Assistant - Deployment Script"
+echo "======================================================"
+echo "Installation Directory: $INSTALL_DIR"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -134,28 +146,6 @@ ufw allow 8000/tcp  # API
 ufw allow 3001/tcp  # Grafana
 # Bisq2 API is not exposed to the internet, only accessible within Docker network
 ufw --force enable
-
-# Create dedicated user for the application
-# Using a fixed UID/GID (e.g., 1001) makes it easier to map permissions
-# consistently between the host and Docker containers.
-# Ensure your Dockerfiles also create and use a user with this UID/GID.
-FIXED_UID=1001
-FIXED_GID=1001
-if ! id -u bisq-support &>/dev/null; then
-    echo -e "${BLUE}Creating bisq-support group and user with UID/GID $FIXED_UID/$FIXED_GID...${NC}"
-    groupadd -g $FIXED_GID bisq-support || echo "Group bisq-support already exists or error creating."
-    # Use -m to create the home directory if user is created
-    useradd -m -d /home/bisq-support -u $FIXED_UID -g $FIXED_GID -r -s /bin/false bisq-support
-else
-    echo -e "${GREEN}User bisq-support already exists.${NC}"
-fi
-
-# Ensure the home directory exists and has correct ownership
-# This needs to run even if the user already existed
-echo -e "${BLUE}Ensuring home directory /home/bisq-support exists and has correct permissions...${NC}"
-mkdir -p /home/bisq-support
-chown bisq-support:bisq-support /home/bisq-support
-chmod 750 /home/bisq-support # Standard home dir permissions
 
 # Setup directories with proper permissions
 echo -e "${BLUE}[4/6] Setting up directories and permissions...${NC}"
@@ -426,4 +416,80 @@ echo "3. Logs are available in $INSTALL_DIR/api/data/logs and via 'docker compos
 echo "4. Run './scripts/update.sh' to update the application"
 echo "5. Security updates are configured to run automatically"
 echo "6. Bisq 2 API logs are available with: docker logs bisq2-api"
-echo "======================================================"${NC} 
+echo "======================================================"${NC}
+
+# Define installation directory using sourced variable or default
+# Defaulting to /opt/bisq-support which aligns with deploy.sh
+INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}
+DOCKER_DIR="$INSTALL_DIR/docker"
+COMPOSE_FILE="docker-compose.yml"
+HEALTH_CHECK_RETRIES=30
+HEALTH_CHECK_INTERVAL=2
+
+# Define application user and group
+APP_USER="bisq-support"
+APP_GROUP="bisq-support"
+# Use a standard non-privileged UID/GID
+APP_UID=1001
+APP_GID=1001
+
+
+# Git configuration with defaults
+GIT_REMOTE=${GIT_REMOTE:-origin}
+GIT_BRANCH=${GIT_BRANCH:-main}
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "Consider running with sudo if you encounter permission errors.${NC}"
+fi
+
+# --- Create Application User and Group --- #
+echo -e "${BLUE}Ensuring application user and group ($APP_USER:$APP_GROUP) exist...${NC}"
+if ! getent group "$APP_GROUP" >/dev/null; then
+    echo "Creating group '$APP_GROUP' with GID $APP_GID..."
+    groupadd -r -g "$APP_GID" "$APP_GROUP"
+else
+    echo "Group '$APP_GROUP' already exists."
+fi
+
+if ! id -u "$APP_USER" >/dev/null 2>&1; then
+    echo "Creating user '$APP_USER' with UID $APP_UID..."
+    useradd -r -u "$APP_UID" -g "$APP_GROUP" -s /bin/false -d "$INSTALL_DIR" "$APP_USER"
+else
+    echo "User '$APP_USER' already exists."
+fi
+# --- End User and Group Creation --- #
+
+# Go to installation directory
+cd "$INSTALL_DIR" || {
+    echo "Error: Failed to change to installation directory: $INSTALL_DIR"
+    exit 1
+}
+
+echo -e "${BLUE}Creating required data directories...${NC}"
+mkdir -p "$INSTALL_DIR/api/data/wiki" "$INSTALL_DIR/api/data/vectorstore" "$INSTALL_DIR/api/data/feedback" "$INSTALL_DIR/api/data/logs"
+mkdir -p "$INSTALL_DIR/docker/logs/nginx"
+mkdir -p "$INSTALL_DIR/runtime_secrets"
+mkdir -p "$INSTALL_DIR/failed_updates"
+
+# Set ownership of the data directories to the application user
+echo "Setting ownership of data directories to $APP_USER:$APP_GROUP..."
+chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/api/data"
+chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/docker/logs"
+chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/runtime_secrets"
+chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/failed_updates"
+
+# --- Docker Operations --- #
+# Navigate to docker directory
+cd "$DOCKER_DIR" || {
+    echo "Error: Failed to change to Docker directory: $DOCKER_DIR"
+    exit 1
+}
+
+# Export UID and GID for Docker Compose build arguments
+export APP_UID
+export APP_GID
+
+# Stop any existing containers before building/starting
+echo -e "${BLUE}Stopping any old containers...${NC}"
+docker compose -f "$COMPOSE_FILE" down

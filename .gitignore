@@ -74,6 +74,9 @@ api/data/vectorstore/
 *.sqlite3
 *.log
 
+# Ignore the raw, transient chat export file
+api/data/support_chat_export.csv
+
 # Misc
 Thumbs.db
 *.bak

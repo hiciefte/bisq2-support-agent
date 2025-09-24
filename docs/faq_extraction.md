@@ -79,7 +79,7 @@ The FAQ extraction process relies on several environment variables:
 |----------|-------------|---------|
 | `BISQ_API_URL` | URL to the Bisq API | `http://host.docker.internal:8090` |
 | `OPENAI_API_KEY` | API key for OpenAI | - |
-| `OPENAI_MODEL` | OpenAI model to use | `o3-mini` |
+| `OPENAI_MODEL` | OpenAI model to use | `gpt-4o-mini` |
 | `DATA_DIR` | Directory for storing data files | - |
 
 ### File Paths

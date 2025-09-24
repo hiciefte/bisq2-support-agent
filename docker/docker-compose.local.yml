@@ -10,44 +10,41 @@ services:
     image: bisq2-api
 
   api:
-    build:
-      context: ..
-      dockerfile: docker/api/Dockerfile
     volumes:
-      - ../api/app:/app/app # Mount only the app directory for development
-      - ../api/data:/app/data # Mount the entire data directory
+      # Mount the application code for hot-reloading
+      - ../api/app:/app/app
+      # Mount the data separately so its changes don't trigger reloads
+      - ../api/data:/data
     environment:
-      # Only Docker-specific overrides here
-      - ENVIRONMENT=development # Environment-specific setting
+      - ENVIRONMENT=development
       - BISQ_API_URL=http://host.docker.internal:8090
-      - DATA_DIR=/app/data # Set the data directory path
+      - DATA_DIR=/data # Point to the non-reloaded data directory
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
     ports:
       - "8000:8000"
-    platform: linux/arm64
-    networks:
-      - bisq-support-network
+    healthcheck:
+      # Extend the startup period to allow for slow initial setup (e.g., embedding downloads)
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
 
   web:
     build:
       context: ..
       dockerfile: docker/web/Dockerfile.dev
-      args:
-        - BUILD_ENV=development
+    command: ["npm", "run", "dev"]
     volumes:
       - ../web:/app
-      - /app/node_modules
-      - /app/.next
-    expose:
-      - "3000"
+      - web_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
     environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=development
-      - WATCHPACK_POLLING=true
       - NEXT_TELEMETRY_DISABLED=1
-    command: npm run dev
-    networks:
-      - bisq-support-network
-    depends_on:
-      - api
+      - CHOKIDAR_USEPOLLING=true
 
 networks:
   bisq-support-network:
