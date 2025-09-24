@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install pip-tools for requirements management
-RUN pip install --no-cache-dir pip-tools
+RUN pip install --no-cache-dir pip-tools==7.5.0
 
 # Copy dependency files
 COPY api/requirements.in /app/api/
@@ -62,7 +62,7 @@ ARG APP_GID=1001
 
 # Create a non-root user
 RUN groupadd -g "${APP_GID}" bisq-support && \
-    useradd -u "${APP_UID}" -g bisq-support -s /bin/false -m bisq-support
+    useradd -l -u "${APP_UID}" -g bisq-support -s /bin/false -m bisq-support
 
 # Set up work directory
 WORKDIR /app

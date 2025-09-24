@@ -786,7 +786,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         return faqs
 
-    def extract_faqs_with_openai(self, conversations_to_process: List[Dict]) -> List[Dict]:
+    def extract_faqs_with_openai(
+        self, conversations_to_process: List[Dict]
+    ) -> List[Dict]:
         """Extract FAQs from conversations using OpenAI.
 
         Args:
@@ -803,11 +805,14 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             logger.info("No new conversations provided to process for OpenAI.")
             return []
 
-        logger.info(f"Extracting FAQs from {len(conversations_to_process)} conversations using OpenAI...")
+        logger.info(
+            f"Extracting FAQs from {len(conversations_to_process)} conversations using OpenAI..."
+        )
 
         # Prepare conversations for the prompt
         formatted_convs = [
-            self._format_conversation_for_prompt(conv) for conv in conversations_to_process
+            self._format_conversation_for_prompt(conv)
+            for conv in conversations_to_process
         ]
 
         # Split conversations into batches to avoid token limits
