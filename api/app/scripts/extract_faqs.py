@@ -84,11 +84,7 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             # Handle force reprocessing by temporarily clearing the processed conversation IDs
             if force_reprocess:
                 logger.info("Force reprocessing all conversations")
-                # Load and clear processed conversation IDs
-                processed_conv_ids = faq_service.load_processed_conv_ids()
-                processed_conv_ids.clear()
-                # Save the empty set back to disk
-                faq_service.processed_conv_ids = processed_conv_ids
+                faq_service.processed_conv_ids = set()
                 faq_service.save_processed_conv_ids()
 
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
