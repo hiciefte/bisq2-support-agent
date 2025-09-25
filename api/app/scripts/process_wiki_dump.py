@@ -90,6 +90,107 @@ class WikiDumpProcessor:
 
         return text.strip()
 
+    def categorize_content(self, title: str, content: str) -> str:
+        """Categorize content as bisq1, bisq2, or general based on title and content analysis."""
+        title_lower = title.lower()
+        content_lower = content.lower()
+
+        # Define Bisq 2 specific page titles and patterns
+        bisq2_titles = [
+            "bisq 2",
+            "bisq easy",
+            "bsq swaps",
+            "bisq 2 roles",
+            "automatic backup script",
+        ]
+
+        # Define Bisq 1 specific page titles and patterns
+        bisq1_titles = [
+            "arbitration",
+            "arbitrator",
+            "bsq",
+            "mediator",
+            "security deposits",
+            "mediation",
+            "dispute resolution",
+            "refund agent",
+            "burningman",
+            "burning man",
+            "dao",
+            "bisq 1",
+        ]
+
+        # Check for exact title matches first
+        for bisq2_title in bisq2_titles:
+            if bisq2_title in title_lower:
+                return "bisq2"
+
+        for bisq1_title in bisq1_titles:
+            if bisq1_title in title_lower:
+                return "bisq1"
+
+        # Content-based pattern analysis
+        bisq2_score = 0
+        bisq1_score = 0
+
+        # Bisq 2 indicators
+        bisq2_patterns = [
+            "bisq easy",
+            "reputation-based",
+            "no security deposit",
+            "trade protocols",
+            "multiple identities",
+            "multiple trade protocols",
+            "bisq 2",
+            "bisq2",
+            "600 usd",
+            "$600",
+            "novice bitcoin",
+            "reputation system",
+            "bonded roles",
+        ]
+
+        # Bisq 1 indicators
+        bisq1_patterns = [
+            "multisig",
+            "2-of-2 multisig",
+            "arbitration",
+            "security deposits",
+            "time-locked",
+            "delayed payout",
+            "v1.2",
+            "version 1.",
+            "mediation",
+            "dispute resolution",
+            "dao voting",
+            "bsq burning",
+            "refund agent",
+        ]
+
+        for pattern in bisq2_patterns:
+            if pattern in content_lower:
+                bisq2_score += content_lower.count(pattern)
+
+        for pattern in bisq1_patterns:
+            if pattern in content_lower:
+                bisq1_score += content_lower.count(pattern)
+
+        # Determine category based on scores
+        if bisq2_score > bisq1_score and bisq2_score > 0:
+            return "bisq2"
+        elif bisq1_score > bisq2_score and bisq1_score > 0:
+            return "bisq1"
+        else:
+            # Additional context clues for general content
+            if "bisq 2" in content_lower or "bisq2" in content_lower:
+                return "bisq2"
+            elif "bisq 1" in content_lower or any(
+                v in content_lower for v in ["v1.2", "version 1"]
+            ):
+                return "bisq1"
+            else:
+                return "general"
+
     def process_page(self, page: ET.Element) -> Optional[Dict]:
         """Process a single wiki page."""
         try:
@@ -115,16 +216,8 @@ class WikiDumpProcessor:
 
             content = text_elem.text
 
-            # Extract category from metadata comment
-            category = "general"  # Default category
-            match = re.search(r"<!-- BISQ VERSION: (.*?) -->", content)
-            if match:
-                extracted_category = match.group(1).strip().lower()
-                # Map to the keys used in the context dictionary
-                if extracted_category == "bisq1":
-                    category = "bisq1"
-                elif extracted_category == "bisq2":
-                    category = "bisq2"
+            # Use enhanced categorization logic
+            category = self.categorize_content(title, content)
 
             # Clean the text
             clean_content = self.clean_text(content)
@@ -137,7 +230,7 @@ class WikiDumpProcessor:
             # Create page entry
             entry = {"title": title, "content": clean_content, "category": category}
 
-            logger.debug(f"Processed page: {title} (category: {entry['category']})")
+            logger.info(f"Processed page: {title} (category: {entry['category']})")
             return entry
 
         except Exception as e:

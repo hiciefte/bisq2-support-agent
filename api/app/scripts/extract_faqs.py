@@ -75,16 +75,18 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             # Initialize the FAQ Service
             faq_service = FAQService(settings)
 
-            # Clear processed conversation IDs if force_reprocess is True
-            if force_reprocess:
-                logger.info("Force reprocessing all conversations")
-                faq_service.processed_conv_ids.clear()
-
             # Run the extraction process using the service
             if retry_count > 0:
                 logger.info(f"Retry attempt {retry_count}/{MAX_RETRIES}...")
 
             logger.info("Starting FAQ extraction process...")
+
+            # Handle force reprocessing by temporarily clearing the processed conversation IDs
+            if force_reprocess:
+                logger.info("Force reprocessing all conversations")
+                faq_service.processed_conv_ids = set()
+                faq_service.save_processed_conv_ids()
+
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
 
             logger.info(
