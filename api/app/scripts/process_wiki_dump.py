@@ -97,14 +97,27 @@ class WikiDumpProcessor:
 
         # Define Bisq 2 specific page titles and patterns
         bisq2_titles = [
-            "bisq 2", "bisq easy", "bsq swaps", "bisq 2 roles", "automatic backup script"
+            "bisq 2",
+            "bisq easy",
+            "bsq swaps",
+            "bisq 2 roles",
+            "automatic backup script",
         ]
 
         # Define Bisq 1 specific page titles and patterns
         bisq1_titles = [
-            "arbitration", "arbitrator", "bsq", "mediator", "security deposits",
-            "mediation", "dispute resolution", "refund agent", "burningman",
-            "burning man", "dao", "bisq 1"
+            "arbitration",
+            "arbitrator",
+            "bsq",
+            "mediator",
+            "security deposits",
+            "mediation",
+            "dispute resolution",
+            "refund agent",
+            "burningman",
+            "burning man",
+            "dao",
+            "bisq 1",
         ]
 
         # Check for exact title matches first
@@ -122,16 +135,36 @@ class WikiDumpProcessor:
 
         # Bisq 2 indicators
         bisq2_patterns = [
-            "bisq easy", "reputation-based", "no security deposit", "trade protocols",
-            "multiple identities", "multiple trade protocols", "bisq 2", "bisq2",
-            "600 usd", "$600", "novice bitcoin", "reputation system", "bonded roles"
+            "bisq easy",
+            "reputation-based",
+            "no security deposit",
+            "trade protocols",
+            "multiple identities",
+            "multiple trade protocols",
+            "bisq 2",
+            "bisq2",
+            "600 usd",
+            "$600",
+            "novice bitcoin",
+            "reputation system",
+            "bonded roles",
         ]
 
         # Bisq 1 indicators
         bisq1_patterns = [
-            "multisig", "2-of-2 multisig", "arbitration", "security deposits",
-            "time-locked", "delayed payout", "v1.2", "version 1.", "mediation",
-            "dispute resolution", "dao voting", "bsq burning", "refund agent"
+            "multisig",
+            "2-of-2 multisig",
+            "arbitration",
+            "security deposits",
+            "time-locked",
+            "delayed payout",
+            "v1.2",
+            "version 1.",
+            "mediation",
+            "dispute resolution",
+            "dao voting",
+            "bsq burning",
+            "refund agent",
         ]
 
         for pattern in bisq2_patterns:
@@ -151,7 +184,9 @@ class WikiDumpProcessor:
             # Additional context clues for general content
             if "bisq 2" in content_lower or "bisq2" in content_lower:
                 return "bisq2"
-            elif "bisq 1" in content_lower or any(v in content_lower for v in ["v1.2", "version 1"]):
+            elif "bisq 1" in content_lower or any(
+                v in content_lower for v in ["v1.2", "version 1"]
+            ):
                 return "bisq1"
             else:
                 return "general"

@@ -69,14 +69,19 @@ class FAQService:
 
             # Initialize OpenAI client for FAQ extraction
             self.openai_client = None
-            if hasattr(self.settings, 'OPENAI_API_KEY') and self.settings.OPENAI_API_KEY:
+            if (
+                hasattr(self.settings, "OPENAI_API_KEY")
+                and self.settings.OPENAI_API_KEY
+            ):
                 try:
                     self.openai_client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
                     logger.info("OpenAI client initialized for FAQ extraction")
                 except Exception as e:
                     logger.warning(f"Failed to initialize OpenAI client: {e}")
             else:
-                logger.warning("OPENAI_API_KEY not provided. FAQ extraction will not work.")
+                logger.warning(
+                    "OPENAI_API_KEY not provided. FAQ extraction will not work."
+                )
 
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
