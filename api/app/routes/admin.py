@@ -12,6 +12,12 @@ from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATE
 from app.core.config import get_settings
 from app.core.security import verify_admin_access
 from app.models.faq import FAQItem, FAQIdentifiedItem, FAQListResponse
+from app.models.feedback import (
+    FeedbackFilterRequest,
+    FeedbackListResponse,
+    FeedbackStatsResponse,
+    CreateFAQFromFeedbackRequest,
+)
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 
@@ -277,12 +283,224 @@ async def get_metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@router.get("/feedback/list", response_model=FeedbackListResponse)
+async def get_feedback_list(
+    rating: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    issues: str = None,  # Comma-separated list
+    source_types: str = None,  # Comma-separated list
+    search_text: str = None,
+    needs_faq: bool = None,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "newest",
+):
+    """Get filtered and paginated feedback list for admin interface.
+
+    This endpoint provides comprehensive feedback management capabilities:
+    - Filter by rating (positive/negative/all)
+    - Filter by date range
+    - Filter by issue types
+    - Filter by source types
+    - Text search across questions/answers/explanations
+    - Filter for feedback needing FAQ creation
+    - Pagination and sorting support
+
+    Authentication required via API key.
+    """
+    logger.info(
+        f"Admin request to fetch feedback list with filters: rating={rating}, page={page}"
+    )
+
+    # Parse comma-separated lists
+    issues_list = [issue.strip() for issue in issues.split(",")] if issues else None
+    source_types_list = (
+        [st.strip() for st in source_types.split(",")] if source_types else None
+    )
+
+    # Create filter request
+    filters = FeedbackFilterRequest(
+        rating=rating,
+        date_from=date_from,
+        date_to=date_to,
+        issues=issues_list,
+        source_types=source_types_list,
+        search_text=search_text,
+        needs_faq=needs_faq,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+    )
+
+    try:
+        result = feedback_service.get_feedback_with_filters(filters)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback list: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback list."
+        ) from e
+
+
+@router.get("/feedback/stats", response_model=FeedbackStatsResponse)
+async def get_feedback_stats_enhanced():
+    """Get enhanced feedback statistics for admin dashboard.
+
+    Provides comprehensive analytics including:
+    - Basic counts and rates
+    - Common issues breakdown
+    - Source effectiveness metrics
+    - Recent activity trends
+    - Items needing FAQ creation
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch enhanced feedback statistics")
+
+    try:
+        stats = feedback_service.get_feedback_stats_enhanced()
+        return FeedbackStatsResponse(**stats)
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback stats: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback statistics."
+        ) from e
+
+
+@router.get("/feedback/needs-faq")
+async def get_feedback_needing_faq():
+    """Get negative feedback that would benefit from FAQ creation.
+
+    Returns feedback items that:
+    - Have negative ratings
+    - Include explanations from users about why the answer was unhelpful
+    - Have responses indicating the LLM had no source information
+
+    This endpoint is specifically designed to help support agents identify
+    knowledge gaps that should be addressed with new FAQs.
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch feedback needing FAQ creation")
+
+    try:
+        feedback_items = feedback_service.get_negative_feedback_for_faq_creation()
+        return {"feedback_items": feedback_items, "count": len(feedback_items)}
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch feedback needing FAQ creation: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback data."
+        ) from e
+
+
+@router.post("/feedback/create-faq", response_model=FAQIdentifiedItem, status_code=201)
+async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
+    """Create a new FAQ based on feedback.
+
+    This endpoint allows support agents to convert negative feedback into
+    new FAQ entries, helping to address knowledge gaps and improve future
+    responses for similar questions.
+
+    Authentication required via API key.
+    """
+    logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
+
+    try:
+        # Create the FAQ item
+        faq_item = FAQItem(
+            question=request.suggested_question or "Generated from feedback",
+            answer=request.suggested_answer,
+            category=request.category,
+            source="Feedback",  # Mark as created from feedback
+        )
+
+        # Add the FAQ using the FAQ service
+        new_faq = faq_service.add_faq(faq_item)
+
+        # TODO: Optionally update the original feedback to mark it as processed
+        # This could be useful for tracking which feedback has been addressed
+
+        logger.info(
+            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id}"
+        )
+        return new_faq
+
+    except Exception as e:
+        logger.error(
+            f"Failed to create FAQ from feedback {request.message_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to create FAQ from feedback."
+        ) from e
+
+
+@router.get("/feedback/by-issues")
+async def get_feedback_by_issues():
+    """Get feedback grouped by issue types for pattern analysis.
+
+    This endpoint helps support agents understand common problems
+    by grouping negative feedback by issue categories such as:
+    - too_verbose, too_technical, inaccurate, etc.
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch feedback grouped by issues")
+
+    try:
+        issues_dict = feedback_service.get_feedback_by_issues()
+
+        # Convert to a more API-friendly format
+        result = []
+        for issue, items in issues_dict.items():
+            result.append(
+                {
+                    "issue_type": issue,
+                    "count": len(items),
+                    "feedback_items": items[:5],  # Include first 5 examples
+                }
+            )
+
+        # Sort by count descending
+        result.sort(key=lambda x: x["count"], reverse=True)
+
+        return {"issues": result, "total_issues": len(result)}
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback by issues: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback by issues."
+        ) from e
+
+
 @router.get("/faqs", response_model=FAQListResponse)
-async def get_all_faqs_for_admin_route():
-    """Get all FAQs for the admin interface."""
-    logger.info("Admin request to fetch all FAQs")
-    faqs = faq_service.get_all_faqs()
-    return FAQListResponse(faqs=faqs)
+async def get_all_faqs_for_admin_route(
+    page: int = 1,
+    page_size: int = 10,
+    search_text: str = None,
+    categories: str = None,  # Comma-separated list
+    source: str = None,
+):
+    """Get FAQs for the admin interface with pagination and filtering support."""
+    logger.info(f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}")
+
+    try:
+        # Parse comma-separated categories
+        categories_list = [cat.strip() for cat in categories.split(",")] if categories else None
+
+        result = faq_service.get_faqs_paginated(
+            page=page,
+            page_size=page_size,
+            search_text=search_text,
+            categories=categories_list,
+            source=source
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch FAQs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch FAQs.") from e
 
 
 @router.post("/faqs", response_model=FAQIdentifiedItem, status_code=201)
