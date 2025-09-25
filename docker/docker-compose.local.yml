@@ -17,7 +17,7 @@ services:
       - ../api/data:/data
     environment:
       - ENVIRONMENT=development
-      - BISQ_API_URL=http://host.docker.internal:8090
+      - BISQ_API_URL=http://bisq2-api:8090
       - DATA_DIR=/data # Point to the non-reloaded data directory
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
     ports:
