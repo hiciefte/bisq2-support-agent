@@ -25,6 +25,9 @@ import portalocker
 from fastapi import Request
 from langchain_core.documents import Document
 
+# Import OpenAI client
+from openai import OpenAI
+
 # Import Pydantic models
 from app.models.faq import FAQItem, FAQIdentifiedItem
 
@@ -63,6 +66,25 @@ class FAQService:
             )
             self._ensure_faq_file_exists()
             self.source_weights = {"faq": 1.2}  # Default weight
+
+            # Initialize OpenAI client for FAQ extraction
+            self.openai_client = None
+            if (
+                hasattr(self.settings, "OPENAI_API_KEY")
+                and self.settings.OPENAI_API_KEY
+            ):
+                try:
+                    self.openai_client = OpenAI(
+                        api_key=self.settings.OPENAI_API_KEY, timeout=30.0
+                    )
+                    logger.info("OpenAI client initialized for FAQ extraction")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to initialize OpenAI client: {e}")
+            else:
+                logger.warning(
+                    "OPENAI_API_KEY not provided. FAQ extraction will not work."
+                )
+
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
 
@@ -714,6 +736,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     model=self.settings.OPENAI_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     max_completion_tokens=2000,
+                    timeout=30.0,
                 )
                 return response.choices[0].message.content.strip()
 
