@@ -57,8 +57,8 @@ export default function ManageFaqsPage() {
         const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
         console.error(errorText);
         setError(errorText);
-        if (response.status === 401) {
-          setLoginError('Invalid API Key.');
+        if (response.status === 401 || response.status === 403) {
+          setLoginError('Invalid API Key or Access Forbidden.');
           setApiKey(null);
           localStorage.removeItem('admin_api_key');
         }
