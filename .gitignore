@@ -99,3 +99,7 @@ secrets/
 runtime_secrets/
 failed_updates/
 docker/prometheus/admin_key
+*.lock
+/api/data/feedback/*
+/docs/requirements/
+/.playwright-mcp/
