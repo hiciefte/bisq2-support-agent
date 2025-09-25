@@ -17,9 +17,19 @@ from app.models.feedback import (
     FeedbackListResponse,
     FeedbackStatsResponse,
     CreateFAQFromFeedbackRequest,
+    DashboardOverviewResponse,
 )
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.dashboard_service import DashboardService
+
+# Import chat metrics to ensure they're registered with Prometheus
+from app.routes.chat import (
+    QUERY_TOTAL,
+    QUERY_RESPONSE_TIME_HISTOGRAM,
+    CURRENT_RESPONSE_TIME,
+    QUERY_ERRORS,
+)
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -43,6 +53,9 @@ feedback_service = FeedbackService(settings=settings)
 
 # Create a singleton instance of FAQService
 faq_service = FAQService(settings=settings)
+
+# Create a singleton instance of DashboardService
+dashboard_service = DashboardService(settings=settings)
 
 # Controlled vocabulary for issue types to prevent high-cardinality
 KNOWN_ISSUE_TYPES = {
@@ -91,6 +104,17 @@ SOURCE_HELPFUL = Counter(
 )
 ISSUE_COUNT = Counter(
     "bisq_issue_count", "Count of specific issues in feedback", ["issue_type"]
+)
+
+# Dashboard-specific metrics
+FAQ_CREATION_TOTAL = Counter(
+    "bisq_faq_creation_total", "Total number of FAQs created from feedback"
+)
+SYSTEM_UPTIME = Gauge(
+    "bisq_system_uptime_seconds", "System uptime in seconds"
+)
+DASHBOARD_REQUESTS = Counter(
+    "bisq_dashboard_requests_total", "Total requests to dashboard endpoints"
 )
 
 
@@ -423,6 +447,9 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         # TODO: Optionally update the original feedback to mark it as processed
         # This could be useful for tracking which feedback has been addressed
 
+        # Record FAQ creation metric
+        FAQ_CREATION_TOTAL.inc()
+
         logger.info(
             f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id}"
         )
@@ -533,3 +560,31 @@ async def delete_existing_faq_route(faq_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="FAQ not found")
     return Response(status_code=204)
+
+
+@router.get("/dashboard/overview", response_model=DashboardOverviewResponse)
+async def get_dashboard_overview():
+    """Get comprehensive dashboard overview with metrics and analytics.
+
+    This endpoint provides a complete dashboard overview combining:
+    - Real-time feedback statistics and trends
+    - Average response time metrics
+    - Feedback items that would benefit from FAQ creation
+    - System uptime and query statistics
+    - Historical trend data for performance monitoring
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch dashboard overview")
+
+    # Track dashboard requests
+    DASHBOARD_REQUESTS.inc()
+
+    try:
+        overview_data = await dashboard_service.get_dashboard_overview()
+        return DashboardOverviewResponse(**overview_data)
+    except Exception as e:
+        logger.error(f"Failed to fetch dashboard overview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch dashboard overview."
+        ) from e
