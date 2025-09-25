@@ -93,6 +93,7 @@ grafana/data/
 .cursor/
 docs/llm/
 .python-version
+.claude/
 bisq2_dump.xml
 secrets/
 runtime_secrets/

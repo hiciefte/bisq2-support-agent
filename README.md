@@ -60,6 +60,11 @@ Once deployed, the production application should be managed using the following 
 
 These scripts are location-aware and source their configuration from a production environment file (`/etc/bisq-support/deploy.env`). They should not be used for local development.
 
+**Note**: If you encounter "Permission denied" errors when running scripts, ensure they are executable:
+```bash
+chmod +x /opt/bisq-support/scripts/*.sh
+```
+
 ### Updating the Application
 
 The `scripts/update.sh` script handles pulling the latest changes from the Git repository, rebuilding Docker images, and restarting the services. It includes a rollback mechanism in case of failure.
