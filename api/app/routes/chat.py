@@ -1,16 +1,35 @@
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from prometheus_client import Counter, Gauge, Histogram
 
 from app.core.config import get_settings, Settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Prometheus metrics for chat/query tracking
+QUERY_TOTAL = Counter("bisq_queries_total", "Total number of queries processed")
+QUERY_RESPONSE_TIME_HISTOGRAM = Histogram(
+    "bisq_query_response_time_seconds",
+    "Response time distribution for chat queries",
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
+)
+CURRENT_RESPONSE_TIME = Gauge(
+    "bisq_current_response_time_seconds",
+    "Latest query response time"
+)
+QUERY_ERRORS = Counter(
+    "bisq_query_errors_total",
+    "Total number of query errors",
+    ["error_type"]
+)
 
 
 class ChatMessage(BaseModel):
@@ -48,6 +67,9 @@ async def query(
     logger.info(f"Request content type: {request.headers.get('content-type')}")
     logger.info(f"Request method: {request.method}")
 
+    # Start timing for Prometheus metrics
+    start_time = time.time()
+
     try:
         # Get RAG service from app state
         rag_service = request.app.state.rag_service
@@ -83,6 +105,7 @@ async def query(
             logger.error(
                 f"Model fields: {QueryRequest.model_json_schema()['properties']}"
             )
+            QUERY_ERRORS.labels(error_type="validation").inc()
             raise HTTPException(status_code=422, detail=str(e)) from e
 
         # Get response from simplified RAG service
@@ -116,10 +139,17 @@ async def query(
             response_time=result["response_time"],
         )
 
+        # Record metrics to Prometheus
+        total_time = time.time() - start_time
+        QUERY_TOTAL.inc()
+        QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
+        CURRENT_RESPONSE_TIME.set(total_time)
+
         return JSONResponse(content=response_data.model_dump())
     except Exception as e:
         logger.error(f"Unexpected error processing request: {str(e)}")
         logger.error("Full error details:", exc_info=True)
+        QUERY_ERRORS.labels(error_type="internal_error").inc()
         return JSONResponse(
             status_code=500, content={"detail": "Internal server error"}
         )
