@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -143,6 +144,15 @@ export default function ManageFeedbackPage() {
 
   const router = useRouter();
 
+  // Check if there are any active filters
+  const hasActiveFilters = filters.search_text ||
+    filters.rating !== 'all' ||
+    filters.date_from ||
+    filters.date_to ||
+    filters.issues.length > 0 ||
+    filters.source_types.length > 0 ||
+    filters.needs_faq;
+
   // Common issue types for filtering
   const ISSUE_TYPES = [
     'too_verbose', 'too_technical', 'not_specific', 'inaccurate',
@@ -240,12 +250,16 @@ export default function ManageFeedbackPage() {
       setApiKey(key);
       setLoginError('');
       fetchData(key);
+      // Notify layout of auth change
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
     }
   };
 
   const handleLogout = () => {
     localStorage.removeItem('admin_api_key');
     setApiKey(null);
+    // Notify layout of auth change
+    window.dispatchEvent(new CustomEvent('admin-auth-changed'));
     setFeedbackData(null);
     setStats(null);
     router.push('/admin/manage-feedback');
@@ -408,78 +422,45 @@ export default function ManageFeedbackPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background dark">
-      <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
+    <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
         {/* Header */}
-        <div className="bg-card rounded-lg shadow-sm border border-border p-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-card-foreground">Feedback Management</h1>
-              <p className="text-muted-foreground mt-1">Monitor and analyze user feedback for the support assistant</p>
-            </div>
-            <div className="flex gap-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Feedback Management</h1>
+            <p className="text-muted-foreground">Monitor and analyze user feedback for the support assistant</p>
+          </div>
+          <div className="flex gap-2">
               <Button onClick={() => setShowFilters(!showFilters)} variant="outline" size="sm" className="border-border hover:border-primary">
                 <Filter className="mr-2 h-4 w-4" />
                 Filters
+                {hasActiveFilters && (
+                  <Badge variant="secondary" className="ml-2 px-1.5 py-0.5 text-xs">
+                    {[
+                      filters.search_text && 'text',
+                      filters.rating !== 'all' && 'rating',
+                      filters.date_from && 'date',
+                      filters.issues.length && `${filters.issues.length} issue${filters.issues.length > 1 ? 's' : ''}`,
+                      filters.source_types.length && `${filters.source_types.length} source${filters.source_types.length > 1 ? 's' : ''}`,
+                      filters.needs_faq && 'needs FAQ'
+                    ].filter(Boolean).length}
+                  </Badge>
+                )}
               </Button>
               <Button onClick={exportFeedback} variant="outline" size="sm" className="border-border hover:border-primary">
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </Button>
-              <Button onClick={handleLogout} variant="ghost" size="sm" className="text-muted-foreground hover:text-card-foreground hover:bg-accent">Logout</Button>
             </div>
-          </div>
         </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-          <strong className="font-bold">Error: </strong>
-          <span className="block sm:inline">{error}</span>
-        </div>
-      )}
-
-        {/* Stats Cards */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card className="bg-card border border-border shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Feedback</CardTitle>
-                <MessageCircle className="h-5 w-5 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-card-foreground">{stats.total_feedback}</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-card border border-border shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Helpful Rate</CardTitle>
-                <TrendingUp className="h-5 w-5 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-card-foreground">{Math.round(stats.helpful_rate * 100)}%</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-card border border-border shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Negative Feedback</CardTitle>
-                <ThumbsDown className="h-5 w-5 text-red-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-card-foreground">{stats.negative_count}</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-card border border-border shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Needs FAQ</CardTitle>
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-card-foreground">{stats.needs_faq_count}</div>
-              </CardContent>
-            </Card>
+        {/* Error Display */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{error}</span>
           </div>
         )}
+
 
         {/* Tabs */}
         <div className="bg-card rounded-lg shadow-sm border border-border">
@@ -917,7 +898,6 @@ export default function ManageFeedbackPage() {
           </form>
         </DialogContent>
       </Dialog>
-      </div>
     </div>
   );
 }

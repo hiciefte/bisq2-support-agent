@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search } from 'lucide-react';
+import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
@@ -106,8 +106,8 @@ export default function ManageFaqsPage() {
 
         // Extract unique categories and sources for filter options
         if (data.faqs) {
-          const categories = [...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean))];
-          const sources = [...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean))];
+          const categories = [...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean))] as string[];
+          const sources = [...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean))] as string[];
           setAvailableCategories(categories);
           setAvailableSources(sources);
         }
@@ -138,6 +138,8 @@ export default function ManageFaqsPage() {
       setApiKey(key);
       setLoginError('');
       fetchFaqs(key);
+      // Notify layout of auth change
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
     }
   };
   
@@ -145,6 +147,8 @@ export default function ManageFaqsPage() {
     localStorage.removeItem('admin_api_key');
     setApiKey(null);
     setFaqData(null);
+    // Notify layout of auth change
+    window.dispatchEvent(new CustomEvent('admin-auth-changed'));
     router.push('/admin/manage-faqs');
   };
 
@@ -287,16 +291,14 @@ export default function ManageFaqsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background dark">
-      <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
+    <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
         {/* Header */}
-        <div className="bg-card rounded-lg shadow-sm border border-border p-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-card-foreground">FAQ Management</h1>
-              <p className="text-muted-foreground mt-1">Create and manage frequently asked questions for the support system</p>
-            </div>
-            <div className="flex gap-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">FAQ Management</h1>
+            <p className="text-muted-foreground">Create and manage frequently asked questions for the support system</p>
+          </div>
+          <div className="flex gap-2">
               <Button
                 onClick={() => setShowFilters(!showFilters)}
                 variant="outline"
@@ -311,9 +313,7 @@ export default function ManageFaqsPage() {
                   </Badge>
                 )}
               </Button>
-              <Button onClick={handleLogout} variant="ghost" size="sm" className="text-muted-foreground hover:text-card-foreground hover:bg-accent">Logout</Button>
             </div>
-          </div>
         </div>
 
         {/* Error Display */}
@@ -401,8 +401,9 @@ export default function ManageFaqsPage() {
 
               {/* Filter Actions */}
               <div className="flex justify-between pt-4 border-t">
-                <Button variant="outline" onClick={clearAllFilters} disabled={!hasActiveFilters}>
-                  Clear All
+                <Button variant="outline" onClick={clearAllFilters} disabled={!hasActiveFilters} size="sm">
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Reset Filters
                 </Button>
                 <div className="text-sm text-muted-foreground">
                   {hasActiveFilters && (
@@ -590,7 +591,6 @@ export default function ManageFaqsPage() {
           )}
         </CardContent>
         </Card>
-      </div>
     </div>
   );
 } 
