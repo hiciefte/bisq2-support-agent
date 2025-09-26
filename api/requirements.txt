@@ -28,7 +28,7 @@ attrs==25.3.0
     #   referencing
 backoff==2.2.1
     # via posthog
-bcrypt==4.3.0
+bcrypt==5.0.0
     # via chromadb
 beautifulsoup4==4.13.5
     # via -r api/requirements.in
@@ -161,7 +161,7 @@ langchain==0.3.27
     #   langchain-community
 langchain-chroma==0.2.6
     # via -r api/requirements.in
-langchain-community==0.3.29
+langchain-community==0.3.30
     # via -r api/requirements.in
 langchain-core==0.3.76
     # via
@@ -240,7 +240,7 @@ oauthlib==3.3.1
     # via
     #   kubernetes
     #   requests-oauthlib
-onnxruntime==1.22.1
+onnxruntime==1.23.0
     # via chromadb
 openai==1.109.1
     # via
@@ -382,7 +382,7 @@ pytokens==0.1.10
     # via black
 pytz==2025.2
     # via pandas
-pyyaml==6.0.2
+pyyaml==6.0.3
     # via
     #   chromadb
     #   huggingface-hub

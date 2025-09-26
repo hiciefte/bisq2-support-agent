@@ -4,8 +4,10 @@ Security utilities for the Bisq Support API.
 
 import logging
 import secrets
+from datetime import datetime, timedelta
+from typing import Optional
 
-from fastapi import Request, HTTPException, status
+from fastapi import Request, HTTPException, status, Response
 
 from app.core.config import get_settings
 
@@ -19,8 +21,37 @@ MIN_API_KEY_LENGTH = 24
 logger = logging.getLogger(__name__)
 
 
+def verify_admin_key(provided_key: str) -> bool:
+    """Verify that the provided API key is valid.
+
+    Args:
+        provided_key: The API key to verify
+
+    Returns:
+        bool: True if the key is valid
+
+    Raises:
+        HTTPException: If admin access is not configured
+    """
+    admin_api_key = settings.ADMIN_API_KEY
+
+    if not admin_api_key:
+        logger.warning("Admin access attempted but ADMIN_API_KEY is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin access not configured",
+        )
+
+    if len(admin_api_key) < MIN_API_KEY_LENGTH:
+        logger.warning(
+            f"ADMIN_API_KEY is configured with insecure length: {len(admin_api_key)} (min: {MIN_API_KEY_LENGTH})"
+        )
+
+    return secrets.compare_digest(provided_key, admin_api_key)
+
+
 def verify_admin_access(request: Request) -> bool:
-    """Verify that the request has admin access.
+    """Verify that the request has admin access via cookie or header.
 
     Args:
         request: The FastAPI request object
@@ -31,23 +62,15 @@ def verify_admin_access(request: Request) -> bool:
     Raises:
         HTTPException: If access is denied with appropriate status code
     """
-    admin_api_key = settings.ADMIN_API_KEY
-
-    if not admin_api_key:
-        # If ADMIN_API_KEY is not set, deny all access to admin endpoints
-        logger.warning("Admin access attempted but ADMIN_API_KEY is not configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin access not configured",
+    # First, check for authentication cookie
+    auth_cookie = request.cookies.get("admin_authenticated")
+    if auth_cookie == "true":
+        logger.debug(
+            f"Admin access granted via cookie from {request.client.host if request.client else 'unknown'}"
         )
+        return True
 
-    if len(admin_api_key) < MIN_API_KEY_LENGTH:
-        # If ADMIN_API_KEY is too short, warn about insecure key
-        logger.warning(
-            f"ADMIN_API_KEY is configured with insecure length: {len(admin_api_key)} (min: {MIN_API_KEY_LENGTH})"
-        )
-
-    # Check for API key in different locations
+    # Fallback to API key in headers (for backward compatibility)
     provided_key = (
         request.headers.get("X-API-KEY")
         or request.query_params.get("api_key")
@@ -59,19 +82,17 @@ def verify_admin_access(request: Request) -> bool:
     )
 
     if provided_key:
-        if secrets.compare_digest(provided_key, admin_api_key):
-            # Key is correct
+        if verify_admin_key(provided_key):
             if len(provided_key) < MIN_API_KEY_LENGTH:
                 logger.warning(
                     f"Successful login with insecure admin key length: {len(provided_key)} chars"
                 )
             else:
                 logger.debug(
-                    f"Admin access granted from {request.client.host if request.client else 'unknown'}"
+                    f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
                 )
             return True
         else:
-            # Key is incorrect
             logger.warning(
                 f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}"
             )
@@ -80,12 +101,43 @@ def verify_admin_access(request: Request) -> bool:
                 detail="Invalid admin credentials",
             )
 
-    # No key was provided
+    # No authentication found
     logger.warning(
-        f"Missing admin API key from {request.client.host if request.client else 'unknown'}"
+        f"Missing admin authentication from {request.client.host if request.client else 'unknown'}"
     )
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required"
+    )
+
+
+def set_admin_cookie(response: Response) -> None:
+    """Set secure admin authentication cookie.
+
+    Args:
+        response: FastAPI response object to set cookie on
+    """
+    # Set secure HTTP-only cookie
+    response.set_cookie(
+        key="admin_authenticated",
+        value="true",
+        max_age=24 * 60 * 60,  # 24 hours
+        httponly=True,  # Prevents XSS access
+        secure=True,  # HTTPS only (disable for local dev)
+        samesite="strict",  # CSRF protection
+    )
+
+
+def clear_admin_cookie(response: Response) -> None:
+    """Clear admin authentication cookie.
+
+    Args:
+        response: FastAPI response object to clear cookie on
+    """
+    response.delete_cookie(
+        key="admin_authenticated",
+        httponly=True,
+        secure=True,
+        samesite="strict",
     )
 
 

@@ -181,6 +181,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(admin.router, tags=["Admin"])
+app.include_router(admin.auth_router, tags=["Admin Auth"])
 
 
 @app.get("/healthcheck")

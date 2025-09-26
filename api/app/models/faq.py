@@ -23,3 +23,7 @@ class FAQUpdateRequest(BaseModel):
 
 class FAQListResponse(BaseModel):
     faqs: List[FAQIdentifiedItem]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int

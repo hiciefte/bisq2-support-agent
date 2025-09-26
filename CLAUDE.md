@@ -123,6 +123,21 @@ This is a RAG-based support assistant with three main components:
 - **Volume Mounts**: Data persisted in Docker volumes for development
 - **RAG Updates**: Restart API service to rebuild vector store after content changes
 
+#### FAQ Management System
+- **Admin Interface**: Web-based FAQ management at `/admin/manage-faqs`
+- **Features**: Complete CRUD operations with pagination and comprehensive filtering
+- **Filtering Options**:
+  - Text search across questions and answers
+  - Category filtering with clickable badges
+  - Source filtering (Manual, Extracted, etc.)
+  - Combined filters with visual indicators
+- **Backend Implementation**:
+  - Pagination: `api/app/services/faq_service.py:get_faqs_paginated()`
+  - Filtering: `_apply_filters()` helper method supports text, category, and source filters
+  - API Endpoint: `/admin/faqs` with query parameters for pagination and filtering
+- **Frontend Components**: Uses shadcn/ui components (Badge, Select, Card) for modern UI
+- **Data Flow**: FAQ changes trigger automatic reindexing in the vector store for RAG system
+
 ### Monitoring
 - **Metrics**: Prometheus metrics exposed at `/metrics` endpoint
 - **Health Checks**: `/health` and `/healthcheck` endpoints
@@ -163,3 +178,4 @@ wrong salt parameter, causing all login attempts to fail.
 This commit corrects the salt parameter and adds unit tests to
 prevent regression.
 ```
+- As you navigate and work through the repository do not forget to update the CLAUDE.md file with valuable information that will help you increase your understanding of the codebase
