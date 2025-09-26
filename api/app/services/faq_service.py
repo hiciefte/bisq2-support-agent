@@ -143,13 +143,23 @@ class FAQService:
         """Get all FAQs with their stable IDs."""
         return self._read_all_faqs_with_ids()
 
-    def get_faqs_paginated(self, page: int = 1, page_size: int = 10, search_text: str = None, categories: List[str] = None, source: str = None):
+    def get_faqs_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        search_text: str = None,
+        categories: List[str] = None,
+        source: str = None,
+    ):
         """Get FAQs with pagination and filtering support."""
         from app.models.faq import FAQListResponse
         import math
 
         # Get all FAQs
         all_faqs = self._read_all_faqs_with_ids()
+
+        # Reverse order to show newest FAQs first (since they are appended to the file)
+        all_faqs = list(reversed(all_faqs))
 
         # Apply filters
         filtered_faqs = self._apply_filters(all_faqs, search_text, categories, source)
@@ -168,17 +178,23 @@ class FAQService:
         offset = (page - 1) * page_size
 
         # Get the page of FAQs
-        paginated_faqs = filtered_faqs[offset:offset + page_size]
+        paginated_faqs = filtered_faqs[offset : offset + page_size]
 
         return FAQListResponse(
             faqs=paginated_faqs,
             total_count=total_count,
             page=page,
             page_size=page_size,
-            total_pages=total_pages
+            total_pages=total_pages,
         )
 
-    def _apply_filters(self, faqs: List[FAQIdentifiedItem], search_text: str = None, categories: List[str] = None, source: str = None) -> List[FAQIdentifiedItem]:
+    def _apply_filters(
+        self,
+        faqs: List[FAQIdentifiedItem],
+        search_text: str = None,
+        categories: List[str] = None,
+        source: str = None,
+    ) -> List[FAQIdentifiedItem]:
         """Apply filters to FAQ list."""
         filtered_faqs = faqs
 
@@ -186,22 +202,24 @@ class FAQService:
         if search_text and search_text.strip():
             search_lower = search_text.lower().strip()
             filtered_faqs = [
-                faq for faq in filtered_faqs
-                if search_lower in faq.question.lower() or search_lower in faq.answer.lower()
+                faq
+                for faq in filtered_faqs
+                if search_lower in faq.question.lower()
+                or search_lower in faq.answer.lower()
             ]
 
         # Category filter
         if categories and len(categories) > 0:
             filtered_faqs = [
-                faq for faq in filtered_faqs
+                faq
+                for faq in filtered_faqs
                 if faq.category and faq.category in categories
             ]
 
         # Source filter
         if source and source.strip():
             filtered_faqs = [
-                faq for faq in filtered_faqs
-                if faq.source and faq.source == source
+                faq for faq in filtered_faqs if faq.source and faq.source == source
             ]
 
         return filtered_faqs

@@ -5,12 +5,17 @@ Admin routes for the Bisq Support API.
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 from app.core.config import get_settings
-from app.core.security import verify_admin_access
+from app.core.security import (
+    verify_admin_access,
+    verify_admin_key,
+    set_admin_cookie,
+    clear_admin_cookie,
+)
 from app.models.faq import FAQItem, FAQIdentifiedItem, FAQListResponse
 from app.models.feedback import (
     FeedbackFilterRequest,
@@ -18,6 +23,8 @@ from app.models.feedback import (
     FeedbackStatsResponse,
     CreateFAQFromFeedbackRequest,
     DashboardOverviewResponse,
+    AdminLoginRequest,
+    AdminLoginResponse,
 )
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
@@ -37,7 +44,17 @@ logger = logging.getLogger(__name__)
 # Get settings
 settings = get_settings()
 
-# Create router with better documentation of admin security requirements
+# Create authentication router without dependencies for login/logout endpoints
+auth_router = APIRouter(
+    prefix="/admin/auth",
+    tags=["Admin Auth"],
+    responses={
+        401: {"description": "Unauthorized - Invalid or missing API key"},
+        403: {"description": "Forbidden - Insufficient permissions"},
+    },
+)
+
+# Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
@@ -110,9 +127,7 @@ ISSUE_COUNT = Counter(
 FAQ_CREATION_TOTAL = Counter(
     "bisq_faq_creation_total", "Total number of FAQs created from feedback"
 )
-SYSTEM_UPTIME = Gauge(
-    "bisq_system_uptime_seconds", "System uptime in seconds"
-)
+SYSTEM_UPTIME = Gauge("bisq_system_uptime_seconds", "System uptime in seconds")
 DASHBOARD_REQUESTS = Counter(
     "bisq_dashboard_requests_total", "Total requests to dashboard endpoints"
 )
@@ -511,18 +526,22 @@ async def get_all_faqs_for_admin_route(
     source: str = None,
 ):
     """Get FAQs for the admin interface with pagination and filtering support."""
-    logger.info(f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}")
+    logger.info(
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}"
+    )
 
     try:
         # Parse comma-separated categories
-        categories_list = [cat.strip() for cat in categories.split(",")] if categories else None
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
 
         result = faq_service.get_faqs_paginated(
             page=page,
             page_size=page_size,
             search_text=search_text,
             categories=categories_list,
-            source=source
+            source=source,
         )
         return result
     except Exception as e:
@@ -588,3 +607,63 @@ async def get_dashboard_overview():
         raise HTTPException(
             status_code=500, detail="Failed to fetch dashboard overview."
         ) from e
+
+
+@auth_router.post("/login", response_model=AdminLoginResponse)
+async def admin_login(login_request: AdminLoginRequest, response: Response):
+    """Authenticate admin user and set secure session cookie.
+
+    This endpoint validates the provided API key and sets an HTTP-only cookie
+    for secure session management. The cookie prevents XSS attacks and provides
+    automatic CSRF protection.
+
+    Args:
+        login_request: Login credentials containing API key
+        response: FastAPI response object for setting cookies
+
+    Returns:
+        AdminLoginResponse: Login success confirmation
+
+    Raises:
+        HTTPException: If credentials are invalid or admin access not configured
+    """
+    logger.info("Admin login attempt")
+
+    try:
+        # Verify the API key
+        if verify_admin_key(login_request.api_key):
+            # Set secure authentication cookie
+            set_admin_cookie(response)
+            logger.info("Admin login successful")
+            return AdminLoginResponse(message="Login successful", authenticated=True)
+        else:
+            logger.warning("Admin login failed - invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
+    except HTTPException:
+        # Re-raise HTTP exceptions (like service unavailable)
+        raise
+    except Exception as e:
+        logger.error(f"Admin login error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed"
+        ) from e
+
+
+@auth_router.post("/logout")
+async def admin_logout(response: Response):
+    """Logout admin user by clearing authentication cookie.
+
+    This endpoint clears the secure session cookie, effectively logging out
+    the admin user. No authentication is required for logout.
+
+    Args:
+        response: FastAPI response object for clearing cookies
+
+    Returns:
+        dict: Logout confirmation message
+    """
+    logger.info("Admin logout")
+    clear_admin_cookie(response)
+    return {"message": "Logout successful", "authenticated": False}
