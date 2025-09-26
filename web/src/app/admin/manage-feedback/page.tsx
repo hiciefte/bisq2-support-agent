@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
+import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
 
 interface FeedbackItem {
   message_id: string;
@@ -86,7 +87,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function ManageFeedbackPage() {
   // Authentication state
-  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
   const [loginError, setLoginError] = useState('');
 
   // Data state
@@ -162,27 +164,23 @@ export default function ManageFeedbackPage() {
   const SOURCE_TYPES = ['faq', 'wiki', 'unknown'];
 
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('admin_api_key');
-    if (storedApiKey) {
-      setApiKey(storedApiKey);
-      fetchData(storedApiKey);
-    } else {
-      setIsLoading(false);
-    }
+    // SECURITY: No longer using localStorage for API keys - migrating to secure HTTP-only cookies
+    // const storedApiKey = localStorage.getItem('admin_api_key');
+    // This component will be replaced by the SecureAuth wrapper in the layout
+    // For now, just set loading to false since authentication is handled at layout level
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    if (apiKey) {
-      fetchData(apiKey);
-    }
+    fetchData();
   }, [filters, activeTab]);
 
-  const fetchData = async (key: string) => {
+  const fetchData = async () => {
     setIsLoading(true);
     try {
       await Promise.all([
-        fetchFeedbackList(key),
-        fetchStats(key)
+        fetchFeedbackList(),
+        fetchStats()
       ]);
       setError(null);
     } catch (err) {
@@ -193,7 +191,7 @@ export default function ManageFeedbackPage() {
     }
   };
 
-  const fetchFeedbackList = async (key: string) => {
+  const fetchFeedbackList = async () => {
     // Adjust filters based on active tab
     const adjustedFilters = { ...filters };
     if (activeTab === 'negative') {
@@ -217,9 +215,7 @@ export default function ManageFeedbackPage() {
       }
     });
 
-    const response = await fetch(`${API_BASE_URL}/admin/feedback/list?${params}`, {
-      headers: { 'X-API-KEY': key },
-    });
+    const response = await makeAuthenticatedRequest(`/admin/feedback/list?${params}`);
 
     if (response.ok) {
       const data = await response.json();
@@ -229,10 +225,8 @@ export default function ManageFeedbackPage() {
     }
   };
 
-  const fetchStats = async (key: string) => {
-    const response = await fetch(`${API_BASE_URL}/admin/feedback/stats`, {
-      headers: { 'X-API-KEY': key },
-    });
+  const fetchStats = async () => {
+    const response = await makeAuthenticatedRequest('/admin/feedback/stats');
 
     if (response.ok) {
       const data = await response.json();
@@ -246,7 +240,8 @@ export default function ManageFeedbackPage() {
     e.preventDefault();
     const key = (e.target as HTMLFormElement).apiKey.value;
     if (key) {
-      localStorage.setItem('admin_api_key', key);
+      // SECURITY: No longer storing API keys in localStorage - using secure HTTP-only cookies instead
+      // localStorage.setItem('admin_api_key', key);
       setApiKey(key);
       setLoginError('');
       fetchData(key);
@@ -256,7 +251,8 @@ export default function ManageFeedbackPage() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('admin_api_key');
+    // SECURITY: No longer using localStorage for API keys
+    // localStorage.removeItem('admin_api_key');
     setApiKey(null);
     // Notify layout of auth change
     window.dispatchEvent(new CustomEvent('admin-auth-changed'));
@@ -308,15 +304,13 @@ export default function ManageFeedbackPage() {
 
   const handleCreateFAQ = async (e: FormEvent) => {
     e.preventDefault();
-    if (!apiKey) return;
 
     setIsSubmittingFAQ(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/feedback/create-faq`, {
+      const response = await makeAuthenticatedRequest('/admin/feedback/create-faq', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey,
         },
         body: JSON.stringify(faqForm),
       });
@@ -333,7 +327,7 @@ export default function ManageFeedbackPage() {
         setIsCustomCategory(false);
         setCustomCategory('');
         // Refresh data to reflect changes
-        fetchData(apiKey);
+        fetchData();
         setError(null);
       } else {
         const errorText = `Failed to create FAQ. Status: ${response.status}`;
@@ -348,7 +342,7 @@ export default function ManageFeedbackPage() {
   };
 
   const exportFeedback = async () => {
-    if (!apiKey || !feedbackData || feedbackData.feedback_items.length === 0) return;
+    if (!feedbackData || feedbackData.feedback_items.length === 0) return;
 
     const csvData = feedbackData.feedback_items.map(item => ({
       message_id: item.message_id,
@@ -395,31 +389,7 @@ export default function ManageFeedbackPage() {
     return colors[issue as keyof typeof colors] || 'bg-gray-100 text-gray-800';
   };
 
-  // Login form
-  if (!apiKey) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-2xl font-bold text-center">Admin Login</CardTitle>
-            <CardDescription>Enter your API key to manage feedback.</CardDescription>
-          </CardHeader>
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="apiKey">API Key</Label>
-                <Input id="apiKey" name="apiKey" type="password" required />
-              </div>
-              {loginError && <p className="text-sm text-red-500">{loginError}</p>}
-            </CardContent>
-            <CardFooter>
-              <Button type="submit" className="w-full">Login</Button>
-            </CardFooter>
-          </form>
-        </Card>
-      </div>
-    );
-  }
+  // Authentication is handled by SecureAuth wrapper in layout
 
   return (
     <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
@@ -638,26 +608,48 @@ export default function ManageFeedbackPage() {
 
               {/* Pagination */}
               {feedbackData && feedbackData.total_pages > 1 && (
-                <div className="flex justify-center space-x-2 mt-6">
-                  <Button
-                    onClick={() => handleFilterChange('page', Math.max(1, filters.page - 1))}
-                    disabled={filters.page <= 1}
-                    variant="outline"
-                    size="sm"
-                  >
-                    Previous
-                  </Button>
-                  <span className="flex items-center px-3 py-2 text-sm">
-                    Page {filters.page} of {feedbackData.total_pages}
-                  </span>
-                  <Button
-                    onClick={() => handleFilterChange('page', Math.min(feedbackData.total_pages, filters.page + 1))}
-                    disabled={filters.page >= feedbackData.total_pages}
-                    variant="outline"
-                    size="sm"
-                  >
-                    Next
-                  </Button>
+                <div className="flex items-center justify-between px-2 py-4">
+                  <div className="flex items-center space-x-6 lg:space-x-8">
+                    <div className="flex items-center space-x-2">
+                      <p className="text-sm font-medium">
+                        Showing {((filters.page - 1) * filters.page_size) + 1} to {Math.min(filters.page * filters.page_size, feedbackData.total_count)} of {feedbackData.total_count} entries
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleFilterChange('page', Math.max(1, filters.page - 1))}
+                      disabled={filters.page <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <div className="flex items-center space-x-1">
+                      {Array.from({ length: Math.min(5, feedbackData.total_pages) }, (_, i) => {
+                        const pageNum = Math.max(1, Math.min(feedbackData.total_pages - 4, filters.page - 2)) + i;
+                        if (pageNum > feedbackData.total_pages) return null;
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={pageNum === filters.page ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => handleFilterChange('page', pageNum)}
+                          >
+                            {pageNum}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleFilterChange('page', Math.min(feedbackData.total_pages, filters.page + 1))}
+                      disabled={filters.page >= feedbackData.total_pages}
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
@@ -875,12 +867,14 @@ export default function ManageFeedbackPage() {
                   />
                 )}
               </div>
-              <div>
-                <Label>User Feedback</Label>
-                <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
-                  {faqForm.additional_notes}
+              {faqForm.additional_notes && (
+                <div>
+                  <Label>User Feedback</Label>
+                  <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
+                    {faqForm.additional_notes}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <DialogFooter className="mt-6">
               <Button type="button" variant="outline" onClick={() => {

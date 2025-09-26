@@ -143,15 +143,21 @@ class DashboardOverviewResponse(BaseModel):
     helpful_rate: float = Field(description="Helpful rate as percentage")
     helpful_rate_trend: float = Field(description="24h trend in helpful rate")
     average_response_time: float = Field(description="Average response time in seconds")
-    response_time_trend: float = Field(description="Response time trend (negative = improvement)")
+    response_time_trend: float = Field(
+        description="Response time trend (negative = improvement)"
+    )
     negative_feedback_count: int = Field(description="Recent negative feedback count")
-    negative_feedback_trend: float = Field(description="Negative feedback trend percentage")
+    negative_feedback_trend: float = Field(
+        description="Negative feedback trend percentage"
+    )
 
     # Dashboard-specific data
     feedback_items_for_faq: List[FeedbackForFAQItem] = Field(
         description="Feedback items that would benefit from FAQ creation"
     )
-    feedback_items_for_faq_count: int = Field(description="Count of feedback items for FAQ creation")
+    feedback_items_for_faq_count: int = Field(
+        description="Count of feedback items for FAQ creation"
+    )
     system_uptime: float = Field(description="System uptime in seconds")
     total_queries: int = Field(description="Total queries processed")
     total_faqs_created: int = Field(description="Total FAQs created from feedback")
@@ -161,3 +167,16 @@ class DashboardOverviewResponse(BaseModel):
     total_faqs: int = Field(description="Total FAQs in system")
     last_updated: str = Field(description="When the data was last updated")
     fallback: Optional[bool] = Field(None, description="Whether this is fallback data")
+
+
+class AdminLoginRequest(BaseModel):
+    """Request model for admin login."""
+
+    api_key: str = Field(description="Admin API key for authentication")
+
+
+class AdminLoginResponse(BaseModel):
+    """Response model for successful admin login."""
+
+    message: str = Field(description="Login success message")
+    authenticated: bool = Field(description="Authentication status")

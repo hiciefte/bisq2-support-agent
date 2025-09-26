@@ -19,16 +19,13 @@ QUERY_TOTAL = Counter("bisq_queries_total", "Total number of queries processed")
 QUERY_RESPONSE_TIME_HISTOGRAM = Histogram(
     "bisq_query_response_time_seconds",
     "Response time distribution for chat queries",
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
 )
 CURRENT_RESPONSE_TIME = Gauge(
-    "bisq_current_response_time_seconds",
-    "Latest query response time"
+    "bisq_current_response_time_seconds", "Latest query response time"
 )
 QUERY_ERRORS = Counter(
-    "bisq_query_errors_total",
-    "Total number of query errors",
-    ["error_type"]
+    "bisq_query_errors_total", "Total number of query errors", ["error_type"]
 )
 
 

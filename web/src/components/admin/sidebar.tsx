@@ -34,26 +34,35 @@ export function AdminSidebar() {
   const pathname = usePathname()
 
   useEffect(() => {
-    const checkAuth = () => {
-      const apiKey = localStorage.getItem('admin_api_key');
-      setIsAuthenticated(!!apiKey);
+    // Since we now use SecureAuth wrapper, we're only rendered when authenticated
+    setIsAuthenticated(true);
+
+    const handleAuthChange = () => {
+      // This will be called when authentication status changes
+      setIsAuthenticated(true);
     };
 
-    checkAuth();
-    window.addEventListener('admin-auth-changed', checkAuth);
-    window.addEventListener('storage', checkAuth);
+    window.addEventListener('admin-auth-changed', handleAuthChange);
 
     return () => {
-      window.removeEventListener('admin-auth-changed', checkAuth);
-      window.removeEventListener('storage', checkAuth);
+      window.removeEventListener('admin-auth-changed', handleAuthChange);
     };
   }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('admin_api_key')
-    // Notify layout of auth change
-    window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-    window.location.href = '/admin/overview'
+  const handleLogout = async () => {
+    try {
+      // Import logout function dynamically to avoid import issues
+      const { logout } = await import('@/lib/auth');
+      await logout();
+      // Notify layout of auth change
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      // Redirect to login
+      window.location.href = '/admin/overview';
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Fallback: still redirect even if logout fails
+      window.location.href = '/admin/overview';
+    }
   }
 
   const SidebarContent = () => (
@@ -61,8 +70,12 @@ export function AdminSidebar() {
       {/* Header */}
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold">
-            B
+          <div className="flex h-8 w-8 items-center justify-center">
+            <img
+              src="/bisq-logo.svg"
+              alt="Bisq Logo"
+              className="h-8 w-auto"
+            />
           </div>
           <div className="flex flex-col">
             <h2 className="text-lg font-semibold">Bisq Support</h2>

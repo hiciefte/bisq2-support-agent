@@ -65,20 +65,19 @@ class DashboardService:
 
             dashboard_data = {
                 # Core metrics
-                "helpful_rate": feedback_stats["helpful_rate"] * 100,  # Convert to percentage
+                "helpful_rate": feedback_stats["helpful_rate"]
+                * 100,  # Convert to percentage
                 "helpful_rate_trend": helpful_rate_trend,
                 "average_response_time": await self._get_average_response_time(),
                 "response_time_trend": response_time_trend,
                 "negative_feedback_count": feedback_stats["negative_count"],
                 "negative_feedback_trend": negative_feedback_trend,
-
                 # Dashboard-specific data
                 "feedback_items_for_faq": feedback_for_faq,
                 "feedback_items_for_faq_count": len(feedback_for_faq),
                 "system_uptime": uptime_seconds,
                 "total_queries": await self._get_total_query_count(),
                 "total_faqs_created": faq_stats["total_created_from_feedback"],
-
                 # Additional context
                 "total_feedback": feedback_stats["total_feedback"],
                 "total_faqs": faq_stats["total_faqs"],
@@ -97,26 +96,36 @@ class DashboardService:
         """Get feedback items that would benefit from FAQ creation."""
         try:
             # Use the same logic as the feedback service to ensure consistency
-            feedback_items = self.feedback_service.get_negative_feedback_for_faq_creation()
+            feedback_items = (
+                self.feedback_service.get_negative_feedback_for_faq_creation()
+            )
 
             # Convert to dictionary format expected by the dashboard
             faq_candidates = []
             for feedback in feedback_items:
                 # Use the same criteria as feedback service: negative feedback with explanations or "no source" responses
-                if feedback.is_negative and (feedback.explanation or feedback.has_no_source_response):
+                if feedback.is_negative and (
+                    feedback.explanation or feedback.has_no_source_response
+                ):
 
-                    faq_candidates.append({
-                        "message_id": feedback.message_id,
-                        "question": feedback.question,
-                        "answer": feedback.answer,
-                        "explanation": feedback.explanation,
-                        "issues": feedback.issues,
-                        "timestamp": feedback.timestamp,
-                        "potential_category": self._suggest_faq_category(feedback.issues)
-                    })
+                    faq_candidates.append(
+                        {
+                            "message_id": feedback.message_id,
+                            "question": feedback.question,
+                            "answer": feedback.answer,
+                            "explanation": feedback.explanation,
+                            "issues": feedback.issues,
+                            "timestamp": feedback.timestamp,
+                            "potential_category": self._suggest_faq_category(
+                                feedback.issues
+                            ),
+                        }
+                    )
 
             # Return the most recent 10 candidates
-            return sorted(faq_candidates, key=lambda x: x["timestamp"], reverse=True)[:10]
+            return sorted(faq_candidates, key=lambda x: x["timestamp"], reverse=True)[
+                :10
+            ]
 
         except Exception as e:
             logger.error(f"Failed to get feedback items for FAQ: {e}")
@@ -129,12 +138,18 @@ class DashboardService:
 
             return {
                 "total_faqs": len(all_faqs),
-                "total_created_from_feedback": len([f for f in all_faqs if f.source == "Feedback"]),
+                "total_created_from_feedback": len(
+                    [f for f in all_faqs if f.source == "Feedback"]
+                ),
                 "total_manual": len([f for f in all_faqs if f.source == "Manual"]),
             }
         except Exception as e:
             logger.error(f"Failed to get FAQ creation stats: {e}")
-            return {"total_faqs": 0, "total_created_from_feedback": 0, "total_manual": 0}
+            return {
+                "total_faqs": 0,
+                "total_created_from_feedback": 0,
+                "total_manual": 0,
+            }
 
     async def _get_average_response_time(self) -> float:
         """
@@ -196,7 +211,12 @@ class DashboardService:
         # Simple categorization logic
         issue_keywords = {
             "Technical": ["error", "bug", "crash", "broken", "not working"],
-            "User Experience": ["confusing", "unclear", "hard to understand", "complex"],
+            "User Experience": [
+                "confusing",
+                "unclear",
+                "hard to understand",
+                "complex",
+            ],
             "Performance": ["slow", "timeout", "loading", "delay"],
             "Content": ["wrong", "incorrect", "outdated", "missing"],
         }

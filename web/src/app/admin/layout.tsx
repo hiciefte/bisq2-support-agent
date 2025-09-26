@@ -1,4 +1,5 @@
-import { AdminSidebar } from "@/components/admin/sidebar"
+import { AdminSidebar } from "@/components/admin/sidebar";
+import { SecureAuth } from "@/components/admin/SecureAuth";
 
 export default function AdminLayout({
   children,
@@ -6,13 +7,15 @@ export default function AdminLayout({
   children: React.ReactNode
 }) {
   return (
-    <div className="min-h-screen bg-background">
-      <div className="flex">
-        <AdminSidebar />
-        <main className="flex-1">
-          {children}
-        </main>
+    <SecureAuth>
+      <div className="min-h-screen bg-background">
+        <div className="flex">
+          <AdminSidebar />
+          <main className="flex-1">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </SecureAuth>
   )
 }

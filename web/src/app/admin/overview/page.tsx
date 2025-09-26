@@ -5,7 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
+import { makeAuthenticatedRequest } from '@/lib/auth';
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -42,21 +48,29 @@ export default function AdminOverview() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState<string | null>(null);
+
+  // Create FAQ dialog state
+  const [showCreateFAQ, setShowCreateFAQ] = useState(false);
+  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackForFAQ | null>(null);
+  const [faqForm, setFaqForm] = useState({
+    message_id: '',
+    suggested_question: '',
+    suggested_answer: '',
+    category: '',
+    additional_notes: ''
+  });
+  const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [customCategory, setCustomCategory] = useState('');
+
   const router = useRouter();
 
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('admin_api_key');
-    if (storedApiKey) {
-      setApiKey(storedApiKey);
-      fetchDashboardData(storedApiKey);
-    } else {
-      // Redirect to login - we'll handle this through the existing admin pages
-      router.push('/admin/manage-feedback');
-    }
-  }, [router]);
+    // Authentication is handled by SecureAuth wrapper in layout
+    fetchDashboardData();
+  }, []);
 
-  const fetchDashboardData = async (key: string, isRefresh = false) => {
+  const fetchDashboardData = async (isRefresh = false) => {
     if (isRefresh) {
       setIsRefreshing(true);
     } else {
@@ -64,21 +78,14 @@ export default function AdminOverview() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/dashboard/overview`, {
-        headers: { 'X-API-KEY': key },
-      });
+      const response = await makeAuthenticatedRequest('/admin/dashboard/overview');
 
       if (response.ok) {
         const data = await response.json();
         setDashboardData(data);
         setError(null);
       } else {
-        if (response.status === 401 || response.status === 403) {
-          localStorage.removeItem('admin_api_key');
-          router.push('/admin/manage-feedback');
-        } else {
-          setError(`Failed to fetch dashboard data. Status: ${response.status}`);
-        }
+        setError(`Failed to fetch dashboard data. Status: ${response.status}`);
       }
     } catch (err) {
       setError('An unexpected error occurred while fetching dashboard data.');
@@ -90,8 +97,59 @@ export default function AdminOverview() {
   };
 
   const handleRefresh = () => {
-    if (apiKey) {
-      fetchDashboardData(apiKey, true);
+    fetchDashboardData(true);
+  };
+
+  const handleCreateFAQClick = (item: FeedbackForFAQ) => {
+    setSelectedFeedback(item);
+    setFaqForm({
+      message_id: item.message_id,
+      suggested_question: item.question,
+      suggested_answer: '',
+      category: item.potential_category || 'General',
+      additional_notes: item.explanation || ''
+    });
+    setIsCustomCategory(false);
+    setCustomCategory('');
+    setShowCreateFAQ(true);
+  };
+
+  const handleCreateFAQ = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    setIsSubmittingFAQ(true);
+    try {
+      const response = await makeAuthenticatedRequest('/admin/feedback/create-faq', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(faqForm),
+      });
+
+      if (response.ok) {
+        setShowCreateFAQ(false);
+        setFaqForm({
+          message_id: '',
+          suggested_question: '',
+          suggested_answer: '',
+          category: '',
+          additional_notes: ''
+        });
+        setIsCustomCategory(false);
+        setCustomCategory('');
+        // Refresh data to reflect changes
+        fetchDashboardData();
+        setError(null);
+      } else {
+        const errorText = `Failed to create FAQ. Status: ${response.status}`;
+        setError(errorText);
+      }
+    } catch (err) {
+      setError('An unexpected error occurred while creating FAQ.');
+      console.error('FAQ creation error:', err);
+    } finally {
+      setIsSubmittingFAQ(false);
     }
   };
 
@@ -320,7 +378,11 @@ export default function AdminOverview() {
                       </div>
                     </div>
                     <div className="flex flex-col gap-2">
-                      <Button size="sm" variant="outline">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCreateFAQClick(item)}
+                      >
                         <PlusCircle className="h-3 w-3 mr-1" />
                         Create FAQ
                       </Button>
@@ -337,6 +399,117 @@ export default function AdminOverview() {
       <div className="text-xs text-muted-foreground text-center">
         Last updated: {new Date(dashboardData.last_updated).toLocaleString()}
       </div>
+
+      {/* Create FAQ Dialog */}
+      <Dialog open={showCreateFAQ} onOpenChange={setShowCreateFAQ}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create FAQ from Feedback</DialogTitle>
+            <DialogDescription>
+              Create a new FAQ entry based on user feedback
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateFAQ} className="space-y-4">
+            <div>
+              <Label htmlFor="suggested_question">Question</Label>
+              <Input
+                id="suggested_question"
+                value={faqForm.suggested_question}
+                onChange={(e) => setFaqForm({ ...faqForm, suggested_question: e.target.value })}
+                placeholder="Enter the FAQ question"
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="suggested_answer">Answer</Label>
+              <Textarea
+                id="suggested_answer"
+                value={faqForm.suggested_answer}
+                onChange={(e) => setFaqForm({ ...faqForm, suggested_answer: e.target.value })}
+                placeholder="Enter the FAQ answer"
+                rows={4}
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="category">Category</Label>
+              <Select
+                value={isCustomCategory ? 'custom' : faqForm.category}
+                onValueChange={(value) => {
+                  if (value === 'custom') {
+                    setIsCustomCategory(true);
+                    setFaqForm({ ...faqForm, category: '' });
+                  } else {
+                    setIsCustomCategory(false);
+                    setCustomCategory('');
+                    setFaqForm({ ...faqForm, category: value });
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="General">General</SelectItem>
+                  <SelectItem value="Trading">Trading</SelectItem>
+                  <SelectItem value="Technical">Technical</SelectItem>
+                  <SelectItem value="Account">Account</SelectItem>
+                  <SelectItem value="Payment">Payment</SelectItem>
+                  <SelectItem value="Security">Security</SelectItem>
+                  <SelectItem value="custom">Custom Category</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {isCustomCategory && (
+              <div>
+                <Label htmlFor="customCategory">Custom Category</Label>
+                <Input
+                  id="customCategory"
+                  value={customCategory}
+                  onChange={(e) => {
+                    setCustomCategory(e.target.value);
+                    setFaqForm({ ...faqForm, category: e.target.value });
+                  }}
+                  placeholder="Enter custom category"
+                  required
+                />
+              </div>
+            )}
+
+            {faqForm.additional_notes && (
+              <div>
+                <Label>User Feedback</Label>
+                <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
+                  {faqForm.additional_notes}
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowCreateFAQ(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmittingFAQ}>
+                {isSubmittingFAQ ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create FAQ'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
