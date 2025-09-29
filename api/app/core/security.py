@@ -112,18 +112,20 @@ def verify_admin_access(request: Request) -> bool:
 def set_admin_cookie(response: Response) -> None:
     """Set secure admin authentication cookie.
 
+    This function sets a secure HTTP-only cookie with appropriate security flags
+    based on the deployment environment. For Tor .onion domains or HTTP development
+    environments, the secure flag can be disabled via COOKIE_SECURE setting.
+
     Args:
         response: FastAPI response object to set cookie on
     """
-    # Set secure HTTP-only cookie - adjust security flags based on environment
-    is_production = not settings.DEBUG
     response.set_cookie(
         key="admin_authenticated",
         value="true",
         max_age=24 * 60 * 60,  # 24 hours
         httponly=True,  # Prevents XSS access
-        secure=is_production,  # HTTPS only in production, allow HTTP in development
-        samesite="lax",  # More permissive for IP-based access, still provides CSRF protection
+        secure=settings.COOKIE_SECURE,  # Configurable for .onion/HTTP environments
+        samesite="lax",  # Provides CSRF protection while allowing cross-site navigation
         path="/",  # Ensure cookie is available for all paths
     )
 
