@@ -74,8 +74,11 @@ api/data/vectorstore/
 *.sqlite3
 *.log
 
-# Ignore the raw, transient chat export file
+# Ignore sensitive chat and conversation data
 api/data/support_chat_export.csv
+api/data/conversations.jsonl
+api/data/*conversation*
+api/data/*chat*
 
 # Misc
 Thumbs.db
@@ -99,3 +102,12 @@ secrets/
 runtime_secrets/
 failed_updates/
 docker/prometheus/admin_key
+# Lock files (preserve package-lock.json for reproducible builds)
+yarn.lock
+pnpm-lock.yaml
+*.lock
+!package-lock.json
+/api/data/feedback/*
+!/api/data/feedback/.gitkeep
+/docs/requirements/
+/.playwright-mcp/

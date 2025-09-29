@@ -1,16 +1,31 @@
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 
+from app.core.config import Settings, get_settings
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel
-
-from app.core.config import get_settings, Settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Prometheus metrics for chat/query tracking
+QUERY_TOTAL = Counter("bisq_queries_total", "Total number of queries processed")
+QUERY_RESPONSE_TIME_HISTOGRAM = Histogram(
+    "bisq_query_response_time_seconds",
+    "Response time distribution for chat queries",
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+)
+CURRENT_RESPONSE_TIME = Gauge(
+    "bisq_current_response_time_seconds", "Latest query response time"
+)
+QUERY_ERRORS = Counter(
+    "bisq_query_errors_total", "Total number of query errors", ["error_type"]
+)
 
 
 class ChatMessage(BaseModel):
@@ -44,9 +59,15 @@ async def query(
 ):
     """Process a query and return a response with sources."""
     logger.info("Received request to /query endpoint")
-    logger.info(f"Request headers: {dict(request.headers)}")
-    logger.info(f"Request content type: {request.headers.get('content-type')}")
-    logger.info(f"Request method: {request.method}")
+    # SECURITY: Only log safe headers, not all headers which may contain tokens
+    logger.info(
+        "Request received: method=%s content_type=%s",
+        request.method,
+        request.headers.get("content-type"),
+    )
+
+    # Start timing for Prometheus metrics
+    start_time = time.time()
 
     try:
         # Get RAG service from app state
@@ -54,35 +75,31 @@ async def query(
 
         # Use the automatically parsed payload from Body
         data = await request.json()
-        logger.info(f"Automatically parsed JSON data: {json.dumps(data, indent=2)}")
-        logger.info(f"Parsed data type: {type(data)}")
-        logger.info(
-            f"Parsed data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}"
+        # SECURITY: Only log metadata, not the full data which may contain sensitive user queries
+        logger.debug(
+            "Parsed data keys: %s",
+            list(data.keys()) if isinstance(data, dict) else [],
         )
 
         # Validate against our model
         try:
-            logger.info("Attempting to validate request data...")
+            logger.debug("Attempting to validate request data...")
             # Get field names using model_json_schema instead of model_fields.keys()
             expected_fields = list(
                 QueryRequest.model_json_schema()["properties"].keys()
             )
-            logger.info(f"Expected model fields: {expected_fields}")
-            logger.info(
-                f"Received fields: {list(data.keys()) if isinstance(data, dict) else []}"
+            logger.debug("Expected model fields: %s", expected_fields)
+            logger.debug(
+                "Received fields: %s",
+                list(data.keys()) if isinstance(data, dict) else [],
             )
-            logger.info(f"Model validation about to start with data: {data}")
 
             query_request = QueryRequest.model_validate(data)
-            logger.info(f"Successfully validated request: {query_request}")
+            # SECURITY: Do not log the full request which contains user queries
+            logger.info("Successfully validated request structure")
         except Exception as e:
-            logger.error("Validation error occurred")
-            logger.error(f"Input data: {data}")
-            logger.error(f"Validation error details: {str(e)}")
-            # Use model_json_schema instead of model_fields
-            logger.error(
-                f"Model fields: {QueryRequest.model_json_schema()['properties']}"
-            )
+            logger.warning("Validation error: %s", e)
+            QUERY_ERRORS.labels(error_type="validation").inc()
             raise HTTPException(status_code=422, detail=str(e)) from e
 
         # Get response from simplified RAG service
@@ -91,10 +108,9 @@ async def query(
             logger.info(
                 f"Number of messages in chat history: {len(query_request.chat_history)}"
             )
+            # SECURITY: Log message roles only, not content which may contain sensitive user data
             for i, msg in enumerate(query_request.chat_history):
-                logger.info(
-                    f"Message {i}: role={msg.role}, content={msg.content[:30]}..."
-                )
+                logger.info(f"Message {i}: role={msg.role}")
         else:
             logger.info("No chat history provided in the request")
 
@@ -118,11 +134,17 @@ async def query(
 
         return JSONResponse(content=response_data.model_dump())
     except Exception as e:
-        logger.error(f"Unexpected error processing request: {str(e)}")
-        logger.error("Full error details:", exc_info=True)
+        logger.exception("Unexpected error processing /query")
+        QUERY_ERRORS.labels(error_type="internal_error").inc()
         return JSONResponse(
             status_code=500, content={"detail": "Internal server error"}
         )
+    finally:
+        # Record metrics to Prometheus - always executed regardless of success/failure
+        total_time = time.time() - start_time
+        QUERY_TOTAL.inc()
+        QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
+        CURRENT_RESPONSE_TIME.set(total_time)
 
 
 @router.get("/stats")

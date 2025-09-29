@@ -1,6 +1,6 @@
-from typing import Optional, List
+from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FAQItem(BaseModel):
@@ -23,3 +23,7 @@ class FAQUpdateRequest(BaseModel):
 
 class FAQListResponse(BaseModel):
     faqs: List[FAQIdentifiedItem]
+    total_count: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+    total_pages: int = Field(ge=1)

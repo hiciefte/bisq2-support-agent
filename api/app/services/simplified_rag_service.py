@@ -16,8 +16,10 @@ import logging
 import os
 import shutil
 import time
-from typing import List, Dict, Any, Union
+from typing import Any, Dict, List, Union
 
+from app.core.config import get_settings
+from app.utils.logging import redact_pii
 from fastapi import Request
 from langchain.prompts import ChatPromptTemplate
 
@@ -32,9 +34,6 @@ from langchain_openai import OpenAIEmbeddings
 
 # Text splitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-from app.core.config import get_settings
-from app.utils.logging import redact_pii
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
