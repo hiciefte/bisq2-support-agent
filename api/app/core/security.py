@@ -123,7 +123,8 @@ def set_admin_cookie(response: Response) -> None:
         max_age=24 * 60 * 60,  # 24 hours
         httponly=True,  # Prevents XSS access
         secure=is_production,  # HTTPS only in production, allow HTTP in development
-        samesite="strict",  # CSRF protection
+        samesite="lax",  # More permissive for IP-based access, still provides CSRF protection
+        path="/",  # Ensure cookie is available for all paths
     )
 
 
@@ -139,7 +140,8 @@ def clear_admin_cookie(response: Response) -> None:
         key="admin_authenticated",
         httponly=True,
         secure=is_production,  # HTTPS only in production, allow HTTP in development
-        samesite="strict",
+        samesite="lax",  # Match the set_cookie settings
+        path="/",  # Ensure cookie is deleted from all paths
     )
 
 
