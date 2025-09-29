@@ -21,12 +21,11 @@ Environment variables:
     DATA_DIR: Directory for data files (default: api/data)
 """
 
-import logging
 import argparse
-from typing import List, Dict, Any, Optional
-
 import asyncio
+import logging
 from asyncio import get_event_loop
+from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API

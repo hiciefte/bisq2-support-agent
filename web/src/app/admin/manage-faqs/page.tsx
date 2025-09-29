@@ -11,6 +11,7 @@ import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw } fro
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
+import { makeAuthenticatedRequest, loginWithApiKey, logout, checkAuthStatus } from '@/lib/auth';
 
 interface FAQ {
   id: string;
@@ -37,7 +38,7 @@ export default function ManageFaqsPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingFaq, setEditingFaq] = useState<FAQ | null>(null);
   const [formData, setFormData] = useState({ question: '', answer: '', category: '', source: 'Manual' });
-  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [loginError, setLoginError] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -58,24 +59,27 @@ export default function ManageFaqsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('admin_api_key');
-    if (storedApiKey) {
-      setApiKey(storedApiKey);
-      fetchFaqs(storedApiKey);
-    } else {
-      setIsLoading(false);
-    }
+    const checkAuth = async () => {
+      const authenticated = await checkAuthStatus();
+      setIsAuthenticated(authenticated);
+      if (authenticated) {
+        fetchFaqs();
+      } else {
+        setIsLoading(false);
+      }
+    };
+    checkAuth();
   }, []);
 
   // Re-fetch data when filters change
   useEffect(() => {
-    if (apiKey) {
+    if (isAuthenticated) {
       setCurrentPage(1); // Reset to first page when filters change
-      fetchFaqs(apiKey, 1);
+      fetchFaqs(1);
     }
   }, [filters]);
 
-  const fetchFaqs = async (key: string, page = 1) => {
+  const fetchFaqs = async (page = 1) => {
     setIsLoading(true);
     try {
       // Build query parameters
@@ -96,9 +100,7 @@ export default function ManageFaqsPage() {
         params.append('source', filters.source);
       }
 
-      const response = await fetch(`${API_BASE_URL}/admin/faqs?${params.toString()}`, {
-        headers: { 'X-API-KEY': key },
-      });
+      const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
         setFaqData(data);
@@ -116,9 +118,8 @@ export default function ManageFaqsPage() {
         console.error(errorText);
         setError(errorText);
         if (response.status === 401 || response.status === 403) {
-          setLoginError('Invalid API Key or Access Forbidden.');
-          setApiKey(null);
-          localStorage.removeItem('admin_api_key');
+          setLoginError('Authentication required. Please log in again.');
+          setIsAuthenticated(false);
         }
       }
     } catch (error) {
@@ -130,47 +131,63 @@ export default function ManageFaqsPage() {
     }
   };
 
-  const handleLogin = (e: FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     const key = (e.target as HTMLFormElement).apiKey.value;
     if (key) {
-      localStorage.setItem('admin_api_key', key);
-      setApiKey(key);
-      setLoginError('');
-      fetchFaqs(key);
-      // Notify layout of auth change
-      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      try {
+        const response = await loginWithApiKey(key);
+        if (response.authenticated) {
+          setIsAuthenticated(true);
+          setLoginError('');
+          fetchFaqs();
+          // Notify layout of auth change
+          window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+        } else {
+          setLoginError('Invalid API key. Please try again.');
+        }
+      } catch (error) {
+        console.error('Login error:', error);
+        setLoginError('Login failed. Please try again.');
+      }
     }
   };
   
-  const handleLogout = () => {
-    localStorage.removeItem('admin_api_key');
-    setApiKey(null);
-    setFaqData(null);
-    // Notify layout of auth change
-    window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-    router.push('/admin/manage-faqs');
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setIsAuthenticated(false);
+      setFaqData(null);
+      // Notify layout of auth change
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      router.push('/admin/manage-faqs');
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Still reset state even if logout fails
+      setIsAuthenticated(false);
+      setFaqData(null);
+      router.push('/admin/manage-faqs');
+    }
   };
 
   const handleFormSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!apiKey) return;
+    if (!isAuthenticated) return;
     setIsSubmitting(true);
-    const url = editingFaq ? `${API_BASE_URL}/admin/faqs/${editingFaq.id}` : `${API_BASE_URL}/admin/faqs`;
+    const endpoint = editingFaq ? `/admin/faqs/${editingFaq.id}` : `/admin/faqs`;
     const method = editingFaq ? 'PUT' : 'POST';
 
     try {
-      const response = await fetch(url, {
+      const response = await makeAuthenticatedRequest(endpoint, {
         method,
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey,
         },
         body: JSON.stringify(formData),
       });
 
       if (response.ok) {
-        fetchFaqs(apiKey, currentPage);
+        fetchFaqs(currentPage);
         setIsFormOpen(false);
         setEditingFaq(null);
         setFormData({ question: '', answer: '', category: '', source: 'Manual' });
@@ -197,16 +214,15 @@ export default function ManageFaqsPage() {
   };
   
   const handleDelete = async (id: string) => {
-    if (!apiKey) return;
+    if (!isAuthenticated) return;
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/faqs/${id}`, {
+      const response = await makeAuthenticatedRequest(`/admin/faqs/${id}`, {
         method: 'DELETE',
-        headers: { 'X-API-KEY': apiKey },
       });
 
       if (response.ok) {
-        fetchFaqs(apiKey, currentPage);
+        fetchFaqs(currentPage);
         setError(null);
       } else {
         const errorText = `Failed to delete FAQ. Status: ${response.status}`;
@@ -231,9 +247,9 @@ export default function ManageFaqsPage() {
   }
 
   const handlePageChange = (newPage: number) => {
-    if (apiKey && newPage >= 1 && newPage <= (faqData?.total_pages || 1)) {
+    if (isAuthenticated && newPage >= 1 && newPage <= (faqData?.total_pages || 1)) {
       setCurrentPage(newPage);
-      fetchFaqs(apiKey, newPage);
+      fetchFaqs(newPage);
     }
   };
 
@@ -265,7 +281,7 @@ export default function ManageFaqsPage() {
 
   const hasActiveFilters = filters.search_text || filters.categories.length > 0 || filters.source;
 
-  if (!apiKey) {
+  if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Card className="w-full max-w-md">

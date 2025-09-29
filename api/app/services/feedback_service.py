@@ -8,25 +8,24 @@ This service handles all feedback-related functionality:
 - Using feedback to improve RAG responses
 """
 
+import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
-import asyncio
-import portalocker
-import math
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import Request
-
+import portalocker
 from app.models.feedback import (
-    FeedbackItem,
     FeedbackFilterRequest,
+    FeedbackItem,
     FeedbackListResponse,
 )
+from fastapi import Request
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1047,7 +1046,8 @@ class FeedbackService:
             try:
                 month_key = item.timestamp[:7]  # YYYY-MM
                 monthly_counts[month_key] += 1
-            except:
+            except (IndexError, TypeError, AttributeError):
+                # Handle cases where timestamp is None, empty, or malformed
                 monthly_counts["unknown"] += 1
 
         # Source effectiveness
