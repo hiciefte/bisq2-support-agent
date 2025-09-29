@@ -36,6 +36,9 @@ pip install -r requirements.txt
 
 # Update requirements.txt (use Docker for cross-platform compatibility)
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+
+# For enhanced supply-chain security (optional, adds complexity):
+# docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile --generate-hashes api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
 ```
 
 ### Web Frontend Development
