@@ -3,40 +3,39 @@ Admin routes for the Bisq Support API.
 """
 
 import logging
-from typing import Dict, Any
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response
-from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
 from app.core.security import (
+    clear_admin_cookie,
+    set_admin_cookie,
     verify_admin_access,
     verify_admin_key,
-    set_admin_cookie,
-    clear_admin_cookie,
 )
-from app.models.faq import FAQItem, FAQIdentifiedItem, FAQListResponse
+from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.models.feedback import (
+    AdminLoginRequest,
+    AdminLoginResponse,
+    CreateFAQFromFeedbackRequest,
+    DashboardOverviewResponse,
     FeedbackFilterRequest,
     FeedbackListResponse,
     FeedbackStatsResponse,
-    CreateFAQFromFeedbackRequest,
-    DashboardOverviewResponse,
-    AdminLoginRequest,
-    AdminLoginResponse,
 )
-from app.services.faq_service import FAQService
-from app.services.feedback_service import FeedbackService
-from app.services.dashboard_service import DashboardService
 
 # Import chat metrics to ensure they're registered with Prometheus
 from app.routes.chat import (
-    QUERY_TOTAL,
-    QUERY_RESPONSE_TIME_HISTOGRAM,
     CURRENT_RESPONSE_TIME,
     QUERY_ERRORS,
+    QUERY_RESPONSE_TIME_HISTOGRAM,
+    QUERY_TOTAL,
 )
+from app.services.dashboard_service import DashboardService
+from app.services.faq_service import FAQService
+from app.services.feedback_service import FeedbackService
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -155,7 +154,7 @@ def map_to_controlled_issue_type(issue: str) -> str:
 
 
 @router.get("/feedback", response_model=Dict[str, Any])
-async def get_feedback_analytics():
+async def get_feedback_analytics() -> Dict[str, Any]:
     """Get analytics about user feedback.
 
     This endpoint requires admin authentication via the API key.
@@ -268,7 +267,7 @@ async def get_feedback_analytics():
 
 
 @router.get("/metrics", response_class=Response)
-async def get_metrics():
+async def get_metrics() -> Response:
     """Get feedback metrics in Prometheus format.
 
     This endpoint requires admin authentication via the API key.
@@ -311,7 +310,7 @@ async def get_metrics():
 
     # Update issue metrics with controlled vocabulary to prevent high-cardinality
     # First clear any existing metrics to ensure removed issues don't persist
-    for issue_type in list(KNOWN_ISSUE_TYPES.values()) + ["other"]:
+    for issue_type in [*KNOWN_ISSUE_TYPES.values(), "other"]:
         ISSUE_COUNT.labels(issue_type=issue_type)._value.set(0)
 
     # Now set the new values
@@ -324,13 +323,13 @@ async def get_metrics():
 
 @router.get("/feedback/list", response_model=FeedbackListResponse)
 async def get_feedback_list(
-    rating: str = None,
-    date_from: str = None,
-    date_to: str = None,
-    issues: str = None,  # Comma-separated list
-    source_types: str = None,  # Comma-separated list
-    search_text: str = None,
-    needs_faq: bool = None,
+    rating: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    issues: Optional[str] = None,  # Comma-separated list
+    source_types: Optional[str] = None,  # Comma-separated list
+    search_text: Optional[str] = None,
+    needs_faq: Optional[bool] = None,
     page: int = 1,
     page_size: int = 50,
     sort_by: str = "newest",
@@ -408,7 +407,7 @@ async def get_feedback_stats_enhanced():
 
 
 @router.get("/feedback/needs-faq")
-async def get_feedback_needing_faq():
+async def get_feedback_needing_faq() -> Dict[str, Any]:
     """Get negative feedback that would benefit from FAQ creation.
 
     Returns feedback items that:
@@ -481,7 +480,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
 
 
 @router.get("/feedback/by-issues")
-async def get_feedback_by_issues():
+async def get_feedback_by_issues() -> Dict[str, Any]:
     """Get feedback grouped by issue types for pattern analysis.
 
     This endpoint helps support agents understand common problems
@@ -521,9 +520,9 @@ async def get_feedback_by_issues():
 async def get_all_faqs_for_admin_route(
     page: int = 1,
     page_size: int = 10,
-    search_text: str = None,
-    categories: str = None,  # Comma-separated list
-    source: str = None,
+    search_text: Optional[str] = None,
+    categories: Optional[str] = None,  # Comma-separated list
+    source: Optional[str] = None,
 ):
     """Get FAQs for the admin interface with pagination and filtering support."""
     logger.info(
@@ -652,7 +651,7 @@ async def admin_login(login_request: AdminLoginRequest, response: Response):
 
 
 @auth_router.post("/logout")
-async def admin_logout(response: Response):
+async def admin_logout(response: Response) -> Dict[str, Any]:
     """Logout admin user by clearing authentication cookie.
 
     This endpoint clears the secure session cookie, effectively logging out

@@ -18,18 +18,18 @@ import unicodedata
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional, cast
+from typing import Any, Dict, List, Optional, Set, cast
 
 import pandas as pd
 import portalocker
+
+# Import Pydantic models
+from app.models.faq import FAQIdentifiedItem, FAQItem
 from fastapi import Request
 from langchain_core.documents import Document
 
 # Import OpenAI client
 from openai import OpenAI
-
-# Import Pydantic models
-from app.models.faq import FAQItem, FAQIdentifiedItem
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -152,8 +152,9 @@ class FAQService:
         source: str = None,
     ):
         """Get FAQs with pagination and filtering support."""
-        from app.models.faq import FAQListResponse
         import math
+
+        from app.models.faq import FAQListResponse
 
         # Get all FAQs
         all_faqs = self._read_all_faqs_with_ids()
@@ -191,9 +192,9 @@ class FAQService:
     def _apply_filters(
         self,
         faqs: List[FAQIdentifiedItem],
-        search_text: str = None,
-        categories: List[str] = None,
-        source: str = None,
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
     ) -> List[FAQIdentifiedItem]:
         """Apply filters to FAQ list."""
         filtered_faqs = faqs
@@ -209,17 +210,21 @@ class FAQService:
             ]
 
         # Category filter
-        if categories and len(categories) > 0:
+        if categories:
+            categories_set = {c.lower() for c in categories if isinstance(c, str)}
             filtered_faqs = [
                 faq
                 for faq in filtered_faqs
-                if faq.category and faq.category in categories
+                if faq.category and faq.category.lower() in categories_set
             ]
 
         # Source filter
         if source and source.strip():
+            source_lower = source.strip().lower()
             filtered_faqs = [
-                faq for faq in filtered_faqs if faq.source and faq.source == source
+                faq
+                for faq in filtered_faqs
+                if faq.source and faq.source.lower() == source_lower
             ]
 
         return filtered_faqs

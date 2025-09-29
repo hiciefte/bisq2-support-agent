@@ -1,10 +1,9 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Optional
 
 import aiohttp
-import asyncio
-
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)

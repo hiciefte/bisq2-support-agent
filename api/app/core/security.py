@@ -7,9 +7,8 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Request, HTTPException, status, Response
-
 from app.core.config import get_settings
+from fastapi import HTTPException, Request, Response, status
 
 # Get settings instance
 settings = get_settings()
@@ -116,13 +115,14 @@ def set_admin_cookie(response: Response) -> None:
     Args:
         response: FastAPI response object to set cookie on
     """
-    # Set secure HTTP-only cookie
+    # Set secure HTTP-only cookie - adjust security flags based on environment
+    is_production = not settings.DEBUG
     response.set_cookie(
         key="admin_authenticated",
         value="true",
         max_age=24 * 60 * 60,  # 24 hours
         httponly=True,  # Prevents XSS access
-        secure=True,  # HTTPS only (disable for local dev)
+        secure=is_production,  # HTTPS only in production, allow HTTP in development
         samesite="strict",  # CSRF protection
     )
 
@@ -133,10 +133,12 @@ def clear_admin_cookie(response: Response) -> None:
     Args:
         response: FastAPI response object to clear cookie on
     """
+    # Use same security flags as set_admin_cookie for consistency
+    is_production = not settings.DEBUG
     response.delete_cookie(
         key="admin_authenticated",
         httponly=True,
-        secure=True,
+        secure=is_production,  # HTTPS only in production, allow HTTP in development
         samesite="strict",
     )
 
