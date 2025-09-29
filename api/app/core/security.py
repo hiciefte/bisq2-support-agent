@@ -134,13 +134,9 @@ def clear_admin_cookie(response: Response) -> None:
     Args:
         response: FastAPI response object to clear cookie on
     """
-    # Use same security flags as set_admin_cookie for consistency
-    is_production = not settings.DEBUG
+    # Use minimal parameters for maximum compatibility across FastAPI/Starlette versions
     response.delete_cookie(
         key="admin_authenticated",
-        httponly=True,
-        secure=is_production,  # HTTPS only in production, allow HTTP in development
-        samesite="lax",  # Match the set_cookie settings
         path="/",  # Ensure cookie is deleted from all paths
     )
 
