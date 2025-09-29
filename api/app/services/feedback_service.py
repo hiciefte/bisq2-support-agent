@@ -8,17 +8,23 @@ This service handles all feedback-related functionality:
 - Using feedback to improve RAG responses
 """
 
+import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
-import asyncio
-import portalocker
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import portalocker
+from app.models.feedback import (
+    FeedbackFilterRequest,
+    FeedbackItem,
+    FeedbackListResponse,
+)
 from fastapi import Request
 
 # Configure logging
@@ -737,6 +743,345 @@ class FeedbackService:
             Dictionary mapping source types to their weights
         """
         return self.source_weights
+
+    def get_feedback_with_filters(
+        self, filters: FeedbackFilterRequest
+    ) -> FeedbackListResponse:
+        """Get filtered and paginated feedback data.
+
+        Args:
+            filters: Filtering and pagination parameters
+
+        Returns:
+            FeedbackListResponse with filtered feedback items
+        """
+        all_feedback = self.load_feedback()
+
+        # Convert dict items to FeedbackItem objects
+        feedback_items = []
+        for item in all_feedback:
+            try:
+                feedback_item = FeedbackItem(**item)
+                feedback_items.append(feedback_item)
+            except Exception as e:
+                logger.warning(f"Error parsing feedback item: {e}")
+                continue
+
+        # Apply filters
+        filtered_items = self._apply_filters(feedback_items, filters)
+
+        # Apply sorting
+        sorted_items = self._apply_sorting(filtered_items, filters.sort_by)
+
+        # Apply pagination
+        total_count = len(sorted_items)
+        total_pages = (
+            math.ceil(total_count / filters.page_size) if total_count > 0 else 0
+        )
+
+        start_idx = (filters.page - 1) * filters.page_size
+        end_idx = start_idx + filters.page_size
+        paginated_items = sorted_items[start_idx:end_idx]
+
+        return FeedbackListResponse(
+            feedback_items=paginated_items,
+            total_count=total_count,
+            page=filters.page,
+            page_size=filters.page_size,
+            total_pages=total_pages,
+            filters_applied={
+                "rating": filters.rating,
+                "date_from": filters.date_from,
+                "date_to": filters.date_to,
+                "issues": filters.issues,
+                "source_types": filters.source_types,
+                "search_text": filters.search_text,
+                "needs_faq": filters.needs_faq,
+                "sort_by": filters.sort_by,
+            },
+        )
+
+    def _apply_filters(
+        self, feedback_items: List[FeedbackItem], filters: FeedbackFilterRequest
+    ) -> List[FeedbackItem]:
+        """Apply various filters to feedback items."""
+        filtered_items = feedback_items
+
+        # Filter by rating
+        if filters.rating == "positive":
+            filtered_items = [item for item in filtered_items if item.is_positive]
+        elif filters.rating == "negative":
+            filtered_items = [item for item in filtered_items if item.is_negative]
+
+        # Filter by date range
+        if filters.date_from or filters.date_to:
+            filtered_items = self._filter_by_date(
+                filtered_items, filters.date_from, filters.date_to
+            )
+
+        # Filter by issues
+        if filters.issues:
+            filtered_items = [
+                item
+                for item in filtered_items
+                if any(issue in item.issues for issue in filters.issues)
+            ]
+
+        # Filter by source types
+        if filters.source_types:
+            filtered_items = [
+                item
+                for item in filtered_items
+                if self._has_source_type(item, filters.source_types)
+            ]
+
+        # Filter by search text
+        if filters.search_text:
+            filtered_items = self._filter_by_text_search(
+                filtered_items, filters.search_text
+            )
+
+        # Filter for items that need FAQ creation
+        if filters.needs_faq:
+            filtered_items = [
+                item
+                for item in filtered_items
+                if item.is_negative
+                and (item.has_no_source_response or item.explanation)
+            ]
+
+        return filtered_items
+
+    def _filter_by_date(
+        self,
+        items: List[FeedbackItem],
+        date_from: Optional[str],
+        date_to: Optional[str],
+    ) -> List[FeedbackItem]:
+        """Filter items by date range."""
+        filtered = []
+        for item in items:
+            try:
+                # Parse timestamp
+                if "T" in item.timestamp:
+                    item_date = datetime.fromisoformat(
+                        item.timestamp.replace("Z", "+00:00")
+                    )
+                else:
+                    item_date = datetime.fromisoformat(item.timestamp)
+
+                # Check date bounds
+                if date_from:
+                    from_date = datetime.fromisoformat(date_from)
+                    if item_date < from_date:
+                        continue
+
+                if date_to:
+                    to_date = datetime.fromisoformat(date_to)
+                    if item_date > to_date:
+                        continue
+
+                filtered.append(item)
+            except Exception as e:
+                logger.warning(f"Error parsing timestamp {item.timestamp}: {e}")
+                # Include items with unparseable timestamps to avoid losing data
+                filtered.append(item)
+
+        return filtered
+
+    def _has_source_type(self, item: FeedbackItem, source_types: List[str]) -> bool:
+        """Check if item has any of the specified source types."""
+        sources = (
+            item.sources_used
+            if item.sources_used
+            else (item.sources if item.sources else [])
+        )
+        if not sources:
+            return "unknown" in source_types
+
+        for source in sources:
+            if source.get("type", "unknown") in source_types:
+                return True
+        return False
+
+    def _filter_by_text_search(
+        self, items: List[FeedbackItem], search_text: str
+    ) -> List[FeedbackItem]:
+        """Filter items by text search in questions, answers, and explanations."""
+        search_lower = search_text.lower()
+        filtered = []
+
+        for item in items:
+            # Search in question
+            if search_lower in item.question.lower():
+                filtered.append(item)
+                continue
+
+            # Search in answer
+            if search_lower in item.answer.lower():
+                filtered.append(item)
+                continue
+
+            # Search in explanation if available
+            if item.explanation and search_lower in item.explanation.lower():
+                filtered.append(item)
+                continue
+
+        return filtered
+
+    def _apply_sorting(
+        self, items: List[FeedbackItem], sort_by: Optional[str]
+    ) -> List[FeedbackItem]:
+        """Apply sorting to feedback items."""
+        if not sort_by or sort_by == "newest":
+            return sorted(items, key=lambda x: x.timestamp, reverse=True)
+        elif sort_by == "oldest":
+            return sorted(items, key=lambda x: x.timestamp)
+        elif sort_by == "rating_desc":
+            return sorted(items, key=lambda x: x.rating, reverse=True)
+        elif sort_by == "rating_asc":
+            return sorted(items, key=lambda x: x.rating)
+        else:
+            return items
+
+    def get_feedback_by_issues(self) -> Dict[str, List[FeedbackItem]]:
+        """Get feedback grouped by issue types for analysis."""
+        all_feedback = self.load_feedback()
+        feedback_items = []
+
+        for item in all_feedback:
+            try:
+                feedback_item = FeedbackItem(**item)
+                if feedback_item.is_negative and feedback_item.issues:
+                    feedback_items.append(feedback_item)
+            except Exception as e:
+                logger.warning(f"Error parsing feedback item: {e}")
+                continue
+
+        # Group by issues
+        issues_dict = defaultdict(list)
+        for item in feedback_items:
+            for issue in item.issues:
+                issues_dict[issue].append(item)
+
+        return dict(issues_dict)
+
+    def get_negative_feedback_for_faq_creation(self) -> List[FeedbackItem]:
+        """Get negative feedback that would benefit from FAQ creation."""
+        all_feedback = self.load_feedback()
+        feedback_items = []
+
+        for item in all_feedback:
+            try:
+                feedback_item = FeedbackItem(**item)
+                # Include negative feedback with explanations or "no source" responses
+                if feedback_item.is_negative and (
+                    feedback_item.explanation or feedback_item.has_no_source_response
+                ):
+                    feedback_items.append(feedback_item)
+            except Exception as e:
+                logger.warning(f"Error parsing feedback item: {e}")
+                continue
+
+        # Sort by newest first
+        return sorted(feedback_items, key=lambda x: x.timestamp, reverse=True)
+
+    def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
+        """Get enhanced feedback statistics for admin dashboard."""
+        all_feedback = self.load_feedback()
+        feedback_items = []
+
+        for item in all_feedback:
+            try:
+                feedback_item = FeedbackItem(**item)
+                feedback_items.append(feedback_item)
+            except Exception as e:
+                logger.warning(f"Error parsing feedback item: {e}")
+                continue
+
+        if not feedback_items:
+            return {
+                "total_feedback": 0,
+                "positive_count": 0,
+                "negative_count": 0,
+                "helpful_rate": 0,
+                "common_issues": {},
+                "recent_negative_count": 0,
+                "needs_faq_count": 0,
+                "source_effectiveness": {},
+                "feedback_by_month": {},
+            }
+
+        # Basic stats
+        total_count = len(feedback_items)
+        positive_count = sum(1 for item in feedback_items if item.is_positive)
+        negative_count = total_count - positive_count
+        helpful_rate = positive_count / total_count if total_count > 0 else 0
+
+        # Common issues
+        issue_counts = defaultdict(int)
+        for item in feedback_items:
+            if item.is_negative:
+                for issue in item.issues:
+                    issue_counts[issue] += 1
+
+        # Recent negative feedback (last 30 days)
+        thirty_days_ago = datetime.now().replace(day=1).strftime("%Y-%m-01")
+        recent_negative = [
+            item
+            for item in feedback_items
+            if item.is_negative and item.timestamp >= thirty_days_ago
+        ]
+
+        # Feedback that needs FAQ creation
+        needs_faq_items = [
+            item
+            for item in feedback_items
+            if item.is_negative and (item.explanation or item.has_no_source_response)
+        ]
+
+        # Feedback by month
+        monthly_counts = defaultdict(int)
+        for item in feedback_items:
+            try:
+                month_key = item.timestamp[:7]  # YYYY-MM
+                monthly_counts[month_key] += 1
+            except (IndexError, TypeError, AttributeError):
+                # Handle cases where timestamp is None, empty, or malformed
+                monthly_counts["unknown"] += 1
+
+        # Source effectiveness
+        source_stats = defaultdict(lambda: {"total": 0, "positive": 0})
+        for item in feedback_items:
+            sources = (
+                item.sources_used
+                if item.sources_used
+                else (item.sources if item.sources else [])
+            )
+            for source in sources:
+                source_type = source.get("type", "unknown")
+                source_stats[source_type]["total"] += 1
+                if item.is_positive:
+                    source_stats[source_type]["positive"] += 1
+
+        # Add helpfulness rate to source stats
+        for source_type in source_stats:
+            stats = source_stats[source_type]
+            stats["helpful_rate"] = (
+                stats["positive"] / stats["total"] if stats["total"] > 0 else 0
+            )
+
+        return {
+            "total_feedback": total_count,
+            "positive_count": positive_count,
+            "negative_count": negative_count,
+            "helpful_rate": helpful_rate,
+            "common_issues": dict(issue_counts),
+            "recent_negative_count": len(recent_negative),
+            "needs_faq_count": len(needs_faq_items),
+            "source_effectiveness": dict(source_stats),
+            "feedback_by_month": dict(monthly_counts),
+        }
 
 
 # Dependency function for FastAPI

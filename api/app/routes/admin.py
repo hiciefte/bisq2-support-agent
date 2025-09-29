@@ -3,17 +3,39 @@ Admin routes for the Bisq Support API.
 """
 
 import logging
-from typing import Dict, Any
-
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
-from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
-from app.core.security import verify_admin_access
-from app.models.faq import FAQItem, FAQIdentifiedItem, FAQListResponse
+from app.core.security import (
+    clear_admin_cookie,
+    set_admin_cookie,
+    verify_admin_access,
+    verify_admin_key,
+)
+from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
+from app.models.feedback import (
+    AdminLoginRequest,
+    AdminLoginResponse,
+    CreateFAQFromFeedbackRequest,
+    DashboardOverviewResponse,
+    FeedbackFilterRequest,
+    FeedbackListResponse,
+    FeedbackStatsResponse,
+)
+
+# Import chat metrics to ensure they're registered with Prometheus
+from app.routes.chat import (
+    CURRENT_RESPONSE_TIME,
+    QUERY_ERRORS,
+    QUERY_RESPONSE_TIME_HISTOGRAM,
+    QUERY_TOTAL,
+)
+from app.services.dashboard_service import DashboardService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -21,7 +43,17 @@ logger = logging.getLogger(__name__)
 # Get settings
 settings = get_settings()
 
-# Create router with better documentation of admin security requirements
+# Create authentication router without dependencies for login/logout endpoints
+auth_router = APIRouter(
+    prefix="/admin/auth",
+    tags=["Admin Auth"],
+    responses={
+        401: {"description": "Unauthorized - Invalid or missing API key"},
+        403: {"description": "Forbidden - Insufficient permissions"},
+    },
+)
+
+# Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
@@ -37,6 +69,9 @@ feedback_service = FeedbackService(settings=settings)
 
 # Create a singleton instance of FAQService
 faq_service = FAQService(settings=settings)
+
+# Create a singleton instance of DashboardService
+dashboard_service = DashboardService(settings=settings)
 
 # Controlled vocabulary for issue types to prevent high-cardinality
 KNOWN_ISSUE_TYPES = {
@@ -87,6 +122,15 @@ ISSUE_COUNT = Counter(
     "bisq_issue_count", "Count of specific issues in feedback", ["issue_type"]
 )
 
+# Dashboard-specific metrics
+FAQ_CREATION_TOTAL = Counter(
+    "bisq_faq_creation_total", "Total number of FAQs created from feedback"
+)
+SYSTEM_UPTIME = Gauge("bisq_system_uptime_seconds", "System uptime in seconds")
+DASHBOARD_REQUESTS = Counter(
+    "bisq_dashboard_requests_total", "Total requests to dashboard endpoints"
+)
+
 
 def map_to_controlled_issue_type(issue: str) -> str:
     """Map arbitrary issue strings to controlled vocabulary to prevent high-cardinality.
@@ -110,7 +154,7 @@ def map_to_controlled_issue_type(issue: str) -> str:
 
 
 @router.get("/feedback", response_model=Dict[str, Any])
-async def get_feedback_analytics():
+async def get_feedback_analytics() -> Dict[str, Any]:
     """Get analytics about user feedback.
 
     This endpoint requires admin authentication via the API key.
@@ -223,7 +267,7 @@ async def get_feedback_analytics():
 
 
 @router.get("/metrics", response_class=Response)
-async def get_metrics():
+async def get_metrics() -> Response:
     """Get feedback metrics in Prometheus format.
 
     This endpoint requires admin authentication via the API key.
@@ -266,7 +310,7 @@ async def get_metrics():
 
     # Update issue metrics with controlled vocabulary to prevent high-cardinality
     # First clear any existing metrics to ensure removed issues don't persist
-    for issue_type in list(KNOWN_ISSUE_TYPES.values()) + ["other"]:
+    for issue_type in [*KNOWN_ISSUE_TYPES.values(), "other"]:
         ISSUE_COUNT.labels(issue_type=issue_type)._value.set(0)
 
     # Now set the new values
@@ -277,12 +321,231 @@ async def get_metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@router.get("/feedback/list", response_model=FeedbackListResponse)
+async def get_feedback_list(
+    rating: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    issues: Optional[str] = None,  # Comma-separated list
+    source_types: Optional[str] = None,  # Comma-separated list
+    search_text: Optional[str] = None,
+    needs_faq: Optional[bool] = None,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "newest",
+):
+    """Get filtered and paginated feedback list for admin interface.
+
+    This endpoint provides comprehensive feedback management capabilities:
+    - Filter by rating (positive/negative/all)
+    - Filter by date range
+    - Filter by issue types
+    - Filter by source types
+    - Text search across questions/answers/explanations
+    - Filter for feedback needing FAQ creation
+    - Pagination and sorting support
+
+    Authentication required via API key.
+    """
+    logger.info(
+        f"Admin request to fetch feedback list with filters: rating={rating}, page={page}"
+    )
+
+    # Parse comma-separated lists
+    issues_list = [issue.strip() for issue in issues.split(",")] if issues else None
+    source_types_list = (
+        [st.strip() for st in source_types.split(",")] if source_types else None
+    )
+
+    # Create filter request
+    filters = FeedbackFilterRequest(
+        rating=rating,
+        date_from=date_from,
+        date_to=date_to,
+        issues=issues_list,
+        source_types=source_types_list,
+        search_text=search_text,
+        needs_faq=needs_faq,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+    )
+
+    try:
+        result = feedback_service.get_feedback_with_filters(filters)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback list: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback list."
+        ) from e
+
+
+@router.get("/feedback/stats", response_model=FeedbackStatsResponse)
+async def get_feedback_stats_enhanced():
+    """Get enhanced feedback statistics for admin dashboard.
+
+    Provides comprehensive analytics including:
+    - Basic counts and rates
+    - Common issues breakdown
+    - Source effectiveness metrics
+    - Recent activity trends
+    - Items needing FAQ creation
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch enhanced feedback statistics")
+
+    try:
+        stats = feedback_service.get_feedback_stats_enhanced()
+        return FeedbackStatsResponse(**stats)
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback stats: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback statistics."
+        ) from e
+
+
+@router.get("/feedback/needs-faq")
+async def get_feedback_needing_faq() -> Dict[str, Any]:
+    """Get negative feedback that would benefit from FAQ creation.
+
+    Returns feedback items that:
+    - Have negative ratings
+    - Include explanations from users about why the answer was unhelpful
+    - Have responses indicating the LLM had no source information
+
+    This endpoint is specifically designed to help support agents identify
+    knowledge gaps that should be addressed with new FAQs.
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch feedback needing FAQ creation")
+
+    try:
+        feedback_items = feedback_service.get_negative_feedback_for_faq_creation()
+        return {"feedback_items": feedback_items, "count": len(feedback_items)}
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch feedback needing FAQ creation: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback data."
+        ) from e
+
+
+@router.post("/feedback/create-faq", response_model=FAQIdentifiedItem, status_code=201)
+async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
+    """Create a new FAQ based on feedback.
+
+    This endpoint allows support agents to convert negative feedback into
+    new FAQ entries, helping to address knowledge gaps and improve future
+    responses for similar questions.
+
+    Authentication required via API key.
+    """
+    logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
+
+    try:
+        # Create the FAQ item
+        faq_item = FAQItem(
+            question=request.suggested_question or "Generated from feedback",
+            answer=request.suggested_answer,
+            category=request.category,
+            source="Feedback",  # Mark as created from feedback
+        )
+
+        # Add the FAQ using the FAQ service
+        new_faq = faq_service.add_faq(faq_item)
+
+        # TODO: Optionally update the original feedback to mark it as processed
+        # This could be useful for tracking which feedback has been addressed
+
+        # Record FAQ creation metric
+        FAQ_CREATION_TOTAL.inc()
+
+        logger.info(
+            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id}"
+        )
+        return new_faq
+
+    except Exception as e:
+        logger.error(
+            f"Failed to create FAQ from feedback {request.message_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to create FAQ from feedback."
+        ) from e
+
+
+@router.get("/feedback/by-issues")
+async def get_feedback_by_issues() -> Dict[str, Any]:
+    """Get feedback grouped by issue types for pattern analysis.
+
+    This endpoint helps support agents understand common problems
+    by grouping negative feedback by issue categories such as:
+    - too_verbose, too_technical, inaccurate, etc.
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch feedback grouped by issues")
+
+    try:
+        issues_dict = feedback_service.get_feedback_by_issues()
+
+        # Convert to a more API-friendly format
+        result = []
+        for issue, items in issues_dict.items():
+            result.append(
+                {
+                    "issue_type": issue,
+                    "count": len(items),
+                    "feedback_items": items[:5],  # Include first 5 examples
+                }
+            )
+
+        # Sort by count descending
+        result.sort(key=lambda x: x["count"], reverse=True)
+
+        return {"issues": result, "total_issues": len(result)}
+    except Exception as e:
+        logger.error(f"Failed to fetch feedback by issues: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback by issues."
+        ) from e
+
+
 @router.get("/faqs", response_model=FAQListResponse)
-async def get_all_faqs_for_admin_route():
-    """Get all FAQs for the admin interface."""
-    logger.info("Admin request to fetch all FAQs")
-    faqs = faq_service.get_all_faqs()
-    return FAQListResponse(faqs=faqs)
+async def get_all_faqs_for_admin_route(
+    page: int = 1,
+    page_size: int = 10,
+    search_text: Optional[str] = None,
+    categories: Optional[str] = None,  # Comma-separated list
+    source: Optional[str] = None,
+):
+    """Get FAQs for the admin interface with pagination and filtering support."""
+    logger.info(
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}"
+    )
+
+    try:
+        # Parse comma-separated categories
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
+
+        result = faq_service.get_faqs_paginated(
+            page=page,
+            page_size=page_size,
+            search_text=search_text,
+            categories=categories_list,
+            source=source,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch FAQs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch FAQs.") from e
 
 
 @router.post("/faqs", response_model=FAQIdentifiedItem, status_code=201)
@@ -315,3 +578,91 @@ async def delete_existing_faq_route(faq_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="FAQ not found")
     return Response(status_code=204)
+
+
+@router.get("/dashboard/overview", response_model=DashboardOverviewResponse)
+async def get_dashboard_overview():
+    """Get comprehensive dashboard overview with metrics and analytics.
+
+    This endpoint provides a complete dashboard overview combining:
+    - Real-time feedback statistics and trends
+    - Average response time metrics
+    - Feedback items that would benefit from FAQ creation
+    - System uptime and query statistics
+    - Historical trend data for performance monitoring
+
+    Authentication required via API key.
+    """
+    logger.info("Admin request to fetch dashboard overview")
+
+    # Track dashboard requests
+    DASHBOARD_REQUESTS.inc()
+
+    try:
+        overview_data = await dashboard_service.get_dashboard_overview()
+        return DashboardOverviewResponse(**overview_data)
+    except Exception as e:
+        logger.error(f"Failed to fetch dashboard overview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch dashboard overview."
+        ) from e
+
+
+@auth_router.post("/login", response_model=AdminLoginResponse)
+async def admin_login(login_request: AdminLoginRequest, response: Response):
+    """Authenticate admin user and set secure session cookie.
+
+    This endpoint validates the provided API key and sets an HTTP-only cookie
+    for secure session management. The cookie prevents XSS attacks and provides
+    automatic CSRF protection.
+
+    Args:
+        login_request: Login credentials containing API key
+        response: FastAPI response object for setting cookies
+
+    Returns:
+        AdminLoginResponse: Login success confirmation
+
+    Raises:
+        HTTPException: If credentials are invalid or admin access not configured
+    """
+    logger.info("Admin login attempt")
+
+    try:
+        # Verify the API key
+        if verify_admin_key(login_request.api_key):
+            # Set secure authentication cookie
+            set_admin_cookie(response)
+            logger.info("Admin login successful")
+            return AdminLoginResponse(message="Login successful", authenticated=True)
+        else:
+            logger.warning("Admin login failed - invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
+    except HTTPException:
+        # Re-raise HTTP exceptions (like service unavailable)
+        raise
+    except Exception as e:
+        logger.error(f"Admin login error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed"
+        ) from e
+
+
+@auth_router.post("/logout")
+async def admin_logout(response: Response) -> Dict[str, Any]:
+    """Logout admin user by clearing authentication cookie.
+
+    This endpoint clears the secure session cookie, effectively logging out
+    the admin user. No authentication is required for logout.
+
+    Args:
+        response: FastAPI response object for clearing cookies
+
+    Returns:
+        dict: Logout confirmation message
+    """
+    logger.info("Admin logout")
+    clear_admin_cookie(response)
+    return {"message": "Logout successful", "authenticated": False}

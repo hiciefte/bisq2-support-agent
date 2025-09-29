@@ -8,19 +8,18 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from prometheus_fastapi_instrumentator import Instrumentator
-
 from app.core.config import get_settings
-from app.routes import chat, health, feedback, admin
+from app.routes import admin, chat, feedback, health
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.wiki_service import WikiService
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Configure logging
 logging.basicConfig(
@@ -181,6 +180,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(admin.router, tags=["Admin"])
+app.include_router(admin.auth_router, tags=["Admin Auth"])
 
 
 @app.get("/healthcheck")

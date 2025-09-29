@@ -18,18 +18,18 @@ import unicodedata
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional, cast
+from typing import Any, Dict, List, Optional, Set, cast
 
 import pandas as pd
 import portalocker
+
+# Import Pydantic models
+from app.models.faq import FAQIdentifiedItem, FAQItem
 from fastapi import Request
 from langchain_core.documents import Document
 
 # Import OpenAI client
 from openai import OpenAI
-
-# Import Pydantic models
-from app.models.faq import FAQItem, FAQIdentifiedItem
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -142,6 +142,92 @@ class FAQService:
     def get_all_faqs(self) -> List[FAQIdentifiedItem]:
         """Get all FAQs with their stable IDs."""
         return self._read_all_faqs_with_ids()
+
+    def get_faqs_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        search_text: str = None,
+        categories: List[str] = None,
+        source: str = None,
+    ):
+        """Get FAQs with pagination and filtering support."""
+        import math
+
+        from app.models.faq import FAQListResponse
+
+        # Get all FAQs
+        all_faqs = self._read_all_faqs_with_ids()
+
+        # Reverse order to show newest FAQs first (since they are appended to the file)
+        all_faqs = list(reversed(all_faqs))
+
+        # Apply filters
+        filtered_faqs = self._apply_filters(all_faqs, search_text, categories, source)
+        total_count = len(filtered_faqs)
+
+        # Calculate pagination
+        total_pages = math.ceil(total_count / page_size) if total_count > 0 else 1
+
+        # Validate page number
+        if page < 1:
+            page = 1
+        if page > total_pages:
+            page = total_pages
+
+        # Calculate offset
+        offset = (page - 1) * page_size
+
+        # Get the page of FAQs
+        paginated_faqs = filtered_faqs[offset : offset + page_size]
+
+        return FAQListResponse(
+            faqs=paginated_faqs,
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
+
+    def _apply_filters(
+        self,
+        faqs: List[FAQIdentifiedItem],
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
+    ) -> List[FAQIdentifiedItem]:
+        """Apply filters to FAQ list."""
+        filtered_faqs = faqs
+
+        # Text search filter
+        if search_text and search_text.strip():
+            search_lower = search_text.lower().strip()
+            filtered_faqs = [
+                faq
+                for faq in filtered_faqs
+                if search_lower in faq.question.lower()
+                or search_lower in faq.answer.lower()
+            ]
+
+        # Category filter
+        if categories:
+            categories_set = {c.lower() for c in categories if isinstance(c, str)}
+            filtered_faqs = [
+                faq
+                for faq in filtered_faqs
+                if faq.category and faq.category.lower() in categories_set
+            ]
+
+        # Source filter
+        if source and source.strip():
+            source_lower = source.strip().lower()
+            filtered_faqs = [
+                faq
+                for faq in filtered_faqs
+                if faq.source and faq.source.lower() == source_lower
+            ]
+
+        return filtered_faqs
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
         """Adds a new FAQ to the FAQ file after checking for duplicates."""
