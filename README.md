@@ -50,6 +50,24 @@ To run it, execute the script from your server:
 curl -sSL https://raw.githubusercontent.com/bisq-network/bisq2-support-agent/main/scripts/deploy.sh | sudo bash
 ```
 
+#### Post-Deployment Configuration
+
+After deployment, you must configure CORS to access the admin interface:
+
+1. **Edit CORS settings** in `/opt/bisq-support/docker/.env`:
+   ```bash
+   # Update CORS_ORIGINS to include your server IP/domain:
+   CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://YOUR_SERVER_IP
+   ```
+
+2. **Restart services**:
+   ```bash
+   cd /opt/bisq-support/scripts/
+   ./restart.sh
+   ```
+
+3. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
+
 #### Managing the Application
 
 Once deployed, the production application should be managed using the following scripts located in `/opt/bisq-support/scripts/`:
