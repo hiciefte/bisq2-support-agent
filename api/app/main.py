@@ -161,12 +161,7 @@ app.add_middleware(
 
 # Set up Prometheus metrics
 instrumentator = Instrumentator().instrument(app)
-
-
-@app.on_event("startup")
-async def startup():
-    # Initialize the instrumentator but don't expose it
-    logger.info("Prometheus metrics instrumentation initialized")
+logger.info("Prometheus metrics instrumentation initialized")
 
 
 # Create a dedicated metrics endpoint
