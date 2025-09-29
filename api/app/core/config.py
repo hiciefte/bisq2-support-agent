@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str  # No default, must be set via environment
 
+    # Security settings for cookie handling
+    COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
+
     # Environment settings
     ENVIRONMENT: str = "development"
 
