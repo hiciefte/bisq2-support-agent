@@ -207,3 +207,4 @@ This commit corrects the salt parameter and adds unit tests to
 prevent regression.
 ```
 - As you navigate and work through the repository do not forget to update the CLAUDE.md file with valuable information that will help you increase your understanding of the codebase
+- remember if GitHub Actions errors occur because of an outdated requirements.txt check the section Updating Python Dependencies in the README.md to see how to create the requirements.txt properly
