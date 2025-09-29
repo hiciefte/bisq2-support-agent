@@ -87,12 +87,20 @@ This is a RAG-based support assistant with three main components:
 ### Web Frontend (Next.js/TypeScript)
 - **Component Architecture**: Uses Radix UI components with Tailwind CSS
 - **State Management**: React hooks for chat interface
-- **API Integration**: Communicates with FastAPI backend at `/chat` endpoint
+- **API Integration**: Communicates with FastAPI backend via nginx proxy
+- **API URL Resolution**: Uses `http://${hostname}:8000/api` in production (proxied by nginx)
+- **Local Development**: Direct API access via `NEXT_PUBLIC_API_URL=http://localhost:8000`
 
 ### Docker Environment
-- **Local Development**: Uses `docker-compose.local.yml` with hot-reloading
-- **Production**: Uses `docker-compose.yml` with optimized builds
+- **Local Development**: Uses `docker-compose.local.yml` with hot-reloading and direct API port exposure (8000:8000)
+- **Production**: Uses `docker-compose.yml` with nginx reverse proxy (no direct API exposure)
 - **Services**: nginx (reverse proxy), api, web, prometheus, grafana, bisq2-api
+
+#### Nginx Routing Configuration
+- **Public API Routes**: `/api/` (general), `/api/admin/faqs`, `/api/admin/feedback`, `/api/admin/auth/`
+- **Internal-Only Routes**: All other `/api/admin/` endpoints (restricted to 127.0.0.1 and Docker networks)
+- **Rate Limiting**: Different zones for API (5r/s), admin (3r/s), web (20r/s), static (30r/s)
+- **Local vs Production**: Local development bypasses nginx restrictions via direct API access
 
 ### Bisq Integration
 - **WebSocket Client**: `api/app/integrations/bisq_websocket.py` connects to Bisq 2 API
@@ -111,6 +119,26 @@ This is a RAG-based support assistant with three main components:
 - **Local**: Environment variables in `docker/.env` (created by `run-local.sh` if missing)
 - **Production**: Environment file at `/etc/bisq-support/deploy.env`
 - **Required Variables**: `OPENAI_API_KEY`, `ADMIN_API_KEY`, `XAI_API_KEY` (optional)
+
+#### Post-Deployment Configuration (Production)
+After deploying to a server, you must configure CORS to access the admin interface:
+
+1. **Edit CORS settings**: Update `/opt/bisq-support/docker/.env`
+   ```bash
+   # Change this line to include your server IP/domain:
+   CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://YOUR_SERVER_IP
+
+   # For HTTPS (recommended for production):
+   CORS_ORIGINS=https://yourdomain.com,http://localhost:3000
+   ```
+
+2. **Restart services**: Run `./restart.sh` from `/opt/bisq-support/scripts/`
+
+3. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` value to log in
+
+**Common Issues:**
+- **403 Forbidden on /admin**: CORS_ORIGINS doesn't include your access URL
+- **Admin login fails**: Verify ADMIN_API_KEY matches the value in the .env file
 
 ### Code Style and Quality
 - **Python**: Black (formatting), isort (imports), mypy (type checking)
