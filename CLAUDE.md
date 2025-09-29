@@ -139,6 +139,7 @@ After deploying to a server, you must configure CORS to access the admin interfa
 **Common Issues:**
 - **403 Forbidden on /admin**: CORS_ORIGINS doesn't include your access URL
 - **Admin login fails**: Verify ADMIN_API_KEY matches the value in the .env file
+- **Cookie issues with Tor/.onion**: Set `COOKIE_SECURE=false` in .env file for HTTP/Tor deployments
 
 ### Code Style and Quality
 - **Python**: Black (formatting), isort (imports), mypy (type checking)
@@ -207,3 +208,4 @@ This commit corrects the salt parameter and adds unit tests to
 prevent regression.
 ```
 - As you navigate and work through the repository do not forget to update the CLAUDE.md file with valuable information that will help you increase your understanding of the codebase
+- remember if GitHub Actions errors occur because of an outdated requirements.txt check the section Updating Python Dependencies in the README.md to see how to create the requirements.txt properly
