@@ -30,7 +30,7 @@ backoff==2.2.1
     # via posthog
 bcrypt==5.0.0
     # via chromadb
-beautifulsoup4==4.14.0
+beautifulsoup4==4.14.2
     # via -r api/requirements.in
 black==25.9.0
     # via -r api/requirements.in
@@ -115,7 +115,7 @@ httpx==0.28.1
     #   openai
 httpx-sse==0.4.1
     # via langchain-community
-huggingface-hub==0.35.1
+huggingface-hub==0.35.2
     # via
     #   langchain-huggingface
     #   tokenizers
