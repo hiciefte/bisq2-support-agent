@@ -52,21 +52,42 @@ curl -sSL https://raw.githubusercontent.com/bisq-network/bisq2-support-agent/mai
 
 #### Post-Deployment Configuration
 
-After deployment, you must configure CORS to access the admin interface:
+After deployment, you must configure the following settings in `/opt/bisq-support/docker/.env`:
 
-1. **Edit CORS settings** in `/opt/bisq-support/docker/.env`:
+1. **CORS Settings** - Required to access the admin interface:
    ```bash
    # Update CORS_ORIGINS to include your server IP/domain:
    CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://YOUR_SERVER_IP
    ```
 
-2. **Restart services**:
+2. **Privacy and Security Settings** (recommended for GDPR compliance):
+   ```bash
+   # Data retention period in days (default: 30)
+   DATA_RETENTION_DAYS=30
+
+   # Enable privacy-preserving features (recommended for production)
+   ENABLE_PRIVACY_MODE=true
+
+   # Enable PII detection in logs to prevent logging sensitive data
+   PII_DETECTION_ENABLED=true
+
+   # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+   LOG_LEVEL=INFO
+   ```
+
+3. **Cookie Security** - For Tor/.onion deployments:
+   ```bash
+   # Set to false for HTTP/Tor deployments (default: true for HTTPS)
+   COOKIE_SECURE=false
+   ```
+
+4. **Restart services** after making changes:
    ```bash
    cd /opt/bisq-support/scripts/
    ./restart.sh
    ```
 
-3. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
+5. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
 
 #### Managing the Application
 
@@ -75,6 +96,7 @@ Once deployed, the production application should be managed using the following 
 -   **`start.sh`**: Starts the application containers using the production configuration.
 -   **`stop.sh`**: Stops and removes the application containers.
 -   **`restart.sh`**: Performs a graceful stop followed by a start.
+-   **`cleanup_old_data.sh`**: Cleans up personal data older than `DATA_RETENTION_DAYS` (GDPR compliance).
 
 These scripts are location-aware and source their configuration from a production environment file (`/etc/bisq-support/deploy.env`). They should not be used for local development.
 
@@ -82,6 +104,24 @@ These scripts are location-aware and source their configuration from a productio
 ```bash
 chmod +x /opt/bisq-support/scripts/*.sh
 ```
+
+#### Automated Data Cleanup (Privacy Compliance)
+
+To automatically clean up personal data on production servers, set up a cron job:
+
+```bash
+# Edit root crontab
+sudo crontab -e
+
+# Add this line to run cleanup daily at 2 AM
+0 2 * * * /opt/bisq-support/scripts/cleanup_old_data.sh >> /var/log/bisq-data-cleanup.log 2>&1
+```
+
+The cleanup script:
+- Removes raw chat data older than `DATA_RETENTION_DAYS` (default: 30 days)
+- Preserves anonymized FAQs permanently
+- Respects the `ENABLE_PRIVACY_MODE` setting
+- Can be run manually with `--dry-run` flag to preview deletions
 
 ### Updating the Application
 

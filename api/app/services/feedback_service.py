@@ -20,11 +20,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import portalocker
-from app.models.feedback import (
-    FeedbackFilterRequest,
-    FeedbackItem,
-    FeedbackListResponse,
-)
+from app.models.feedback import (FeedbackFilterRequest, FeedbackItem,
+                                 FeedbackListResponse)
 from fastapi import Request
 
 # Configure logging

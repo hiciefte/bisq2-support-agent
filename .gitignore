@@ -113,3 +113,4 @@ pnpm-lock.yaml
 !/api/data/feedback/.gitkeep
 /docs/requirements/
 /.playwright-mcp/
+/.trees/

@@ -110,6 +110,12 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR}
       - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
+      # Privacy and security settings
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
+      - ENABLE_PRIVACY_MODE=${ENABLE_PRIVACY_MODE:-true}
+      - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
+      - AUDIT_LOG_ENABLED=${AUDIT_LOG_ENABLED:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     expose:
       - "8000"
     networks:
