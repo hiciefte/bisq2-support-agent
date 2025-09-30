@@ -113,4 +113,5 @@ pnpm-lock.yaml
 !/api/data/feedback/.gitkeep
 /docs/requirements/
 /.playwright-mcp/
+# Git worktrees directory - used for parallel feature development
 /.trees/

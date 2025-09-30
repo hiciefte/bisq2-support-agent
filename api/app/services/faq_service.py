@@ -22,12 +22,10 @@ from typing import Any, Dict, List, Optional, Set, cast
 
 import pandas as pd
 import portalocker
-
 # Import Pydantic models
 from app.models.faq import FAQIdentifiedItem, FAQItem
 from fastapi import Request
 from langchain_core.documents import Document
-
 # Import OpenAI client
 from openai import OpenAI
 
@@ -445,10 +443,10 @@ class FAQService:
         processed_msg_ids = set()
 
         # First, try loading from the new message ID tracking file
-        processed_msg_ids_path = Path(self.settings.PROCESSED_MESSAGE_IDS_FILE_PATH)
-        if processed_msg_ids_path.exists():
+        # Use instance variable for consistency
+        if self.processed_msg_ids_path.exists():
             try:
-                with open(processed_msg_ids_path, "r") as f:
+                with open(self.processed_msg_ids_path, "r") as f:
                     for line in f:
                         line = line.strip()
                         if line:
@@ -529,8 +527,8 @@ class FAQService:
                     f.write(f"{msg_id}\n")
 
             logger.info(f"Saved {len(msg_ids)} processed message IDs")
-        except Exception as e:
-            logger.error(f"Error saving processed message IDs: {str(e)}")
+        except Exception:
+            logger.exception("Error saving processed message IDs")
 
     # Backward compatibility aliases
     def load_processed_conv_ids(self) -> Set[str]:

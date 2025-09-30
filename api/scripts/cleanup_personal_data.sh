@@ -13,7 +13,7 @@
 #   DATA_RETENTION_DAYS - Number of days to retain data (default: 30)
 #   DATA_DIR - Path to data directory (default: api/data)
 
-set -e
+set -euo pipefail
 
 # Configuration
 RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
@@ -53,10 +53,11 @@ for file_pattern in "${FILES_TO_CLEANUP[@]}"; do
     # Find and delete files older than retention period
     while IFS= read -r -d '' file; do
         total_files=$((total_files + 1))
-        if [ -n "$file" ]; then
-            log "Deleting: $file"
-            rm -f "$file"
+        log "Deleting: $file"
+        if rm -f "$file" 2>/dev/null; then
             files_deleted=$((files_deleted + 1))
+        else
+            log "WARNING: Failed to delete $file"
         fi
     done < <(find . -maxdepth 1 -name "$file_pattern" -type f -mtime "+${RETENTION_DAYS}" -print0 2>/dev/null)
 done

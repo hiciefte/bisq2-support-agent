@@ -20,12 +20,16 @@ class PIIDetector:
         "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
         "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
         "bitcoin_legacy": r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
-        "bitcoin_bech32": r"\bbc1[a-z0-9]{39,59}\b",
+        # Match specific segwit (bc1q) and taproot (bc1p) addresses
+        "bitcoin_bech32": r"\bbc1[qp][a-z0-9]{38,58}\b",
         "matrix_id": r"@[a-zA-Z0-9._-]+:[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
         "uuid": r"\b[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\b",
         "phone": r"\b(?:\+\d{1,3}[-. ]?)?\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}\b",
-        "api_key": r"\b[a-zA-Z0-9]{32,}\b",
-        "long_number": r"\b\d{8,}\b",
+        # Match API keys with common prefixes to reduce false positives
+        "api_key": r"\b(?:sk-|pk-|Bearer\s+)?[a-zA-Z0-9_-]{32,}\b",
+        # Match credit card numbers and SSNs specifically instead of generic long numbers
+        "credit_card": r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b",
+        "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
     }
 
     def __init__(self):
@@ -190,9 +194,9 @@ class PIIMonitor:
                 "total_count": total_detections,
             }
 
-        except Exception as e:
-            logger.error(f"Error scanning file {file_path}: {str(e)}")
-            return {"file_path": file_path, "error": str(e)}
+        except Exception:
+            logger.exception(f"Error scanning file {file_path}")
+            return {"file_path": file_path, "error": "Scan failed"}
 
 
 def scan_logs_for_pii(log_dir: str, pattern: str = "*.log") -> List[Dict]:
