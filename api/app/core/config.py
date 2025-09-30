@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
 
+    # Privacy and data protection settings
+    DATA_RETENTION_DAYS: int = 30  # Days to retain personal data before cleanup
+    ENABLE_PRIVACY_MODE: bool = True  # Enable privacy-preserving features
+    PII_DETECTION_ENABLED: bool = True  # Enable PII detection in logs
+
     # Environment settings
     ENVIRONMENT: str = "development"
 
@@ -97,6 +102,11 @@ class Settings(BaseSettings):
     def CONVERSATIONS_FILE_PATH(self) -> str:
         """Complete path to the conversations file"""
         return os.path.join(self.DATA_DIR, "conversations.jsonl")
+
+    @property
+    def PROCESSED_MESSAGE_IDS_FILE_PATH(self) -> str:
+        """Complete path to the processed message IDs file"""
+        return os.path.join(self.DATA_DIR, "processed_message_ids.jsonl")
 
     def get_data_path(self, *path_parts) -> str:
         """Utility method to construct paths within DATA_DIR
