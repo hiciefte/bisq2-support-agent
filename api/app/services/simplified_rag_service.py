@@ -22,16 +22,12 @@ from app.core.config import get_settings
 from app.utils.logging import redact_pii
 from fastapi import Request
 from langchain.prompts import ChatPromptTemplate
-
 # Vector store and embeddings
 from langchain_chroma import Chroma
-
 # Core LangChain imports
 from langchain_core.documents import Document
-
 # LLM providers
 from langchain_openai import OpenAIEmbeddings
-
 # Text splitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 

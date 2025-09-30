@@ -6,30 +6,16 @@ import logging
 from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
-from app.core.security import (
-    clear_admin_cookie,
-    set_admin_cookie,
-    verify_admin_access,
-    verify_admin_key,
-)
+from app.core.security import (clear_admin_cookie, set_admin_cookie,
+                               verify_admin_access, verify_admin_key)
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
-from app.models.feedback import (
-    AdminLoginRequest,
-    AdminLoginResponse,
-    CreateFAQFromFeedbackRequest,
-    DashboardOverviewResponse,
-    FeedbackFilterRequest,
-    FeedbackListResponse,
-    FeedbackStatsResponse,
-)
-
+from app.models.feedback import (AdminLoginRequest, AdminLoginResponse,
+                                 CreateFAQFromFeedbackRequest,
+                                 DashboardOverviewResponse, FeedbackFilterRequest,
+                                 FeedbackListResponse, FeedbackStatsResponse)
 # Import chat metrics to ensure they're registered with Prometheus
-from app.routes.chat import (
-    CURRENT_RESPONSE_TIME,
-    QUERY_ERRORS,
-    QUERY_RESPONSE_TIME_HISTOGRAM,
-    QUERY_TOTAL,
-)
+from app.routes.chat import (CURRENT_RESPONSE_TIME, QUERY_ERRORS,
+                             QUERY_RESPONSE_TIME_HISTOGRAM, QUERY_TOTAL)
 from app.services.dashboard_service import DashboardService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
