@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # --- Get Project Root ---
 # This script is location-aware. It will run correctly regardless of the caller's CWD.
@@ -56,6 +56,9 @@ check_service_health() {
         elif docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"State":"exited"'; then
             echo "❌ $service has exited, attempting restart..."
             docker compose -f docker-compose.yml up -d "$service"
+        elif docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"Health":"unhealthy"'; then
+            echo "🔴 $service reports UNHEALTHY, attempting restart..."
+            docker compose -f docker-compose.yml up -d "$service"
         fi
 
         echo "⏳ Waiting for $service to become healthy (attempt $attempt/$max_attempts)..."
@@ -92,7 +95,6 @@ check_service_health "api" 12  # 2 minutes with 10s intervals
 api_healthy=$?
 
 check_service_health "bisq2-api" 18  # 3 minutes with 10s intervals
-bisq2_healthy=$?
 
 # Ensure dependent services are running
 ensure_dependent_services
