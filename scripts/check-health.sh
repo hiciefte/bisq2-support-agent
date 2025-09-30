@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -Eeuo pipefail
 
 # Health Check Monitoring Script for Bisq Support Assistant
 # This script monitors the health of all services and automatically restarts failed dependencies
@@ -26,18 +26,26 @@ cd "$DOCKER_DIR" || {
     exit 1
 }
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo -e "${RED}Error: 'jq' is required but not installed. Install jq and retry.${NC}"
+    exit 1
+fi
+
 # Function to check service health
 check_service() {
     local service=$1
-    local status=$(docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null)
+    local status
+    status=$(docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null)
 
     if [ -z "$status" ]; then
         echo -e "${RED}❌ $service: NOT FOUND${NC}"
         return 2
     fi
 
-    local state=$(echo "$status" | jq -r '.State' 2>/dev/null || echo "unknown")
-    local health=$(echo "$status" | jq -r '.Health' 2>/dev/null || echo "none")
+    local state
+    local health
+    state=$(echo "$status" | jq -r '.State' 2>/dev/null || echo "unknown")
+    health=$(echo "$status" | jq -r '.Health' 2>/dev/null || echo "none")
 
     case "$state" in
         "running")
@@ -141,12 +149,14 @@ main() {
     # Auto-restart failed critical services
     local restarted_services=()
     for service in "${failed_services[@]}"; do
-        if [[ " ${critical_services[*]} " =~ " ${service} " ]]; then
+        case " ${critical_services[*]} " in
+          *" ${service} "*)
             echo ""
             echo -e "${BLUE}🔧 Auto-restarting critical service: $service${NC}"
             restart_service_with_deps "$service"
             restarted_services+=("$service")
-        fi
+            ;;
+        esac
     done
 
     # Wait for restarted services to become healthy
@@ -155,16 +165,18 @@ main() {
         echo -e "${BLUE}⏳ Waiting for restarted services to become healthy...${NC}"
         sleep 10  # Initial wait for services to start
 
-        local all_healthy=true
+        local all_healthy=0
         for service in "${restarted_services[@]}"; do
-            if [[ " ${critical_services[*]} " =~ " ${service} " ]]; then
+            case " ${critical_services[*]} " in
+              *" ${service} "*)
                 if ! wait_for_healthy "$service" 120; then  # 2 minutes wait
-                    all_healthy=false
+                    all_healthy=1
                 fi
-            fi
+                ;;
+            esac
         done
 
-        if [ "$all_healthy" = true ]; then
+        if [ $all_healthy -eq 0 ]; then
             echo ""
             echo -e "${GREEN}✅ All restarted services are now healthy!${NC}"
             exit 0
