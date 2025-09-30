@@ -62,7 +62,24 @@ curl -sSL https://raw.githubusercontent.com/bisq-network/bisq2-support-agent/mai
 
 # Update application with rollback capability
 ./update.sh
+
+# Data cleanup (privacy compliance)
+./cleanup_old_data.sh              # Run manual cleanup
+./cleanup_old_data.sh --dry-run    # Preview what would be deleted
 ```
+
+#### Setting Up Automated Data Cleanup (Production)
+To enable automatic privacy-compliant data cleanup on production servers:
+
+```bash
+# Add cron job for daily cleanup at 2 AM
+sudo crontab -e
+
+# Add this line:
+0 2 * * * /opt/bisq-support/scripts/cleanup_old_data.sh >> /var/log/bisq-data-cleanup.log 2>&1
+```
+
+The cleanup script respects the `DATA_RETENTION_DAYS` environment variable (default: 30 days).
 
 ## Project Architecture
 
@@ -154,6 +171,19 @@ After deploying to a server, you must configure CORS to access the admin interfa
 - **Data Directory**: `api/data/` contains wiki content, vector store, feedback, and FAQs
 - **Volume Mounts**: Data persisted in Docker volumes for development
 - **RAG Updates**: Restart API service to rebuild vector store after content changes
+
+#### Privacy-First Data Management
+- **Personal Data Handling**: Raw chat conversations and personal data are **not committed to git**
+- **Message ID Tracking**: System tracks individual `msg_id` values instead of conversation IDs for more granular deduplication
+- **Data Retention**: Production servers automatically clean up raw chat data after 30 days (configurable via `DATA_RETENTION_DAYS`)
+- **Preserved Data**: Only anonymized FAQs (`extracted_faq.jsonl`) are permanently stored and committed to git
+- **File Structure**:
+  - `extracted_faq.jsonl` - Committed to git (permanent FAQ knowledge base)
+  - `conversations.jsonl` - Local only, gitignored (raw conversation data)
+  - `processed_message_ids.jsonl` - Local only, gitignored (processing state)
+  - `processed_conversations.json` - Deprecated, gitignored (backward compatibility)
+- **Cleanup Script**: `/scripts/cleanup_old_data.sh` runs as a cron job on production servers
+- **Backward Compatibility**: Automatically converts old conversation-based tracking to message-based tracking
 
 #### FAQ Management System
 - **Admin Interface**: Web-based FAQ management at `/admin/manage-faqs`

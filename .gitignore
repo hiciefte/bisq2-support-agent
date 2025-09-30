@@ -74,9 +74,11 @@ api/data/vectorstore/
 *.sqlite3
 *.log
 
-# Ignore sensitive chat and conversation data
+# Ignore sensitive chat and conversation data (privacy-first data management)
 api/data/support_chat_export.csv
 api/data/conversations.jsonl
+api/data/processed_conversations.json
+api/data/processed_message_ids.jsonl
 api/data/*conversation*
 api/data/*chat*
 

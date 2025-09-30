@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # Environment settings
     ENVIRONMENT: str = "development"
 
+    # Privacy & Data Retention settings
+    DATA_RETENTION_DAYS: int = 30  # Number of days to retain raw chat data
+    ENABLE_PRIVACY_MODE: bool = True  # Enable additional privacy controls
+    AUDIT_LOG_ENABLED: bool = False  # Enable audit logging for data operations
+
     # Simple config - let Pydantic handle things
     model_config = SettingsConfigDict(
         env_file=".env",  # Enable .env file loading
