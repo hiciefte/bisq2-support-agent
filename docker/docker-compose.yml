@@ -2,7 +2,7 @@ services:
   # Nginx reverse proxy for web frontend only
   nginx:
     image: nginx:alpine
-    restart: always
+    restart: unless-stopped
     environment:
       - API_URL=${API_URL:-/api} # For CSP configuration
     volumes:
