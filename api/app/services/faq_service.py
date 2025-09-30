@@ -22,12 +22,10 @@ from typing import Any, Dict, List, Optional, Set, cast
 
 import pandas as pd
 import portalocker
-
 # Import Pydantic models
 from app.models.faq import FAQIdentifiedItem, FAQItem
 from fastapi import Request
 from langchain_core.documents import Document
-
 # Import OpenAI client
 from openai import OpenAI
 
@@ -58,6 +56,7 @@ class FAQService:
             data_dir = Path(self.settings.DATA_DIR)
             self._faq_file_path = data_dir / "extracted_faq.jsonl"
             self.processed_convs_path = data_dir / "processed_conversations.json"
+            self.processed_msg_ids_path = data_dir / "processed_message_ids.jsonl"
             self.conversations_path = data_dir / "conversations.jsonl"
             self.existing_input_path = data_dir / "support_chat_export.csv"
 
@@ -432,12 +431,119 @@ class FAQService:
 
     # FAQ Extraction Methods from extract_faqs.py
 
+    def load_processed_msg_ids(self) -> Set[str]:
+        """Load the set of message IDs that have already been processed.
+
+        This method supports backward compatibility by converting old conversation-based
+        tracking to message-based tracking if needed.
+
+        Returns:
+            Set of processed message IDs
+        """
+        processed_msg_ids = set()
+
+        # First, try loading from the new message ID tracking file
+        if (
+            hasattr(self, "processed_msg_ids_path")
+            and self.processed_msg_ids_path.exists()
+        ):
+            try:
+                with open(self.processed_msg_ids_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if isinstance(data, dict) and "msg_id" in data:
+                                    processed_msg_ids.add(data["msg_id"])
+                                elif isinstance(data, str):
+                                    processed_msg_ids.add(data)
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    f"Skipping malformed line in processed_message_ids: {line}"
+                                )
+                logger.info(
+                    f"Loaded {len(processed_msg_ids)} processed message IDs from {self.processed_msg_ids_path}"
+                )
+                return processed_msg_ids
+            except Exception as e:
+                logger.warning(f"Error loading processed message IDs: {str(e)}")
+
+        # Backward compatibility: convert old conversation tracking to message tracking
+        if hasattr(self, "processed_convs_path") and self.processed_convs_path.exists():
+            try:
+                with open(self.processed_convs_path, "r") as f:
+                    conv_ids = set(json.load(f))
+                logger.info(
+                    f"Found {len(conv_ids)} processed conversation IDs in legacy format"
+                )
+
+                # If conversations.jsonl exists, extract all message IDs from processed conversations
+                if (
+                    hasattr(self, "conversations_path")
+                    and self.conversations_path.exists()
+                ):
+                    with open(self.conversations_path, "r") as f:
+                        for line in f:
+                            try:
+                                conv = json.loads(line)
+                                if conv.get("id") in conv_ids:
+                                    # Extract all message IDs from this conversation
+                                    for msg in conv.get("messages", []):
+                                        if "msg_id" in msg:
+                                            processed_msg_ids.add(msg["msg_id"])
+                            except json.JSONDecodeError:
+                                continue
+                    logger.info(
+                        f"Converted {len(conv_ids)} conversation IDs to {len(processed_msg_ids)} message IDs"
+                    )
+
+                    # Save the converted message IDs to the new format
+                    if processed_msg_ids:
+                        self.processed_msg_ids = processed_msg_ids
+                        self.save_processed_msg_ids()
+                        logger.info("Saved converted message IDs to new format")
+            except Exception as e:
+                logger.warning(
+                    f"Error during backward compatibility conversion: {str(e)}"
+                )
+
+        return processed_msg_ids
+
+    def save_processed_msg_ids(self):
+        """Save the set of processed message IDs to JSONL format.
+
+        Each message ID is saved as a single-line JSON object for efficient appending.
+        """
+        if not hasattr(self, "processed_msg_ids_path"):
+            logger.warning("Cannot save processed message IDs: path not set")
+            return
+
+        if not hasattr(self, "processed_msg_ids"):
+            logger.warning("No processed_msg_ids to save")
+            return
+
+        try:
+            # Write all message IDs to file
+            with open(self.processed_msg_ids_path, "w") as f:
+                for msg_id in self.processed_msg_ids:
+                    f.write(json.dumps({"msg_id": msg_id}) + "\n")
+            logger.info(
+                f"Saved {len(self.processed_msg_ids)} processed message IDs to {self.processed_msg_ids_path}"
+            )
+        except Exception as e:
+            logger.error(f"Error saving processed message IDs: {str(e)}")
+
     def load_processed_conv_ids(self) -> Set[str]:
-        """Load the set of conversation IDs that have already been processed."""
+        """Load the set of conversation IDs that have already been processed.
+
+        DEPRECATED: This method is kept for backward compatibility only.
+        New code should use load_processed_msg_ids() instead.
+        """
         if not hasattr(self, "processed_convs_path"):
             return set()
 
-        self._ensure_faq_file_exists()  # Ensure parent dir exists, though this is for processed_convs
+        self._ensure_faq_file_exists()  # Ensure parent dir exists
 
         if self.processed_convs_path.exists():
             try:
@@ -449,7 +555,11 @@ class FAQService:
         return set()
 
     def save_processed_conv_ids(self):
-        """Save the set of processed conversation IDs."""
+        """Save the set of processed conversation IDs.
+
+        DEPRECATED: This method is kept for backward compatibility only.
+        New code should use save_processed_msg_ids() instead.
+        """
         if not hasattr(self, "processed_convs_path"):
             logger.warning("Cannot save processed conversation IDs: path not set")
             return
@@ -1044,6 +1154,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
     async def extract_and_save_faqs(self, bisq_api=None) -> List[Dict]:
         """Run the complete FAQ extraction process.
 
+        This method now uses message-level tracking instead of conversation-level tracking
+        for more granular deduplication and to survive conversation regrouping.
+
         Args:
             bisq_api: Optional Bisq2API instance to fetch data
 
@@ -1051,8 +1164,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             List of extracted FAQ dictionaries
         """
         try:
-            # Load the set of already processed conversation IDs first
-            self.processed_conv_ids = self.load_processed_conv_ids()
+            # Load the set of already processed message IDs
+            # This automatically handles backward compatibility with old conversation tracking
+            self.processed_msg_ids = self.load_processed_msg_ids()
 
             # Reset and pre-seed duplicate set with on-disk FAQs
             self.normalized_faq_keys = set()
@@ -1077,21 +1191,29 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     f"Saved {len(all_conversations)} conversations to {self.conversations_path}"
                 )
 
-            # --- Centralized State Management ---
-            # Determine which conversations are new and need processing
-            new_conversations_to_process = [
-                conv
-                for conv in all_conversations
-                if conv["id"] not in self.processed_conv_ids
-            ]
+            # --- Message-Level State Management ---
+            # Determine which conversations contain at least one unprocessed message
+            new_conversations_to_process = []
+            for conv in all_conversations:
+                # Check if any message in this conversation has not been processed
+                unprocessed_msg_ids = [
+                    msg["msg_id"]
+                    for msg in conv["messages"]
+                    if msg["msg_id"] not in self.processed_msg_ids
+                ]
+                if unprocessed_msg_ids:
+                    new_conversations_to_process.append(conv)
+                    logger.debug(
+                        f"Conversation {conv['id']} has {len(unprocessed_msg_ids)} unprocessed messages"
+                    )
 
             if not new_conversations_to_process:
-                logger.info("No new conversations to process.")
+                logger.info("No new messages to process.")
                 return []
 
-            # Extract FAQs from only the new conversations
+            # Extract FAQs from conversations with unprocessed messages
             logger.info(
-                f"Processing {len(new_conversations_to_process)} new conversations..."
+                f"Processing {len(new_conversations_to_process)} conversations with new messages..."
             )
             new_faqs = self.extract_faqs_with_openai(new_conversations_to_process)
 
@@ -1102,10 +1224,13 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     f"Extraction complete. Saved {len(new_faqs)} new FAQ entries."
                 )
 
-            # Update and save the list of processed conversation IDs
+            # Mark all messages from processed conversations as processed
             for conv in new_conversations_to_process:
-                self.processed_conv_ids.add(conv["id"])
-            self.save_processed_conv_ids()
+                for msg in conv["messages"]:
+                    self.processed_msg_ids.add(msg["msg_id"])
+
+            # Save the updated set of processed message IDs
+            self.save_processed_msg_ids()
 
             return new_faqs
 
