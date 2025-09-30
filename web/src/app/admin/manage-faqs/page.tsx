@@ -11,7 +11,7 @@ import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw } fro
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
-import { makeAuthenticatedRequest, loginWithApiKey, logout, checkAuthStatus } from '@/lib/auth';
+import { makeAuthenticatedRequest } from '@/lib/auth';
 
 interface FAQ {
   id: string;
@@ -38,8 +38,6 @@ export default function ManageFaqsPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingFaq, setEditingFaq] = useState<FAQ | null>(null);
   const [formData, setFormData] = useState({ question: '', answer: '', category: '', source: 'Manual' });
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [loginError, setLoginError] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(10);
@@ -59,24 +57,14 @@ export default function ManageFaqsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const authenticated = await checkAuthStatus();
-      setIsAuthenticated(authenticated);
-      if (authenticated) {
-        fetchFaqs();
-      } else {
-        setIsLoading(false);
-      }
-    };
-    checkAuth();
+    // Since we're wrapped with SecureAuth, we know we're authenticated
+    fetchFaqs();
   }, []);
 
   // Re-fetch data when filters change
   useEffect(() => {
-    if (isAuthenticated) {
-      setCurrentPage(1); // Reset to first page when filters change
-      fetchFaqs(1);
-    }
+    setCurrentPage(1); // Reset to first page when filters change
+    fetchFaqs(1);
   }, [filters]);
 
   const fetchFaqs = async (page = 1) => {
@@ -118,8 +106,8 @@ export default function ManageFaqsPage() {
         console.error(errorText);
         setError(errorText);
         if (response.status === 401 || response.status === 403) {
-          setLoginError('Authentication required. Please log in again.');
-          setIsAuthenticated(false);
+          // Let SecureAuth handle authentication errors
+          window.location.reload();
         }
       }
     } catch (error) {
@@ -131,48 +119,9 @@ export default function ManageFaqsPage() {
     }
   };
 
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    const key = (e.target as HTMLFormElement).apiKey.value;
-    if (key) {
-      try {
-        const response = await loginWithApiKey(key);
-        if (response.authenticated) {
-          setIsAuthenticated(true);
-          setLoginError('');
-          fetchFaqs();
-          // Notify layout of auth change
-          window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-        } else {
-          setLoginError('Invalid API key. Please try again.');
-        }
-      } catch (error) {
-        console.error('Login error:', error);
-        setLoginError('Login failed. Please try again.');
-      }
-    }
-  };
-  
-  const handleLogout = async () => {
-    try {
-      await logout();
-      setIsAuthenticated(false);
-      setFaqData(null);
-      // Notify layout of auth change
-      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-      router.push('/admin/manage-faqs');
-    } catch (error) {
-      console.error('Logout error:', error);
-      // Still reset state even if logout fails
-      setIsAuthenticated(false);
-      setFaqData(null);
-      router.push('/admin/manage-faqs');
-    }
-  };
 
   const handleFormSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!isAuthenticated) return;
     setIsSubmitting(true);
     const endpoint = editingFaq ? `/admin/faqs/${editingFaq.id}` : `/admin/faqs`;
     const method = editingFaq ? 'PUT' : 'POST';
@@ -214,7 +163,6 @@ export default function ManageFaqsPage() {
   };
   
   const handleDelete = async (id: string) => {
-    if (!isAuthenticated) return;
     setIsSubmitting(true);
     try {
       const response = await makeAuthenticatedRequest(`/admin/faqs/${id}`, {
@@ -247,7 +195,7 @@ export default function ManageFaqsPage() {
   }
 
   const handlePageChange = (newPage: number) => {
-    if (isAuthenticated && newPage >= 1 && newPage <= (faqData?.total_pages || 1)) {
+    if (newPage >= 1 && newPage <= (faqData?.total_pages || 1)) {
       setCurrentPage(newPage);
       fetchFaqs(newPage);
     }
@@ -280,31 +228,6 @@ export default function ManageFaqsPage() {
   };
 
   const hasActiveFilters = filters.search_text || filters.categories.length > 0 || filters.source;
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-2xl font-bold text-center">Admin Login</CardTitle>
-            <CardDescription>Enter your API key to manage FAQs.</CardDescription>
-          </CardHeader>
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="apiKey">API Key</Label>
-                <Input id="apiKey" name="apiKey" type="password" required />
-              </div>
-              {loginError && <p className="text-sm text-red-500">{loginError}</p>}
-            </CardContent>
-            <CardFooter>
-              <Button type="submit" className="w-full">Login</Button>
-            </CardFooter>
-          </form>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
