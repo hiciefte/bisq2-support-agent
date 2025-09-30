@@ -82,6 +82,14 @@ rollback_update() {
     local reason="${1:-Unknown reason}"
     log_error "Initiating rollback due to: $reason"
 
+    # Ensure PREV_HEAD is set before attempting rollback
+    if [ -z "${PREV_HEAD:-}" ]; then
+        log_error "CRITICAL: PREV_HEAD not set. Cannot determine rollback target."
+        log_error "This likely means update_repository was not called successfully."
+        log_error "Manual intervention required to restore system state."
+        exit 2
+    fi
+
     # Store the current failed state for debugging
     local failed_date
     failed_date=$(date +%Y%m%d_%H%M%S)
