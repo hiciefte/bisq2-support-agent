@@ -460,9 +460,7 @@ class FAQService:
                             except json.JSONDecodeError:
                                 # Treat as plain text message ID
                                 processed_msg_ids.add(line)
-                logger.info(
-                    f"Loaded {len(processed_msg_ids)} processed message IDs"
-                )
+                logger.info(f"Loaded {len(processed_msg_ids)} processed message IDs")
                 return processed_msg_ids
             except Exception as e:
                 logger.warning(f"Error loading processed message IDs: {str(e)}")
