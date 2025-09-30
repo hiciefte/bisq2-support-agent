@@ -34,7 +34,7 @@ stash_changes() {
     cd "$repo_dir" || return 1
 
     log_warning "Local changes detected. Stashing changes..."
-    if ! git stash save "$stash_message"; then
+    if ! git stash push -m "$stash_message"; then
         log_error "Failed to stash local changes. Please commit or discard your changes."
         return 1
     fi

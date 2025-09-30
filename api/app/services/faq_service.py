@@ -22,10 +22,12 @@ from typing import Any, Dict, List, Optional, Set, cast
 
 import pandas as pd
 import portalocker
+
 # Import Pydantic models
 from app.models.faq import FAQIdentifiedItem, FAQItem
 from fastapi import Request
 from langchain_core.documents import Document
+
 # Import OpenAI client
 from openai import OpenAI
 
