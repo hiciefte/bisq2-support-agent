@@ -106,6 +106,7 @@ services:
       - XAI_MODEL=${XAI_MODEL}
       - XAI_API_BASE_URL=${XAI_API_BASE_URL}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR}
       - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
