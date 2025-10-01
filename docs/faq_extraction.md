@@ -77,7 +77,7 @@ The FAQ extraction process relies on several environment variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `BISQ_API_URL` | URL to the Bisq API | `http://host.docker.internal:8090` |
+| `BISQ_API_URL` | URL to the Bisq API | `http://bisq2-api:8090` (Docker network) |
 | `OPENAI_API_KEY` | API key for OpenAI | - |
 | `OPENAI_MODEL` | OpenAI model to use | `gpt-4o-mini` |
 | `DATA_DIR` | Directory for storing data files | - |
@@ -116,7 +116,7 @@ docker compose -f docker/docker-compose.local.yml up -d faq-extractor
 
 ### Scheduled Execution
 
-In the production environment, the FAQ extraction is scheduled to run weekly via the `scheduler` service in the Docker Compose configuration.
+In the production environment, the FAQ extraction is scheduled to run **daily at midnight** via the `scheduler` service in the Docker Compose configuration. This ensures the FAQ database stays current with recent support conversations.
 
 ## Integration with RAG System
 
@@ -147,9 +147,10 @@ docker logs docker-faq-extractor-1
 ### Common Issues and Solutions
 
 1. **Connection to Bisq API fails**:
-   - Verify the `BISQ_API_URL` environment variable is set correctly in Docker Compose
-   - Ensure the Bisq API is running and accessible
-   - Check network connectivity between containers (e.g., using `host.docker.internal`)
+   - Verify the `BISQ_API_URL` environment variable is set to `http://bisq2-api:8090` (Docker network hostname)
+   - Ensure the Bisq API service (`bisq2-api`) is running and healthy
+   - Check Docker network connectivity between the `api` and `bisq2-api` containers
+   - For local development outside Docker, use `http://localhost:8090` instead
 
 2. **OpenAI API errors**:
    - Verify the `OPENAI_API_KEY` is valid
