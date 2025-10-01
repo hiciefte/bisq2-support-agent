@@ -77,7 +77,7 @@ export default function PrivacyPolicy() {
                 <li>
                   See{" "}
                   <a
-                    href="https://openai.com/policies/privacy-policy"
+                    href="https://openai.com/policies/privacy-policy/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
