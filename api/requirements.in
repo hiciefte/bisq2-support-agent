@@ -14,7 +14,9 @@ langchain-chroma
 chromadb
 
 # LLM providers
-openai
+# Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
+# 2.0.0 changes Response tool-call output schema (breaking change)
+openai<2.0.0
 langchain-openai
 langchain-huggingface
 langchain-text-splitters

@@ -304,6 +304,44 @@ apply_updates() {
     fi
 }
 
+# Fix file permissions for container access
+fix_permissions() {
+    log_info "Fixing container-mounted directory permissions..."
+
+    # Use numeric UID/GID to ensure container (UID 1001) can write files
+    # This handles cases where bisq-support user has different UID on host
+    local APP_UID=1001
+    local APP_GID=1001
+
+    # Fix permissions for all container-mounted paths
+    local paths=(
+        "$INSTALL_DIR/api/data"
+        "$INSTALL_DIR/docker/logs"
+        "$INSTALL_DIR/runtime_secrets"
+        "$INSTALL_DIR/failed_updates"
+    )
+
+    local fixed_count=0
+    local skipped_count=0
+
+    for path in "${paths[@]}"; do
+        if [ -d "$path" ]; then
+            chown -R "$APP_UID:$APP_GID" "$path"
+            fixed_count=$((fixed_count + 1))
+        else
+            skipped_count=$((skipped_count + 1))
+        fi
+    done
+
+    if [ "$fixed_count" -gt 0 ]; then
+        log_success "Fixed permissions for $fixed_count director(ies) (UID:GID $APP_UID:$APP_GID)"
+    fi
+
+    if [ "$skipped_count" -gt 0 ]; then
+        log_warning "Skipped $skipped_count non-existent director(ies)"
+    fi
+}
+
 # Cleanup old backups
 cleanup_backups() {
     log_info "Cleaning up old backups..."
@@ -326,6 +364,9 @@ main() {
 
     # Analyze what needs to be updated
     analyze_changes
+
+    # Fix permissions before applying updates
+    fix_permissions
 
     # Apply updates (rebuild or restart services)
     apply_updates
