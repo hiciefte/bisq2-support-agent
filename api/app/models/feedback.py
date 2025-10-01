@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class FeedbackItem(BaseModel):
     """Individual feedback entry model."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     message_id: str
     question: str
