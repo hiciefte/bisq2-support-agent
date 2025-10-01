@@ -337,9 +337,10 @@ mkdir -p "$INSTALL_DIR/api/data/logs"
 mkdir -p "$INSTALL_DIR/api/data/vectorstore"
 mkdir -p "$INSTALL_DIR/api/data/feedback"
 # Correct permissions for data dirs needed by Docker containers
-# Ensure the user inside the Docker container (ideally UID 1001) can write here
-chown -R bisq-support:bisq-support "$INSTALL_DIR/api/data"
-chmod -R 775 "$INSTALL_DIR/api/data" # Group writable needed if container user is bisq-support
+# Use numeric UID/GID to ensure container (UID 1001) can write files
+# This handles cases where bisq-support user has different UID on host
+chown -R $APP_UID:$APP_GID "$INSTALL_DIR/api/data"
+chmod -R 775 "$INSTALL_DIR/api/data"
 
 # Start services
 echo -e "${BLUE}Starting services in production mode...${NC}"
@@ -472,12 +473,13 @@ mkdir -p "$INSTALL_DIR/docker/logs/nginx"
 mkdir -p "$INSTALL_DIR/runtime_secrets"
 mkdir -p "$INSTALL_DIR/failed_updates"
 
-# Set ownership of the data directories to the application user
-echo "Setting ownership of data directories to $APP_USER:$APP_GROUP..."
-chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/api/data"
-chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/docker/logs"
-chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/runtime_secrets"
-chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR/failed_updates"
+# Set ownership of the data directories using numeric UID/GID
+# This ensures correct permissions even if username doesn't match UID on host
+echo "Setting ownership of data directories to UID:GID $APP_UID:$APP_GID..."
+chown -R "$APP_UID:$APP_GID" "$INSTALL_DIR/api/data"
+chown -R "$APP_UID:$APP_GID" "$INSTALL_DIR/docker/logs"
+chown -R "$APP_UID:$APP_GID" "$INSTALL_DIR/runtime_secrets"
+chown -R "$APP_UID:$APP_GID" "$INSTALL_DIR/failed_updates"
 
 # --- Docker Operations --- #
 # Navigate to docker directory
