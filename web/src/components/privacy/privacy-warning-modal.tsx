@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, Send, Database, Trash2, FileText } from "lucide-react"
 
 const STORAGE_KEY = "bisq-privacy-warning-acknowledged"
 
@@ -32,7 +32,7 @@ export function PrivacyWarningModal() {
 
   return (
     <Dialog open={showModal} onOpenChange={() => {}}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()} showClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
             <AlertTriangle className="h-6 w-6 text-yellow-500" />
@@ -73,26 +73,26 @@ export function PrivacyWarningModal() {
           </div>
 
           <div className="space-y-3 text-sm">
-            <div className="flex items-start gap-2">
-              <span className="text-lg">📤</span>
+            <div className="flex items-start gap-3">
+              <Send className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
                 <strong>Your questions are sent to OpenAI</strong> for AI processing
               </p>
             </div>
-            <div className="flex items-start gap-2">
-              <span className="text-lg">📊</span>
+            <div className="flex items-start gap-3">
+              <Database className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
                 <strong>We collect questions, answers, and feedback</strong> to improve our service
               </p>
             </div>
-            <div className="flex items-start gap-2">
-              <span className="text-lg">🗑️</span>
+            <div className="flex items-start gap-3">
+              <Trash2 className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
                 <strong>All personal data is automatically deleted after 30 days</strong>
               </p>
             </div>
-            <div className="flex items-start gap-2">
-              <span className="text-lg">📚</span>
+            <div className="flex items-start gap-3">
+              <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p>
                 <strong>Only anonymized FAQs are kept permanently</strong>
               </p>
