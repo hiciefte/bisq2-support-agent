@@ -2,9 +2,9 @@
 # Docker and service management utilities for Bisq Support Assistant
 
 # Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/common.sh"
+source "$LIB_DIR/common.sh"
 
 # Configuration
 HEALTH_CHECK_RETRIES=${HEALTH_CHECK_RETRIES:-30}
