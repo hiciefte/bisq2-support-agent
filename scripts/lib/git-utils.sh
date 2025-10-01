@@ -2,9 +2,9 @@
 # Git operations and version management utilities for Bisq Support Assistant
 
 # Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/common.sh"
+source "$LIB_DIR/common.sh"
 
 # Function to check for local changes
 check_local_changes() {
