@@ -84,8 +84,7 @@ api/data/*conversation*
 api/data/*chat*
 
 # Ignore user feedback data (contains conversation_id and message_id for user tracking)
-api/data/feedback/*.jsonl
-api/data/feedback/analysis/*
+api/data/feedback/*
 !api/data/feedback/.gitkeep
 
 # Misc
