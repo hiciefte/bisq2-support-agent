@@ -64,8 +64,8 @@ These variables configure the application services running inside Docker contain
     *   Description: A comma-separated list of origins (URLs) allowed to make requests to the API. Use `*` for wide-open access (not recommended for production).
     *   Default: `http://localhost:3000,http://127.0.0.1:3000`
 *   **`DATA_DIR`**
-    *   Description: The path *inside the API container* where persistent data (wiki, FAQs, vectorstore, feedback) is stored/mounted.
-    *   Default: `/app/api/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts)
+    *   Description: The path *inside the API container* where persistent data (wiki, FAQs, vectorstore, feedback) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
+    *   Default: `/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts in `docker-compose.yml`)
 *   **`EXPOSE_API_PORT`**
     *   Description: Internal port used by the API container.
     *   Default: `8000`
