@@ -304,6 +304,23 @@ apply_updates() {
     fi
 }
 
+# Fix file permissions for container access
+fix_permissions() {
+    log_info "Fixing data directory permissions..."
+
+    # Use numeric UID/GID to ensure container (UID 1001) can write files
+    # This handles cases where bisq-support user has different UID on host
+    local APP_UID=1001
+    local APP_GID=1001
+
+    if [ -d "$INSTALL_DIR/api/data" ]; then
+        chown -R "$APP_UID:$APP_GID" "$INSTALL_DIR/api/data"
+        log_success "Data directory permissions fixed (UID:GID $APP_UID:$APP_GID)"
+    else
+        log_warning "Data directory not found, skipping permission fix"
+    fi
+}
+
 # Cleanup old backups
 cleanup_backups() {
     log_info "Cleaning up old backups..."
@@ -326,6 +343,9 @@ main() {
 
     # Analyze what needs to be updated
     analyze_changes
+
+    # Fix permissions before applying updates
+    fix_permissions
 
     # Apply updates (rebuild or restart services)
     apply_updates
