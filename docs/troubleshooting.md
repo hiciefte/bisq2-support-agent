@@ -150,6 +150,37 @@ If the web UI shows a timeout when connecting to the API:
 
 ## FAQ Extractor Issues
 
+### Connection Errors During Startup
+
+If you see connection errors in FAQ extraction logs during container startup, this is **expected behavior** and not a problem:
+
+**Typical Error:**
+```text
+Failed to export chat messages: Cannot connect to host bisq2-api:8090
+```
+
+**Explanation:**
+- The bisq2-api service takes 30-60 seconds to fully initialize (Tor network + P2P connections)
+- FAQ extraction may start before bisq2-api is ready
+- The system has built-in retry logic that automatically succeeds once bisq2-api is ready
+- No data is lost during this process
+
+**When to Be Concerned:**
+- If connection errors persist for more than 2 minutes after startup
+- If the final FAQ extraction result shows failures
+
+**Verification:**
+```bash
+# Test API connectivity from host machine
+curl http://localhost:8090/api/v1/support/export/csv
+
+# Or test from within the API container (using Docker network hostname)
+docker compose -f docker/docker-compose.yml exec api curl http://bisq2-api:8090/api/v1/support/export/csv
+
+# Run FAQ extraction manually to see final result
+docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
+```
+
 ### No New FAQs Generated
 
 If the FAQ extractor runs but doesn't generate new FAQs:
@@ -168,6 +199,12 @@ If the FAQ extractor runs but doesn't generate new FAQs:
    ```bash
    # Check the key in the Docker environment file
    grep OPENAI_API_KEY docker/.env
+   ```
+
+4. Ensure BISQ_API_URL is correctly set:
+   ```bash
+   # Should be http://bisq2-api:8090 for Docker
+   grep BISQ_API_URL docker/.env
    ```
 
 ## Monitoring Issues
