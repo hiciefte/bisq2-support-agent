@@ -155,7 +155,7 @@ If the web UI shows a timeout when connecting to the API:
 If you see connection errors in FAQ extraction logs during container startup, this is **expected behavior** and not a problem:
 
 **Typical Error:**
-```
+```text
 Failed to export chat messages: Cannot connect to host bisq2-api:8090
 ```
 
