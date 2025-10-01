@@ -114,7 +114,58 @@ This key will be passed to Prometheus as an environment variable in the docker-c
    EXPOSE_GRAFANA_PORT=3001
    ```
 
+## Privacy and Data Protection
+
+### User Data Handling
+
+The Bisq Support Agent collects minimal user data for service improvement:
+
+**What We Collect:**
+- Chat questions and AI responses
+- User feedback ratings (thumbs up/down)
+- Optional feedback explanations
+- Timestamps and message IDs
+
+**What We DON'T Collect:**
+- Personal identifiers (names, emails)
+- IP addresses (beyond standard server logs)
+- User accounts or authentication data
+
+### Data Retention
+
+**Automated Cleanup:**
+- Personal data is automatically deleted after **30 days** (configurable via `DATA_RETENTION_DAYS`)
+- Only anonymized FAQs are kept permanently for the knowledge base
+- See `scripts/cleanup_old_data.sh` for implementation
+
+**Privacy Compliance:**
+- Data minimization: Only collect what's necessary
+- Purpose limitation: Data used only for service improvement
+- Transparency: Users are informed via privacy policy (see `/privacy` page)
+
+### Third-Party Data Sharing
+
+**OpenAI Integration:**
+- User questions are sent to OpenAI for AI response generation
+- OpenAI does not use API data for training (per their API usage policy)
+- Users are warned not to share sensitive information
+
+**Security Warning:**
+Users are prominently warned NOT to share:
+- Private keys or seed phrases
+- Personal identifying information
+- Financial account details
+- Trading partner information
+
+### Privacy Policy Implementation
+
+For detailed privacy implementation requirements, see:
+- `docs/requirements/privacy-implementation-spec.md` - Technical specification
+- `/privacy` page - User-facing privacy policy
+- Privacy warning modal on first visit to chat interface
+
 ## References
 
 - [Grafana Security Documentation](https://grafana.com/docs/grafana/latest/administration/security/)
-- [Prometheus Security Documentation](https://prometheus.io/docs/operating/security/) 
+- [Prometheus Security Documentation](https://prometheus.io/docs/operating/security/)
+- [OpenAI API Data Usage Policy](https://openai.com/policies/api-data-usage-policies) 
