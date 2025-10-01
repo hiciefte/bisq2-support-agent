@@ -171,8 +171,11 @@ Failed to export chat messages: Cannot connect to host bisq2-api:8090
 
 **Verification:**
 ```bash
-# Test API connectivity manually
-curl http://bisq2-api:8090/api/v1/support/export/csv
+# Test API connectivity from host machine
+curl http://localhost:8090/api/v1/support/export/csv
+
+# Or test from within the API container (using Docker network hostname)
+docker compose -f docker/docker-compose.yml exec api curl http://bisq2-api:8090/api/v1/support/export/csv
 
 # Run FAQ extraction manually to see final result
 docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
