@@ -75,12 +75,17 @@ api/data/vectorstore/
 *.log
 
 # Ignore sensitive chat and conversation data (privacy-first data management)
+# These files contain personal identifiers (conversation_id, message_id, timestamps)
 api/data/support_chat_export.csv
 api/data/conversations.jsonl
 api/data/processed_conversations.json
 api/data/processed_message_ids.jsonl
 api/data/*conversation*
 api/data/*chat*
+
+# Ignore user feedback data (contains conversation_id and message_id for user tracking)
+api/data/feedback/*
+!api/data/feedback/.gitkeep
 
 # Misc
 Thumbs.db
@@ -109,8 +114,6 @@ yarn.lock
 pnpm-lock.yaml
 *.lock
 !package-lock.json
-/api/data/feedback/*
-!/api/data/feedback/.gitkeep
 /docs/requirements/
 /.playwright-mcp/
 # Git worktrees directory - used for parallel feature development
