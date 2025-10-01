@@ -19,6 +19,8 @@ import {
 import {Textarea} from "@/components/ui/textarea"
 import {Checkbox} from "@/components/ui/checkbox"
 import {Label} from "@/components/ui/label"
+import {PrivacyWarningModal} from "@/components/privacy/privacy-warning-modal"
+import Link from "next/link"
 
 // Constants
 const MAX_CHAT_HISTORY_LENGTH = 8; // Configurable: Adjust this to include more or less context
@@ -632,7 +634,9 @@ const ChatInterface = () => {
     }
 
     return (
-        <div className="flex flex-col h-full overflow-hidden">
+        <>
+            <PrivacyWarningModal />
+            <div className="flex flex-col h-full overflow-hidden">
             {/* Messages container */}
             <div className="flex-1 overflow-hidden">
                 <div className="h-full overflow-y-auto" ref={scrollAreaRef}>
@@ -885,7 +889,7 @@ const ChatInterface = () => {
                             ref={inputRef}
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
-                            placeholder={isLoading ? "Thinking..." : "Ask a question..."}
+                            placeholder={isLoading ? "Thinking..." : "Ask about Bisq (never share private keys or personal info)"}
                             className="min-h-[80px] pt-3 pb-10 pr-12 rounded-lg bg-muted/50 focus:bg-background align-top"
                             disabled={isLoading}
                         />
@@ -919,9 +923,18 @@ const ChatInterface = () => {
                             </button>
                         </div>
                     )}
+                    <div className="flex justify-center mt-4 pb-4">
+                        <Link
+                            href="/privacy"
+                            className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
+                        >
+                            Privacy Policy
+                        </Link>
+                    </div>
                 </div>
             </form>
         </div>
+        </>
     )
 }
 
