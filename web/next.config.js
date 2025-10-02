@@ -16,8 +16,14 @@ const nextConfig = {
     experimental: {
         forceSwcTransforms: true,
     },
-    // Ensure proper handling of static assets
+    // Security: Remove fingerprinting
     poweredByHeader: false,
+    generateBuildId: async () => {
+        // Use a constant build ID to prevent version fingerprinting
+        // This makes it harder for attackers to identify specific versions
+        return 'bisq-support-build'
+    },
+    // Performance optimizations
     compress: true,
     reactStrictMode: true,
 };
