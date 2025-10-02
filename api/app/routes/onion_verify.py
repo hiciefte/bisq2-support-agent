@@ -20,7 +20,8 @@ router = APIRouter(prefix="/.well-known/onion-verify", tags=["Onion Verification
 
 # Static timestamp generated at module load time (timezone-aware UTC)
 # This ensures consistent hash verification across requests
-VERIFICATION_TIMESTAMP = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+VERIFICATION_TIMESTAMP = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 # Compute verification data and hash once at module load
 def _get_verification_data():
@@ -28,9 +29,12 @@ def _get_verification_data():
     onion_address = settings.TOR_HIDDEN_SERVICE
     if not onion_address:
         return None, None, None
-    verification_data = f"onion-address={onion_address}\ntimestamp={VERIFICATION_TIMESTAMP}"
+    verification_data = (
+        f"onion-address={onion_address}\ntimestamp={VERIFICATION_TIMESTAMP}"
+    )
     data_hash = hashlib.sha256(verification_data.encode()).hexdigest()
     return onion_address, verification_data, data_hash
+
 
 ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
 
