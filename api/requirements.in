@@ -27,6 +27,9 @@ beautifulsoup4
 requests
 mwclient
 
+# HTTP client with SOCKS proxy support for Tor
+httpx[socks]
+
 # Data processing
 pandas
 tqdm
