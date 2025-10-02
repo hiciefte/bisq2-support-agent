@@ -175,11 +175,6 @@ configure_environment() {
             echo "TOR_HIDDEN_SERVICE=${ONION_ADDRESS}" >> "$ENV_FILE"
         fi
 
-        # Add Tor SOCKS proxy settings
-        if ! grep -q "^TOR_SOCKS_PROXY=" "$ENV_FILE"; then
-            echo "TOR_SOCKS_PROXY=socks5h://127.0.0.1:9052" >> "$ENV_FILE"
-        fi
-
         # Update CORS_ORIGINS to include .onion
         if grep -q "^CORS_ORIGINS=" "$ENV_FILE"; then
             CURRENT_CORS=$(grep "^CORS_ORIGINS=" "$ENV_FILE" | cut -d= -f2-)
