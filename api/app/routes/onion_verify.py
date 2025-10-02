@@ -6,8 +6,8 @@ Provides cryptographic proof of .onion address ownership.
 
 import hashlib
 import logging
-from datetime import datetime
-from typing import Dict
+from datetime import datetime, timezone
+from typing import Dict, Union
 
 from app.core.config import get_settings
 from fastapi import APIRouter, Response
@@ -18,9 +18,21 @@ settings = get_settings()
 
 router = APIRouter(prefix="/.well-known/onion-verify", tags=["Onion Verification"])
 
-# Static timestamp generated at module load time
+# Static timestamp generated at module load time (timezone-aware UTC)
 # This ensures consistent hash verification across requests
-VERIFICATION_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
+VERIFICATION_TIMESTAMP = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+# Compute verification data and hash once at module load
+def _get_verification_data():
+    """Precompute verification data and hash at module load time."""
+    onion_address = settings.TOR_HIDDEN_SERVICE
+    if not onion_address:
+        return None, None, None
+    verification_data = f"onion-address={onion_address}\ntimestamp={VERIFICATION_TIMESTAMP}"
+    data_hash = hashlib.sha256(verification_data.encode()).hexdigest()
+    return onion_address, verification_data, data_hash
+
+ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
 
 
 @router.get("/bisq-support.txt")
@@ -37,23 +49,18 @@ async def onion_verification() -> Response:
     Returns:
         Response: Plain text verification file
     """
-    onion_address = settings.TOR_HIDDEN_SERVICE
-
-    if not onion_address:
+    if not ONION_ADDRESS:
         return Response(
             content="# Onion service not configured\n",
             media_type="text/plain",
             status_code=503,
         )
 
-    # Use static timestamp for consistent hash verification
+    # Use precomputed values from module load
+    onion_address = ONION_ADDRESS
     timestamp = VERIFICATION_TIMESTAMP
-
-    # Create verification content
-    verification_data = f"onion-address={onion_address}\ntimestamp={timestamp}"
-
-    # Generate SHA256 hash for verification
-    data_hash = hashlib.sha256(verification_data.encode()).hexdigest()
+    verification_data = VERIFICATION_DATA
+    data_hash = VERIFICATION_HASH
 
     # Complete verification file
     content = f"""# Bisq Support Agent - Onion Service Verification
@@ -90,18 +97,16 @@ hash={data_hash}
     return Response(content=content, media_type="text/plain")
 
 
-@router.get("/verification-info")
-async def verification_info() -> Dict[str, str]:
+@router.get("/verification-info", response_model=None)
+async def verification_info() -> Union[Dict[str, str], JSONResponse]:
     """Return JSON verification information.
 
     Provides structured verification data for programmatic access.
 
     Returns:
-        Dict: JSON object with verification details
+        Union[Dict, JSONResponse]: JSON object with verification details or error response
     """
-    onion_address = settings.TOR_HIDDEN_SERVICE
-
-    if not onion_address:
+    if not ONION_ADDRESS:
         return JSONResponse(
             status_code=503,
             content={
@@ -110,10 +115,11 @@ async def verification_info() -> Dict[str, str]:
             },
         )
 
-    # Use static timestamp for consistent hash verification
+    # Use precomputed values from module load
+    onion_address = ONION_ADDRESS
     timestamp = VERIFICATION_TIMESTAMP
-    verification_data = f"onion-address={onion_address}\ntimestamp={timestamp}"
-    data_hash = hashlib.sha256(verification_data.encode()).hexdigest()
+    verification_data = VERIFICATION_DATA
+    data_hash = VERIFICATION_HASH
 
     return {
         "status": "available",
