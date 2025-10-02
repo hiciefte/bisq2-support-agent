@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install pip-tools for requirements management
-RUN pip install --no-cache-dir pip-tools==7.5.0
+RUN pip install --no-cache-dir pip-tools==7.5.1
 
 # Copy dependency files
 COPY api/requirements.in /app/api/

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # External URLs
     BISQ_API_URL: str = "http://localhost:8090"
 
+    # Tor hidden service settings
+    TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
+
     # LLM Provider setting
     LLM_PROVIDER: str = "openai"  # Can be "openai" or "xai"
 
