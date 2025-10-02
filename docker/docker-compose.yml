@@ -11,7 +11,8 @@ services:
       - ./logs/nginx:/var/log/nginx
       - ./nginx/error_pages:/usr/share/nginx/html/error_pages:ro
     ports:
-      - "80:80"
+      # Bind to localhost only for Tor daemon access (host-based Tor)
+      - "127.0.0.1:80:80"
     depends_on:
       web:
         condition: service_healthy
@@ -38,6 +39,22 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+    # Security hardening
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/run
+      - /var/cache/nginx
+      - /tmp
 
   # Bisq2 API service
   bisq2-api:
@@ -136,6 +153,11 @@ services:
         limits:
           cpus: '2'
           memory: 4G
+    # Security hardening
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   # Web frontend
   web:
@@ -174,6 +196,15 @@ services:
         limits:
           cpus: '1'
           memory: 1G
+    # Security hardening
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
 
   # Monitoring - Prometheus
   prometheus:
