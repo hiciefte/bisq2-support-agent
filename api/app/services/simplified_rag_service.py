@@ -113,7 +113,9 @@ class SimplifiedRAGService:
         }
 
         if self.settings.TOR_SOCKS_PROXY:
-            logger.info(f"Configuring OpenAI embeddings to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+            logger.info(
+                f"Configuring OpenAI embeddings to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}"
+            )
             import httpx
 
             # Create custom HTTP client with SOCKS proxy support
@@ -164,7 +166,9 @@ class SimplifiedRAGService:
 
         # Configure Tor proxy if available
         if self.settings.TOR_SOCKS_PROXY:
-            logger.info(f"Configuring OpenAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+            logger.info(
+                f"Configuring OpenAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}"
+            )
             import httpx
 
             # Create custom HTTP client with SOCKS proxy support
@@ -198,7 +202,9 @@ class SimplifiedRAGService:
 
             # Configure Tor proxy if available
             if self.settings.TOR_SOCKS_PROXY:
-                logger.info(f"Configuring xAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+                logger.info(
+                    f"Configuring xAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}"
+                )
                 import httpx
 
                 # Create custom HTTP client with SOCKS proxy support

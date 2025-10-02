@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     BISQ_API_URL: str = "http://localhost:8090"
 
     # Tor proxy settings
-    TOR_SOCKS_PROXY: str = ""  # Optional SOCKS5 proxy for external API calls (e.g., socks5h://127.0.0.1:9052)
+    TOR_SOCKS_PROXY: str = (
+        ""  # Optional SOCKS5 proxy for external API calls (e.g., socks5h://127.0.0.1:9052)
+    )
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
     # LLM Provider setting
