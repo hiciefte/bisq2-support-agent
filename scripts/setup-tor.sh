@@ -119,9 +119,29 @@ EOF
     log_success "Tor configuration updated with security hardening"
 }
 
+# Apply systemd hardening
+apply_systemd_hardening() {
+    log_info "[3/6] Applying systemd hardening..."
+
+    local SYSTEMD_OVERRIDE_DIR="/etc/systemd/system/tor.service.d"
+    local HARDENING_FILE="${SYSTEMD_OVERRIDE_DIR}/hardening.conf"
+
+    # Create override directory
+    mkdir -p "$SYSTEMD_OVERRIDE_DIR"
+
+    # Copy hardening configuration
+    if [ -f "$SCRIPT_DIR/templates/tor-systemd-hardening.conf" ]; then
+        cp "$SCRIPT_DIR/templates/tor-systemd-hardening.conf" "$HARDENING_FILE"
+        chmod 644 "$HARDENING_FILE"
+        log_success "Systemd hardening applied: $HARDENING_FILE"
+    else
+        log_warning "Hardening template not found, skipping systemd hardening"
+    fi
+}
+
 # Start Tor and generate .onion address
 start_tor_service() {
-    log_info "[3/6] Starting Tor service..."
+    log_info "[4/6] Starting Tor service..."
 
     systemctl daemon-reload
     systemctl restart tor
@@ -141,7 +161,7 @@ start_tor_service() {
 
 # Get generated .onion address and update environment
 configure_environment() {
-    log_info "[4/6] Configuring .onion address..."
+    log_info "[5/6] Configuring .onion address..."
 
     local HIDDEN_SERVICE_DIR="/var/lib/tor/bisq-support"
     local ENV_FILE="$INSTALL_DIR/docker/.env"
@@ -223,7 +243,7 @@ EOF
 
 # Backup hidden service keys
 backup_keys() {
-    log_info "[5/6] Backing up hidden service keys..."
+    log_info "[6/7] Backing up hidden service keys..."
 
     local HIDDEN_SERVICE_DIR="/var/lib/tor/bisq-support"
     local BACKUP_DIR="$INSTALL_DIR/backups/tor-keys"
@@ -241,7 +261,7 @@ backup_keys() {
 
 # Verify installation
 verify_installation() {
-    log_info "[6/6] Verifying installation..."
+    log_info "[7/7] Verifying installation..."
 
     local CHECKS_PASSED=0
     local CHECKS_TOTAL=5
@@ -302,6 +322,7 @@ verify_installation() {
 main() {
     install_tor
     configure_hidden_service
+    apply_systemd_hardening
     start_tor_service
     configure_environment
     backup_keys
