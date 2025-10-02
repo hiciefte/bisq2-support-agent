@@ -26,3 +26,16 @@ scrape_configs:
     static_configs:
       - targets: ['web:3000']
     metrics_path: '/api/metrics'
+
+  # Tor-specific monitoring job
+  # This job scrapes metrics specific to Tor hidden service health
+  # Uncomment and configure when deploying with Tor
+  # - job_name: 'tor_onion_service'
+  #   static_configs:
+  #     - targets: ['your-address.onion']
+  #   proxy_url: 'socks5://host.docker.internal:9050'  # Use host Tor SOCKS proxy
+  #   # For Linux Docker Engine:
+  #   # proxy_url: 'socks5://172.17.0.1:9050'
+  #   scrape_interval: 30s
+  #   scrape_timeout: 10s
+  #   metrics_path: '/metrics'
