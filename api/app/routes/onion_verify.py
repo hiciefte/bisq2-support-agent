@@ -11,6 +11,7 @@ from typing import Dict
 
 from app.core.config import get_settings
 from fastapi import APIRouter, Response
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -42,7 +43,7 @@ async def onion_verification() -> Response:
         return Response(
             content="# Onion service not configured\n",
             media_type="text/plain",
-            status_code=404,
+            status_code=503,
         )
 
     # Use static timestamp for consistent hash verification
@@ -101,10 +102,13 @@ async def verification_info() -> Dict[str, str]:
     onion_address = settings.TOR_HIDDEN_SERVICE
 
     if not onion_address:
-        return {
-            "status": "unavailable",
-            "message": "Onion service not configured",
-        }
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unavailable",
+                "message": "Onion service not configured",
+            },
+        )
 
     # Use static timestamp for consistent hash verification
     timestamp = VERIFICATION_TIMESTAMP
