@@ -156,10 +156,15 @@ encrypt_backup() {
 
     # Prompt for passphrase
     log_info "Enter passphrase for encryption:"
-    gpg --symmetric --cipher-algo AES256 "$ARCHIVE_NAME"
+    if ! gpg --symmetric --cipher-algo AES256 "$ARCHIVE_NAME"; then
+        log_error "GPG encryption failed"
+        rm -f "$ARCHIVE_NAME"
+        exit 1
+    fi
 
-    # Remove unencrypted archive
+    # Remove unencrypted archive and plaintext backup directory
     rm -f "$ARCHIVE_NAME"
+    rm -rf "backup-${TIMESTAMP}"
 
     # Calculate checksum of encrypted file
     local CHECKSUM=$(sha256sum "$ENCRYPTED_ARCHIVE" | cut -d' ' -f1)
