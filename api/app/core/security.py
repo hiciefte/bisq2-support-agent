@@ -2,7 +2,9 @@
 Security utilities for the Bisq Support API.
 """
 
+import asyncio
 import logging
+import random
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -20,8 +22,59 @@ MIN_API_KEY_LENGTH = 24
 logger = logging.getLogger(__name__)
 
 
+async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bool:
+    """Verify API key with timing attack resistance.
+
+    Implements constant-time comparison with random delay to prevent timing attacks
+    and deferred logging to avoid information leakage.
+
+    Args:
+        provided_key: The API key to verify
+        request: The FastAPI request object (for deferred logging)
+
+    Returns:
+        bool: True if the key is valid
+
+    Raises:
+        HTTPException: If admin access is not configured
+    """
+    admin_api_key = settings.ADMIN_API_KEY
+
+    if not admin_api_key:
+        # Deferred logging - log after delay
+        log_message = "Admin access attempted but ADMIN_API_KEY is not configured"
+        await asyncio.sleep(random.uniform(0.05, 0.15))
+        logger.warning(log_message)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin access not configured",
+        )
+
+    # Constant-time comparison (already implemented)
+    is_valid = secrets.compare_digest(provided_key, admin_api_key)
+
+    # Random delay to prevent timing attacks (50-150ms)
+    await asyncio.sleep(random.uniform(0.05, 0.15))
+
+    # Deferred logging based on result
+    if not is_valid:
+        logger.warning(
+            f"Invalid admin credentials from {request.client.host if request.client else 'unknown'}"
+        )
+    elif len(admin_api_key) < MIN_API_KEY_LENGTH:
+        logger.warning(
+            f"Successful login with insecure admin key length: {len(provided_key)} chars"
+        )
+    else:
+        logger.debug(
+            f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
+        )
+
+    return is_valid
+
+
 def verify_admin_key(provided_key: str) -> bool:
-    """Verify that the provided API key is valid.
+    """Verify that the provided API key is valid (synchronous version).
 
     Args:
         provided_key: The API key to verify

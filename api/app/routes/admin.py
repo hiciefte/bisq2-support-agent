@@ -11,6 +11,7 @@ from app.core.security import (
     set_admin_cookie,
     verify_admin_access,
     verify_admin_key,
+    verify_admin_key_with_delay,
 )
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.models.feedback import (
@@ -609,16 +610,24 @@ async def get_dashboard_overview():
 
 
 @auth_router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(login_request: AdminLoginRequest, response: Response):
+async def admin_login(
+    login_request: AdminLoginRequest, response: Response, request: Request
+):
     """Authenticate admin user and set secure session cookie.
 
-    This endpoint validates the provided API key and sets an HTTP-only cookie
-    for secure session management. The cookie prevents XSS attacks and provides
-    automatic CSRF protection.
+    This endpoint validates the provided API key with timing attack resistance
+    and sets an HTTP-only cookie for secure session management. The cookie prevents
+    XSS attacks and provides automatic CSRF protection.
+
+    Security features:
+    - Constant-time key comparison
+    - Random delay to prevent timing attacks (50-150ms)
+    - Deferred logging to avoid information leakage
 
     Args:
         login_request: Login credentials containing API key
         response: FastAPI response object for setting cookies
+        request: FastAPI request object for logging
 
     Returns:
         AdminLoginResponse: Login success confirmation
@@ -626,17 +635,15 @@ async def admin_login(login_request: AdminLoginRequest, response: Response):
     Raises:
         HTTPException: If credentials are invalid or admin access not configured
     """
-    logger.info("Admin login attempt")
+    # No logging before verification to prevent timing attacks
 
     try:
-        # Verify the API key
-        if verify_admin_key(login_request.api_key):
+        # Verify the API key with timing attack resistance
+        if await verify_admin_key_with_delay(login_request.api_key, request):
             # Set secure authentication cookie
             set_admin_cookie(response)
-            logger.info("Admin login successful")
             return AdminLoginResponse(message="Login successful", authenticated=True)
         else:
-            logger.warning("Admin login failed - invalid credentials")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
