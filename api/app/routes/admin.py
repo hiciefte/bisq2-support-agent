@@ -5,6 +5,8 @@ Admin routes for the Bisq Support API.
 import logging
 from typing import Any, Dict, Optional
 
+from fastapi import Request
+
 from app.core.config import get_settings
 from app.core.security import (
     clear_admin_cookie,
