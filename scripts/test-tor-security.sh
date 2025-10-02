@@ -64,7 +64,8 @@ check_http_header() {
     local header="$2"
     local expected_value="$3"
 
-    local actual_value=$(curl -s -I "$url" | grep -i "^$header:" | cut -d' ' -f2- | tr -d '\r')
+    local actual_value
+    actual_value=$(curl -s -I "$url" | grep -i "^$header:" | cut -d' ' -f2- | tr -d '\r')
 
     if echo "$actual_value" | grep -q "$expected_value"; then
         return 0
