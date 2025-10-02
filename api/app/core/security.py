@@ -4,7 +4,6 @@ Security utilities for the Bisq Support API.
 
 import asyncio
 import logging
-import random
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -20,6 +19,9 @@ MIN_API_KEY_LENGTH = 24
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Cryptographically secure random number generator for timing delays
+secure_random = secrets.SystemRandom()
 
 
 async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bool:
@@ -43,7 +45,7 @@ async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bo
     if not admin_api_key:
         # Deferred logging - log after delay
         log_message = "Admin access attempted but ADMIN_API_KEY is not configured"
-        await asyncio.sleep(random.uniform(0.05, 0.15))
+        await asyncio.sleep(secure_random.uniform(0.05, 0.15))
         logger.warning(log_message)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -54,7 +56,7 @@ async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bo
     is_valid = secrets.compare_digest(provided_key, admin_api_key)
 
     # Random delay to prevent timing attacks (50-150ms)
-    await asyncio.sleep(random.uniform(0.05, 0.15))
+    await asyncio.sleep(secure_random.uniform(0.05, 0.15))
 
     # Deferred logging based on result
     if not is_valid:

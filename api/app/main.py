@@ -9,7 +9,7 @@ import sys
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
-from app.routes import admin, chat, feedback, health
+from app.routes import admin, chat, feedback, health, onion_verify
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
@@ -176,6 +176,7 @@ app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(admin.router, tags=["Admin"])
 app.include_router(admin.auth_router, tags=["Admin Auth"])
+app.include_router(onion_verify.router, tags=["Onion Verification"])
 
 
 @app.get("/healthcheck")
