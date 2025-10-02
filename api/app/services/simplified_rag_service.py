@@ -106,10 +106,24 @@ class SimplifiedRAGService:
                 "OpenAI API key not provided. Embeddings will not work properly."
             )
 
-        self.embeddings = OpenAIEmbeddings(
-            api_key=self.settings.OPENAI_API_KEY,
-            model=self.settings.OPENAI_EMBEDDING_MODEL,
-        )
+        # Configure HTTP client with Tor proxy if available
+        embedding_kwargs = {
+            "api_key": self.settings.OPENAI_API_KEY,
+            "model": self.settings.OPENAI_EMBEDDING_MODEL,
+        }
+
+        if self.settings.TOR_SOCKS_PROXY:
+            logger.info(f"Configuring OpenAI embeddings to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+            import httpx
+
+            # Create custom HTTP client with SOCKS proxy support
+            http_client = httpx.Client(
+                proxy=self.settings.TOR_SOCKS_PROXY,
+                timeout=30.0,
+            )
+            embedding_kwargs["http_client"] = http_client
+
+        self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
 
         logger.info("OpenAI embeddings model initialized")
 
@@ -141,12 +155,26 @@ class SimplifiedRAGService:
         from langchain_openai import ChatOpenAI
 
         # Configure model parameters
-        self.llm = ChatOpenAI(
-            api_key=self.settings.OPENAI_API_KEY,
-            model=model_name,
-            max_tokens=self.settings.MAX_TOKENS,
-            verbose=True,
-        )
+        llm_kwargs = {
+            "api_key": self.settings.OPENAI_API_KEY,
+            "model": model_name,
+            "max_tokens": self.settings.MAX_TOKENS,
+            "verbose": True,
+        }
+
+        # Configure Tor proxy if available
+        if self.settings.TOR_SOCKS_PROXY:
+            logger.info(f"Configuring OpenAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+            import httpx
+
+            # Create custom HTTP client with SOCKS proxy support
+            http_client = httpx.Client(
+                proxy=self.settings.TOR_SOCKS_PROXY,
+                timeout=60.0,  # Longer timeout for LLM requests
+            )
+            llm_kwargs["http_client"] = http_client
+
+        self.llm = ChatOpenAI(**llm_kwargs)
         logger.info(
             f"OpenAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
         )
@@ -159,14 +187,29 @@ class SimplifiedRAGService:
         try:
             from langchain_xai import ChatXai
 
+            # Configure model parameters
+            xai_kwargs = {
+                "api_key": self.settings.XAI_API_KEY,
+                "model": model_name,
+                "temperature": 0.7,
+                "max_tokens": self.settings.MAX_TOKENS,
+                "timeout": 30,
+            }
+
+            # Configure Tor proxy if available
+            if self.settings.TOR_SOCKS_PROXY:
+                logger.info(f"Configuring xAI LLM to use Tor proxy: {self.settings.TOR_SOCKS_PROXY}")
+                import httpx
+
+                # Create custom HTTP client with SOCKS proxy support
+                http_client = httpx.Client(
+                    proxy=self.settings.TOR_SOCKS_PROXY,
+                    timeout=60.0,
+                )
+                xai_kwargs["http_client"] = http_client
+
             # Initialize the model
-            self.llm = ChatXai(
-                api_key=self.settings.XAI_API_KEY,
-                model=model_name,
-                temperature=0.7,
-                max_tokens=self.settings.MAX_TOKENS,
-                timeout=30,
-            )
+            self.llm = ChatXai(**xai_kwargs)
             logger.info(
                 f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
             )
