@@ -9,6 +9,10 @@ import sys
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
+from app.core.tor_metrics import (
+    update_cookie_security_mode,
+    update_tor_service_configured,
+)
 from app.routes import admin, chat, feedback, health, onion_verify
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
@@ -85,6 +89,13 @@ async def lifespan(app: FastAPI):
     app.state.faq_service = faq_service
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
+
+    # Initialize Tor metrics
+    logger.info("Initializing Tor metrics...")
+    tor_configured = bool(settings.TOR_HIDDEN_SERVICE)
+    update_tor_service_configured(tor_configured, settings.TOR_HIDDEN_SERVICE)
+    update_cookie_security_mode(settings.COOKIE_SECURE)
+    logger.info(f"Tor metrics initialized - Configured: {tor_configured}, Cookie Secure: {settings.COOKIE_SECURE}")
 
     # Yield control to the application
     yield

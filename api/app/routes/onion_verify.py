@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Union
 
 from app.core.config import get_settings
+from app.core.tor_metrics import record_verification_request
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
@@ -54,6 +55,7 @@ async def onion_verification() -> Response:
         Response: Plain text verification file
     """
     if not ONION_ADDRESS:
+        record_verification_request("bisq-support.txt", 503)
         return Response(
             content="# Onion service not configured\n",
             media_type="text/plain",
@@ -98,6 +100,7 @@ hash={data_hash}
 # - PGP-signed announcements from Bisq developers
 """
 
+    record_verification_request("bisq-support.txt", 200)
     return Response(content=content, media_type="text/plain")
 
 
@@ -111,6 +114,7 @@ async def verification_info() -> Union[Dict[str, str], JSONResponse]:
         Union[Dict, JSONResponse]: JSON object with verification details or error response
     """
     if not ONION_ADDRESS:
+        record_verification_request("verification-info", 503)
         return JSONResponse(
             status_code=503,
             content={
@@ -125,6 +129,7 @@ async def verification_info() -> Union[Dict[str, str], JSONResponse]:
     verification_data = VERIFICATION_DATA
     data_hash = VERIFICATION_HASH
 
+    record_verification_request("verification-info", 200)
     return {
         "status": "available",
         "onion_address": onion_address,
