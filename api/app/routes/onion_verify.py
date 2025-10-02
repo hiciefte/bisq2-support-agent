@@ -17,6 +17,10 @@ settings = get_settings()
 
 router = APIRouter(prefix="/.well-known/onion-verify", tags=["Onion Verification"])
 
+# Static timestamp generated at module load time
+# This ensures consistent hash verification across requests
+VERIFICATION_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
+
 
 @router.get("/bisq-support.txt")
 async def onion_verification() -> Response:
@@ -25,7 +29,7 @@ async def onion_verification() -> Response:
     This endpoint provides cryptographic proof that the clearnet site
     controls the .onion address. The verification file contains:
     - The .onion address
-    - Timestamp of generation
+    - Static timestamp (generated at module load, consistent across requests)
     - SHA256 hash of the verification data
     - Human-readable verification instructions
 
@@ -38,11 +42,11 @@ async def onion_verification() -> Response:
         return Response(
             content="# Onion service not configured\n",
             media_type="text/plain",
-            status_code=503,
+            status_code=404,
         )
 
-    # Generate verification timestamp
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    # Use static timestamp for consistent hash verification
+    timestamp = VERIFICATION_TIMESTAMP
 
     # Create verification content
     verification_data = f"onion-address={onion_address}\ntimestamp={timestamp}"
@@ -67,7 +71,7 @@ hash={data_hash}
 # 1. Visit this same URL on both clearnet and .onion
 # 2. Verify that the onion-address matches on both versions
 # 3. Verify that the hash matches: sha256sum of "onion-address=<addr>\\ntimestamp=<time>"
-# 4. Check that the timestamp is recent (within 24 hours recommended)
+# 4. The timestamp is static (set at service start) to ensure consistent hash verification
 
 # How to Verify
 # echo -n "{verification_data}" | sha256sum
@@ -102,7 +106,8 @@ async def verification_info() -> Dict[str, str]:
             "message": "Onion service not configured",
         }
 
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    # Use static timestamp for consistent hash verification
+    timestamp = VERIFICATION_TIMESTAMP
     verification_data = f"onion-address={onion_address}\ntimestamp={timestamp}"
     data_hash = hashlib.sha256(verification_data.encode()).hexdigest()
 
