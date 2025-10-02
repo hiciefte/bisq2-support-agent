@@ -63,7 +63,9 @@ def update_tor_connection_status(connected: bool) -> None:
     logger.debug(f"Tor connection status updated: {connected}")
 
 
-def update_tor_service_configured(configured: bool, onion_address: Optional[str] = None) -> None:
+def update_tor_service_configured(
+    configured: bool, onion_address: Optional[str] = None
+) -> None:
     """Update Tor hidden service configuration status.
 
     Args:
@@ -74,16 +76,20 @@ def update_tor_service_configured(configured: bool, onion_address: Optional[str]
 
     if configured and onion_address:
         # Store .onion address info (only domain, not full URL for privacy)
-        tor_onion_address_info.info({
-            "address": onion_address,
-            "version": "v3",  # Assuming v3 onion addresses
-        })
+        tor_onion_address_info.info(
+            {
+                "address": onion_address,
+                "version": "v3",  # Assuming v3 onion addresses
+            }
+        )
         logger.info(f"Tor hidden service configured: {onion_address}")
     else:
-        tor_onion_address_info.info({
-            "address": "not_configured",
-            "version": "unknown",
-        })
+        tor_onion_address_info.info(
+            {
+                "address": "not_configured",
+                "version": "unknown",
+            }
+        )
         logger.debug("Tor hidden service not configured")
 
 
@@ -97,7 +103,9 @@ def update_cookie_security_mode(secure: bool) -> None:
     logger.debug(f"Cookie secure mode: {secure}")
 
 
-def record_tor_request(method: str, endpoint: str, status: int, duration: float) -> None:
+def record_tor_request(
+    method: str, endpoint: str, status: int, duration: float
+) -> None:
     """Record metrics for a request received via .onion.
 
     Args:
@@ -107,7 +115,9 @@ def record_tor_request(method: str, endpoint: str, status: int, duration: float)
         duration: Request duration in seconds
     """
     tor_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
-    tor_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
+    tor_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(
+        duration
+    )
 
 
 def record_verification_request(endpoint: str, status: int) -> None:

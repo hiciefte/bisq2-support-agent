@@ -95,7 +95,9 @@ async def lifespan(app: FastAPI):
     tor_configured = bool(settings.TOR_HIDDEN_SERVICE)
     update_tor_service_configured(tor_configured, settings.TOR_HIDDEN_SERVICE)
     update_cookie_security_mode(settings.COOKIE_SECURE)
-    logger.info(f"Tor metrics initialized - Configured: {tor_configured}, Cookie Secure: {settings.COOKIE_SECURE}")
+    logger.info(
+        f"Tor metrics initialized - Configured: {tor_configured}, Cookie Secure: {settings.COOKIE_SECURE}"
+    )
 
     # Yield control to the application
     yield
