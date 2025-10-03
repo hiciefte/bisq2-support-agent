@@ -205,7 +205,7 @@ echo -e "\n${BLUE}=== Rate Limiting Tests ===${NC}"
 
 # Make 10 rapid requests to test rate limiting
 RATE_LIMIT_TEST=0
-for i in {1..10}; do
+for _ in {1..10}; do
     STATUS=$(curl -s -o /dev/null -w '%{http_code}' $API_URL/health)
     if [ "$STATUS" = "429" ]; then
         RATE_LIMIT_TEST=1
@@ -227,9 +227,6 @@ fi
 echo -e "\n${BLUE}=== Cryptographic Validation Tests ===${NC}"
 
 if command -v sha256sum &> /dev/null; then
-    VERIFICATION_DATA=$(curl -s $API_URL/.well-known/onion-verify/verification-info | jq -r '"\(.onion_address)\n\(.timestamp)"' | sed 's/^/onion-address=/' | sed 's/\n/\\ntimestamp=/')
-    EXPECTED_HASH=$(curl -s $API_URL/.well-known/onion-verify/verification-info | jq -r '.verification_hash')
-
     # This test is complex and may not work correctly without jq parsing, skip for now
     echo -e "${YELLOW}Cryptographic hash validation requires manual verification${NC}"
 fi
