@@ -30,13 +30,15 @@ echo ""
 # Helper functions
 run_test() {
     local test_name="$1"
-    local test_command="$2"
-    local expected_result="${3:-0}"
+    shift
+    local expected_result="${!#}"  # Last argument
+    set -- "${@:1:$#-1}"  # Remove last argument, leaving command and args
 
     ((TESTS_TOTAL++))
     echo -n "[$TESTS_TOTAL] Testing: $test_name... "
 
-    if eval "$test_command" > /dev/null 2>&1; then
+    # Execute command with arguments (no eval - safe execution)
+    if "$@" > /dev/null 2>&1; then
         if [ "$expected_result" = "0" ]; then
             echo -e "${GREEN}PASS${NC}"
             ((TESTS_PASSED++))
@@ -76,21 +78,92 @@ check_http_header() {
     fi
 }
 
+# Test helper functions (no eval - safe execution)
+test_endpoint_responds() {
+    local url="$1"
+    local http_code
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+    [[ "$http_code" =~ ^(200|503)$ ]]
+}
+
+test_onion_address_matches() {
+    local api_url="$1"
+    local onion_url="$2"
+    local clearnet_addr onion_addr
+    clearnet_addr=$(curl -s "$api_url/.well-known/onion-verify/verification-info" | jq -r '.onion_address')
+    onion_addr=$(curl -s "$onion_url/.well-known/onion-verify/verification-info" | jq -r '.onion_address')
+    [ "$clearnet_addr" = "$onion_addr" ]
+}
+
+test_verification_hash_matches() {
+    local api_url="$1"
+    local onion_url="$2"
+    local clearnet_hash onion_hash
+    clearnet_hash=$(curl -s "$api_url/.well-known/onion-verify/verification-info" | jq -r '.verification_hash')
+    onion_hash=$(curl -s "$onion_url/.well-known/onion-verify/verification-info" | jq -r '.verification_hash')
+    [ "$clearnet_hash" = "$onion_hash" ]
+}
+
+test_header_present() {
+    local url="$1"
+    local header="$2"
+    curl -sI "$url" | grep -qi "$header"
+}
+
+test_header_not_contains() {
+    local url="$1"
+    local header="$2"
+    local value="$3"
+    ! curl -sI "$url" | grep -i "$header" | grep -q "$value"
+}
+
+test_metrics_contains() {
+    local url="$1"
+    local metric="$2"
+    curl -sf "$url/metrics" | grep -q "$metric"
+}
+
+test_grep_file() {
+    local pattern="$1"
+    local file="$2"
+    grep -q "$pattern" "$file" 2>/dev/null
+}
+
+test_http_status() {
+    local url="$1"
+    local expected_status="$2"
+    local actual_status
+    actual_status=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+    [ "$actual_status" = "$expected_status" ]
+}
+
+test_string_contains() {
+    local string="$1"
+    local pattern="$2"
+    echo "$string" | grep -qi "$pattern"
+}
+
+test_url_contains_text() {
+    local url="$1"
+    local text="$2"
+    curl -sf "$url" | grep -q "$text"
+}
+
 # Test 1: Onion verification endpoints
 echo -e "\n${BLUE}=== Onion Verification Tests ===${NC}"
 
 run_test "Verification endpoint responds" \
-    "curl -s -o /dev/null -w '%{http_code}' $API_URL/.well-known/onion-verify/bisq-support.txt | grep -qE '^(200|503)$'"
+    test_endpoint_responds "$API_URL/.well-known/onion-verify/bisq-support.txt" 0
 
 run_test "Verification JSON endpoint responds" \
-    "curl -s -o /dev/null -w '%{http_code}' $API_URL/.well-known/onion-verify/verification-info | grep -qE '^(200|503)$'"
+    test_endpoint_responds "$API_URL/.well-known/onion-verify/verification-info" 0
 
 if [ -n "$ONION_URL" ]; then
     run_test "Onion address matches clearnet" \
-        "test \$(curl -s $API_URL/.well-known/onion-verify/verification-info | jq -r '.onion_address') = \$(curl -s $ONION_URL/.well-known/onion-verify/verification-info | jq -r '.onion_address')"
+        test_onion_address_matches "$API_URL" "$ONION_URL" 0
 
     run_test "Verification hash matches on both domains" \
-        "test \$(curl -s $API_URL/.well-known/onion-verify/verification-info | jq -r '.verification_hash') = \$(curl -s $ONION_URL/.well-known/onion-verify/verification-info | jq -r '.verification_hash')"
+        test_verification_hash_matches "$API_URL" "$ONION_URL" 0
 fi
 
 # Test 2: Security Headers
@@ -99,25 +172,25 @@ echo -e "\n${BLUE}=== Security Headers Tests ===${NC}"
 # Check if web service is available
 if curl -s -o /dev/null -w '%{http_code}' "$WEB_URL" | grep -qE '^(200|301|302|304)$'; then
     run_test "CSP header present" \
-        "curl -sI $WEB_URL | grep -qi 'Content-Security-Policy'"
+        test_header_present "$WEB_URL" "Content-Security-Policy" 0
 
     run_test "CSP does not contain unsafe-eval" \
-        "! curl -sI $WEB_URL | grep -i 'Content-Security-Policy' | grep -q 'unsafe-eval'"
+        test_header_not_contains "$WEB_URL" "Content-Security-Policy" "unsafe-eval" 0
 
     run_test "X-Content-Type-Options is nosniff" \
-        "curl -sI $WEB_URL | grep -qi 'X-Content-Type-Options: nosniff'"
+        test_header_present "$WEB_URL" "X-Content-Type-Options: nosniff" 0
 
     run_test "X-Frame-Options is SAMEORIGIN" \
-        "curl -sI $WEB_URL | grep -qi 'X-Frame-Options: SAMEORIGIN'"
+        test_header_present "$WEB_URL" "X-Frame-Options: SAMEORIGIN" 0
 
     run_test "Referrer-Policy header present" \
-        "curl -sI $WEB_URL | grep -qi 'Referrer-Policy'"
+        test_header_present "$WEB_URL" "Referrer-Policy" 0
 else
     echo -e "${YELLOW}Web service not available, skipping CSP header tests${NC}"
 fi
 
 run_test "No X-Powered-By header (fingerprinting)" \
-    "! curl -sI $API_URL | grep -qi 'X-Powered-By'"
+    test_header_not_contains "$API_URL" "X-Powered-By" "." 0
 
 # Test 3: Cookie Security
 echo -e "\n${BLUE}=== Cookie Security Tests ===${NC}"
@@ -128,19 +201,22 @@ if [ -f "docker/.env" ] && grep -q "ADMIN_API_KEY=" docker/.env 2>/dev/null; the
 
     if [ -n "$ADMIN_KEY" ] && [ "$ADMIN_KEY" != "" ]; then
         # Test with valid credentials to check cookie flags
-        COOKIE_RESPONSE=$(curl -sI --max-time 5 $API_URL/admin/auth/login -X POST -H 'Content-Type: application/json' -d "{\"api_key\":\"$ADMIN_KEY\"}" 2>/dev/null | grep -i 'Set-Cookie' || true)
+        COOKIE_RESPONSE=$(curl -sI --max-time 5 "$API_URL/admin/auth/login" -X POST -H 'Content-Type: application/json' -d "{\"api_key\":\"$ADMIN_KEY\"}" 2>/dev/null | grep -i 'Set-Cookie' || true)
 
         if [ -n "$COOKIE_RESPONSE" ]; then
             run_test "Admin cookie has HttpOnly flag" \
-                "echo '$COOKIE_RESPONSE' | grep -qi 'HttpOnly'"
+                test_string_contains "$COOKIE_RESPONSE" "HttpOnly" 0
 
             run_test "Admin cookie has SameSite flag" \
-                "echo '$COOKIE_RESPONSE' | grep -qi 'SameSite'"
+                test_string_contains "$COOKIE_RESPONSE" "SameSite" 0
 
             # Note: Secure flag should be false for .onion deployments
             if [ -n "$ONION_URL" ]; then
+                test_not_contains_secure() {
+                    ! echo "$1" | grep -qi 'Secure'
+                }
                 run_test "Cookie Secure=false for .onion (HTTP)" \
-                    "! echo '$COOKIE_RESPONSE' | grep -qi 'Secure'"
+                    test_not_contains_secure "$COOKIE_RESPONSE" 0
             fi
         else
             echo -e "${YELLOW}No Set-Cookie header in response, skipping cookie tests${NC}"
@@ -156,36 +232,41 @@ fi
 echo -e "\n${BLUE}=== Tor Metrics Tests ===${NC}"
 
 run_test "Tor metrics endpoint accessible" \
-    "curl -sf $API_URL/metrics | grep -q 'tor_'"
+    test_metrics_contains "$API_URL" "tor_" 0
 
 run_test "Tor connection status metric exists" \
-    "curl -sf $API_URL/metrics | grep -q 'tor_connection_status'"
+    test_metrics_contains "$API_URL" "tor_connection_status" 0
 
 run_test "Tor hidden service configured metric exists" \
-    "curl -sf $API_URL/metrics | grep -q 'tor_hidden_service_configured'"
+    test_metrics_contains "$API_URL" "tor_hidden_service_configured" 0
 
 run_test "Tor verification requests metric exists" \
-    "curl -sf $API_URL/metrics | grep -q 'tor_verification_requests_total'"
+    test_metrics_contains "$API_URL" "tor_verification_requests_total" 0
 
 run_test "Tor cookie security metric exists" \
-    "curl -sf $API_URL/metrics | grep -q 'tor_cookie_secure_mode'"
+    test_metrics_contains "$API_URL" "tor_cookie_secure_mode" 0
 
 # Test 5: Build ID Fingerprinting
 echo -e "\n${BLUE}=== Fingerprinting Protection Tests ===${NC}"
 
+test_build_id() {
+    local url="$1"
+    curl -sf "$url" | grep -q 'bisq-support-build' || curl -sf "$url/_next/static/" 2>/dev/null | grep -q 'bisq-support-build'
+}
+
 run_test "Next.js uses constant build ID" \
-    "curl -sf $WEB_URL | grep -q 'bisq-support-build' || curl -sf $WEB_URL/_next/static/ 2>/dev/null | grep -q 'bisq-support-build'"
+    test_build_id "$WEB_URL" 0
 
 # Test 6: DNS Leak Prevention (if Tor is configured)
 echo -e "\n${BLUE}=== DNS Leak Tests ===${NC}"
 
 if [ -f "docker/.env" ]; then
-    if grep -q "TOR_ENABLED=true" docker/.env; then
+    if grep -q "TOR_ENABLED=true" docker/.env 2>/dev/null; then
         run_test "Tor proxy configuration present" \
-            "grep -q 'TOR_SOCKS_PROXY=' docker/.env"
+            test_grep_file "TOR_SOCKS_PROXY=" "docker/.env" 0
 
         run_test "External API proxy enabled" \
-            "grep -q 'USE_TOR_FOR_EXTERNAL_APIS=true' docker/.env"
+            test_grep_file "USE_TOR_FOR_EXTERNAL_APIS=true" "docker/.env" 0
     else
         echo -e "${YELLOW}Tor not enabled, skipping DNS leak tests${NC}"
     fi
@@ -195,10 +276,10 @@ fi
 echo -e "\n${BLUE}=== Admin Interface Security Tests ===${NC}"
 
 run_test "Admin login requires authentication" \
-    "test \$(curl -s -o /dev/null -w '%{http_code}' $API_URL/admin/dashboard/overview) = 401"
+    test_http_status "$API_URL/admin/dashboard/overview" "401" 0
 
 run_test "Admin endpoints reject unauthorized access" \
-    "test \$(curl -s -o /dev/null -w '%{http_code}' $API_URL/admin/faqs) = 401"
+    test_http_status "$API_URL/admin/faqs" "401" 0
 
 # Test 8: Rate Limiting (if nginx is configured)
 echo -e "\n${BLUE}=== Rate Limiting Tests ===${NC}"
