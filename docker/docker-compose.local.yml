@@ -1,7 +1,7 @@
 services:
   nginx:
     ports:
-      - "80:80"
+      - "8080:80"  # Use port 8080 locally to avoid macOS port 80 conflicts
     networks:
       - bisq-support-network
 
