@@ -44,7 +44,7 @@ fi
 # Estimate difficulty
 PREFIX_LEN=${#PREFIX}
 case $PREFIX_LEN in
-    1-3)
+    1|2|3)
         ESTIMATE="< 1 second"
         DIFFICULTY="Trivial"
         ;;
