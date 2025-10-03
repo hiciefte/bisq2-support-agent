@@ -81,13 +81,41 @@ After deployment, you must configure the following settings in `/opt/bisq-suppor
    COOKIE_SECURE=false
    ```
 
-4. **Restart services** after making changes:
+4. **Security Headers** (enabled by default in production):
+   - The production deployment uses `docker/nginx/conf.d/default.prod.conf` with security headers enabled
+   - Headers include: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+   - Configuration is automatically applied via `docker-compose.yml`
+   - **No additional setup required** - security headers work out of the box
+
+5. **Restart services** after making changes:
    ```bash
    cd /opt/bisq-support/scripts/
    ./restart.sh
    ```
 
-5. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
+6. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
+
+#### Optional: Tor Hidden Service Deployment
+
+To expose the application as a Tor hidden service (.onion address) for private, censorship-resistant access:
+
+**This is completely optional** - the application works perfectly without Tor configuration.
+
+📖 **See the complete guide**: [Tor Hidden Service Deployment](docs/tor-deployment.md)
+
+Quick overview:
+- Install Tor daemon on the host system
+- Configure hidden service in `/etc/tor/torrc`
+- Add `.onion` address to `TOR_HIDDEN_SERVICE` environment variable
+- Set `COOKIE_SECURE=false` for .onion deployments
+- Restart services
+
+The guide includes:
+- ✅ Step-by-step deployment instructions
+- ✅ Security hardening configuration
+- ✅ Backup and recovery procedures
+- ✅ Monitoring and troubleshooting
+- ✅ Automated security testing
 
 #### Managing the Application
 
