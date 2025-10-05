@@ -13,7 +13,17 @@ NC='\033[0m'
 
 # Configuration
 PREFIX="${1:-bisq}"
-THREADS="${2:-$(nproc)}"
+
+if [ -n "${2:-}" ]; then
+    THREADS="$2"
+elif command -v nproc >/dev/null 2>&1; then
+    THREADS=$(nproc)
+elif command -v sysctl >/dev/null 2>&1; then
+    THREADS=$(sysctl -n hw.ncpu)
+else
+    THREADS=1
+fi
+
 OUTPUT_DIR="./onion-keys-$(date +%Y%m%d-%H%M%S)"
 
 echo -e "${BLUE}========================================${NC}"
