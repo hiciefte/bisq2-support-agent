@@ -115,7 +115,8 @@ services:
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/data # Mount the data directory
-      - feedback-data:/data/feedback # Named volume for persistent feedback storage
+      # Named volume disabled: causes permission issues in local dev (root:root ownership)
+      # - feedback-data:/data/feedback # Named volume for persistent feedback storage
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
