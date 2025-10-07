@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,6 +55,12 @@ export default function ManageFaqsPage() {
   const [availableSources, setAvailableSources] = useState<string[]>([]);
 
   const router = useRouter();
+  const currentPageRef = useRef(currentPage);
+
+  // Keep the ref in sync with the latest page
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
 
   useEffect(() => {
     // Since we're wrapped with SecureAuth, we know we're authenticated
@@ -68,7 +74,7 @@ export default function ManageFaqsPage() {
 
     // Auto-refresh every 30 seconds
     const intervalId = setInterval(() => {
-      fetchFaqs(currentPage);
+      fetchFaqs(currentPageRef.current);
     }, 30000);
 
     // Cleanup interval on unmount

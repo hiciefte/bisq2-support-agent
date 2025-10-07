@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 
 interface ConversationMessage {
-  role: string;
+  role: 'user' | 'assistant';
   content: string;
 }
 
@@ -121,16 +121,25 @@ export default function AdminOverview() {
 
       if (response.ok) {
         const fullFeedback = await response.json();
-        setSelectedFeedback({
-          ...item,
-          conversation_history: fullFeedback.conversation_history || []
-        });
+        // Validate the response structure
+        if (fullFeedback && Array.isArray(fullFeedback.conversation_history)) {
+          setSelectedFeedback({
+            ...item,
+            conversation_history: fullFeedback.conversation_history || []
+          });
+        } else {
+          console.warn('Invalid feedback response structure');
+          setSelectedFeedback(item);
+          setError('Conversation history is unavailable for this feedback item.');
+        }
       } else {
         setSelectedFeedback(item);
+        setError('Unable to load conversation history. Proceeding with available data.');
       }
     } catch (error) {
       console.error('Error fetching feedback details:', error);
       setSelectedFeedback(item);
+      setError('Unable to load conversation history. Proceeding with available data.');
     }
 
     setFaqForm({
