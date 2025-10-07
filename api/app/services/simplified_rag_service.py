@@ -238,7 +238,7 @@ class SimplifiedRAGService:
             else:
                 logger.info("Vector store directory does not exist, skipping cleanup")
         except Exception as e:
-            logger.error(f"Error cleaning vector store: {str(e)}", exc_info=True)
+            logger.error(f"Error cleaning vector store: {e!s}", exc_info=True)
             raise
 
     async def setup(self):
@@ -363,7 +363,7 @@ class SimplifiedRAGService:
             return True
         except Exception as e:
             logger.error(
-                f"Error during simplified RAG service setup: {str(e)}", exc_info=True
+                f"Error during simplified RAG service setup: {e!s}", exc_info=True
             )
             raise
 
@@ -526,7 +526,7 @@ Answer:"""
 
                 return response_content
             except Exception as e:
-                logger.error(f"Error generating response: {str(e)}", exc_info=True)
+                logger.error(f"Error generating response: {e!s}", exc_info=True)
                 return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
 
         # Store the generate_response function as our RAG chain
@@ -615,7 +615,7 @@ Answer:"""
             }
 
         except Exception as e:
-            logger.error(f"Error answering from context: {str(e)}", exc_info=True)
+            logger.error(f"Error answering from context: {e!s}", exc_info=True)
             # Fall back to "no information" response
             return {
                 "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
@@ -699,7 +699,7 @@ Answer:"""
                         logger.info("Created feedback entry for missing FAQ")
                     except Exception as e:
                         logger.error(
-                            f"Error creating feedback entry: {str(e)}", exc_info=True
+                            f"Error creating feedback entry: {e!s}", exc_info=True
                         )
 
                 return {
@@ -826,7 +826,7 @@ Answer:"""
 
         except Exception as e:
             error_time = time.time() - start_time
-            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            logger.error(f"Error processing query: {e!s}", exc_info=True)
             return {
                 "answer": "I apologize, but I encountered an error processing your query. Please try again.",
                 "sources": [],

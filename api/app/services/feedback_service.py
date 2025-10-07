@@ -106,7 +106,7 @@ class FeedbackService:
             return all_feedback
 
         except Exception as e:
-            logger.error(f"Error loading feedback data from database: {str(e)}")
+            logger.error(f"Error loading feedback data from database: {e!s}")
             return []
 
     async def store_feedback(self, feedback_data: Dict[str, Any]) -> bool:
@@ -164,7 +164,7 @@ class FeedbackService:
             return True
 
         except Exception as e:
-            logger.error(f"Error storing feedback in database: {str(e)}")
+            logger.error(f"Error storing feedback in database: {e!s}")
             return False
 
     def _apply_partial_update(
@@ -244,7 +244,7 @@ class FeedbackService:
                 return False
 
             except Exception as e:
-                logger.error(f"Error updating feedback entry in database: {str(e)}")
+                logger.error(f"Error updating feedback entry in database: {e!s}")
                 return False
 
     async def analyze_feedback_text(self, explanation_text: str) -> List[str]:
@@ -515,7 +515,7 @@ class FeedbackService:
             return True
 
         except Exception as e:
-            logger.error(f"Error applying feedback weights: {str(e)}", exc_info=True)
+            logger.error(f"Error applying feedback weights: {e!s}", exc_info=True)
             return False
 
     def migrate_legacy_feedback(self) -> Dict[str, Any]:
@@ -574,7 +574,7 @@ class FeedbackService:
                 migration_stats["backed_up_files"].append(os.path.basename(file_path))
                 migration_stats["legacy_files_processed"] += 1
             except Exception as e:
-                logger.error(f"Error processing legacy file {file_path}: {str(e)}")
+                logger.error(f"Error processing legacy file {file_path}: {e!s}")
 
         # 2. Check root feedback.jsonl
         root_feedback = os.path.join(self.settings.DATA_DIR, "feedback.jsonl")
@@ -591,7 +591,7 @@ class FeedbackService:
                 migration_stats["backed_up_files"].append("feedback.jsonl")
                 migration_stats["legacy_files_processed"] += 1
             except Exception as e:
-                logger.error(f"Error processing root feedback file: {str(e)}")
+                logger.error(f"Error processing root feedback file: {e!s}")
 
         # Sort entries by timestamp where available
         for entry in legacy_entries:
@@ -623,7 +623,7 @@ class FeedbackService:
                 with open(month_file, "a") as f:
                     f.write(json.dumps(entry) + "\n")
             except Exception as e:
-                logger.error(f"Error writing entry to month file: {str(e)}")
+                logger.error(f"Error writing entry to month file: {e!s}")
 
         logger.info(
             f"Migration completed: {migration_stats['total_entries_migrated']} entries "
@@ -1006,7 +1006,7 @@ class FeedbackService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting feedback stats: {str(e)}")
+            logger.error(f"Error getting feedback stats: {e!s}")
             return {
                 "total_feedback": 0,
                 "positive_count": 0,
