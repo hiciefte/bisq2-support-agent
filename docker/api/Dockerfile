@@ -51,9 +51,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 # --- Final Stage ---
 FROM python:3.11-slim AS final
 
-# Install curl for health checks
+# Install curl for health checks and gosu for privilege dropping
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Arguments for user and group IDs
@@ -77,8 +78,9 @@ COPY api /app/api
 # Set ownership of the app directory
 RUN chown -R bisq-support:bisq-support /app
 
-# Switch to the non-root user
-USER bisq-support
+# Copy and set up entrypoint script
+COPY docker/api/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app
@@ -86,5 +88,7 @@ ENV PYTHONPATH=/app
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Run the application
+# Use entrypoint to fix permissions on startup, then drop privileges
+# Entrypoint will run as root initially to fix permissions, then exec as bisq-support user
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

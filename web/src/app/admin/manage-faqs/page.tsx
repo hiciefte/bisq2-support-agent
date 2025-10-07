@@ -65,6 +65,14 @@ export default function ManageFaqsPage() {
   useEffect(() => {
     setCurrentPage(1); // Reset to first page when filters change
     fetchFaqs(1);
+
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchFaqs(currentPage);
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, [filters]);
 
   const fetchFaqs = async (page = 1) => {

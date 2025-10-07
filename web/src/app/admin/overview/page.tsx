@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw, MessageCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+
+interface ConversationMessage {
+  role: string;
+  content: string;
+}
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -21,6 +26,7 @@ interface FeedbackForFAQ {
   issues: string[];
   timestamp: string;
   potential_category: string;
+  conversation_history?: ConversationMessage[];
 }
 
 interface DashboardData {
@@ -68,6 +74,14 @@ export default function AdminOverview() {
   useEffect(() => {
     // Authentication is handled by SecureAuth wrapper in layout
     fetchDashboardData();
+
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchDashboardData(true);
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, []);
 
   const fetchDashboardData = async (isRefresh = false) => {
@@ -100,8 +114,25 @@ export default function AdminOverview() {
     fetchDashboardData(true);
   };
 
-  const handleCreateFAQClick = (item: FeedbackForFAQ) => {
-    setSelectedFeedback(item);
+  const handleCreateFAQClick = async (item: FeedbackForFAQ) => {
+    try {
+      // Fetch full feedback details including conversation history
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        setSelectedFeedback({
+          ...item,
+          conversation_history: fullFeedback.conversation_history || []
+        });
+      } else {
+        setSelectedFeedback(item);
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+      setSelectedFeedback(item);
+    }
+
     setFaqForm({
       message_id: item.message_id,
       suggested_question: item.question,
@@ -484,6 +515,25 @@ export default function AdminOverview() {
                 <Label>User Feedback</Label>
                 <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
                   {faqForm.additional_notes}
+                </div>
+              </div>
+            )}
+
+            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 1 && (
+              <div>
+                <Label>Conversation History ({selectedFeedback.conversation_history.length - 1} messages)</Label>
+                <div className="mt-2 space-y-3 max-h-64 overflow-y-auto p-3 bg-accent rounded">
+                  {selectedFeedback.conversation_history.slice(0, -1).map((message, idx) => (
+                    <div key={idx} className={`p-3 rounded ${message.role === 'user' ? 'bg-blue-50 border-l-4 border-blue-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <MessageCircle className="h-4 w-4 text-gray-700" />
+                        <span className="font-semibold text-sm text-gray-900">
+                          {message.role === 'user' ? 'User' : 'Assistant'}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

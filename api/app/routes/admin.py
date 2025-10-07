@@ -482,6 +482,38 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         ) from e
 
 
+@router.get("/feedback/{message_id}")
+async def get_feedback_details(message_id: str) -> Dict[str, Any]:
+    """Get complete feedback details including full conversation history.
+
+    This endpoint retrieves a single feedback entry with all associated data:
+    - Question, answer, rating, and explanation
+    - Complete conversation history with all messages
+    - Metadata and issue types
+    - Timestamps
+
+    Authentication required via API key.
+    """
+    logger.info(f"Admin request to fetch feedback details for message: {message_id}")
+
+    try:
+        feedback = feedback_service.repository.get_feedback_by_message_id(message_id)
+
+        if not feedback:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+
+        return feedback
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch feedback details for {message_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch feedback details."
+        ) from e
+
+
 @router.get("/feedback/by-issues")
 async def get_feedback_by_issues() -> Dict[str, Any]:
     """Get feedback grouped by issue types for pattern analysis.

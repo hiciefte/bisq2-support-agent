@@ -35,8 +35,9 @@ export function Rating({
           type="button"
           disabled={disabled || hasRated}
           className={cn(
-            "rounded-sm p-1 text-muted-foreground hover:text-[#25B135] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
-            rating === 1 && "text-[#25B135]"
+            "rounded-sm p-1 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 transition-colors",
+            !hasRated && "hover:text-[#25B135]",
+            rating === 1 && "text-[#25B135] opacity-100"
           )}
           onClick={() => handleRate(1)}
         >
@@ -46,8 +47,9 @@ export function Rating({
           type="button"
           disabled={disabled || hasRated}
           className={cn(
-            "rounded-sm p-1 text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
-            rating === 0 && "text-destructive"
+            "rounded-sm p-1 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 transition-colors",
+            !hasRated && "hover:text-destructive",
+            rating === 0 && "text-destructive opacity-100"
           )}
           onClick={() => handleRate(0)}
         >

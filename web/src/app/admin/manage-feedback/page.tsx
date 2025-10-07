@@ -34,12 +34,18 @@ import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
 
+interface ConversationMessage {
+  role: string;
+  content: string;
+}
+
 interface FeedbackItem {
   message_id: string;
   question: string;
   answer: string;
   rating: number;
   timestamp: string;
+  conversation_history?: ConversationMessage[];
   sources?: Array<{
     title: string;
     type: string;
@@ -119,6 +125,7 @@ export default function ManageFeedbackPage() {
 
   // FAQ creation state
   const [showCreateFAQ, setShowCreateFAQ] = useState(false);
+  const [selectedFeedbackForFAQ, setSelectedFeedbackForFAQ] = useState<FeedbackItem | null>(null);
   const [faqForm, setFaqForm] = useState({
     message_id: '',
     suggested_question: '',
@@ -173,6 +180,14 @@ export default function ManageFeedbackPage() {
 
   useEffect(() => {
     fetchData();
+
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, [filters, activeTab]);
 
   const fetchData = async () => {
@@ -291,12 +306,49 @@ export default function ManageFeedbackPage() {
     });
   };
 
-  const openFeedbackDetail = (feedback: FeedbackItem) => {
-    setSelectedFeedback(feedback);
+  const openFeedbackDetail = async (feedback: FeedbackItem) => {
+    try {
+      // Fetch full feedback details including conversation history
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedback.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        setSelectedFeedback({
+          ...feedback,
+          conversation_history: fullFeedback.conversation_history || []
+        });
+      } else {
+        // Fall back to list data if detailed fetch fails
+        setSelectedFeedback(feedback);
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+      // Fall back to list data
+      setSelectedFeedback(feedback);
+    }
+
     setShowFeedbackDetail(true);
   };
 
-  const openCreateFAQ = (feedback: FeedbackItem) => {
+  const openCreateFAQ = async (feedback: FeedbackItem) => {
+    try {
+      // Fetch full feedback details including conversation history
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedback.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        setSelectedFeedbackForFAQ({
+          ...feedback,
+          conversation_history: fullFeedback.conversation_history || []
+        });
+      } else {
+        setSelectedFeedbackForFAQ(feedback);
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+      setSelectedFeedbackForFAQ(feedback);
+    }
+
     setFaqForm({
       message_id: feedback.message_id,
       suggested_question: feedback.question,
@@ -749,6 +801,26 @@ export default function ManageFeedbackPage() {
                 </div>
               )}
 
+              {/* Conversation History */}
+              {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
+                <div>
+                  <span className="font-medium text-card-foreground font-medium">Conversation History ({selectedFeedback.conversation_history.length - 1} messages):</span>
+                  <div className="mt-2 space-y-3 max-h-96 overflow-y-auto p-3 bg-accent rounded">
+                    {selectedFeedback.conversation_history.slice(0, -1).map((message, idx) => (
+                      <div key={idx} className={`p-3 rounded ${message.role === 'user' ? 'bg-blue-50 border-l-4 border-blue-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <MessageCircle className="h-4 w-4 text-gray-700" />
+                          <span className="font-semibold text-sm text-gray-900">
+                            {message.role === 'user' ? 'User' : 'Assistant'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Issues */}
               {selectedFeedback.issues && selectedFeedback.issues.length > 0 && (
                 <div>
@@ -879,6 +951,24 @@ export default function ManageFeedbackPage() {
                   <Label>User Feedback</Label>
                   <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
                     {faqForm.additional_notes}
+                  </div>
+                </div>
+              )}
+              {selectedFeedbackForFAQ?.conversation_history && selectedFeedbackForFAQ.conversation_history.length > 1 && (
+                <div>
+                  <Label>Conversation History ({selectedFeedbackForFAQ.conversation_history.length - 1} messages)</Label>
+                  <div className="mt-2 space-y-3 max-h-64 overflow-y-auto p-3 bg-accent rounded">
+                    {selectedFeedbackForFAQ.conversation_history.slice(0, -1).map((message, idx) => (
+                      <div key={idx} className={`p-3 rounded ${message.role === 'user' ? 'bg-blue-50 border-l-4 border-blue-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <MessageCircle className="h-4 w-4 text-gray-700" />
+                          <span className="font-semibold text-sm text-gray-900">
+                            {message.role === 'user' ? 'User' : 'Assistant'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
