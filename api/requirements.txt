@@ -185,7 +185,7 @@ langchain-text-splitters==0.3.11
     #   langchain
 langchain-xai==0.2.5
     # via -r api/requirements.in
-langsmith==0.4.32
+langsmith==0.4.33
     # via
     #   langchain
     #   langchain-community
@@ -330,7 +330,7 @@ pyasn1-modules==0.4.2
     # via google-auth
 pybase64==1.4.2
     # via chromadb
-pydantic==2.11.10
+pydantic==2.12.0
     # via
     #   -r api/requirements.in
     #   chromadb
@@ -340,7 +340,7 @@ pydantic==2.11.10
     #   langsmith
     #   openai
     #   pydantic-settings
-pydantic-core==2.33.2
+pydantic-core==2.41.1
     # via pydantic
 pydantic-settings==2.11.0
     # via
