@@ -236,29 +236,36 @@ export default function ManageFeedbackPage() {
     }
   };
 
-  const handleLogin = (e: FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     const key = (e.target as HTMLFormElement).apiKey.value;
     if (key) {
-      // SECURITY: No longer storing API keys in localStorage - using secure HTTP-only cookies instead
-      // localStorage.setItem('admin_api_key', key);
-      setApiKey(key);
-      setLoginError('');
-      fetchData(key);
-      // Notify layout of auth change
-      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      try {
+        // Use the secure cookie-based authentication
+        await loginWithApiKey(key);
+        setLoginError('');
+        // Fetch data after successful login
+        await fetchData();
+        // Notify layout of auth change
+        window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      } catch (error) {
+        setLoginError('Login failed. Please check your API key.');
+        console.error('Login error:', error);
+      }
     }
   };
 
-  const handleLogout = () => {
-    // SECURITY: No longer using localStorage for API keys
-    // localStorage.removeItem('admin_api_key');
-    setApiKey(null);
-    // Notify layout of auth change
-    window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-    setFeedbackData(null);
-    setStats(null);
-    router.push('/admin/manage-feedback');
+  const handleLogout = async () => {
+    try {
+      await logout();
+      // Notify layout of auth change
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
+      setFeedbackData(null);
+      setStats(null);
+      router.push('/admin/manage-feedback');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   const handleFilterChange = (key: string, value: any) => {

@@ -201,6 +201,8 @@ sudo ss -tlnp | grep tor
 
 ### Step 5: Get Your .onion Address
 
+#### Option A: Use Random Address (Fastest)
+
 ```bash
 # Primary web/API hidden service address
 sudo cat /var/lib/tor/bisq-support/hostname
@@ -208,6 +210,27 @@ sudo cat /var/lib/tor/bisq-support/hostname
 # Optional: Metrics hidden service address (if configured)
 # sudo cat /var/lib/tor/bisq-support-metrics/hostname
 ```
+
+#### Option B: Use Custom Vanity Address (Recommended)
+
+For better branding, generate a custom .onion address locally (e.g., `bisq*.onion`):
+
+📖 **See guide**: [Generate Custom Vanity .onion Address](generate-vanity-onion.md)
+
+**Quick start**:
+```bash
+# On your local machine (more powerful CPU)
+./scripts/generate-vanity-onion.sh bisq
+
+# Transfer keys to server and install
+# (Script provides complete instructions)
+```
+
+**Benefits**:
+- Memorable address (e.g., `bisq7abc...onion` instead of random)
+- Better branding and trust
+- Generate offline on powerful machine
+- 4-6 character prefix takes seconds to minutes
 
 **Important**: Save this .onion address securely. You'll need it for the next step.
 

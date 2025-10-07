@@ -238,7 +238,7 @@ class SimplifiedRAGService:
             else:
                 logger.info("Vector store directory does not exist, skipping cleanup")
         except Exception as e:
-            logger.error(f"Error cleaning vector store: {str(e)}", exc_info=True)
+            logger.error(f"Error cleaning vector store: {e!s}", exc_info=True)
             raise
 
     async def setup(self):
@@ -363,7 +363,7 @@ class SimplifiedRAGService:
             return True
         except Exception as e:
             logger.error(
-                f"Error during simplified RAG service setup: {str(e)}", exc_info=True
+                f"Error during simplified RAG service setup: {e!s}", exc_info=True
             )
             raise
 
@@ -526,7 +526,7 @@ Answer:"""
 
                 return response_content
             except Exception as e:
-                logger.error(f"Error generating response: {str(e)}", exc_info=True)
+                logger.error(f"Error generating response: {e!s}", exc_info=True)
                 return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
 
         # Store the generate_response function as our RAG chain
@@ -540,6 +540,97 @@ Answer:"""
         if self.vectorstore and hasattr(self.vectorstore, "persist"):
             self.vectorstore.persist()
         logger.info("Simplified RAG service cleanup complete")
+
+    async def _answer_from_context(
+        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+    ) -> dict:
+        """Try to answer a question using only conversation history.
+
+        This method is called when no relevant documents are found, but conversation
+        history exists that might contain the answer.
+
+        Args:
+            question: The user's question
+            chat_history: List of previous conversation exchanges
+
+        Returns:
+            dict: Response with answer, metadata, and answer source tracking
+        """
+        start_time = time.time()
+
+        try:
+            logger.info(
+                "Attempting to answer from conversation context (no documents found)"
+            )
+
+            # Format chat history for the prompt
+            formatted_history = []
+            recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH :]
+
+            for exchange in recent_history:
+                if hasattr(exchange, "role") and hasattr(exchange, "content"):
+                    role = exchange.role
+                    content = exchange.content
+                    if role == "user":
+                        formatted_history.append(f"Human: {content}")
+                    elif role == "assistant":
+                        formatted_history.append(f"Assistant: {content}")
+                elif isinstance(exchange, dict):
+                    user_msg = exchange.get("user", "")
+                    ai_msg = exchange.get("assistant", "")
+                    if user_msg:
+                        formatted_history.append(f"Human: {user_msg}")
+                    if ai_msg:
+                        formatted_history.append(f"Assistant: {ai_msg}")
+
+            chat_history_str = "\n".join(formatted_history)
+
+            # Create a special prompt for context-only answers
+            context_only_prompt = f"""You are a Bisq 2 support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
+
+IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
+
+Previous Conversation:
+{chat_history_str}
+
+Current Question: {question}
+
+Instructions:
+- If the answer is clearly in the conversation above, provide it concisely
+- If this is a follow-up about something mentioned in the conversation, answer based on that context
+- If this is a NEW topic not in the conversation, respond: "I don't have information about that in our knowledge base"
+- Keep your answer to 2-3 sentences maximum
+
+Answer:"""
+
+            # Get response from LLM
+            response_text = self.llm.invoke(context_only_prompt)
+            response_content = (
+                response_text.content
+                if hasattr(response_text, "content")
+                else str(response_text)
+            )
+
+            logger.info(f"Generated context-based answer: {response_content[:100]}...")
+
+            return {
+                "answer": response_content,
+                "sources": [],  # No document sources for context-based answers
+                "response_time": time.time() - start_time,
+                "answered_from": "context",  # Metadata flag
+                "context_fallback": True,
+            }
+
+        except Exception as e:
+            logger.error(f"Error answering from context: {e!s}", exc_info=True)
+            # Fall back to "no information" response
+            return {
+                "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
+                "sources": [],
+                "response_time": time.time() - start_time,
+                "forwarded_to_human": True,
+                "context_fallback_failed": True,
+            }
 
     async def query(
         self, question: str, chat_history: List[Union[Dict[str, str], Any]]
@@ -580,9 +671,21 @@ Answer:"""
             docs = self.retriever.get_relevant_documents(preprocessed_question)
             logger.info(f"Retrieved {len(docs)} relevant documents")
 
-            # If no documents were retrieved, create a feedback entry and return a message about forwarding to human support
+            # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
                 logger.info("No relevant documents found for the query")
+
+                # Check if we have conversation history to potentially answer from
+                if chat_history and len(chat_history) > 0:
+                    logger.info(
+                        f"Attempting context-aware fallback with {len(chat_history)} messages in history"
+                    )
+                    return await self._answer_from_context(
+                        preprocessed_question, chat_history
+                    )
+
+                # No conversation history either - create feedback entry and return "no info" message
+                logger.info("No conversation history available for context fallback")
 
                 # Create feedback entry for missing FAQ
                 if self.feedback_service:
@@ -603,7 +706,7 @@ Answer:"""
                         logger.info("Created feedback entry for missing FAQ")
                     except Exception as e:
                         logger.error(
-                            f"Error creating feedback entry: {str(e)}", exc_info=True
+                            f"Error creating feedback entry: {e!s}", exc_info=True
                         )
 
                 return {
@@ -723,13 +826,14 @@ Answer:"""
                 "answer": response_text,
                 "sources": sources,
                 "response_time": response_time,
+                "answered_from": "documents",  # Metadata flag
                 "forwarded_to_human": False,
                 "feedback_created": False,
             }
 
         except Exception as e:
             error_time = time.time() - start_time
-            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            logger.error(f"Error processing query: {e!s}", exc_info=True)
             return {
                 "answer": "I apologize, but I encountered an error processing your query. Please try again.",
                 "sources": [],

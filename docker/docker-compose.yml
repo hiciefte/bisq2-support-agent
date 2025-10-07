@@ -15,8 +15,8 @@ services:
       - ./logs/nginx:/var/log/nginx
       - ./nginx/error_pages:/usr/share/nginx/html/error_pages:ro
     ports:
-      # Bind to localhost only for Tor daemon access (host-based Tor)
-      - "127.0.0.1:80:80"
+      # Bind to all interfaces for clearnet and Tor access
+      - "0.0.0.0:80:80"
     depends_on:
       web:
         condition: service_healthy
@@ -115,6 +115,8 @@ services:
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/data # Mount the data directory
+      # Named volume disabled: causes permission issues in local dev (root:root ownership)
+      # - feedback-data:/data/feedback # Named volume for persistent feedback storage
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
@@ -337,6 +339,9 @@ volumes:
     name: bisq2-web-node-modules
   bisq2-data:
     name: bisq2-data
+  feedback-data:
+    name: bisq2-feedback-data
+    driver: local
 
 networks:
   bisq-support-network:

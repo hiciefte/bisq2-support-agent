@@ -425,6 +425,14 @@ const ChatInterface = () => {
             .filter((msg) => msg.role === "assistant" && msg.rating !== undefined)
             .map((msg) => msg.rating!)
 
+        // Prepare conversation history (last 10 messages before the rated message)
+        const conversationHistory = messages
+            .slice(Math.max(0, messageIndex - 10), messageIndex)
+            .map(msg => ({
+                role: msg.role,
+                content: msg.content
+            }));
+
         // Prepare feedback data
         const feedbackData = {
             message_id: messageId,
@@ -438,7 +446,8 @@ const ChatInterface = () => {
                 conversation_id: messages[0].id,
                 timestamp: new Date().toISOString(),
                 previous_ratings: previousRatings
-            }
+            },
+            conversation_history: conversationHistory
         }
 
         try {

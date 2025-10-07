@@ -113,9 +113,7 @@ class WikiService:
             logger.info(f"Loaded {len(documents)} wiki documents from JSONL file")
             return documents
         except Exception as e:
-            logger.error(
-                f"Error loading processed wiki content: {str(e)}", exc_info=True
-            )
+            logger.error(f"Error loading processed wiki content: {e!s}", exc_info=True)
             return []
 
 

@@ -4,21 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
+from app.models.feedback import FeedbackRequest
 from app.services.feedback_service import get_feedback_service
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-class FeedbackRequest(BaseModel):
-    message_id: str
-    question: str
-    answer: str
-    rating: int
-    sources: Optional[List[Dict[str, str]]] = None
-    metadata: Optional[Dict[str, Any]] = None
 
 
 @router.post("/feedback/submit")

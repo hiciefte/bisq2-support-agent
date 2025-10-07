@@ -428,7 +428,7 @@ class FAQService:
             logger.info(f"Loaded {len(documents)} FAQ documents")
             return documents
         except Exception as e:
-            logger.error(f"Error loading FAQ data: {str(e)}", exc_info=True)
+            logger.error(f"Error loading FAQ data: {e!s}", exc_info=True)
             return []
 
     # FAQ Extraction Methods from extract_faqs.py
@@ -465,7 +465,7 @@ class FAQService:
                 logger.info(f"Loaded {len(processed_msg_ids)} processed message IDs")
                 return processed_msg_ids
             except Exception as e:
-                logger.warning(f"Error loading processed message IDs: {str(e)}")
+                logger.warning(f"Error loading processed message IDs: {e!s}")
 
         # Backward compatibility: convert old conversation tracking to message tracking
         if hasattr(self, "processed_convs_path") and self.processed_convs_path.exists():
@@ -496,9 +496,7 @@ class FAQService:
                         f"Converted {len(conv_ids)} conversation IDs to {len(processed_msg_ids)} message IDs"
                     )
             except Exception as e:
-                logger.warning(
-                    f"Error during backward compatibility conversion: {str(e)}"
-                )
+                logger.warning(f"Error during backward compatibility conversion: {e!s}")
 
         return processed_msg_ids
 
@@ -579,7 +577,7 @@ class FAQService:
                     latest_df = pd.read_csv(StringIO(csv_content))
                     logger.info(f"Fetched {len(latest_df)} messages from API")
         except Exception as e:
-            logger.error(f"Failed to fetch messages from API: {str(e)}")
+            logger.error(f"Failed to fetch messages from API: {e!s}")
         finally:
             if bisq_api:
                 await bisq_api.cleanup()
@@ -922,7 +920,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 error_level = logging.WARNING if is_rate_limit else logging.ERROR
                 logger.log(
                     error_level,
-                    f"Error during OpenAI API call on attempt {attempt + 1}: {str(e)}",
+                    f"Error during OpenAI API call on attempt {attempt + 1}: {e!s}",
                 )
 
                 if attempt < max_retries - 1:
@@ -1069,7 +1067,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                         )
             logger.info(f"Loaded {len(faqs)} existing FAQs from {self._faq_file_path}")
         except Exception as e:
-            logger.error(f"Error in load_existing_faqs: {str(e)}", exc_info=True)
+            logger.error(f"Error in load_existing_faqs: {e!s}", exc_info=True)
         return faqs
 
     def save_faqs(self, faqs: List[Dict]):
@@ -1224,7 +1222,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             return new_faqs
 
         except Exception as e:
-            logger.error(f"Error during FAQ extraction: {str(e)}")
+            logger.error(f"Error during FAQ extraction: {e!s}")
             raise
 
 
