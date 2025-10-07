@@ -351,6 +351,34 @@ cleanup_backups() {
     cleanup_old_backups "$INSTALL_DIR" 5
 }
 
+# Verify feedback persistence after deployment
+verify_feedback_persistence() {
+    log_info "Verifying feedback data persistence..."
+
+    local verify_script="$INSTALL_DIR/scripts/verify-feedback-persistence.sh"
+
+    if [ ! -f "$verify_script" ]; then
+        log_warning "Feedback verification script not found: $verify_script"
+        log_warning "Skipping feedback persistence check"
+        return 0
+    fi
+
+    # Make sure script is executable
+    chmod +x "$verify_script"
+
+    # Run verification script
+    if ! "$verify_script"; then
+        log_warning "Feedback persistence verification failed"
+        log_warning "Feedback data may not be persisting correctly"
+        log_warning "Please review the output above and fix any issues"
+        # Don't fail the deployment, just warn
+        return 0
+    fi
+
+    log_success "Feedback persistence verified successfully"
+    return 0
+}
+
 # Main execution flow
 main() {
     # Validate environment
@@ -370,6 +398,9 @@ main() {
 
     # Apply updates (rebuild or restart services)
     apply_updates
+
+    # Verify feedback persistence
+    verify_feedback_persistence
 
     # Cleanup old backups
     cleanup_backups
