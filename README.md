@@ -182,7 +182,7 @@ The feedback system has been migrated from JSONL files to SQLite for better data
 -   **SQLite Database**: `api/data/feedback.db` - Primary feedback storage (automatically created)
 -   **Database Schema**: Includes tables for feedback entries, conversation history, metadata, and issues
 -   **Migration**: Existing JSONL feedback files can be migrated using `python -m app.scripts.migrate_feedback_to_sqlite`
--   **Permissions**: The database file must be writable by the API container user (UID 1001 in production)
+-   **Permissions**: The database file must be writable by the API container user (UID 1001, the `bisq-support` user in production). If you encounter permission errors, fix ownership with: `sudo chown 1001:1001 api/data/feedback.db`
 
 For new deployments, no migration is needed - the database will be created automatically on first startup.
 
