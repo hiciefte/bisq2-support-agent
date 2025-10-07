@@ -11,6 +11,7 @@ This script:
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -214,18 +215,23 @@ class FeedbackMigration:
 
 def main():
     """Main entry point for migration script."""
+    # Get default paths from environment or use container defaults
+    data_dir = os.environ.get("DATA_DIR", "/data")
+    default_db_path = os.path.join(data_dir, "feedback.db")
+    default_feedback_dir = os.path.join(data_dir, "feedback")
+
     parser = argparse.ArgumentParser(
         description="Migrate feedback from JSONL to SQLite"
     )
     parser.add_argument(
         "--db-path",
-        default="api/data/feedback.db",
-        help="Path to SQLite database file (default: api/data/feedback.db)",
+        default=default_db_path,
+        help=f"Path to SQLite database file (default: {default_db_path})",
     )
     parser.add_argument(
         "--feedback-dir",
-        default="api/data/feedback",
-        help="Directory containing JSONL feedback files (default: api/data/feedback)",
+        default=default_feedback_dir,
+        help=f"Directory containing JSONL feedback files (default: {default_feedback_dir})",
     )
     parser.add_argument(
         "--dry-run",
