@@ -176,7 +176,12 @@ class FeedbackService:
         with open(feedback_file, "a") as f:
             f.write(json.dumps(feedback_data) + "\n")
 
-        logger.info(f"Stored feedback in {os.path.basename(feedback_file)}")
+        # Log conversation history details
+        conversation_history = feedback_data.get("conversation_history", [])
+        logger.info(
+            f"Stored feedback in {os.path.basename(feedback_file)} "
+            f"with {len(conversation_history)} conversation messages"
+        )
 
         # Apply feedback weights to improve future responses
         await self.apply_feedback_weights_async(feedback_data)
