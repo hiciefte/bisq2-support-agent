@@ -121,3 +121,4 @@ pnpm-lock.yaml
 /.playwright-mcp/
 # Git worktrees directory - used for parallel feature development
 /.trees/
+onion-keys/
