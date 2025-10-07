@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useCallback, FormEvent } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -175,35 +175,7 @@ export default function ManageFeedbackPage() {
     setIsLoading(false);
   }, []);
 
-  useEffect(() => {
-    fetchData();
-
-    // Auto-refresh every 30 seconds
-    const intervalId = setInterval(() => {
-      fetchData();
-    }, 30000);
-
-    // Cleanup interval on unmount
-    return () => clearInterval(intervalId);
-  }, [filters, activeTab]);
-
-  const fetchData = async () => {
-    setIsLoading(true);
-    try {
-      await Promise.all([
-        fetchFeedbackList(),
-        fetchStats()
-      ]);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Failed to fetch feedback data');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchFeedbackList = async () => {
+  const fetchFeedbackList = useCallback(async () => {
     // Adjust filters based on active tab
     const adjustedFilters = { ...filters };
     if (activeTab === 'negative') {
@@ -235,9 +207,9 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
-  };
+  }, [filters, activeTab]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     const response = await makeAuthenticatedRequest('/admin/feedback/stats');
 
     if (response.ok) {
@@ -246,7 +218,37 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch stats. Status: ${response.status}`);
     }
-  };
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await Promise.all([
+        fetchFeedbackList(),
+        fetchStats()
+      ]);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError('Failed to fetch feedback data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchFeedbackList, fetchStats]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchData]);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();

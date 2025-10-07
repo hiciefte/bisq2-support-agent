@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -68,20 +68,7 @@ export default function AdminOverview() {
 
   const router = useRouter();
 
-  useEffect(() => {
-    // Authentication is handled by SecureAuth wrapper in layout
-    fetchDashboardData();
-
-    // Auto-refresh every 30 seconds
-    const intervalId = setInterval(() => {
-      fetchDashboardData(true);
-    }, 30000);
-
-    // Cleanup interval on unmount
-    return () => clearInterval(intervalId);
-  }, []);
-
-  const fetchDashboardData = async (isRefresh = false) => {
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setIsRefreshing(true);
     } else {
@@ -105,7 +92,20 @@ export default function AdminOverview() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Authentication is handled by SecureAuth wrapper in layout
+    fetchDashboardData();
+
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchDashboardData(true);
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchDashboardData]);
 
   const handleRefresh = () => {
     fetchDashboardData(true);
@@ -526,7 +526,7 @@ export default function AdminOverview() {
               </div>
             )}
 
-            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 0 && (
+            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 1 && (
               <ConversationHistory messages={selectedFeedback.conversation_history} />
             )}
 
