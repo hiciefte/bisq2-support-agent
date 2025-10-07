@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw, MessageCircle } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+import { ConversationHistory } from '@/components/admin/ConversationHistory';
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -528,23 +529,8 @@ export default function AdminOverview() {
               </div>
             )}
 
-            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 1 && (
-              <div>
-                <Label>Conversation History ({selectedFeedback.conversation_history.length - 1} messages)</Label>
-                <div className="mt-2 space-y-3 max-h-64 overflow-y-auto p-3 bg-accent rounded">
-                  {selectedFeedback.conversation_history.slice(0, -1).map((message, idx) => (
-                    <div key={idx} className={`p-3 rounded ${message.role === 'user' ? 'bg-blue-50 border-l-4 border-blue-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <MessageCircle className="h-4 w-4 text-gray-700" />
-                        <span className="font-semibold text-sm text-gray-900">
-                          {message.role === 'user' ? 'User' : 'Assistant'}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-800 whitespace-pre-wrap">{message.content}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {selectedFeedback?.conversation_history && (
+              <ConversationHistory messages={selectedFeedback.conversation_history} />
             )}
 
             <DialogFooter>
