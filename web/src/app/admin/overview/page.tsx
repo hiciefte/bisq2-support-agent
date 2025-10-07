@@ -112,26 +112,32 @@ export default function AdminOverview() {
   };
 
   const handleCreateFAQClick = async (item: FeedbackForFAQ) => {
+    let feedbackWithHistory = item;
+    let errorMessage: string | null = null;
+
     try {
       // Fetch full feedback details including conversation history
       const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
 
       if (response.ok) {
         const fullFeedback = await response.json();
-        setSelectedFeedback({
+        feedbackWithHistory = {
           ...item,
           conversation_history: Array.isArray(fullFeedback.conversation_history)
             ? fullFeedback.conversation_history
             : []
-        });
+        };
       } else {
-        setSelectedFeedback(item);
-        setError('Unable to load conversation history. Proceeding with available data.');
+        errorMessage = 'Unable to load conversation history. Proceeding with available data.';
       }
     } catch (error) {
       console.error('Error fetching feedback details:', error);
-      setSelectedFeedback(item);
-      setError('Unable to load conversation history. Proceeding with available data.');
+      errorMessage = 'Unable to load conversation history. Proceeding with available data.';
+    }
+
+    setSelectedFeedback(feedbackWithHistory);
+    if (errorMessage) {
+      setError(errorMessage);
     }
 
     setFaqForm({
@@ -520,7 +526,7 @@ export default function AdminOverview() {
               </div>
             )}
 
-            {selectedFeedback?.conversation_history && (
+            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 0 && (
               <ConversationHistory messages={selectedFeedback.conversation_history} />
             )}
 

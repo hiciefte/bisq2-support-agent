@@ -122,3 +122,5 @@ pnpm-lock.yaml
 # Git worktrees directory - used for parallel feature development
 /.trees/
 onion-keys/
+/web/tests/e2e/
+/web/test-results/
