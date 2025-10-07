@@ -289,8 +289,15 @@ class FeedbackRepository:
 
                 # Attach metadata and issues
                 metadata = metadata_map.get(feedback_id, {}).copy()
+
+                # Add explanation from feedback table to metadata for FeedbackItem compatibility
+                # The FeedbackItem model expects explanation in metadata.explanation
+                if row["explanation"]:
+                    metadata["explanation"] = row["explanation"]
+
                 if issues_map[feedback_id]:
                     metadata["issues"] = issues_map[feedback_id]
+
                 if metadata:
                     feedback["metadata"] = metadata
 

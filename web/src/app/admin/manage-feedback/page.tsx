@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useCallback, FormEvent } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,6 +33,8 @@ import {
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
+import { ConversationHistory } from '@/components/admin/ConversationHistory';
+import { ConversationMessage } from '@/types/feedback';
 
 interface FeedbackItem {
   message_id: string;
@@ -40,6 +42,7 @@ interface FeedbackItem {
   answer: string;
   rating: number;
   timestamp: string;
+  conversation_history?: ConversationMessage[];
   sources?: Array<{
     title: string;
     type: string;
@@ -119,6 +122,7 @@ export default function ManageFeedbackPage() {
 
   // FAQ creation state
   const [showCreateFAQ, setShowCreateFAQ] = useState(false);
+  const [selectedFeedbackForFAQ, setSelectedFeedbackForFAQ] = useState<FeedbackItem | null>(null);
   const [faqForm, setFaqForm] = useState({
     message_id: '',
     suggested_question: '',
@@ -171,27 +175,7 @@ export default function ManageFeedbackPage() {
     setIsLoading(false);
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [filters, activeTab]);
-
-  const fetchData = async () => {
-    setIsLoading(true);
-    try {
-      await Promise.all([
-        fetchFeedbackList(),
-        fetchStats()
-      ]);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Failed to fetch feedback data');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchFeedbackList = async () => {
+  const fetchFeedbackList = useCallback(async () => {
     // Adjust filters based on active tab
     const adjustedFilters = { ...filters };
     if (activeTab === 'negative') {
@@ -223,9 +207,9 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
-  };
+  }, [filters, activeTab]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     const response = await makeAuthenticatedRequest('/admin/feedback/stats');
 
     if (response.ok) {
@@ -234,7 +218,37 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch stats. Status: ${response.status}`);
     }
-  };
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await Promise.all([
+        fetchFeedbackList(),
+        fetchStats()
+      ]);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError('Failed to fetch feedback data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchFeedbackList, fetchStats]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchData]);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -291,12 +305,35 @@ export default function ManageFeedbackPage() {
     });
   };
 
-  const openFeedbackDetail = (feedback: FeedbackItem) => {
-    setSelectedFeedback(feedback);
+  const fetchFullFeedbackDetails = async (feedback: FeedbackItem): Promise<FeedbackItem> => {
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedback.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        return {
+          ...feedback,
+          conversation_history: fullFeedback.conversation_history || []
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+    }
+
+    // Fall back to list data
+    return feedback;
+  };
+
+  const openFeedbackDetail = async (feedback: FeedbackItem) => {
+    const fullFeedback = await fetchFullFeedbackDetails(feedback);
+    setSelectedFeedback(fullFeedback);
     setShowFeedbackDetail(true);
   };
 
-  const openCreateFAQ = (feedback: FeedbackItem) => {
+  const openCreateFAQ = async (feedback: FeedbackItem) => {
+    const fullFeedback = await fetchFullFeedbackDetails(feedback);
+    setSelectedFeedbackForFAQ(fullFeedback);
+
     setFaqForm({
       message_id: feedback.message_id,
       suggested_question: feedback.question,
@@ -749,6 +786,11 @@ export default function ManageFeedbackPage() {
                 </div>
               )}
 
+              {/* Conversation History */}
+              {selectedFeedback.conversation_history && (
+                <ConversationHistory messages={selectedFeedback.conversation_history} />
+              )}
+
               {/* Issues */}
               {selectedFeedback.issues && selectedFeedback.issues.length > 0 && (
                 <div>
@@ -881,6 +923,9 @@ export default function ManageFeedbackPage() {
                     {faqForm.additional_notes}
                   </div>
                 </div>
+              )}
+              {selectedFeedbackForFAQ?.conversation_history && (
+                <ConversationHistory messages={selectedFeedbackForFAQ.conversation_history} />
               )}
             </div>
             <DialogFooter className="mt-6">

@@ -426,8 +426,10 @@ const ChatInterface = () => {
             .map((msg) => msg.rating!)
 
         // Prepare conversation history (last 10 messages before the rated message)
+        // Filter out thank you messages to maintain proper user/assistant alternation
         const conversationHistory = messages
             .slice(Math.max(0, messageIndex - 10), messageIndex)
+            .filter(msg => !msg.isThankYouMessage)
             .map(msg => ({
                 role: msg.role,
                 content: msg.content

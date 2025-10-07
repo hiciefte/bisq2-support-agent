@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+import { ConversationHistory } from '@/components/admin/ConversationHistory';
+import { ConversationMessage } from '@/types/feedback';
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -21,6 +23,7 @@ interface FeedbackForFAQ {
   issues: string[];
   timestamp: string;
   potential_category: string;
+  conversation_history?: ConversationMessage[];
 }
 
 interface DashboardData {
@@ -65,12 +68,7 @@ export default function AdminOverview() {
 
   const router = useRouter();
 
-  useEffect(() => {
-    // Authentication is handled by SecureAuth wrapper in layout
-    fetchDashboardData();
-  }, []);
-
-  const fetchDashboardData = async (isRefresh = false) => {
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setIsRefreshing(true);
     } else {
@@ -94,14 +92,54 @@ export default function AdminOverview() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Authentication is handled by SecureAuth wrapper in layout
+    fetchDashboardData();
+
+    // Auto-refresh every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchDashboardData(true);
+    }, 30000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchDashboardData]);
 
   const handleRefresh = () => {
     fetchDashboardData(true);
   };
 
-  const handleCreateFAQClick = (item: FeedbackForFAQ) => {
-    setSelectedFeedback(item);
+  const handleCreateFAQClick = async (item: FeedbackForFAQ) => {
+    let feedbackWithHistory = item;
+    let errorMessage: string | null = null;
+
+    try {
+      // Fetch full feedback details including conversation history
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        feedbackWithHistory = {
+          ...item,
+          conversation_history: Array.isArray(fullFeedback.conversation_history)
+            ? fullFeedback.conversation_history
+            : []
+        };
+      } else {
+        errorMessage = 'Unable to load conversation history. Proceeding with available data.';
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+      errorMessage = 'Unable to load conversation history. Proceeding with available data.';
+    }
+
+    setSelectedFeedback(feedbackWithHistory);
+    if (errorMessage) {
+      setError(errorMessage);
+    }
+
     setFaqForm({
       message_id: item.message_id,
       suggested_question: item.question,
@@ -486,6 +524,10 @@ export default function AdminOverview() {
                   {faqForm.additional_notes}
                 </div>
               </div>
+            )}
+
+            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 1 && (
+              <ConversationHistory messages={selectedFeedback.conversation_history} />
             )}
 
             <DialogFooter>
