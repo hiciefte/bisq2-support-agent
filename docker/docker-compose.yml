@@ -162,6 +162,11 @@ services:
     # Security hardening
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN        # Required for entrypoint to fix file ownership
+      - DAC_OVERRIDE # Required for entrypoint to bypass permission checks
+      - SETGID       # Required for gosu to switch group
+      - SETUID       # Required for gosu to switch user
     security_opt:
       - no-new-privileges:true
 
