@@ -496,9 +496,7 @@ class FAQService:
                         f"Converted {len(conv_ids)} conversation IDs to {len(processed_msg_ids)} message IDs"
                     )
             except Exception as e:
-                logger.warning(
-                    f"Error during backward compatibility conversion: {e!s}"
-                )
+                logger.warning(f"Error during backward compatibility conversion: {e!s}")
 
         return processed_msg_ids
 

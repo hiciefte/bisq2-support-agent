@@ -13,11 +13,9 @@ class ConversationMessage(BaseModel):
     @field_validator("content")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        """Remove null bytes and normalize whitespace."""
-        # Remove null bytes
+        """Remove null bytes and trim surrounding whitespace."""
         v = v.replace("\x00", "")
-        # Strip excessive whitespace
-        return " ".join(v.split())
+        return v.strip()
 
 
 class FeedbackRequest(BaseModel):
