@@ -170,10 +170,21 @@ The project uses the following data directories within `api/data/`:
 
 -   `wiki/`: Contains wiki documents for the RAG knowledge base.
 -   `vectorstore/`: Stores vector embeddings for semantic search.
--   `feedback/`: Stores user feedback.
+-   `feedback.db`: SQLite database storing user feedback (automatically created on first run).
 -   `extracted_faq.jsonl`: Stores FAQs automatically generated from support chats.
 
-These are automatically created during deployment. For local development, create them manually if needed: `mkdir -p api/data/{wiki,vectorstore,feedback}`.
+These are automatically created during deployment. For local development, create them manually if needed: `mkdir -p api/data/{wiki,vectorstore}`.
+
+### Feedback Storage Migration
+
+The feedback system has been migrated from JSONL files to SQLite for better data integrity and query performance:
+
+-   **SQLite Database**: `api/data/feedback.db` - Primary feedback storage (automatically created)
+-   **Database Schema**: Includes tables for feedback entries, conversation history, metadata, and issues
+-   **Migration**: Existing JSONL feedback files can be migrated using `python -m app.scripts.migrate_feedback_to_sqlite`
+-   **Permissions**: The database file must be writable by the API container user (UID 1001 in production)
+
+For new deployments, no migration is needed - the database will be created automatically on first startup.
 
 ## RAG System Content
 
