@@ -73,21 +73,25 @@ SELECT
     f.explanation,
     f.timestamp,
     f.created_at,
-    GROUP_CONCAT(
-        json_object(
-            'role', cm.role,
-            'content', cm.content,
-            'position', cm.position
-        ) ORDER BY cm.position
-    ) as conversation_history_json,
+    (
+        SELECT GROUP_CONCAT(
+                   json_object(
+                     'role', c.role,
+                     'content', c.content,
+                     'position', c.position
+                   )
+               )
+        FROM (
+            SELECT role, content, position
+            FROM conversation_messages
+            WHERE feedback_id = f.id
+            ORDER BY position
+        ) AS c
+    ) AS conversation_history_json,
     (SELECT GROUP_CONCAT(fm.key || '=' || fm.value, ';')
      FROM feedback_metadata fm
      WHERE fm.feedback_id = f.id) as metadata_str,
     (SELECT GROUP_CONCAT(fi.issue_type, ',')
      FROM feedback_issues fi
      WHERE fi.feedback_id = f.id) as issues_str
-FROM feedback f
-LEFT JOIN conversation_messages cm ON f.id = cm.feedback_id
-LEFT JOIN feedback_metadata fm ON f.id = fm.feedback_id
-LEFT JOIN feedback_issues fi ON f.id = fi.feedback_id
-GROUP BY f.id;
+FROM feedback f;

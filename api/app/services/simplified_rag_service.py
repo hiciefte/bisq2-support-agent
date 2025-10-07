@@ -575,6 +575,13 @@ Answer:"""
                         formatted_history.append(f"Human: {content}")
                     elif role == "assistant":
                         formatted_history.append(f"Assistant: {content}")
+                elif isinstance(exchange, dict):
+                    user_msg = exchange.get("user", "")
+                    ai_msg = exchange.get("assistant", "")
+                    if user_msg:
+                        formatted_history.append(f"Human: {user_msg}")
+                    if ai_msg:
+                        formatted_history.append(f"Assistant: {ai_msg}")
 
             chat_history_str = "\n".join(formatted_history)
 

@@ -79,6 +79,23 @@ class FeedbackService:
             # Prompting guidance based on feedback
             self.prompt_guidance = []
 
+    def _is_valid_feedback_item(self, item: Dict[str, Any]) -> bool:
+        """Check if a feedback item has required fields.
+
+        Args:
+            item: The feedback dictionary to validate
+
+        Returns:
+            bool: True if item has message_id and rating
+        """
+        if "message_id" not in item or "rating" not in item:
+            logger.debug(
+                f"Skipping item missing required fields (message_id/rating): "
+                f"{item.get('feedback_type', 'unknown')}"
+            )
+            return False
+        return True
+
     def load_feedback(self) -> List[Dict[str, Any]]:
         """Load feedback data from SQLite database.
 
@@ -665,11 +682,7 @@ class FeedbackService:
         feedback_items = []
         for item in all_feedback:
             try:
-                # Ensure required fields are present before validation
-                if "message_id" not in item or "rating" not in item:
-                    logger.debug(
-                        f"Skipping item missing required fields: {item.get('feedback_type', 'unknown')}"
-                    )
+                if not self._is_valid_feedback_item(item):
                     continue
 
                 feedback_item = FeedbackItem(**item)
@@ -862,8 +875,7 @@ class FeedbackService:
 
         for item in all_feedback:
             try:
-                # Skip items missing required fields
-                if "message_id" not in item or "rating" not in item:
+                if not self._is_valid_feedback_item(item):
                     continue
 
                 feedback_item = FeedbackItem(**item)
@@ -888,8 +900,7 @@ class FeedbackService:
 
         for item in all_feedback:
             try:
-                # Skip items missing required fields
-                if "message_id" not in item or "rating" not in item:
+                if not self._is_valid_feedback_item(item):
                     continue
 
                 feedback_item = FeedbackItem(**item)
@@ -917,8 +928,7 @@ class FeedbackService:
 
             for item in all_feedback:
                 try:
-                    # Skip items missing required fields
-                    if "message_id" not in item or "rating" not in item:
+                    if not self._is_valid_feedback_item(item):
                         continue
 
                     feedback_item = FeedbackItem(**item)

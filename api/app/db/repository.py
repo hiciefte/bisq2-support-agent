@@ -7,6 +7,7 @@ operations, abstracting away SQL queries from the service layer.
 
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -235,9 +236,47 @@ class FeedbackRepository:
                 params.append(offset)
 
             cursor.execute(query, params)
-            feedback_list = []
+            rows = cursor.fetchall()
+            feedback_ids = [row["id"] for row in rows]
 
-            for row in cursor.fetchall():
+            # Batch-fetch metadata and issues for all feedback entries
+            metadata_map: Dict[int, Dict[str, Any]] = defaultdict(dict)
+            issues_map: Dict[int, List[str]] = defaultdict(list)
+
+            if feedback_ids:
+                placeholders = ",".join("?" for _ in feedback_ids)
+
+                # Fetch metadata
+                cursor.execute(
+                    f"""
+                    SELECT feedback_id, key, value
+                    FROM feedback_metadata
+                    WHERE feedback_id IN ({placeholders})
+                    """,
+                    feedback_ids,
+                )
+                for meta_row in cursor.fetchall():
+                    value = meta_row["value"]
+                    try:
+                        value = json.loads(value)
+                    except (TypeError, json.JSONDecodeError):
+                        pass
+                    metadata_map[meta_row["feedback_id"]][meta_row["key"]] = value
+
+                # Fetch issues
+                cursor.execute(
+                    f"""
+                    SELECT feedback_id, issue_type
+                    FROM feedback_issues
+                    WHERE feedback_id IN ({placeholders})
+                    """,
+                    feedback_ids,
+                )
+                for issue_row in cursor.fetchall():
+                    issues_map[issue_row["feedback_id"]].append(issue_row["issue_type"])
+
+            feedback_list = []
+            for row in rows:
                 feedback = dict(row)
                 feedback_id = feedback["id"]
 
@@ -247,6 +286,13 @@ class FeedbackRepository:
                     (feedback_id,),
                 )
                 feedback["conversation_message_count"] = cursor.fetchone()["count"]
+
+                # Attach metadata and issues
+                metadata = metadata_map.get(feedback_id, {}).copy()
+                if issues_map[feedback_id]:
+                    metadata["issues"] = issues_map[feedback_id]
+                if metadata:
+                    feedback["metadata"] = metadata
 
                 feedback_list.append(feedback)
 
