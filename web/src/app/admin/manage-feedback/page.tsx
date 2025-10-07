@@ -34,11 +34,7 @@ import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
-
-interface ConversationMessage {
-  role: string;
-  content: string;
-}
+import { ConversationMessage } from '@/types/feedback';
 
 interface FeedbackItem {
   message_id: string;
@@ -307,48 +303,34 @@ export default function ManageFeedbackPage() {
     });
   };
 
-  const openFeedbackDetail = async (feedback: FeedbackItem) => {
+  const fetchFullFeedbackDetails = async (feedback: FeedbackItem): Promise<FeedbackItem> => {
     try {
-      // Fetch full feedback details including conversation history
       const response = await makeAuthenticatedRequest(`/admin/feedback/${feedback.message_id}`);
 
       if (response.ok) {
         const fullFeedback = await response.json();
-        setSelectedFeedback({
+        return {
           ...feedback,
           conversation_history: fullFeedback.conversation_history || []
-        });
-      } else {
-        // Fall back to list data if detailed fetch fails
-        setSelectedFeedback(feedback);
+        };
       }
     } catch (error) {
       console.error('Error fetching feedback details:', error);
-      // Fall back to list data
-      setSelectedFeedback(feedback);
     }
 
+    // Fall back to list data
+    return feedback;
+  };
+
+  const openFeedbackDetail = async (feedback: FeedbackItem) => {
+    const fullFeedback = await fetchFullFeedbackDetails(feedback);
+    setSelectedFeedback(fullFeedback);
     setShowFeedbackDetail(true);
   };
 
   const openCreateFAQ = async (feedback: FeedbackItem) => {
-    try {
-      // Fetch full feedback details including conversation history
-      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedback.message_id}`);
-
-      if (response.ok) {
-        const fullFeedback = await response.json();
-        setSelectedFeedbackForFAQ({
-          ...feedback,
-          conversation_history: fullFeedback.conversation_history || []
-        });
-      } else {
-        setSelectedFeedbackForFAQ(feedback);
-      }
-    } catch (error) {
-      console.error('Error fetching feedback details:', error);
-      setSelectedFeedbackForFAQ(feedback);
-    }
+    const fullFeedback = await fetchFullFeedbackDetails(feedback);
+    setSelectedFeedbackForFAQ(fullFeedback);
 
     setFaqForm({
       message_id: feedback.message_id,

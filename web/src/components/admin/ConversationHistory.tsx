@@ -1,10 +1,6 @@
 import { MessageCircle } from 'lucide-react';
 import { Label } from "@/components/ui/label";
-
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+import { ConversationMessage } from '@/types/feedback';
 
 interface ConversationHistoryProps {
   messages: ConversationMessage[];

@@ -13,11 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
-
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+import { ConversationMessage } from '@/types/feedback';
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -122,17 +118,12 @@ export default function AdminOverview() {
 
       if (response.ok) {
         const fullFeedback = await response.json();
-        // Validate the response structure
-        if (fullFeedback && Array.isArray(fullFeedback.conversation_history)) {
-          setSelectedFeedback({
-            ...item,
-            conversation_history: fullFeedback.conversation_history || []
-          });
-        } else {
-          console.warn('Invalid feedback response structure');
-          setSelectedFeedback(item);
-          setError('Conversation history is unavailable for this feedback item.');
-        }
+        setSelectedFeedback({
+          ...item,
+          conversation_history: Array.isArray(fullFeedback.conversation_history)
+            ? fullFeedback.conversation_history
+            : []
+        });
       } else {
         setSelectedFeedback(item);
         setError('Unable to load conversation history. Proceeding with available data.');
