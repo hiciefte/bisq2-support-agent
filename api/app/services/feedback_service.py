@@ -146,7 +146,9 @@ class FeedbackService:
             )
 
             # Log conversation history details
-            conversation_count = len(conversation_history) if conversation_history else 0
+            conversation_count = (
+                len(conversation_history) if conversation_history else 0
+            )
             logger.info(
                 f"Stored feedback with ID {feedback_id} "
                 f"with {conversation_count} conversation messages"
@@ -665,7 +667,9 @@ class FeedbackService:
             try:
                 # Ensure required fields are present before validation
                 if "message_id" not in item or "rating" not in item:
-                    logger.debug(f"Skipping item missing required fields: {item.get('feedback_type', 'unknown')}")
+                    logger.debug(
+                        f"Skipping item missing required fields: {item.get('feedback_type', 'unknown')}"
+                    )
                     continue
 
                 feedback_item = FeedbackItem(**item)
@@ -948,7 +952,8 @@ class FeedbackService:
             needs_faq_items = [
                 item
                 for item in feedback_items
-                if item.is_negative and (item.explanation or item.has_no_source_response)
+                if item.is_negative
+                and (item.explanation or item.has_no_source_response)
             ]
 
             # Feedback by month

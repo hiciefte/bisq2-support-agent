@@ -22,8 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from app.db.database import get_database
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -137,8 +136,7 @@ class FeedbackMigration:
 
             # Check if entry already exists
             cursor.execute(
-                "SELECT id FROM feedback WHERE message_id = ?",
-                (message_id,)
+                "SELECT id FROM feedback WHERE message_id = ?", (message_id,)
             )
             existing = cursor.fetchone()
 

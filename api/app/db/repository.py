@@ -302,9 +302,7 @@ class FeedbackRepository:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_feedback_explanation(
-        self, message_id: str, explanation: str
-    ) -> bool:
+    def update_feedback_explanation(self, message_id: str, explanation: str) -> bool:
         """
         Update the explanation for an existing feedback entry.
 
