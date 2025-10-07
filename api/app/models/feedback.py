@@ -10,31 +10,37 @@ class ConversationMessage(BaseModel):
     role: Literal["user", "assistant"] = Field(description="Message role")
     content: str = Field(max_length=10000, description="Message content (max 10KB)")
 
-    @field_validator('content')
+    @field_validator("content")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
         """Remove null bytes and normalize whitespace."""
         # Remove null bytes
-        v = v.replace('\x00', '')
+        v = v.replace("\x00", "")
         # Strip excessive whitespace
-        return ' '.join(v.split())
+        return " ".join(v.split())
 
 
 class FeedbackRequest(BaseModel):
     """Request model for submitting feedback."""
 
-    message_id: str = Field(pattern=r'^[a-f0-9-]{36}$', description="UUID of the message")
+    message_id: str = Field(
+        pattern=r"^[a-f0-9-]{36}$", description="UUID of the message"
+    )
     question: str = Field(max_length=5000, description="User question")
     answer: str = Field(max_length=20000, description="Assistant answer")
     rating: int = Field(ge=0, le=1, description="0 for negative, 1 for positive")
-    explanation: Optional[str] = Field(None, max_length=5000, description="Feedback explanation")
+    explanation: Optional[str] = Field(
+        None, max_length=5000, description="Feedback explanation"
+    )
     conversation_history: Optional[List[ConversationMessage]] = Field(
         None, max_length=50, description="Conversation context (max 50 messages)"
     )
 
-    @field_validator('conversation_history')
+    @field_validator("conversation_history")
     @classmethod
-    def validate_conversation(cls, v: Optional[List[ConversationMessage]]) -> Optional[List[ConversationMessage]]:
+    def validate_conversation(
+        cls, v: Optional[List[ConversationMessage]]
+    ) -> Optional[List[ConversationMessage]]:
         """Validate conversation history has alternating roles."""
         if v is None or len(v) == 0:
             return v

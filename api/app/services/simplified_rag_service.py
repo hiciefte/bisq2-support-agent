@@ -604,9 +604,7 @@ Answer:"""
                 else str(response_text)
             )
 
-            logger.info(
-                f"Generated context-based answer: {response_content[:100]}..."
-            )
+            logger.info(f"Generated context-based answer: {response_content[:100]}...")
 
             return {
                 "answer": response_content,
@@ -617,9 +615,7 @@ Answer:"""
             }
 
         except Exception as e:
-            logger.error(
-                f"Error answering from context: {str(e)}", exc_info=True
-            )
+            logger.error(f"Error answering from context: {str(e)}", exc_info=True)
             # Fall back to "no information" response
             return {
                 "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
@@ -682,9 +678,7 @@ Answer:"""
                     )
 
                 # No conversation history either - create feedback entry and return "no info" message
-                logger.info(
-                    "No conversation history available for context fallback"
-                )
+                logger.info("No conversation history available for context fallback")
 
                 # Create feedback entry for missing FAQ
                 if self.feedback_service:
