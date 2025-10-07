@@ -114,7 +114,7 @@ class WikiService:
             return documents
         except Exception as e:
             logger.error(
-                f"Error loading processed wiki content: {str(e)}", exc_info=True
+                f"Error loading processed wiki content: {e!s}", exc_info=True
             )
             return []
 
