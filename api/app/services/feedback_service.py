@@ -20,6 +20,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import portalocker
+from app.db.database import get_database
+from app.db.repository import FeedbackRepository
 from app.models.feedback import (
     FeedbackFilterRequest,
     FeedbackItem,
@@ -58,7 +60,14 @@ class FeedbackService:
             self.initialized = True
             if self._update_lock is None:
                 self._update_lock = asyncio.Lock()
-            logger.info("Feedback service initialized")
+
+            # Initialize database and repository
+            db_path = os.path.join(self.settings.DATA_DIR, "feedback.db")
+            db = get_database()
+            db.initialize(db_path)
+            self.repository = FeedbackRepository()
+
+            logger.info("Feedback service initialized with SQLite database")
 
             # Source weights to be applied to different content types
             # These are influenced by feedback but used by RAG
@@ -71,10 +80,7 @@ class FeedbackService:
             self.prompt_guidance = []
 
     def load_feedback(self) -> List[Dict[str, Any]]:
-        """Load feedback data from month-based JSONL files.
-
-        Loads feedback data from the standardized format: feedback_YYYY-MM.jsonl
-        stored in the DATA_DIR/feedback directory.
+        """Load feedback data from SQLite database.
 
         Returns:
             List of feedback entries as dictionaries
@@ -88,71 +94,23 @@ class FeedbackService:
         ):
             return self._feedback_cache
 
-        all_feedback = []
-
-        # Load from the feedback directory (standard location)
-        feedback_dir = self.settings.FEEDBACK_DIR_PATH
-
-        # Check if the directory exists and is accessible
-        if not os.path.exists(feedback_dir):
-            logger.info(f"Feedback directory does not exist: {feedback_dir}")
-            return all_feedback
-
-        if not os.path.isdir(feedback_dir):
-            logger.info(f"Feedback path exists but is not a directory: {feedback_dir}")
-            return all_feedback
-
         try:
-            # Process month-based files (current convention)
-            month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
-            month_files = [
-                os.path.join(feedback_dir, f)
-                for f in os.listdir(feedback_dir)
-                if month_pattern.match(f)
-            ]
-
-            # Sort files chronologically (newest first) to prioritize recent feedback
-            month_files.sort(reverse=True)
-
-            for file_path in month_files:
-                try:
-                    with open(file_path, "r") as f:
-                        file_feedback = []
-                        for line in f:
-                            try:
-                                entry = json.loads(line)
-                                # Filter out non-feedback entries (e.g., missing_faq suggestions)
-                                # Valid feedback must have message_id and rating
-                                if "message_id" in entry and "rating" in entry:
-                                    file_feedback.append(entry)
-                                else:
-                                    logger.debug(
-                                        f"Skipping non-feedback entry: {entry.get('feedback_type', 'unknown type')}"
-                                    )
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Invalid JSON in {file_path}: {str(e)}")
-                                continue
-
-                        all_feedback.extend(file_feedback)
-                        logger.info(
-                            f"Loaded {len(file_feedback)} feedback entries from {os.path.basename(file_path)}"
-                        )
-                except Exception as e:
-                    logger.error(f"Error loading feedback from {file_path}: {str(e)}")
-
-            logger.info(f"Loaded a total of {len(all_feedback)} feedback entries")
+            # Load all feedback from database
+            all_feedback = self.repository.get_all_feedback()
+            logger.info(f"Loaded {len(all_feedback)} feedback entries from database")
 
             # Cache the loaded feedback
             self._feedback_cache = all_feedback
             self._last_load_time = current_time
 
-        except Exception as e:
-            logger.error(f"Error loading feedback data: {str(e)}")
+            return all_feedback
 
-        return all_feedback
+        except Exception as e:
+            logger.error(f"Error loading feedback data from database: {str(e)}")
+            return []
 
     async def store_feedback(self, feedback_data: Dict[str, Any]) -> bool:
-        """Store user feedback in the feedback file.
+        """Store user feedback in the SQLite database.
 
         Args:
             feedback_data: The feedback data to store
@@ -160,33 +118,52 @@ class FeedbackService:
         Returns:
             bool: True if the operation was successful
         """
-        # Create feedback directory if it doesn't exist
-        feedback_dir = self.settings.FEEDBACK_DIR_PATH
-        os.makedirs(feedback_dir, exist_ok=True)
+        try:
+            # Extract required fields
+            message_id = feedback_data.get("message_id")
+            question = feedback_data.get("question", "")
+            answer = feedback_data.get("answer", "")
+            rating = feedback_data.get("rating", 0)
+            explanation = feedback_data.get("explanation")
+            conversation_history = feedback_data.get("conversation_history")
+            metadata = feedback_data.get("metadata", {})
+            timestamp = feedback_data.get("timestamp")
 
-        # Use current month for filename following the established convention
-        current_month = datetime.now().strftime("%Y-%m")
-        feedback_file = os.path.join(feedback_dir, f"feedback_{current_month}.jsonl")
+            # Add timestamp if not already present
+            if timestamp is None:
+                timestamp = datetime.now().isoformat()
 
-        # Add timestamp if not already present
-        if "timestamp" not in feedback_data:
-            feedback_data["timestamp"] = datetime.now().isoformat()
+            # Store in database using repository
+            feedback_id = self.repository.store_feedback(
+                message_id=message_id,
+                question=question,
+                answer=answer,
+                rating=rating,
+                explanation=explanation,
+                conversation_history=conversation_history,
+                metadata=metadata,
+                timestamp=timestamp,
+            )
 
-        # Write to the feedback file
-        with open(feedback_file, "a") as f:
-            f.write(json.dumps(feedback_data) + "\n")
+            # Log conversation history details
+            conversation_count = len(conversation_history) if conversation_history else 0
+            logger.info(
+                f"Stored feedback with ID {feedback_id} "
+                f"with {conversation_count} conversation messages"
+            )
 
-        # Log conversation history details
-        conversation_history = feedback_data.get("conversation_history", [])
-        logger.info(
-            f"Stored feedback in {os.path.basename(feedback_file)} "
-            f"with {len(conversation_history)} conversation messages"
-        )
+            # Invalidate cache
+            self._feedback_cache = None
+            self._last_load_time = None
 
-        # Apply feedback weights to improve future responses
-        await self.apply_feedback_weights_async(feedback_data)
+            # Apply feedback weights to improve future responses
+            await self.apply_feedback_weights_async(feedback_data)
 
-        return True
+            return True
+
+        except Exception as e:
+            logger.error(f"Error storing feedback in database: {str(e)}")
+            return False
 
     def _apply_partial_update(
         self,
@@ -215,153 +192,58 @@ class FeedbackService:
         explanation: Optional[str] = None,
         issues: Optional[List[str]] = None,
     ) -> bool:
-        """Update an existing feedback entry in a month-based feedback file.
-
-        This method is concurrency-safe for intra-process calls due to an asyncio.Lock.
-        It reads a feedback file, updates the entry if found, and writes to a temporary
-        file before replacing the original.
+        """Update an existing feedback entry in the SQLite database.
 
         Args:
             message_id: The unique ID of the message to update.
-            updated_entry: The full updated feedback entry. If provided and explanation/issues
-                           are None, this will be used to replace the entire entry.
-            explanation: The explanation text to add/update in the entry's metadata.
+            updated_entry: The full updated feedback entry (not currently used with SQLite).
+            explanation: The explanation text to add/update.
             issues: The list of issues to add/extend in the entry's metadata.
 
         Returns:
-            bool: True if the entry was found and an update was made (or attempted with data),
-                  False if the entry was not found, or if no update data (explanation, issues,
-                  or updated_entry) was provided for a found entry, resulting in no change.
+            bool: True if the entry was found and updated, False otherwise.
         """
         if self._update_lock is None:
             logger.error("FeedbackService update_lock is not initialized!")
             self._update_lock = asyncio.Lock()
 
         async with self._update_lock:
-            feedback_dir = self.settings.FEEDBACK_DIR_PATH
-            if not os.path.exists(feedback_dir) or not os.path.isdir(feedback_dir):
-                logger.warning(f"Feedback directory not found: {feedback_dir}")
+            try:
+                # For explanation updates, use repository's update method
+                if explanation is not None:
+                    success = self.repository.update_feedback_explanation(
+                        message_id, explanation
+                    )
+                    if success:
+                        logger.info(f"Updated explanation for feedback {message_id}")
+                        # Invalidate cache
+                        self._feedback_cache = None
+                        self._last_load_time = None
+                        return True
+                    else:
+                        logger.warning(
+                            f"Could not find feedback entry with message_id: {message_id}"
+                        )
+                        return False
+
+                # For issues, we need to update metadata
+                # This requires getting the current entry, updating it, and storing it back
+                # For now, log a warning as this functionality needs repository enhancement
+                if issues is not None:
+                    logger.warning(
+                        "Issue updates not yet implemented in SQLite repository. "
+                        "This requires adding issues to an existing feedback entry."
+                    )
+                    return False
+
+                logger.warning(
+                    f"No update data provided for feedback entry {message_id}"
+                )
                 return False
 
-            month_pattern = re.compile(r"feedback_\d{4}-\d{2}\.jsonl$")
-            feedback_files = [
-                os.path.join(feedback_dir, f)
-                for f in os.listdir(feedback_dir)
-                if month_pattern.match(f)
-            ]
-            feedback_files.sort(reverse=True)
-
-            current_month = datetime.now().strftime("%Y-%m")
-            current_month_file = os.path.join(
-                feedback_dir, f"feedback_{current_month}.jsonl"
-            )
-
-            # Ensure current month file is processed first if it exists, then others
-            ordered_files_to_check = []
-            if os.path.exists(current_month_file):
-                ordered_files_to_check.append(current_month_file)
-            for f_path in feedback_files:
-                if f_path != current_month_file:
-                    ordered_files_to_check.append(f_path)
-
-            if not ordered_files_to_check and not os.path.exists(current_month_file):
-                # Attempt to create current month file if no files exist and an update is requested.
-                # This handles the case where the first feedback interaction might be an update call.
-                try:
-                    # The outer condition already ensures current_month_file does not exist here.
-                    open(current_month_file, "a").close()  # Create if not exists
-                    logger.info(
-                        f"Created empty feedback file for current month: {current_month_file}"
-                    )
-                    # Explicitly check again after creation attempt before appending
-                    if os.path.exists(current_month_file):
-                        ordered_files_to_check.append(current_month_file)
-                except IOError as e:
-                    logger.error(
-                        f"Could not create feedback file {current_month_file}: {e}"
-                    )
-
-            overall_updated_made = False
-
-            for file_path in ordered_files_to_check:
-                if not os.path.exists(file_path):
-                    continue
-
-                temp_path = file_path + ".tmp"
-                file_updated_locally = False
-                entry_found_in_file = False
-
-                try:
-                    # Acquire an exclusive cross-process lock and manage file operations
-                    with portalocker.Lock(file_path, mode="r+", timeout=10), open(
-                        file_path, "r"
-                    ) as original, open(temp_path, "w") as temp:
-                        for line in original:
-                            try:
-                                entry = json.loads(line.strip())
-                            except json.JSONDecodeError:
-                                temp.write(line)  # Write invalid line as is
-                                continue
-
-                            if entry.get("message_id") == message_id:
-                                entry_found_in_file = True
-                                if explanation is not None or issues is not None:
-                                    entry = self._apply_partial_update(
-                                        entry,
-                                        explanation=explanation,
-                                        issues=issues,
-                                    )
-                                    temp.write(json.dumps(entry) + "\n")
-                                    file_updated_locally = True
-                                elif updated_entry is not None:
-                                    temp.write(json.dumps(updated_entry) + "\n")
-                                    file_updated_locally = True
-                                else:
-                                    # No update data for this specific entry, write original
-                                    temp.write(line)
-                            else:
-                                temp.write(line)
-
-                    if file_updated_locally:
-                        os.replace(temp_path, file_path)
-                        logger.info(
-                            f"Updated feedback entry in {os.path.basename(file_path)}"
-                        )
-                        overall_updated_made = True
-                        # Invalidate cache since a file was changed
-                        FeedbackService._feedback_cache = None
-                        FeedbackService._last_load_time = None
-                        return True  # Found and updated
-                    else:
-                        os.remove(
-                            temp_path
-                        )  # No changes made to this file, or entry not found with update data
-                        if entry_found_in_file:
-                            # Entry was found, but no data was provided to update it. This is not an error but not an update.
-                            logger.info(
-                                f"Feedback entry {message_id} found in {os.path.basename(file_path)} but no update data provided."
-                            )
-                            # Still, we consider the message_id handled, so return based on whether any change was made
-                            return overall_updated_made  # Which would be False if this was the only file with the entry
-
-                except IOError as e:
-                    logger.error(f"IOError during feedback update for {file_path}: {e}")
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                    # Potentially return False or re-raise depending on desired error handling
-                    return False  # Stop processing if a file operation fails catastrophically
-
-            if not overall_updated_made:
-                logger.warning(
-                    f"Could not find feedback entry with message_id: {message_id} in any feedback file, or no update was performed."
-                )
-
-            # Invalidate cache if any update might have occurred or if file structure changed
-            if overall_updated_made:  # Invalidate only if an actual change was made
-                FeedbackService._feedback_cache = None
-                FeedbackService._last_load_time = None
-
-            return overall_updated_made
+            except Exception as e:
+                logger.error(f"Error updating feedback entry in database: {str(e)}")
+                return False
 
     async def analyze_feedback_text(self, explanation_text: str) -> List[str]:
         """Analyze feedback explanation text to identify common issues.
@@ -1021,22 +903,105 @@ class FeedbackService:
 
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard."""
-        all_feedback = self.load_feedback()
-        feedback_items = []
+        try:
+            # Get basic stats from repository
+            basic_stats = self.repository.get_feedback_stats()
 
-        for item in all_feedback:
-            try:
-                # Skip items missing required fields
-                if "message_id" not in item or "rating" not in item:
+            # Load all feedback for additional calculations
+            all_feedback = self.load_feedback()
+            feedback_items = []
+
+            for item in all_feedback:
+                try:
+                    # Skip items missing required fields
+                    if "message_id" not in item or "rating" not in item:
+                        continue
+
+                    feedback_item = FeedbackItem(**item)
+                    feedback_items.append(feedback_item)
+                except Exception as e:
+                    logger.warning(f"Error parsing feedback item: {e}")
                     continue
 
-                feedback_item = FeedbackItem(**item)
-                feedback_items.append(feedback_item)
-            except Exception as e:
-                logger.warning(f"Error parsing feedback item: {e}")
-                continue
+            if not feedback_items:
+                return {
+                    "total_feedback": basic_stats.get("total", 0),
+                    "positive_count": basic_stats.get("positive", 0),
+                    "negative_count": basic_stats.get("negative", 0),
+                    "helpful_rate": basic_stats.get("positive_rate", 0),
+                    "common_issues": {},
+                    "recent_negative_count": 0,
+                    "needs_faq_count": 0,
+                    "source_effectiveness": {},
+                    "feedback_by_month": {},
+                }
 
-        if not feedback_items:
+            # Recent negative feedback (last 30 days)
+            thirty_days_ago = datetime.now().replace(day=1).strftime("%Y-%m-01")
+            recent_negative = [
+                item
+                for item in feedback_items
+                if item.is_negative and item.timestamp >= thirty_days_ago
+            ]
+
+            # Feedback that needs FAQ creation
+            needs_faq_items = [
+                item
+                for item in feedback_items
+                if item.is_negative and (item.explanation or item.has_no_source_response)
+            ]
+
+            # Feedback by month
+            monthly_counts = defaultdict(int)
+            for item in feedback_items:
+                try:
+                    month_key = item.timestamp[:7]  # YYYY-MM
+                    monthly_counts[month_key] += 1
+                except (IndexError, TypeError, AttributeError):
+                    # Handle cases where timestamp is None, empty, or malformed
+                    monthly_counts["unknown"] += 1
+
+            # Source effectiveness
+            source_stats = defaultdict(lambda: {"total": 0, "positive": 0})
+            for item in feedback_items:
+                sources = (
+                    item.sources_used
+                    if item.sources_used
+                    else (item.sources if item.sources else [])
+                )
+                for source in sources:
+                    source_type = source.get("type", "unknown")
+                    source_stats[source_type]["total"] += 1
+                    if item.is_positive:
+                        source_stats[source_type]["positive"] += 1
+
+            # Add helpfulness rate to source stats
+            for source_type in source_stats:
+                stats = source_stats[source_type]
+                stats["helpful_rate"] = (
+                    stats["positive"] / stats["total"] if stats["total"] > 0 else 0
+                )
+
+            # Convert common_issues from repository format to dict[str, int]
+            common_issues = {
+                item["issue"]: item["count"]
+                for item in basic_stats.get("common_issues", [])
+            }
+
+            return {
+                "total_feedback": basic_stats["total"],
+                "positive_count": basic_stats["positive"],
+                "negative_count": basic_stats["negative"],
+                "helpful_rate": basic_stats["positive_rate"],
+                "common_issues": common_issues,
+                "recent_negative_count": len(recent_negative),
+                "needs_faq_count": len(needs_faq_items),
+                "source_effectiveness": dict(source_stats),
+                "feedback_by_month": dict(monthly_counts),
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting feedback stats: {str(e)}")
             return {
                 "total_feedback": 0,
                 "positive_count": 0,
@@ -1048,77 +1013,6 @@ class FeedbackService:
                 "source_effectiveness": {},
                 "feedback_by_month": {},
             }
-
-        # Basic stats
-        total_count = len(feedback_items)
-        positive_count = sum(1 for item in feedback_items if item.is_positive)
-        negative_count = total_count - positive_count
-        helpful_rate = positive_count / total_count if total_count > 0 else 0
-
-        # Common issues
-        issue_counts = defaultdict(int)
-        for item in feedback_items:
-            if item.is_negative:
-                for issue in item.issues:
-                    issue_counts[issue] += 1
-
-        # Recent negative feedback (last 30 days)
-        thirty_days_ago = datetime.now().replace(day=1).strftime("%Y-%m-01")
-        recent_negative = [
-            item
-            for item in feedback_items
-            if item.is_negative and item.timestamp >= thirty_days_ago
-        ]
-
-        # Feedback that needs FAQ creation
-        needs_faq_items = [
-            item
-            for item in feedback_items
-            if item.is_negative and (item.explanation or item.has_no_source_response)
-        ]
-
-        # Feedback by month
-        monthly_counts = defaultdict(int)
-        for item in feedback_items:
-            try:
-                month_key = item.timestamp[:7]  # YYYY-MM
-                monthly_counts[month_key] += 1
-            except (IndexError, TypeError, AttributeError):
-                # Handle cases where timestamp is None, empty, or malformed
-                monthly_counts["unknown"] += 1
-
-        # Source effectiveness
-        source_stats = defaultdict(lambda: {"total": 0, "positive": 0})
-        for item in feedback_items:
-            sources = (
-                item.sources_used
-                if item.sources_used
-                else (item.sources if item.sources else [])
-            )
-            for source in sources:
-                source_type = source.get("type", "unknown")
-                source_stats[source_type]["total"] += 1
-                if item.is_positive:
-                    source_stats[source_type]["positive"] += 1
-
-        # Add helpfulness rate to source stats
-        for source_type in source_stats:
-            stats = source_stats[source_type]
-            stats["helpful_rate"] = (
-                stats["positive"] / stats["total"] if stats["total"] > 0 else 0
-            )
-
-        return {
-            "total_feedback": total_count,
-            "positive_count": positive_count,
-            "negative_count": negative_count,
-            "helpful_rate": helpful_rate,
-            "common_issues": dict(issue_counts),
-            "recent_negative_count": len(recent_negative),
-            "needs_faq_count": len(needs_faq_items),
-            "source_effectiveness": dict(source_stats),
-            "feedback_by_month": dict(monthly_counts),
-        }
 
 
 # Dependency function for FastAPI
