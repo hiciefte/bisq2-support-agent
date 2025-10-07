@@ -19,6 +19,7 @@ class FeedbackRequest(BaseModel):
     rating: int
     sources: Optional[List[Dict[str, str]]] = None
     metadata: Optional[Dict[str, Any]] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None
 
 
 @router.post("/feedback/submit")

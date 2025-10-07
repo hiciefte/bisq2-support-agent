@@ -117,7 +117,22 @@ class FeedbackService:
             for file_path in month_files:
                 try:
                     with open(file_path, "r") as f:
-                        file_feedback = [json.loads(line) for line in f]
+                        file_feedback = []
+                        for line in f:
+                            try:
+                                entry = json.loads(line)
+                                # Filter out non-feedback entries (e.g., missing_faq suggestions)
+                                # Valid feedback must have message_id and rating
+                                if "message_id" in entry and "rating" in entry:
+                                    file_feedback.append(entry)
+                                else:
+                                    logger.debug(
+                                        f"Skipping non-feedback entry: {entry.get('feedback_type', 'unknown type')}"
+                                    )
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Invalid JSON in {file_path}: {str(e)}")
+                                continue
+
                         all_feedback.extend(file_feedback)
                         logger.info(
                             f"Loaded {len(file_feedback)} feedback entries from {os.path.basename(file_path)}"
@@ -761,6 +776,11 @@ class FeedbackService:
         feedback_items = []
         for item in all_feedback:
             try:
+                # Ensure required fields are present before validation
+                if "message_id" not in item or "rating" not in item:
+                    logger.debug(f"Skipping item missing required fields: {item.get('feedback_type', 'unknown')}")
+                    continue
+
                 feedback_item = FeedbackItem(**item)
                 feedback_items.append(feedback_item)
             except Exception as e:
@@ -951,6 +971,10 @@ class FeedbackService:
 
         for item in all_feedback:
             try:
+                # Skip items missing required fields
+                if "message_id" not in item or "rating" not in item:
+                    continue
+
                 feedback_item = FeedbackItem(**item)
                 if feedback_item.is_negative and feedback_item.issues:
                     feedback_items.append(feedback_item)
@@ -973,6 +997,10 @@ class FeedbackService:
 
         for item in all_feedback:
             try:
+                # Skip items missing required fields
+                if "message_id" not in item or "rating" not in item:
+                    continue
+
                 feedback_item = FeedbackItem(**item)
                 # Include negative feedback with explanations or "no source" responses
                 if feedback_item.is_negative and (
@@ -993,6 +1021,10 @@ class FeedbackService:
 
         for item in all_feedback:
             try:
+                # Skip items missing required fields
+                if "message_id" not in item or "rating" not in item:
+                    continue
+
                 feedback_item = FeedbackItem(**item)
                 feedback_items.append(feedback_item)
             except Exception as e:

@@ -115,6 +115,7 @@ services:
     volumes:
       - ../api/app:/app/app # Mount the app directory for development
       - ../api/data:/data # Mount the data directory
+      - feedback-data:/data/feedback # Named volume for persistent feedback storage
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
@@ -337,6 +338,9 @@ volumes:
     name: bisq2-web-node-modules
   bisq2-data:
     name: bisq2-data
+  feedback-data:
+    name: bisq2-feedback-data
+    driver: local
 
 networks:
   bisq-support-network:
