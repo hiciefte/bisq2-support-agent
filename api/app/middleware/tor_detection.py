@@ -82,13 +82,15 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
             path = request.url.path
             status = response.status_code
 
-            # Record the metrics
-            record_tor_request(
-                method=method, endpoint=path, status=status, duration=duration
-            )
-
-            logger.debug(
-                f"Tor request tracked: {method} {path} -> {status} ({duration:.3f}s)"
-            )
+            # Record the metrics with error handling to prevent request failures
+            try:
+                record_tor_request(
+                    method=method, endpoint=path, status=status, duration=duration
+                )
+                logger.debug(
+                    f"Tor request tracked: {method} {path} -> {status} ({duration:.3f}s)"
+                )
+            except Exception as e:
+                logger.error(f"Failed to record Tor metrics: {e}", exc_info=True)
 
         return response
