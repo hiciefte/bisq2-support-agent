@@ -93,7 +93,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "tor_hidden_service_configured",
+          "expr": "max(tor_hidden_service_configured)",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "tor_connection_status",
+          "expr": "max(tor_connection_status)",
           "refId": "A"
         }
       ],
@@ -249,7 +249,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "tor_cookie_secure_mode",
+          "expr": "max(tor_cookie_secure_mode)",
           "refId": "A"
         }
       ],
@@ -336,7 +336,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(tor_requests_total[5m])",
+          "expr": "sum by(method, endpoint, status) (rate(tor_requests_total[5m]))",
           "legendFormat": "{{method}} {{endpoint}} ({{status}})",
           "refId": "A"
         }
@@ -424,7 +424,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, rate(tor_request_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, sum by(le, method, endpoint) (rate(tor_request_duration_seconds_bucket[5m])))",
           "legendFormat": "p95 {{method}} {{endpoint}}",
           "refId": "A"
         },
@@ -433,7 +433,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, rate(tor_request_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, sum by(le, method, endpoint) (rate(tor_request_duration_seconds_bucket[5m])))",
           "legendFormat": "p50 {{method}} {{endpoint}}",
           "refId": "B"
         }
@@ -520,7 +520,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "increase(tor_verification_requests_total[5m])",
+          "expr": "sum by(endpoint, status) (increase(tor_verification_requests_total[5m]))",
           "legendFormat": "{{endpoint}} ({{status}})",
           "refId": "A"
         }

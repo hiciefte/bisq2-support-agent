@@ -97,6 +97,12 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     f"Tor request tracked: {method} {path} -> {status} ({duration:.3f}s)"
                 )
+
+                # Notify the monitoring service that we received an .onion request
+                # This updates the tor_connection_status metric
+                if hasattr(request.app.state, "tor_monitoring_service"):
+                    request.app.state.tor_monitoring_service.record_onion_request()
+
             except Exception as e:
                 logger.error(f"Failed to record Tor metrics: {e}", exc_info=True)
 
