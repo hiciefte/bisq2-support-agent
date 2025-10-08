@@ -7,10 +7,10 @@ service is accessible and updates the tor_connection_status metric accordingly.
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 import httpx
-
 from app.core.config import Settings
 from app.core.tor_metrics import update_tor_connection_status
 
@@ -37,6 +37,7 @@ class TorMonitoringService:
         self.monitoring_task: Optional[asyncio.Task] = None
         self.is_running = False
         self.check_interval = 30  # Check every 30 seconds
+        self.activity_timeout = 120  # Consider connected if request within 2 minutes
         self.last_request_time: Optional[float] = None
 
     async def start(self) -> None:
@@ -72,8 +73,6 @@ class TorMonitoringService:
         a request is detected from the .onion address. It updates the connection
         status to indicate Tor is working.
         """
-        import time
-
         self.last_request_time = time.time()
         update_tor_connection_status(True)
         logger.debug("Onion request recorded, connection status set to connected")
@@ -86,16 +85,14 @@ class TorMonitoringService:
         received any requests in the last 2 minutes, we'll attempt to verify
         connectivity by checking if the service is reachable.
         """
-        import time
-
         while self.is_running:
             try:
                 current_time = time.time()
 
-                # If we've received a request in the last 2 minutes, consider it connected
+                # If we've received a request recently, consider it connected
                 if (
                     self.last_request_time
-                    and (current_time - self.last_request_time) < 120
+                    and (current_time - self.last_request_time) < self.activity_timeout
                 ):
                     update_tor_connection_status(True)
                     logger.debug("Tor connection active (recent requests detected)")
@@ -144,7 +141,9 @@ class TorMonitoringService:
                     # we can assume Tor is working (nginx routes to us)
                     return True
 
-        except Exception as e:
+        except (httpx.HTTPError, OSError) as e:
+            # HTTPError covers all HTTP-related errors (timeout, connection, etc.)
+            # OSError covers low-level network errors
             logger.debug(f"Tor connectivity check failed: {e}")
 
         return False
