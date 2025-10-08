@@ -56,11 +56,21 @@ export default function ManageFaqsPage() {
 
   const router = useRouter();
   const currentPageRef = useRef(currentPage);
+  const previousDataHashRef = useRef<string>('');
+  const savedScrollPositionRef = useRef<number | null>(null);
 
   // Keep the ref in sync with the latest page
   useEffect(() => {
     currentPageRef.current = currentPage;
   }, [currentPage]);
+
+  // Restore scroll position after background refresh if it was saved
+  useEffect(() => {
+    if (savedScrollPositionRef.current !== null) {
+      window.scrollTo(0, savedScrollPositionRef.current);
+      savedScrollPositionRef.current = null;
+    }
+  }, [faqData, availableCategories, availableSources]);
 
   useEffect(() => {
     // Since we're wrapped with SecureAuth, we know we're authenticated
@@ -72,17 +82,26 @@ export default function ManageFaqsPage() {
     setCurrentPage(1); // Reset to first page when filters change
     fetchFaqs(1);
 
-    // Auto-refresh every 30 seconds
+    // Auto-refresh every 30 seconds (background refresh - no loading spinner)
     const intervalId = setInterval(() => {
-      fetchFaqs(currentPageRef.current);
+      fetchFaqs(currentPageRef.current, true);
     }, 30000);
 
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
   }, [filters]);
 
-  const fetchFaqs = async (page = 1) => {
-    setIsLoading(true);
+  const fetchFaqs = async (page = 1, isBackgroundRefresh = false) => {
+    // Save scroll position for background refreshes
+    if (isBackgroundRefresh) {
+      savedScrollPositionRef.current = window.scrollY;
+    }
+
+    // Only show loading spinner if not a background refresh
+    if (!isBackgroundRefresh) {
+      setIsLoading(true);
+    }
+
     try {
       // Build query parameters
       const params = new URLSearchParams({
@@ -105,15 +124,23 @@ export default function ManageFaqsPage() {
       const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setFaqData(data);
-        setError(null);
 
-        // Extract unique categories and sources for filter options
-        if (data.faqs) {
-          const categories = [...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean))] as string[];
-          const sources = [...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean))] as string[];
-          setAvailableCategories(categories);
-          setAvailableSources(sources);
+        // Calculate hash of new data for comparison
+        const dataHash = JSON.stringify(data);
+
+        // Only update state if data has actually changed
+        if (dataHash !== previousDataHashRef.current) {
+          previousDataHashRef.current = dataHash;
+          setFaqData(data);
+          setError(null);
+
+          // Extract unique categories and sources for filter options
+          if (data.faqs) {
+            const categories = [...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean))] as string[];
+            const sources = [...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean))] as string[];
+            setAvailableCategories(categories);
+            setAvailableSources(sources);
+          }
         }
       } else {
         const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
@@ -129,7 +156,9 @@ export default function ManageFaqsPage() {
       console.error(errorText, error);
       setError(errorText);
     } finally {
-      setIsLoading(false);
+      if (!isBackgroundRefresh) {
+        setIsLoading(false);
+      }
     }
   };
 
