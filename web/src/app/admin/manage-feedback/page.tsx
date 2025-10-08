@@ -787,7 +787,7 @@ export default function ManageFeedbackPage() {
               )}
 
               {/* Conversation History */}
-              {selectedFeedback.conversation_history && (
+              {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
                 <ConversationHistory messages={selectedFeedback.conversation_history} />
               )}
 
@@ -924,7 +924,7 @@ export default function ManageFeedbackPage() {
                   </div>
                 </div>
               )}
-              {selectedFeedbackForFAQ?.conversation_history && (
+              {selectedFeedbackForFAQ?.conversation_history && selectedFeedbackForFAQ.conversation_history.length > 1 && (
                 <ConversationHistory messages={selectedFeedbackForFAQ.conversation_history} />
               )}
             </div>
