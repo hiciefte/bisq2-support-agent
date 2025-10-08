@@ -22,16 +22,12 @@ from app.core.config import get_settings
 from app.utils.logging import redact_pii
 from fastapi import Request
 from langchain.prompts import ChatPromptTemplate
-
 # Vector store and embeddings
 from langchain_chroma import Chroma
-
 # Core LangChain imports
 from langchain_core.documents import Document
-
 # LLM providers
 from langchain_openai import OpenAIEmbeddings
-
 # Text splitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -69,7 +65,20 @@ class SimplifiedRAGService:
             chunk_size=2000,  # Increased from 1500 to preserve more context per chunk
             chunk_overlap=500,  # Maintains good overlap for context preservation
             # Prioritize MediaWiki section headers to keep related content together
-            separators=["\n## ", "\n# ", "\n\n", "==", "=", "'''", "{{", "*", "\n", ". ", " ", ""],
+            separators=[
+                "\n## ",
+                "\n# ",
+                "\n\n",
+                "==",
+                "=",
+                "'''",
+                "{{",
+                "*",
+                "\n",
+                ". ",
+                " ",
+                "",
+            ],
         )
 
         # Configure retriever
@@ -178,7 +187,9 @@ class SimplifiedRAGService:
             logger.info("Falling back to OpenAI model.")
             self._initialize_openai_llm()
 
-    def _retrieve_with_version_priority(self, query: str, score_threshold: float = 0.3) -> List[Document]:
+    def _retrieve_with_version_priority(
+        self, query: str, score_threshold: float = 0.3
+    ) -> List[Document]:
         """
         Multi-stage retrieval that prioritizes Bisq 2 content over Bisq 1.
 
@@ -199,9 +210,7 @@ class SimplifiedRAGService:
             # Stage 1: Prioritize Bisq 2 content
             logger.info("Stage 1: Searching for Bisq 2 content...")
             bisq2_docs = self.vectorstore.similarity_search(
-                query,
-                k=6,
-                filter={"bisq_version": "Bisq 2"}
+                query, k=6, filter={"bisq_version": "Bisq 2"}
             )
             logger.info(f"Found {len(bisq2_docs)} Bisq 2 documents")
             all_docs.extend(bisq2_docs)
@@ -210,9 +219,7 @@ class SimplifiedRAGService:
             if len(all_docs) < 4:
                 logger.info("Stage 2: Searching for General content...")
                 general_docs = self.vectorstore.similarity_search(
-                    query,
-                    k=4,
-                    filter={"bisq_version": "General"}
+                    query, k=4, filter={"bisq_version": "General"}
                 )
                 logger.info(f"Found {len(general_docs)} General documents")
                 all_docs.extend(general_docs)
@@ -221,9 +228,7 @@ class SimplifiedRAGService:
             if len(all_docs) < 3:
                 logger.info("Stage 3: Searching for Bisq 1 content (fallback)...")
                 bisq1_docs = self.vectorstore.similarity_search(
-                    query,
-                    k=2,
-                    filter={"bisq_version": "Bisq 1"}
+                    query, k=2, filter={"bisq_version": "Bisq 1"}
                 )
                 logger.info(f"Found {len(bisq1_docs)} Bisq 1 documents")
                 all_docs.extend(bisq1_docs)
@@ -234,7 +239,9 @@ class SimplifiedRAGService:
         except Exception as e:
             logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
             # Fallback to standard retrieval if filtering fails
-            logger.warning("Falling back to standard retrieval without version filtering")
+            logger.warning(
+                "Falling back to standard retrieval without version filtering"
+            )
             return self.retriever.get_relevant_documents(query)
 
     def _format_docs(self, docs: List[Document]) -> str:
