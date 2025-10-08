@@ -5,5 +5,8 @@ datasources:
     type: prometheus
     access: proxy
     url: http://prometheus:9090
+    # Fixed UID to match dashboard configurations
+    # This ensures dashboards work out-of-the-box on fresh deployments
+    uid: prometheus
     isDefault: true
     editable: true
