@@ -37,6 +37,11 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
             settings.TOR_HIDDEN_SERVICE.lower() if settings.TOR_HIDDEN_SERVICE else ""
         )
 
+        if self.onion_address and not self.onion_address.endswith(".onion"):
+            logger.warning(
+                f"TOR_HIDDEN_SERVICE does not end with .onion: {self.onion_address}"
+            )
+
         if self.onion_address:
             logger.info(
                 f"Tor detection middleware initialized for: {self.onion_address}"
@@ -58,7 +63,7 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
             Response from the application
         """
         # Record start time for duration tracking
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Check if this request came via .onion
         host_header = request.headers.get("host", "").lower()
@@ -77,7 +82,7 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
 
         # If this was a .onion request, record metrics
         if is_onion_request:
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             method = request.method
             path = request.url.path
             status = response.status_code
