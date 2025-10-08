@@ -74,9 +74,9 @@ docopt==0.6.2
     # via mwcli
 durationpy==0.10
     # via kubernetes
-fastapi==0.118.1
+fastapi==0.118.2
     # via -r api/requirements.in
-filelock==3.19.1
+filelock==3.20.0
     # via huggingface-hub
 flatbuffers==25.9.23
     # via onnxruntime
@@ -297,7 +297,7 @@ pillow==11.3.0
     #   matplotlib
 pip-tools==7.5.1
     # via -r api/requirements.in
-platformdirs==4.4.0
+platformdirs==4.5.0
     # via black
 pluggy==1.6.0
     # via pytest
@@ -311,7 +311,7 @@ prometheus-client==0.23.1
     #   prometheus-fastapi-instrumentator
 prometheus-fastapi-instrumentator==7.1.0
     # via -r api/requirements.in
-propcache==0.4.0
+propcache==0.3.2
     # via
     #   aiohttp
     #   yarl
