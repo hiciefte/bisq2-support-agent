@@ -74,7 +74,7 @@ docopt==0.6.2
     # via mwcli
 durationpy==0.10
     # via kubernetes
-fastapi==0.118.0
+fastapi==0.118.1
     # via -r api/requirements.in
 filelock==3.19.1
     # via huggingface-hub
@@ -161,7 +161,7 @@ langchain==0.3.27
     #   langchain-community
 langchain-chroma==0.2.6
     # via -r api/requirements.in
-langchain-community==0.3.30
+langchain-community==0.3.31
     # via -r api/requirements.in
 langchain-core==0.3.78
     # via
@@ -238,7 +238,7 @@ numpy==2.3.3
     #   scipy
 oauthlib==3.3.1
     # via requests-oauthlib
-onnxruntime==1.23.0
+onnxruntime==1.23.1
     # via chromadb
 openai==1.109.1
     # via
@@ -517,7 +517,7 @@ uvloop==0.21.0
     # via uvicorn
 watchfiles==1.1.0
     # via uvicorn
-websocket-client==1.8.0
+websocket-client==1.9.0
     # via kubernetes
 websockets==15.0.1
     # via uvicorn

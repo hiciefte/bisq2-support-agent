@@ -1,0 +1,8 @@
+# CVE-2025-6985: XXE vulnerability in HTMLSectionSplitter class
+# This vulnerability affects the HTMLSectionSplitter class in langchain-text-splitters 0.3.x
+# which uses unsafe XSLT parsing. Our codebase only uses RecursiveCharacterTextSplitter,
+# not HTMLSectionSplitter, so we are not affected by this vulnerability.
+# The only fix is version 1.0.0a1 (alpha), which may have breaking changes.
+# Suppressing until a stable 1.0.0 release is available.
+# Reference: https://github.com/advisories/GHSA-m42m-m8cr-8m58
+CVE-2025-6985
