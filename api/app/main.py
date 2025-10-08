@@ -13,6 +13,7 @@ from app.core.tor_metrics import (
     update_cookie_security_mode,
     update_tor_service_configured,
 )
+from app.middleware import TorDetectionMiddleware
 from app.routes import admin, chat, feedback, health, onion_verify
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
@@ -171,6 +172,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add Tor detection middleware
+app.add_middleware(TorDetectionMiddleware)
+logger.info("Tor detection middleware registered")
 
 # Set up Prometheus metrics
 instrumentator = Instrumentator().instrument(app)
