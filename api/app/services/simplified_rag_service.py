@@ -191,9 +191,7 @@ class SimplifiedRAGService:
             logger.info("Falling back to OpenAI model.")
             self._initialize_openai_llm()
 
-    def _retrieve_with_version_priority(
-        self, query: str, score_threshold: float = 0.3
-    ) -> List[Document]:
+    def _retrieve_with_version_priority(self, query: str) -> List[Document]:
         """
         Multi-stage retrieval that prioritizes Bisq 2 content over Bisq 1.
 
@@ -203,7 +201,6 @@ class SimplifiedRAGService:
 
         Args:
             query: The search query
-            score_threshold: Minimum similarity score
 
         Returns:
             List of documents prioritized by version relevance
@@ -220,6 +217,7 @@ class SimplifiedRAGService:
             all_docs.extend(bisq2_docs)
 
             # Stage 2: Add general content if we don't have enough Bisq 2 content
+            # Threshold of 4 ensures we have sufficient Bisq 2 context before adding general docs
             if len(all_docs) < 4:
                 logger.info("Stage 2: Searching for General content...")
                 general_docs = self.vectorstore.similarity_search(
@@ -229,6 +227,7 @@ class SimplifiedRAGService:
                 all_docs.extend(general_docs)
 
             # Stage 3: Only add Bisq 1 content if we still don't have enough
+            # Threshold of 3 ensures Bisq 1 content is truly a last resort
             if len(all_docs) < 3:
                 logger.info("Stage 3: Searching for Bisq 1 content (fallback)...")
                 bisq1_docs = self.vectorstore.similarity_search(
@@ -242,11 +241,28 @@ class SimplifiedRAGService:
 
         except Exception as e:
             logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
-            # Fallback to standard retrieval if filtering fails
+            # Fallback: retrieve documents and post-sort by version priority
+            # to maintain Bisq 2 > General > Bisq 1 ordering
             logger.warning(
-                "Falling back to standard retrieval without version filtering"
+                "Metadata filtering failed, falling back to post-retrieval sorting"
             )
-            return self.retriever.get_relevant_documents(query)
+            fallback_docs = self.retriever.get_relevant_documents(query)
+
+            # Define version priority (lower number = higher priority)
+            version_priority = {"Bisq 2": 0, "General": 1, "Bisq 1": 2}
+
+            # Sort by version priority while preserving retrieval order within each version
+            sorted_docs = sorted(
+                fallback_docs,
+                key=lambda doc: version_priority.get(
+                    doc.metadata.get("bisq_version", "General"), 1
+                ),
+            )
+
+            logger.info(
+                f"Fallback retrieved {len(sorted_docs)} documents, sorted by version priority"
+            )
+            return sorted_docs
 
     def _format_docs(self, docs: List[Document]) -> str:
         """Format retrieved documents with version-aware processing."""
@@ -738,8 +754,8 @@ Answer:"""
             # Preprocess the question
             preprocessed_question = question.strip()
 
-            # Get relevant documents
-            docs = self.retriever.get_relevant_documents(preprocessed_question)
+            # Get relevant documents with version priority
+            docs = self._retrieve_with_version_priority(preprocessed_question)
             logger.info(f"Retrieved {len(docs)} relevant documents")
 
             # If no documents were retrieved, check if we can answer from conversation context
