@@ -18,6 +18,7 @@ from app.routes import admin, chat, feedback, health, onion_verify
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
+from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,11 +101,23 @@ async def lifespan(app: FastAPI):
         f"Tor metrics initialized - Configured: {tor_configured}, Cookie Secure: {settings.COOKIE_SECURE}"
     )
 
+    # Initialize and start Tor monitoring service
+    logger.info("Initializing Tor monitoring service...")
+    tor_monitoring_service = TorMonitoringService(settings=settings)
+    app.state.tor_monitoring_service = tor_monitoring_service
+    await tor_monitoring_service.start()
+    logger.info("Tor monitoring service started")
+
     # Yield control to the application
     yield
 
     # Shutdown
     logger.info("Application shutdown...")
+
+    # Stop Tor monitoring service
+    if hasattr(app.state, "tor_monitoring_service"):
+        await app.state.tor_monitoring_service.stop()
+
     # Perform any cleanup here if needed
     # For example, rag_service might have a cleanup method
     if hasattr(app.state.rag_service, "cleanup"):
