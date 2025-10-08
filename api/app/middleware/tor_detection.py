@@ -33,9 +33,11 @@ class TorDetectionMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
         settings = get_settings()
-        self.onion_address = (
-            settings.TOR_HIDDEN_SERVICE.lower() if settings.TOR_HIDDEN_SERVICE else ""
-        )
+        # Normalize TOR_HIDDEN_SERVICE by stripping any port suffix
+        # This ensures self.onion_address contains only the domain
+        # (e.g., "abc.onion" from "abc.onion:8080" or "abc.onion")
+        tor_service = settings.TOR_HIDDEN_SERVICE
+        self.onion_address = tor_service.split(":", 1)[0].lower() if tor_service else ""
 
         if self.onion_address and not self.onion_address.endswith(".onion"):
             logger.warning(
