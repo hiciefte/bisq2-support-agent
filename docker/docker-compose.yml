@@ -133,6 +133,8 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
       - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
+      # Tor hidden service configuration
+      - TOR_HIDDEN_SERVICE=${TOR_HIDDEN_SERVICE}
       # Privacy and security settings
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
       - ENABLE_PRIVACY_MODE=${ENABLE_PRIVACY_MODE:-true}
