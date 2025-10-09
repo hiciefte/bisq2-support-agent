@@ -311,7 +311,7 @@ prometheus-client==0.23.1
     #   prometheus-fastapi-instrumentator
 prometheus-fastapi-instrumentator==7.1.0
     # via -r api/requirements.in
-propcache==0.3.2
+propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
