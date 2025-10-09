@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, FormEvent } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -167,6 +167,19 @@ export default function ManageFeedbackPage() {
 
   const SOURCE_TYPES = ['faq', 'wiki', 'unknown'];
 
+  // Refs to track previous data hashes for smart updates
+  const previousFeedbackHashRef = useRef<string>('');
+  const previousStatsHashRef = useRef<string>('');
+  const savedScrollPositionRef = useRef<number | null>(null);
+
+  // Restore scroll position after background refresh if it was saved
+  useEffect(() => {
+    if (savedScrollPositionRef.current !== null) {
+      window.scrollTo(0, savedScrollPositionRef.current);
+      savedScrollPositionRef.current = null;
+    }
+  }, [feedbackData, stats]);
+
   useEffect(() => {
     // SECURITY: No longer using localStorage for API keys - migrating to secure HTTP-only cookies
     // const storedApiKey = localStorage.getItem('admin_api_key');
@@ -203,7 +216,15 @@ export default function ManageFeedbackPage() {
 
     if (response.ok) {
       const data = await response.json();
-      setFeedbackData(data);
+
+      // Calculate hash of new data for comparison
+      const dataHash = JSON.stringify(data);
+
+      // Only update state if data has actually changed
+      if (dataHash !== previousFeedbackHashRef.current) {
+        previousFeedbackHashRef.current = dataHash;
+        setFeedbackData(data);
+      }
     } else {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
@@ -214,14 +235,31 @@ export default function ManageFeedbackPage() {
 
     if (response.ok) {
       const data = await response.json();
-      setStats(data);
+
+      // Calculate hash of new data for comparison
+      const dataHash = JSON.stringify(data);
+
+      // Only update state if data has actually changed
+      if (dataHash !== previousStatsHashRef.current) {
+        previousStatsHashRef.current = dataHash;
+        setStats(data);
+      }
     } else {
       throw new Error(`Failed to fetch stats. Status: ${response.status}`);
     }
   }, []);
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
+  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
+    // Save scroll position for background refreshes
+    if (isBackgroundRefresh) {
+      savedScrollPositionRef.current = window.scrollY;
+    }
+
+    // Only show loading spinner if not a background refresh
+    if (!isBackgroundRefresh) {
+      setIsLoading(true);
+    }
+
     try {
       await Promise.all([
         fetchFeedbackList(),
@@ -232,7 +270,9 @@ export default function ManageFeedbackPage() {
       console.error('Error fetching data:', err);
       setError('Failed to fetch feedback data');
     } finally {
-      setIsLoading(false);
+      if (!isBackgroundRefresh) {
+        setIsLoading(false);
+      }
     }
   }, [fetchFeedbackList, fetchStats]);
 
@@ -241,9 +281,9 @@ export default function ManageFeedbackPage() {
   }, [fetchData]);
 
   useEffect(() => {
-    // Auto-refresh every 30 seconds
+    // Auto-refresh every 30 seconds (background refresh - no loading spinner)
     const intervalId = setInterval(() => {
-      fetchData();
+      fetchData(true);
     }, 30000);
 
     // Cleanup interval on unmount
