@@ -19,21 +19,18 @@ import time
 from typing import Any, Dict, List, Union
 
 from app.core.config import get_settings
+from app.services.rag.document_processor import DocumentProcessor
+from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.llm_provider import LLMProvider
+from app.services.rag.prompt_manager import PromptManager
 from app.utils.logging import redact_pii
 from fastapi import Request
-from langchain.prompts import ChatPromptTemplate
 
 # Vector store and embeddings
 from langchain_chroma import Chroma
 
 # Core LangChain imports
 from langchain_core.documents import Document
-
-# LLM providers
-from langchain_openai import OpenAIEmbeddings
-
-# Text splitter
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -64,25 +61,18 @@ class SimplifiedRAGService:
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
 
-        # Configure text splitter
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        # Initialize document processor for text splitting
+        self.document_processor = DocumentProcessor(
             chunk_size=2000,  # Increased from 1500 to preserve more context per chunk
             chunk_overlap=500,  # Maintains good overlap for context preservation
-            # Prioritize MediaWiki section headers to keep related content together
-            separators=[
-                "\n## ",
-                "\n# ",
-                "\n\n",
-                "==",
-                "=",
-                "'''",
-                "{{",
-                "*",
-                "\n",
-                ". ",
-                " ",
-                "",
-            ],
+        )
+
+        # Initialize LLM provider for embeddings and model initialization
+        self.llm_provider = LLMProvider(settings=self.settings)
+
+        # Initialize prompt manager for prompt templates and chat formatting
+        self.prompt_manager = PromptManager(
+            settings=self.settings, feedback_service=self.feedback_service
         )
 
         # Configure retriever
@@ -94,6 +84,7 @@ class SimplifiedRAGService:
         self.embeddings = None
         self.vectorstore = None
         self.retriever = None
+        self.document_retriever = None  # Will be initialized after vectorstore
         self.llm = None
         self.rag_chain = None
         self.prompt = None
@@ -112,92 +103,15 @@ class SimplifiedRAGService:
         logger.info("Simplified RAG service initialized")
 
     def initialize_embeddings(self):
-        """Initialize the OpenAI embedding model."""
-        logger.info("Initializing OpenAI embeddings model...")
-
-        if not self.settings.OPENAI_API_KEY:
-            logger.warning(
-                "OpenAI API key not provided. Embeddings will not work properly."
-            )
-
-        self.embeddings = OpenAIEmbeddings(
-            api_key=self.settings.OPENAI_API_KEY,
-            model=self.settings.OPENAI_EMBEDDING_MODEL,
-        )
-
-        logger.info("OpenAI embeddings model initialized")
+        """Delegate to LLM provider for embeddings initialization."""
+        self.embeddings = self.llm_provider.initialize_embeddings()
 
     def initialize_llm(self):
-        """Initialize the language model based on configuration."""
-        logger.info("Initializing language model...")
-
-        # Determine which LLM provider to use based on the configuration
-        llm_provider = self.settings.LLM_PROVIDER.lower()
-
-        if llm_provider == "openai" and self.settings.OPENAI_API_KEY:
-            self._initialize_openai_llm()
-        elif llm_provider == "xai" and self.settings.XAI_API_KEY:
-            self._initialize_xai_llm()
-        else:
-            logger.warning(
-                f"LLM provider '{llm_provider}' not configured properly. Using OpenAI as default."
-            )
-            self._initialize_openai_llm()
-
-        logger.info("LLM initialization complete")
-
-    def _initialize_openai_llm(self):
-        """Initialize OpenAI model."""
-        model_name = self.settings.OPENAI_MODEL
-        logger.info(f"Using OpenAI model: {model_name}")
-
-        # Import directly from langchain_openai for more control
-        from langchain_openai import ChatOpenAI
-
-        # Configure model parameters
-        self.llm = ChatOpenAI(
-            api_key=self.settings.OPENAI_API_KEY,
-            model=model_name,
-            max_tokens=self.settings.MAX_TOKENS,
-            verbose=True,
-        )
-        logger.info(
-            f"OpenAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
-        )
-
-    def _initialize_xai_llm(self):
-        """Initialize xAI (Grok) model."""
-        model_name = self.settings.XAI_MODEL
-        logger.info(f"Using xAI model: {model_name}")
-
-        try:
-            from langchain_xai import ChatXai
-
-            # Initialize the model
-            self.llm = ChatXai(
-                api_key=self.settings.XAI_API_KEY,
-                model=model_name,
-                temperature=0.7,
-                max_tokens=self.settings.MAX_TOKENS,
-                timeout=30,
-            )
-            logger.info(
-                f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
-            )
-        except ImportError:
-            logger.error(
-                "langchain_xai package not installed. Please install it to use xAI models."
-            )
-            logger.info("Falling back to OpenAI model.")
-            self._initialize_openai_llm()
+        """Delegate to LLM provider for model initialization."""
+        self.llm = self.llm_provider.initialize_llm()
 
     def _retrieve_with_version_priority(self, query: str) -> List[Document]:
-        """
-        Multi-stage retrieval that prioritizes Bisq 2 content over Bisq 1.
-
-        Stage 1: Search for Bisq 2 content (k=6, highest priority)
-        Stage 2: Add General content if needed (k=4)
-        Stage 3: Only add Bisq 1 content if insufficient results (k=2, lowest priority)
+        """Delegate to document retriever for version-aware retrieval.
 
         Args:
             query: The search query
@@ -205,109 +119,18 @@ class SimplifiedRAGService:
         Returns:
             List of documents prioritized by version relevance
         """
-        all_docs = []
-
-        try:
-            # Stage 1: Prioritize Bisq 2 content
-            logger.info("Stage 1: Searching for Bisq 2 content...")
-            bisq2_docs = self.vectorstore.similarity_search(
-                query, k=6, filter={"bisq_version": "Bisq 2"}
-            )
-            logger.info(f"Found {len(bisq2_docs)} Bisq 2 documents")
-            all_docs.extend(bisq2_docs)
-
-            # Stage 2: Add general content if we don't have enough Bisq 2 content
-            # Threshold of 4 ensures we have sufficient Bisq 2 context before adding general docs
-            if len(all_docs) < 4:
-                logger.info("Stage 2: Searching for General content...")
-                general_docs = self.vectorstore.similarity_search(
-                    query, k=4, filter={"bisq_version": "General"}
-                )
-                logger.info(f"Found {len(general_docs)} General documents")
-                all_docs.extend(general_docs)
-
-            # Stage 3: Only add Bisq 1 content if we still don't have enough
-            # Threshold of 3 ensures Bisq 1 content is truly a last resort
-            if len(all_docs) < 3:
-                logger.info("Stage 3: Searching for Bisq 1 content (fallback)...")
-                bisq1_docs = self.vectorstore.similarity_search(
-                    query, k=2, filter={"bisq_version": "Bisq 1"}
-                )
-                logger.info(f"Found {len(bisq1_docs)} Bisq 1 documents")
-                all_docs.extend(bisq1_docs)
-
-            logger.info(f"Total documents retrieved: {len(all_docs)}")
-            return all_docs
-
-        except Exception as e:
-            logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
-            # Fallback: retrieve documents and post-sort by version priority
-            # to maintain Bisq 2 > General > Bisq 1 ordering
-            logger.warning(
-                "Metadata filtering failed, falling back to post-retrieval sorting"
-            )
-            fallback_docs = self.retriever.get_relevant_documents(query)
-
-            # Define version priority (lower number = higher priority)
-            version_priority = {"Bisq 2": 0, "General": 1, "Bisq 1": 2}
-
-            # Sort by version priority while preserving retrieval order within each version
-            sorted_docs = sorted(
-                fallback_docs,
-                key=lambda doc: version_priority.get(
-                    doc.metadata.get("bisq_version", "General"), 1
-                ),
-            )
-
-            logger.info(
-                f"Fallback retrieved {len(sorted_docs)} documents, sorted by version priority"
-            )
-            return sorted_docs
+        return self.document_retriever.retrieve_with_version_priority(query)
 
     def _format_docs(self, docs: List[Document]) -> str:
-        """Format retrieved documents with version-aware processing."""
-        if not docs:
-            return ""
+        """Delegate to document retriever for document formatting.
 
-        # Sort documents by version weight and relevance
-        sorted_docs = sorted(
-            docs,
-            key=lambda x: (
-                x.metadata.get("source_weight", 1.0),
-                x.metadata.get("category") == "bisq2",  # Prioritize Bisq 2 content
-                x.metadata.get("category") == "bisq1",  # Then Bisq 1 content
-                x.metadata.get("category") == "general",  # Then general content
-            ),
-            reverse=True,
-        )
+        Args:
+            docs: List of documents to format
 
-        formatted_docs = []
-        for doc in sorted_docs:
-            # Extract metadata
-            title = doc.metadata.get("title", "Unknown")
-            category = doc.metadata.get("category", "general")
-            section = doc.metadata.get("section", "")
-            source_type = doc.metadata.get("type", "wiki")
-            source_weight = doc.metadata.get("source_weight", 1.0)
-
-            # Determine version from metadata and content
-            bisq_version = doc.metadata.get("bisq_version", "General")
-            if bisq_version == "General":
-                # Check content for version-specific information
-                content = doc.page_content.lower()
-                if "bisq 2" in content or "bisq2" in content:
-                    bisq_version = "Bisq 2"
-                elif "bisq 1" in content or "bisq1" in content:
-                    bisq_version = "Bisq 1"
-
-            # Format the entry with version context and source attribution
-            entry = f"[{bisq_version}] [{source_type.upper()}] {title}"
-            if section:
-                entry += f" - {section}"
-            entry += f"\n{doc.page_content}\n"
-            formatted_docs.append(entry)
-
-        return "\n\n".join(formatted_docs)
+        Returns:
+            Formatted string with version context
+        """
+        return self.document_retriever.format_documents(docs)
 
     def _clean_vector_store(self):
         """Clean the vector store directory."""
@@ -378,10 +201,8 @@ class SimplifiedRAGService:
                 if self.faq_service:
                     self.faq_service.update_source_weights(self.source_weights)
 
-            # Split documents
-            logger.info("Splitting documents into chunks...")
-            splits = self.text_splitter.split_documents(all_docs)
-            logger.info(f"Created {len(splits)} document chunks")
+            # Split documents using document processor
+            splits = self.document_processor.split_documents(all_docs)
 
             # Initialize embeddings
             logger.info("Initializing embedding model...")
@@ -438,13 +259,26 @@ class SimplifiedRAGService:
                 },
             )
 
+            # Initialize document retriever for version-aware retrieval
+            self.document_retriever = DocumentRetriever(
+                vectorstore=self.vectorstore, retriever=self.retriever
+            )
+            logger.info("Document retriever initialized")
+
             # Initialize language model
             logger.info("Initializing language model...")
             self.initialize_llm()
 
             # Create RAG chain
             logger.info("Creating RAG chain...")
-            self._create_rag_chain()
+            # Create prompt template
+            self.prompt = self.prompt_manager.create_rag_prompt()
+            # Create RAG chain with dependencies
+            self.rag_chain = self.prompt_manager.create_rag_chain(
+                llm=self.llm,
+                retrieve_func=self._retrieve_with_version_priority,
+                format_docs_func=self._format_docs,
+            )
 
             logger.info("Simplified RAG service setup complete")
             return True
@@ -453,172 +287,6 @@ class SimplifiedRAGService:
                 f"Error during simplified RAG service setup: {e!s}", exc_info=True
             )
             raise
-
-    def _create_rag_chain(self):
-        """Create the RAG chain using LangChain."""
-        # Get prompt guidance from the FeedbackService if available
-        additional_guidance = ""
-        if self.feedback_service:
-            guidance = self.feedback_service.get_prompt_guidance()
-            if guidance:
-                additional_guidance = (
-                    f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance}"
-                )
-                logger.info(f"Added prompt guidance: {guidance}")
-
-        # Custom system template with proper sections for context, chat history, and question
-        system_template = f"""You are an assistant for question-answering tasks about Bisq 2.
-
-IMPORTANT: You are a Bisq 2 support assistant.
-Pay special attention to content marked with [VERSION: Bisq 2] as it is specifically about Bisq 2.
-If content is marked with [VERSION: Bisq 1], it refers to the older version of Bisq and may not be applicable to Bisq 2.
-Content marked with [VERSION: Both] contains information relevant to both versions.
-Content marked with [VERSION: General] is general information that may apply to both versions.
-
-Always prioritize Bisq 2 specific information in your answers.
-If you don't know the answer, just say that you don't know.
-Use three sentences maximum and keep the answer concise.{additional_guidance}
-
-Question: {{question}}
-
-Chat History: {{chat_history}}
-
-Context: {{context}}
-
-Answer:"""
-
-        # Create the prompt template
-        self.prompt = ChatPromptTemplate.from_template(system_template)
-        logger.info(f"Custom RAG prompt created with {len(system_template)} characters")
-
-        # Define our chain as a simple function that handles the entire RAG process
-        def generate_response(question, chat_history=None):
-            # Initialize response_start_time at the beginning to avoid reference before assignment
-            response_start_time = time.time()
-
-            try:
-                if not question:
-                    return "I'm sorry, I didn't receive a question. How can I help you with Bisq 2?"
-
-                # Preprocess the question
-                preprocessed_question = question.strip()
-
-                # Log the question with privacy protection
-                logger.info(f"Processing question: {redact_pii(preprocessed_question)}")
-
-                # Set default chat history
-                if chat_history is None:
-                    chat_history = []
-
-                # Format chat history for the prompt
-                chat_history_str = ""
-                if chat_history and len(chat_history) > 0:
-                    # Format each exchange in chat history
-                    formatted_history = []
-                    # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
-                    recent_history = chat_history[
-                        -self.settings.MAX_CHAT_HISTORY_LENGTH :
-                    ]
-                    for exchange in recent_history:
-                        # Check if this is a ChatMessage or a dictionary
-                        if hasattr(exchange, "role") and hasattr(exchange, "content"):
-                            # This is a ChatMessage object
-                            role = exchange.role
-                            content = exchange.content
-                            if role == "user":
-                                formatted_history.append(f"Human: {content}")
-                            elif role == "assistant":
-                                formatted_history.append(f"Assistant: {content}")
-                        elif isinstance(exchange, dict):
-                            # This is a dictionary
-                            user_msg = exchange.get("user", "")
-                            ai_msg = exchange.get("assistant", "")
-                            if user_msg:
-                                formatted_history.append(f"Human: {user_msg}")
-                            if ai_msg:
-                                formatted_history.append(f"Assistant: {ai_msg}")
-                        else:
-                            logger.warning(
-                                f"Unknown exchange type in chat history: {type(exchange)}"
-                            )
-
-                    chat_history_str = "\n".join(formatted_history)
-
-                # Retrieve relevant documents with version priority
-                docs = self._retrieve_with_version_priority(preprocessed_question)
-
-                logger.info(f"Retrieved {len(docs)} relevant documents")
-
-                # Format documents for the prompt
-                context = self._format_docs(docs)
-
-                # Check context length and truncate if necessary to fit in prompt
-                if len(context) > self.settings.MAX_CONTEXT_LENGTH:
-                    logger.warning(
-                        f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
-                    )
-                    context = context[: self.settings.MAX_CONTEXT_LENGTH]
-
-                # Log the complete prompt and context for debugging
-                logger.info("=== DEBUG: Complete Prompt and Context ===")
-                logger.info(f"Question: {preprocessed_question}")
-                logger.info(f"Chat History: {chat_history_str}")
-                logger.info("Context:")
-                logger.info(context)
-                logger.info("=== End Debug Log ===")
-
-                # Format the prompt
-                formatted_prompt = self.prompt.format(
-                    question=preprocessed_question,
-                    chat_history=chat_history_str,
-                    context=context,
-                )
-
-                # Log formatted prompt at DEBUG level
-                logger.debug("=== DEBUG: Complete Formatted Prompt ===")
-                logger.debug(formatted_prompt)
-                logger.debug("=== End Debug Log ===")
-
-                # Generate response
-                response_text = self.llm.invoke(formatted_prompt)
-                response_content = (
-                    response_text.content
-                    if hasattr(response_text, "content")
-                    else str(response_text)
-                )
-
-                # Calculate response time
-                response_time = time.time() - response_start_time
-
-                # Log response information with privacy protection
-                if response_content:
-                    logger.info(
-                        f"Response generated in {response_time:.2f}s, length: {len(response_content)}"
-                    )
-
-                    # Log sample in non-production
-                    is_production = self.settings.ENVIRONMENT.lower() == "production"
-                    if not is_production:
-                        sample = (
-                            response_content[: self.settings.MAX_SAMPLE_LOG_LENGTH]
-                            + "..."
-                            if len(response_content)
-                            > self.settings.MAX_SAMPLE_LOG_LENGTH
-                            else response_content
-                        )
-                        logger.info(f"Content sample: {redact_pii(sample)}")
-                else:
-                    logger.warning("Empty response received from LLM")
-                    return "I apologize, but I couldn't generate a proper response based on the available information."
-
-                return response_content
-            except Exception as e:
-                logger.error(f"Error generating response: {e!s}", exc_info=True)
-                return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
-
-        # Store the generate_response function as our RAG chain
-        self.rag_chain = generate_response
-        logger.info("Custom RAG chain created successfully")
 
     async def cleanup(self):
         """Clean up resources."""
@@ -650,45 +318,13 @@ Answer:"""
                 "Attempting to answer from conversation context (no documents found)"
             )
 
-            # Format chat history for the prompt
-            formatted_history = []
-            recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH :]
+            # Format chat history using prompt manager
+            chat_history_str = self.prompt_manager.format_chat_history(chat_history)
 
-            for exchange in recent_history:
-                if hasattr(exchange, "role") and hasattr(exchange, "content"):
-                    role = exchange.role
-                    content = exchange.content
-                    if role == "user":
-                        formatted_history.append(f"Human: {content}")
-                    elif role == "assistant":
-                        formatted_history.append(f"Assistant: {content}")
-                elif isinstance(exchange, dict):
-                    user_msg = exchange.get("user", "")
-                    ai_msg = exchange.get("assistant", "")
-                    if user_msg:
-                        formatted_history.append(f"Human: {user_msg}")
-                    if ai_msg:
-                        formatted_history.append(f"Assistant: {ai_msg}")
-
-            chat_history_str = "\n".join(formatted_history)
-
-            # Create a special prompt for context-only answers
-            context_only_prompt = f"""You are a Bisq 2 support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
-
-IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
-
-Previous Conversation:
-{chat_history_str}
-
-Current Question: {question}
-
-Instructions:
-- If the answer is clearly in the conversation above, provide it concisely
-- If this is a follow-up about something mentioned in the conversation, answer based on that context
-- If this is a NEW topic not in the conversation, respond: "I don't have information about that in our knowledge base"
-- Keep your answer to 2-3 sentences maximum
-
-Answer:"""
+            # Create context-only prompt using prompt manager
+            context_only_prompt = self.prompt_manager.create_context_only_prompt(
+                question, chat_history_str
+            )
 
             # Get response from LLM
             response_text = self.llm.invoke(context_only_prompt)
@@ -811,22 +447,8 @@ Answer:"""
                 logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
                 logger.debug(f"  Content: {doc.page_content[:200]}...")
 
-            # Format chat history
-            chat_history_str = ""
-            if chat_history and len(chat_history) > 0:
-                # Format each exchange in chat history
-                formatted_history = []
-                # Use only the most recent MAX_CHAT_HISTORY_LENGTH exchanges
-                recent_history = chat_history[-self.settings.MAX_CHAT_HISTORY_LENGTH :]
-                for exchange in recent_history:
-                    if hasattr(exchange, "role") and hasattr(exchange, "content"):
-                        role = exchange.role
-                        content = exchange.content
-                        if role == "user":
-                            formatted_history.append(f"Human: {content}")
-                        elif role == "assistant":
-                            formatted_history.append(f"Assistant: {content}")
-                chat_history_str = "\n".join(formatted_history)
+            # Format chat history using prompt manager
+            chat_history_str = self.prompt_manager.format_chat_history(chat_history)
 
             # Format documents for the prompt
             context = self._format_docs(docs)
@@ -931,7 +553,7 @@ Answer:"""
             }
 
     def _deduplicate_sources(self, sources):
-        """Deduplicate sources to prevent multiple identical or very similar sources.
+        """Delegate to document retriever for source deduplication.
 
         Args:
             sources: List of source dictionaries
@@ -939,26 +561,7 @@ Answer:"""
         Returns:
             List of deduplicated sources
         """
-        if not sources:
-            return []
-
-        # Use a set to track unique sources
-        seen_sources = set()
-        unique_sources = []
-
-        for source in sources:
-            # Create a key based on title and type (primary deduplication)
-            source_key = f"{source['title']}:{source['type']}"
-
-            # Only include the source if we haven't seen this key before
-            if source_key not in seen_sources:
-                seen_sources.add(source_key)
-                unique_sources.append(source)
-
-        logger.info(
-            f"Deduplicated sources from {len(sources)} to {len(unique_sources)}"
-        )
-        return unique_sources
+        return self.document_retriever.deduplicate_sources(sources)
 
 
 def get_rag_service(request: Request) -> SimplifiedRAGService:

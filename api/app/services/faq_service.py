@@ -25,6 +25,10 @@ import portalocker
 
 # Import Pydantic models
 from app.models.faq import FAQIdentifiedItem, FAQItem
+from app.services.faq.conversation_processor import ConversationProcessor
+from app.services.faq.faq_extractor import FAQExtractor
+from app.services.faq.faq_rag_loader import FAQRAGLoader
+from app.services.faq.faq_repository import FAQRepository
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -65,17 +69,24 @@ class FAQService:
             self._file_lock = portalocker.Lock(
                 str(self._faq_file_path) + ".lock", timeout=10
             )
-            self._ensure_faq_file_exists()
-            self.source_weights = {"faq": 1.2}  # Default weight
+
+            # Initialize FAQ repository for CRUD operations
+            self.repository = FAQRepository(self._faq_file_path, self._file_lock)
+
+            # Initialize conversation processor for message threading
+            self.conversation_processor = ConversationProcessor()
+
+            # Initialize FAQ RAG loader for document preparation
+            self.rag_loader = FAQRAGLoader(source_weights={"faq": 1.2})
 
             # Initialize OpenAI client for FAQ extraction
-            self.openai_client = None
+            openai_client = None
             if (
                 hasattr(self.settings, "OPENAI_API_KEY")
                 and self.settings.OPENAI_API_KEY
             ):
                 try:
-                    self.openai_client = OpenAI(
+                    openai_client = OpenAI(
                         api_key=self.settings.OPENAI_API_KEY, timeout=30.0
                     )
                     logger.info("OpenAI client initialized for FAQ extraction")
@@ -86,63 +97,16 @@ class FAQService:
                     "OPENAI_API_KEY not provided. FAQ extraction will not work."
                 )
 
+            # Initialize FAQ extractor for OpenAI-based extraction
+            self.faq_extractor = FAQExtractor(openai_client, self.settings)
+
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
 
-    def _ensure_faq_file_exists(self):
-        """Creates the FAQ file if it doesn't exist."""
-        if not self._faq_file_path.exists():
-            logger.warning(
-                f"FAQ file not found at {self._faq_file_path}. Creating an empty file."
-            )
-            try:
-                # Use 'a' mode to create if it doesn't exist without truncating
-                with self._file_lock, open(self._faq_file_path, "a"):
-                    pass
-            except IOError as e:
-                logger.error(f"Could not create FAQ file at {self._faq_file_path}: {e}")
-
-    def _generate_stable_id(self, faq_item: FAQItem) -> str:
-        """Generates a stable SHA-256 hash ID from the FAQ's content."""
-        content = f"{faq_item.question.strip()}:{faq_item.answer.strip()}"
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-    def _read_all_faqs_with_ids(self) -> List[FAQIdentifiedItem]:
-        """Reads all FAQs from the JSONL file and assigns stable IDs."""
-        faqs: List[FAQIdentifiedItem] = []
-        try:
-            with self._file_lock, open(self._faq_file_path, "r") as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            faq_item = FAQItem(**data)
-                            faq_id = self._generate_stable_id(faq_item)
-                            faqs.append(
-                                FAQIdentifiedItem(id=faq_id, **faq_item.model_dump())
-                            )
-                        except (json.JSONDecodeError, TypeError) as e:
-                            logger.warning(f"Skipping malformed line in FAQ file: {e}")
-            return faqs
-        except FileNotFoundError:
-            logger.info("FAQ file not found on read, returning empty list.")
-            return []
-        except Exception as e:
-            logger.error(f"Error reading FAQ file: {e}")
-            return []
-
-    def _write_all_faqs(self, faqs: List[FAQItem]):
-        """Writes a list of core FAQ data to the JSONL file, overwriting existing content."""
-        try:
-            with self._file_lock, open(self._faq_file_path, "w") as f:
-                for faq in faqs:
-                    f.write(json.dumps(faq.model_dump()) + "\n")
-        except IOError as e:
-            logger.error(f"Failed to write FAQs to disk: {e}")
-
+    # CRUD operations - delegated to repository
     def get_all_faqs(self) -> List[FAQIdentifiedItem]:
         """Get all FAQs with their stable IDs."""
-        return self._read_all_faqs_with_ids()
+        return self.repository.get_all_faqs()
 
     def get_faqs_paginated(
         self,
@@ -153,155 +117,26 @@ class FAQService:
         source: str = None,
     ):
         """Get FAQs with pagination and filtering support."""
-        import math
-
-        from app.models.faq import FAQListResponse
-
-        # Get all FAQs
-        all_faqs = self._read_all_faqs_with_ids()
-
-        # Reverse order to show newest FAQs first (since they are appended to the file)
-        all_faqs = list(reversed(all_faqs))
-
-        # Apply filters
-        filtered_faqs = self._apply_filters(all_faqs, search_text, categories, source)
-        total_count = len(filtered_faqs)
-
-        # Calculate pagination
-        total_pages = math.ceil(total_count / page_size) if total_count > 0 else 1
-
-        # Validate page number
-        if page < 1:
-            page = 1
-        if page > total_pages:
-            page = total_pages
-
-        # Calculate offset
-        offset = (page - 1) * page_size
-
-        # Get the page of FAQs
-        paginated_faqs = filtered_faqs[offset : offset + page_size]
-
-        return FAQListResponse(
-            faqs=paginated_faqs,
-            total_count=total_count,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
+        return self.repository.get_faqs_paginated(
+            page, page_size, search_text, categories, source
         )
-
-    def _apply_filters(
-        self,
-        faqs: List[FAQIdentifiedItem],
-        search_text: Optional[str] = None,
-        categories: Optional[List[str]] = None,
-        source: Optional[str] = None,
-    ) -> List[FAQIdentifiedItem]:
-        """Apply filters to FAQ list."""
-        filtered_faqs = faqs
-
-        # Text search filter
-        if search_text and search_text.strip():
-            search_lower = search_text.lower().strip()
-            filtered_faqs = [
-                faq
-                for faq in filtered_faqs
-                if search_lower in faq.question.lower()
-                or search_lower in faq.answer.lower()
-            ]
-
-        # Category filter
-        if categories:
-            categories_set = {c.lower() for c in categories if isinstance(c, str)}
-            filtered_faqs = [
-                faq
-                for faq in filtered_faqs
-                if faq.category and faq.category.lower() in categories_set
-            ]
-
-        # Source filter
-        if source and source.strip():
-            source_lower = source.strip().lower()
-            filtered_faqs = [
-                faq
-                for faq in filtered_faqs
-                if faq.source and faq.source.lower() == source_lower
-            ]
-
-        return filtered_faqs
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
         """Adds a new FAQ to the FAQ file after checking for duplicates."""
-        new_id = self._generate_stable_id(faq_item)
-
-        # Prevent duplicates
-        all_faqs = self._read_all_faqs_with_ids()
-        if any(faq.id == new_id for faq in all_faqs):
-            raise ValueError(f"Duplicate FAQ with ID: {new_id} already exists.")
-
-        try:
-            with self._file_lock, open(self._faq_file_path, "a") as f:
-                f.write(json.dumps(faq_item.model_dump()) + "\n")
-
-            logger.info(f"Added new FAQ with ID: {new_id}")
-            return FAQIdentifiedItem(id=new_id, **faq_item.model_dump())
-        except IOError as e:
-            logger.error(f"Failed to add FAQ: {e}")
-            raise
+        return self.repository.add_faq(faq_item)
 
     def update_faq(
         self, faq_id: str, updated_data: FAQItem
     ) -> Optional[FAQIdentifiedItem]:
         """Updates an existing FAQ by finding it via its stable ID."""
-        all_faqs_with_ids = self._read_all_faqs_with_ids()
-        updated = False
-
-        core_faqs_to_write: List[FAQItem] = []
-        updated_faq_with_id: Optional[FAQIdentifiedItem] = None
-
-        for faq in all_faqs_with_ids:
-            if faq.id == faq_id:
-                core_faqs_to_write.append(updated_data)
-                new_id = self._generate_stable_id(updated_data)
-                updated_faq_with_id = FAQIdentifiedItem(
-                    id=new_id, **updated_data.model_dump()
-                )
-                updated = True
-            else:
-                core_faqs_to_write.append(FAQItem(**faq.model_dump(exclude={"id"})))
-
-        if updated:
-            self._write_all_faqs(core_faqs_to_write)
-            logger.info(
-                f"Updated FAQ. Old ID: {faq_id}, New ID: {updated_faq_with_id.id if updated_faq_with_id else 'N/A'}"
-            )
-            return updated_faq_with_id
-
-        logger.warning(f"Update failed: FAQ with ID {faq_id} not found.")
-        return None
+        return self.repository.update_faq(faq_id, updated_data)
 
     def delete_faq(self, faq_id: str) -> bool:
         """Deletes an FAQ by finding it via its stable ID."""
-        all_faqs_with_ids = self._read_all_faqs_with_ids()
-
-        # Keep all faqs except the one with the matching ID
-        faqs_to_keep = [faq for faq in all_faqs_with_ids if faq.id != faq_id]
-
-        if len(faqs_to_keep) < len(all_faqs_with_ids):
-            # We need to strip the IDs before writing.
-            core_faqs_to_write = [
-                FAQItem(**faq.model_dump(exclude={"id"})) for faq in faqs_to_keep
-            ]
-            self._write_all_faqs(core_faqs_to_write)
-            logger.info(f"Deleted FAQ with ID: {faq_id}")
-            return True
-
-        logger.warning(f"Delete failed: FAQ with ID {faq_id} not found.")
-        return False
+        return self.repository.delete_faq(faq_id)
 
     def normalize_text(self, text: str) -> str:
-        """Normalize text by converting to lowercase, normalizing Unicode characters,
-        and standardizing whitespace.
+        """Normalize text using the FAQ extractor.
 
         Args:
             text: The text to normalize
@@ -309,31 +144,10 @@ class FAQService:
         Returns:
             Normalized text
         """
-        if not text:
-            return ""
-
-        # Convert to lowercase
-        text = text.lower()
-
-        # Normalize Unicode characters (e.g., convert different apostrophe types to standard)
-        text = unicodedata.normalize("NFKC", text)
-
-        # Replace common Unicode apostrophes with standard ASCII apostrophe
-        text = text.replace("\u2019", "'")  # Right single quotation mark
-        text = text.replace("\u2018", "'")  # Left single quotation mark
-        text = text.replace("\u201b", "'")  # Single high-reversed-9 quotation mark
-        text = text.replace("\u2032", "'")  # Prime
-
-        # Standardize whitespace
-        text = re.sub(r"\s+", " ", text)
-
-        # Trim leading/trailing whitespace
-        text = text.strip()
-
-        return text
+        return self.faq_extractor.normalize_text(text)
 
     def get_normalized_faq_key(self, faq: Dict) -> str:
-        """Generate a normalized key for a FAQ to identify duplicates.
+        """Generate a normalized key for a FAQ using the extractor.
 
         Args:
             faq: The FAQ dictionary
@@ -341,95 +155,28 @@ class FAQService:
         Returns:
             A normalized key string
         """
-        question = self.normalize_text(faq.get("question", ""))
-        answer = self.normalize_text(faq.get("answer", ""))
-        return f"{question}|{answer}"
-
-    def is_duplicate_faq(self, faq: Dict) -> bool:
-        """Check if a FAQ is a duplicate based on normalized content.
-
-        Args:
-            faq: The FAQ dictionary to check
-
-        Returns:
-            True if the FAQ is a duplicate, False otherwise
-        """
-        key = self.get_normalized_faq_key(faq)
-        if key in self.normalized_faq_keys:
-            return True
-        self.normalized_faq_keys.add(key)
-        return False
+        return self.faq_extractor.get_normalized_faq_key(faq)
 
     def update_source_weights(self, new_weights: Dict[str, float]) -> None:
-        """Update source weights for FAQ content.
+        """Update source weights for FAQ content using the RAG loader.
 
         Args:
             new_weights: Dictionary with updated weights
         """
-        if "faq" in new_weights:
-            self.source_weights["faq"] = new_weights["faq"]
-            logger.info(f"Updated FAQ source weight to {self.source_weights['faq']}")
+        self.rag_loader.update_source_weights(new_weights)
 
     def load_faq_data(self, faq_file: Optional[str] = None) -> List[Document]:
-        """Load FAQ data from JSONL file.
+        """Load FAQ data from JSONL file using the RAG loader.
 
         Args:
             faq_file: Path to the FAQ JSONL file.
                       If None, uses the default path from settings.
 
         Returns:
-            List of Document objects
+            List of Document objects prepared for RAG system
         """
         faq_path = Path(faq_file) if faq_file else self._faq_file_path
-
-        logger.info(f"Using FAQ file path: {faq_path}")
-
-        if not faq_path.exists():
-            # Ensure the file exists before trying to read, especially if it can be created on demand
-            self._ensure_faq_file_exists()
-            if not faq_path.exists():  # Check again after ensure
-                logger.warning(f"FAQ file not found: {faq_path}")
-                return []
-
-        documents = []
-        try:
-            with open(faq_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        data = json.loads(line.strip())
-                        question = data.get("question", "")
-                        answer = data.get("answer", "")
-                        category = data.get("category", "General")
-
-                        # Validate required fields
-                        if not question.strip() or not answer.strip():
-                            logger.warning(
-                                f"Skipping FAQ entry with missing question or answer: {data}"
-                            )
-                            continue
-
-                        doc = Document(
-                            page_content=f"Question: {question}\nAnswer: {answer}",
-                            metadata={
-                                "source": str(faq_path),
-                                "title": (
-                                    question[:50] + "..."
-                                    if len(question) > 50
-                                    else question
-                                ),
-                                "type": "faq",
-                                "source_weight": self.source_weights.get("faq", 1.0),
-                                "category": category,
-                            },
-                        )
-                        documents.append(doc)
-                    except json.JSONDecodeError:
-                        logger.error(f"Error parsing JSON line in FAQ file: {line}")
-            logger.info(f"Loaded {len(documents)} FAQ documents")
-            return documents
-        except Exception as e:
-            logger.error(f"Error loading FAQ data: {e!s}", exc_info=True)
-            return []
+        return self.rag_loader.load_faq_data(faq_path)
 
     # FAQ Extraction Methods from extract_faqs.py
 
@@ -605,447 +352,47 @@ class FAQService:
         self.input_path = self.existing_input_path
 
     def load_messages(self):
-        """Load messages from CSV and organize them."""
+        """Load messages from CSV and organize them using the conversation processor."""
         if not hasattr(self, "input_path") or not self.input_path.exists():
             logger.warning("No input file found for loading messages")
             return
 
-        logger.info("Loading messages from CSV...")
-
-        try:
-            # Read the CSV file
-            df = pd.read_csv(self.input_path)
-            logger.debug(f"CSV columns: {list(df.columns)}")
-            total_lines = len(df)
-            logger.info("Processing " + str(total_lines) + " lines from input file")
-
-            # Reset message collections
-            self.messages = {}
-            self.references = {}
-
-            for _, row_data in df.iterrows():
-                try:
-                    msg_id = row_data["Message ID"]
-
-                    # Skip empty or invalid messages
-                    if pd.isna(row_data["Message"]) or not row_data["Message"].strip():
-                        continue
-
-                    # Parse timestamp
-                    timestamp = None
-                    if pd.notna(row_data["Date"]):
-                        try:
-                            timestamp = pd.to_datetime(row_data["Date"])
-                        except Exception as exc:
-                            logger.warning(
-                                f"Timestamp parse error for msg {msg_id}: {exc}"
-                            )
-
-                    # Create message object
-                    msg = {
-                        "msg_id": msg_id,
-                        "text": row_data["Message"].strip(),
-                        "author": (
-                            row_data["Author"]
-                            if pd.notna(row_data["Author"])
-                            else "unknown"
-                        ),
-                        "channel": row_data["Channel"],
-                        "is_support": row_data["Channel"].lower() == "support",
-                        "timestamp": timestamp,
-                        "referenced_msg_id": (
-                            row_data["Referenced Message ID"]
-                            if pd.notna(row_data["Referenced Message ID"])
-                            else None
-                        ),
-                    }
-                    self.messages[msg_id] = msg
-
-                    # Store reference if it exists
-                    if msg["referenced_msg_id"]:
-                        self.references[msg_id] = msg["referenced_msg_id"]
-                        if msg["referenced_msg_id"] not in self.messages and pd.notna(
-                            row_data["Referenced Message Text"]
-                        ):
-                            ref_timestamp = None
-                            ref_rows = df[df["Message ID"] == msg["referenced_msg_id"]]
-                            if not ref_rows.empty and pd.notna(
-                                ref_rows.iloc[0]["Date"]
-                            ):
-                                try:
-                                    ref_timestamp = pd.to_datetime(
-                                        ref_rows.iloc[0]["Date"]
-                                    )
-                                except Exception as exc:
-                                    logger.warning(
-                                        f"Ref timestamp parse error for msg {msg_id}: {exc}"
-                                    )
-                            if ref_timestamp is None and timestamp is not None:
-                                ref_timestamp = timestamp - pd.Timedelta(seconds=1)
-                            ref_msg = {
-                                "msg_id": msg["referenced_msg_id"],
-                                "text": row_data["Referenced Message Text"].strip(),
-                                "author": (
-                                    row_data["Referenced Message Author"]
-                                    if pd.notna(row_data["Referenced Message Author"])
-                                    else "unknown"
-                                ),
-                                "channel": "user",
-                                "is_support": False,
-                                "timestamp": ref_timestamp,
-                                "referenced_msg_id": None,
-                            }
-                            self.messages[msg["referenced_msg_id"]] = ref_msg
-                except Exception as e:
-                    logger.error(f"Error processing row: {e}")
-                    continue
-
-            logger.info(
-                f"Loaded {len(self.messages)} messages with {len(self.references)} references"
-            )
-        except Exception as e:
-            logger.error(f"Error loading CSV file: {e}")
-            raise
+        # Delegate to conversation processor
+        self.conversation_processor.load_messages(self.input_path)
 
     def build_conversation_thread(
         self, start_msg_id: str, max_depth: int = 10
     ) -> List[Dict]:
         """Build a conversation thread starting from a message, following references both ways."""
-        if not self.messages:
-            return []
-
-        thread = []
-        seen_messages = set()
-        to_process = {start_msg_id}
-        depth = 0
-
-        while to_process and depth < max_depth:
-            current_id = to_process.pop()
-
-            if current_id in seen_messages or current_id not in self.messages:
-                continue
-
-            seen_messages.add(current_id)
-            msg = self.messages[current_id].copy()
-            msg["original_index"] = len(thread)
-
-            # Add message to thread
-            thread.append(msg)
-
-            # Follow reference backward
-            if msg["referenced_msg_id"]:
-                to_process.add(msg["referenced_msg_id"])
-
-            # Follow references forward more conservatively
-            forward_refs = [
-                mid
-                for mid, ref in self.references.items()
-                if ref == current_id and
-                # Only include forward references within 30 minutes
-                self.messages[mid]["timestamp"]
-                and self.messages[current_id]["timestamp"]
-                and (
-                    self.messages[mid]["timestamp"]
-                    - self.messages[current_id]["timestamp"]
-                )
-                <= timedelta(minutes=30)
-            ]
-            to_process.update(forward_refs)
-
-            depth += 1
-
-        # Sort thread by timestamp, using the original position as tie-breaker
-        thread.sort(
-            key=lambda x: (
-                x["timestamp"] if x["timestamp"] is not None else pd.Timestamp.min,
-                x["original_index"],
-            )
+        return self.conversation_processor.build_conversation_thread(
+            start_msg_id, max_depth
         )
-
-        # Remove the temporary original_index field
-        for msg in thread:
-            msg.pop("original_index", None)
-
-        return thread
 
     def is_valid_conversation(self, thread: List[Dict]) -> bool:
         """Validate if a conversation thread is complete and meaningful."""
-        if len(thread) < 2:
-            return False
-
-        # Check if there's at least one user message and one support message
-        has_user = any(not msg["is_support"] for msg in thread)
-        has_support = any(msg["is_support"] for msg in thread)
-
-        if not (has_user and has_support):
-            return False
-
-        # Check if messages are too far apart in time
-        timestamps = [
-            msg["timestamp"] for msg in thread if msg["timestamp"] is not None
-        ]
-        if timestamps:
-            time_span = max(timestamps) - min(timestamps)
-            if time_span > timedelta(hours=24):  # Max time span of 24 hours
-                return False
-
-        # Check if all messages are properly connected through references
-        for i in range(1, len(thread)):
-            current_msg = thread[i]
-            previous_msg = thread[i - 1]
-
-            # Check if messages are connected through references
-            if (
-                current_msg["referenced_msg_id"] != previous_msg["msg_id"]
-                and previous_msg["referenced_msg_id"] != current_msg["msg_id"]
-                and not (
-                    current_msg["timestamp"]
-                    and previous_msg["timestamp"]
-                    and (current_msg["timestamp"] - previous_msg["timestamp"])
-                    <= timedelta(minutes=30)
-                )
-            ):
-                return False
-
-        return True
+        return self.conversation_processor.is_valid_conversation(thread)
 
     def group_conversations(self) -> List[Dict]:
-        """Group messages into conversations."""
-        if not self.messages:
-            return []
-
-        logger.info("Grouping messages into conversations...")
-
-        # Start with support messages that have references
-        support_messages = [
-            msg_id
-            for msg_id, msg in self.messages.items()
-            if msg["is_support"] and msg["referenced_msg_id"]
-        ]
-        logger.info(f"Found {len(support_messages)} support messages with references")
-
-        # Process each support message
-        conversations = []
-        processed_msg_ids = set()
-
-        for msg_id in support_messages:
-            if msg_id in processed_msg_ids:
-                continue
-
-            # Build conversation thread
-            thread = self.build_conversation_thread(msg_id)
-
-            # Mark all messages in thread as processed
-            processed_msg_ids.update(msg["msg_id"] for msg in thread)
-
-            # Validate and format conversation
-            if self.is_valid_conversation(thread):
-                conversation = {
-                    "id": thread[0]["msg_id"],  # Use first message ID without prefix
-                    "messages": thread,
-                }
-                conversations.append(conversation)
-
-        logger.info(f"Generated {len(conversations)} conversations")
-        self.conversations = conversations
-        return conversations
-
-    def _format_conversation_for_prompt(self, conversation: Dict) -> str:
-        """Format a single conversation for inclusion in the prompt.
-
-        Args:
-            conversation: A conversation dictionary with messages
-
-        Returns:
-            Formatted conversation text
-        """
-        conv_text = []
-        for msg in conversation["messages"]:
-            role = "Support" if msg["is_support"] else "User"
-            conv_text.append(f"{role}: {msg['text']}")
-        return "\n".join(conv_text)
-
-    def _create_extraction_prompt(self, formatted_conversations: List[str]) -> str:
-        """Create the prompt for FAQ extraction.
-
-        Args:
-            formatted_conversations: List of formatted conversation texts
-
-        Returns:
-            Complete prompt for the OpenAI API
-        """
-        return """You are a language model specialized in text summarization and data extraction. Your task is to analyze these conversations and extract frequently asked questions (FAQs) along with their concise, clear answers.
-
-For each FAQ you identify, output a single-line JSON object in this format:
-{{"question": "A clear, self-contained question extracted or synthesized from the support chats", "answer": "A concise, informative answer derived from the support chat responses", "category": "A one- or two-word category label that best describes the FAQ topic", "source": "Bisq Support Chat"}}
-
-IMPORTANT: Each JSON object must be on a single line, with no line breaks or pretty printing.
-
-Here are the conversations to analyze:
-
-{}
-
-Output each FAQ as a single-line JSON object. No additional text or commentary.""".format(
-            "\n\n---\n\n".join(formatted_conversations)
-        )
-
-    def _call_openai_api(self, prompt: str) -> Optional[str]:
-        """Call the OpenAI API with retries and error handling.
-
-        Args:
-            prompt: The prompt to send to the API
-
-        Returns:
-            Response text if successful, None otherwise
-        """
-        if not self.openai_client:
-            logger.error("OpenAI client not initialized")
-            return None
-
-        max_retries = 3
-        base_delay = 1
-
-        for attempt in range(max_retries):
-            try:
-                response = self.openai_client.chat.completions.create(
-                    model=self.settings.OPENAI_MODEL,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=2000,
-                    timeout=30.0,
-                )
-                return response.choices[0].message.content.strip()
-
-            except Exception as e:
-                is_rate_limit = "rate limit" in str(e).lower()
-                error_level = logging.WARNING if is_rate_limit else logging.ERROR
-                logger.log(
-                    error_level,
-                    f"Error during OpenAI API call on attempt {attempt + 1}: {e!s}",
-                )
-
-                if attempt < max_retries - 1:
-                    # Add jitter to prevent thundering herd
-                    jitter = random.uniform(0, 0.1 * (2**attempt))
-                    delay = base_delay * (2**attempt) + jitter
-                    # Use longer delays for rate limits
-                    if is_rate_limit:
-                        delay = max(delay, 5.0 * (attempt + 1))
-                    logger.info(f"Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                else:
-                    logger.error("Max retries reached for OpenAI API call")
-
-        return None
-
-    def _process_api_response(self, response_text: str) -> List[Dict]:
-        """Process the API response and extract FAQs.
-
-        Args:
-            response_text: The response text from the API
-
-        Returns:
-            List of extracted FAQ dictionaries
-        """
-        faqs = []
-
-        if not response_text:
-            return faqs
-
-        # Clean up the response text - remove markdown code blocks
-        response_text = response_text.replace("```json", "").replace("```", "").strip()
-
-        # Process each line as a potential JSON object
-        for line in response_text.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                faq = json.loads(line)
-                # Basic validation
-                if (
-                    not faq.get("question", "").strip()
-                    or not faq.get("answer", "").strip()
-                ):
-                    logger.warning(
-                        f"Skipping FAQ with missing question or answer: {line}"
-                    )
-                    continue
-
-                # Check for duplicates
-                if self.is_duplicate_faq(faq):
-                    logger.info(
-                        f"Skipping duplicate FAQ: {faq.get('question', '')[:50]}..."
-                    )
-                    continue
-
-                faqs.append(faq)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse FAQ entry: {e}\nLine: {line}")
-
-        return faqs
+        """Group messages into conversations using the conversation processor."""
+        return self.conversation_processor.group_conversations()
 
     def extract_faqs_with_openai(
         self, conversations_to_process: List[Dict]
     ) -> List[Dict]:
-        """Extract FAQs from conversations using OpenAI.
+        """Extract FAQs from conversations using the FAQ extractor.
 
         Args:
-            conversations_to_process: List of new conversation dictionaries to process.
+            conversations_to_process: List of conversation dictionaries to process
 
         Returns:
             List of extracted FAQ dictionaries
         """
-        if not self.openai_client:
-            logger.error("OpenAI client not initialized. Cannot extract FAQs.")
-            return []
-
-        if not conversations_to_process:
-            logger.info("No new conversations provided to process for OpenAI.")
-            return []
-
-        logger.info(
-            f"Extracting FAQs from {len(conversations_to_process)} conversations using OpenAI..."
-        )
-
-        # Prepare conversations for the prompt
-        formatted_convs = [
-            self._format_conversation_for_prompt(conv)
-            for conv in conversations_to_process
-        ]
-
-        # Split conversations into batches to avoid token limits
-        batch_size = 5
-        batches = [
-            formatted_convs[i : i + batch_size]
-            for i in range(0, len(formatted_convs), batch_size)
-        ]
-
-        all_faqs = []
-
-        for batch in batches:
-            # Create the prompt
-            prompt = self._create_extraction_prompt(batch)
-
-            # Call the OpenAI API
-            response_text = self._call_openai_api(prompt)
-
-            if response_text:
-                # Process the response
-                batch_faqs = self._process_api_response(response_text)
-                all_faqs.extend(batch_faqs)
-
-            time.sleep(1)  # Small delay between batches
-
-        logger.info(
-            f"Extracted {len(all_faqs)} FAQ entries from {len(conversations_to_process)} conversations"
-        )
-        return all_faqs
+        return self.faq_extractor.extract_faqs_with_openai(conversations_to_process)
 
     def load_existing_faqs(self) -> List[Dict]:
         """Load existing FAQs from the JSONL file for processing or extraction tasks.
         Returns a list of dictionaries.
         """
-        self._ensure_faq_file_exists()
         faqs = []
         if not hasattr(self, "_faq_file_path") or not self._faq_file_path.exists():
             logger.warning(
@@ -1076,8 +423,6 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         This method is typically used by the FAQ extraction process.
         It now uses portalocker for safe concurrent writes.
         """
-        self._ensure_faq_file_exists()
-
         try:
             # Re-use the class-level lock for this operation
             with self._file_lock, open(
@@ -1086,16 +431,18 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 # Load existing FAQs to check for duplicates
                 existing_faqs = [json.loads(line) for line in f if line.strip()]
 
-                # Create a set of normalized keys for existing FAQs
+                # Create a set of normalized keys for existing FAQs using the extractor
                 normalized_faq_keys = {
-                    self.get_normalized_faq_key(faq) for faq in existing_faqs
+                    self.faq_extractor.get_normalized_faq_key(faq)
+                    for faq in existing_faqs
                 }
 
                 # Filter out duplicates from the new faqs
                 new_unique_faqs = [
                     faq
                     for faq in faqs
-                    if self.get_normalized_faq_key(faq) not in normalized_faq_keys
+                    if self.faq_extractor.get_normalized_faq_key(faq)
+                    not in normalized_faq_keys
                 ]
 
                 if new_unique_faqs:
@@ -1148,9 +495,9 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             # This automatically handles backward compatibility with old conversation tracking
             self.processed_msg_ids = self.load_processed_msg_ids()
 
-            # Reset and pre-seed duplicate set with on-disk FAQs
-            self.normalized_faq_keys = set()
+            # Load existing FAQs and seed the duplicate tracker in the extractor
             existing_faqs = self.load_existing_faqs()
+            self.faq_extractor.seed_duplicate_tracker(existing_faqs)
 
             # Merge existing and new messages from the API
             await self.merge_csv_files(bisq_api)
