@@ -262,6 +262,42 @@ For details on securing these services, see the [Monitoring Security Guide](docs
 
 ## Development
 
+### Code Quality and Pre-commit Hooks
+
+This project uses pre-commit hooks to automatically enforce code quality standards. The hooks run before each commit to check formatting, imports, types, and tests.
+
+**Setting up pre-commit hooks:**
+
+```bash
+# Install pre-commit (if not already installed)
+cd api
+pip install pre-commit
+
+# Install the git hooks
+pre-commit install
+
+# (Optional) Run hooks on all files to verify setup
+pre-commit run --all-files
+```
+
+**What runs on each commit:**
+
+- ✅ **black** - Python code formatting
+- ✅ **isort** - Import sorting
+- ✅ **mypy** - Type checking
+- ✅ **flake8** - Code linting
+- ✅ **pytest** - Fast tests (non-slow tests only)
+- ✅ File checks (trailing whitespace, end-of-file, YAML/JSON syntax)
+
+**Bypassing hooks (use sparingly):**
+
+```bash
+# Skip all hooks for a single commit (only when necessary)
+git commit --no-verify -m "Emergency fix"
+```
+
+**Note:** The same checks run in CI, so bypassing hooks locally will cause CI failures.
+
 ### Updating Python Dependencies
 
 When you need to update Python dependencies or if GitHub Actions fails with "requirements.txt is not up to date":
