@@ -488,9 +488,18 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
 
         # Mark the original feedback as processed with reference to the new FAQ
         # This helps track which feedback has been addressed and prevents duplicate FAQ creation
-        feedback_service.mark_feedback_as_processed(
+        marked = feedback_service.mark_feedback_as_processed(
             message_id=request.message_id, faq_id=new_faq.id
         )
+
+        if not marked:
+            logger.error(
+                f"Failed to mark feedback {request.message_id} as processed after creating FAQ {new_faq.id}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="FAQ created but failed to mark feedback as processed",
+            )
 
         # Record FAQ creation metric
         FAQ_CREATION_TOTAL.inc()
