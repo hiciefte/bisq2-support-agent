@@ -83,4 +83,4 @@ EXPOSE 8090
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Set the default command to run the startup script
-CMD ["/opt/bisq2/start.sh"] 
+CMD ["/opt/bisq2/start.sh"]

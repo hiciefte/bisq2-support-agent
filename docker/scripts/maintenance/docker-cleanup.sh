@@ -2,7 +2,7 @@
 #
 # Docker System Cleanup Script
 # This script safely cleans Docker resources to prevent disk space issues
-# 
+#
 
 # Log file setup
 LOG_DIR="/var/log/bisq-support"
@@ -21,7 +21,7 @@ check_disk_usage() {
   local threshold=75
   local usage
   usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
-  
+
   if [ "$usage" -gt "$threshold" ]; then
     log "Disk usage is at ${usage}%, above threshold of ${threshold}%. Proceeding with cleanup."
     return 0
@@ -47,37 +47,37 @@ fi
 log "Removing stopped containers"
 docker container prune -f >> "$LOG_FILE" 2>&1
 
-# Remove unused images 
+# Remove unused images
 log "Removing dangling images"
 docker image prune -f >> "$LOG_FILE" 2>&1
 
 # If disk usage is high, perform more aggressive cleanup
 if check_disk_usage; then
   log "Performing aggressive cleanup due to high disk usage"
-  
+
   # Remove all unused images, not just dangling ones
   log "Removing all unused images"
   docker image prune -a -f --filter "until=24h" >> "$LOG_FILE" 2>&1
-  
+
   # Remove unused build cache
   log "Removing build cache"
   docker builder prune -f >> "$LOG_FILE" 2>&1
-  
+
   # Remove unused networks
   log "Removing unused networks"
   docker network prune -f >> "$LOG_FILE" 2>&1
-  
+
   # Prune volumes carefully (only if not attached to any container)
   log "Removing unused volumes"
   docker volume prune -f >> "$LOG_FILE" 2>&1
-  
+
   # Clean up logs
   log "Cleaning up Docker logs"
   if [ -d /var/lib/docker/containers ]; then
     find /var/lib/docker/containers -type f -name "*.log" -exec truncate -s 0 {} \;
     log "Docker logs have been truncated"
   fi
-  
+
   # Check disk usage after cleanup
   after_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   log "Disk usage after aggressive cleanup: ${after_usage}%"
@@ -94,4 +94,4 @@ if [ "$critical_usage" -gt 90 ]; then
 fi
 
 log "Docker cleanup process completed"
-exit 0 
+exit 0

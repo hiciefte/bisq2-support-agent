@@ -48,4 +48,4 @@ print_message "- Prometheus: http://$server_ip:9090"
 print_message "- Grafana: http://$server_ip:3001 (admin/securepassword)"
 
 # Make this script executable
-chmod +x ./setup-server.sh 
+chmod +x ./setup-server.sh

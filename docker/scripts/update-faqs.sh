@@ -31,9 +31,9 @@ log "Restarting API container ($API_CONTAINER) to load new FAQs..."
 if ! docker restart $API_CONTAINER; then
   log "ERROR: Failed to restart API container $API_CONTAINER"
   # Optionally, decide if this should be a script-halting error
-  # exit 1 
+  # exit 1
 else
   log "API container $API_CONTAINER restarted successfully."
 fi
 
-exit 0 
+exit 0

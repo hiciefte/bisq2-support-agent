@@ -5,14 +5,11 @@ Admin routes for the Bisq Support API.
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import Request
-
 from app.core.config import get_settings
 from app.core.security import (
     clear_admin_cookie,
     set_admin_cookie,
     verify_admin_access,
-    verify_admin_key,
     verify_admin_key_with_delay,
 )
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
@@ -25,18 +22,10 @@ from app.models.feedback import (
     FeedbackListResponse,
     FeedbackStatsResponse,
 )
-
-# Import chat metrics to ensure they're registered with Prometheus
-from app.routes.chat import (
-    CURRENT_RESPONSE_TIME,
-    QUERY_ERRORS,
-    QUERY_RESPONSE_TIME_HISTOGRAM,
-    QUERY_TOTAL,
-)
 from app.services.dashboard_service import DashboardService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
@@ -198,7 +187,7 @@ async def get_feedback_analytics() -> Dict[str, Any]:
                 source_stats[source_type]["helpful"] += 1
 
     # Common issues in negative feedback
-    raw_issues = {}
+    raw_issues: dict[str, int] = {}
     for item in feedback:
         if item.get("rating", 0) == 0:  # Consider rating 0 as unhelpful
             # Check specific issue fields
@@ -217,7 +206,7 @@ async def get_feedback_analytics() -> Dict[str, Any]:
                     raw_issues[issue] = raw_issues.get(issue, 0) + 1
 
     # Map to controlled vocabulary to prevent high-cardinality
-    common_issues = {}
+    common_issues: dict[str, int] = {}
     for issue, count in raw_issues.items():
         mapped_issue = map_to_controlled_issue_type(issue)
         common_issues[mapped_issue] = common_issues.get(mapped_issue, 0) + count

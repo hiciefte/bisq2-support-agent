@@ -8,7 +8,6 @@ This module provides:
 - Utility fixtures for common test scenarios
 """
 
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -16,12 +15,11 @@ from typing import Generator
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.core.config import Settings
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(scope="session")
@@ -283,7 +281,9 @@ def rag_service(
 
     # Mock the RAG chain to avoid initialization requirements
     mock_rag_chain = MagicMock()
-    mock_rag_chain.invoke.return_value = {"answer": "This is a test response from the mock LLM."}
+    mock_rag_chain.invoke.return_value = {
+        "answer": "This is a test response from the mock LLM."
+    }
     service.rag_chain = mock_rag_chain
 
     # Mock the prompt to avoid initialization requirements

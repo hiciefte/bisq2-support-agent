@@ -89,4 +89,4 @@ These variables configure the application services running inside Docker contain
     *   Default: `prometheuspassword`
 *   **`NEXT_PUBLIC_PROJECT_NAME`**
     *   Description: A name for the project, potentially used in the UI.
-    *   Default: `Bisq 2 Support Agent` 
+    *   Default: `Bisq 2 Support Agent`

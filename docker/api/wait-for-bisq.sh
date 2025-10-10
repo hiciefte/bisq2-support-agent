@@ -15,4 +15,4 @@ until check_bisq; do
 done
 
 echo "Bisq service is ready, starting FAQ extraction..."
-python -m app.scripts.extract_faqs 
+python -m app.scripts.extract_faqs

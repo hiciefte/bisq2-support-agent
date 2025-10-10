@@ -20,20 +20,20 @@ mkdir -p "$LOG_DIR"
 rotate_log() {
   local log_file="$1"
   local base_name="$(basename "$log_file" .log)"
-  
+
   if [ -f "$log_file" ] && [ -s "$log_file" ]; then
     local timestamp=$(date +"%Y%m%d")
     echo "Rotating $log_file to ${log_file%.log}-$timestamp.log"
-    
+
     # Move current log to timestamped version
     mv "$log_file" "${log_file%.log}-$timestamp.log"
-    
+
     # Create a new empty log file
     touch "$log_file"
-    
+
     # Keep only the most recent logs
     ls -t "$LOG_DIR"/$base_name-*.log 2>/dev/null | tail -n +$((MAX_LOG_FILES+1)) | xargs -r rm
-    
+
     echo "Rotation complete for $log_file"
   else
     echo "Log file $log_file does not exist or is empty. Skipping rotation."
@@ -48,4 +48,4 @@ rotate_log "$LOG_DIR/faq-updater.log"
 # Add more log files to rotate as needed
 # rotate_log "$LOG_DIR/another-log-file.log"
 
-echo "Log rotation completed at $(date)" 
+echo "Log rotation completed at $(date)"

@@ -11,11 +11,9 @@ Note: FeedbackService uses SQLite database (not file-based storage)
 and has async methods that require pytest-asyncio.
 """
 
-import pytest
 import uuid
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from app.services.feedback_service import FeedbackService
 
 
@@ -62,11 +60,7 @@ class TestFeedbackStorage:
 
         # Find our feedback
         stored = next(
-            (
-                fb
-                for fb in all_feedback
-                if fb.get("message_id") == unique_id
-            ),
+            (fb for fb in all_feedback if fb.get("message_id") == unique_id),
             None,
         )
         assert stored is not None
@@ -100,27 +94,35 @@ class TestFeedbackStatistics:
         service = FeedbackService(settings=test_settings)
 
         initial_stats = service.get_feedback_stats_enhanced()
-        initial_total = initial_stats.get("total_feedback", 0) or initial_stats.get("total", 0)
+        initial_total = initial_stats.get("total_feedback", 0) or initial_stats.get(
+            "total", 0
+        )
 
         # Add feedback with unique IDs
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Q1",
-            "answer": "A1",
-            "rating": 1,  # positive
-            "explanation": "Good",
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Q1",
+                "answer": "A1",
+                "rating": 1,  # positive
+                "explanation": "Good",
+            }
+        )
 
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Q2",
-            "answer": "A2",
-            "rating": 0,  # negative (database constraint: rating IN (0, 1))
-            "explanation": "Bad",
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Q2",
+                "answer": "A2",
+                "rating": 0,  # negative (database constraint: rating IN (0, 1))
+                "explanation": "Bad",
+            }
+        )
 
         final_stats = service.get_feedback_stats_enhanced()
-        final_total = final_stats.get("total_feedback", 0) or final_stats.get("total", 0)
+        final_total = final_stats.get("total_feedback", 0) or final_stats.get(
+            "total", 0
+        )
 
         # Should have added 2 feedback items
         assert final_total >= initial_total + 2
@@ -150,21 +152,25 @@ class TestFeedbackFiltering:
         service = FeedbackService(settings=test_settings)
 
         # Add positive and negative feedback with unique IDs
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Good question",
-            "answer": "Good answer",
-            "rating": 1,
-            "explanation": "Helpful",
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Good question",
+                "answer": "Good answer",
+                "rating": 1,
+                "explanation": "Helpful",
+            }
+        )
 
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Bad question",
-            "answer": "Bad answer",
-            "rating": 0,  # negative (database constraint: rating IN (0, 1))
-            "explanation": "Not helpful",
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Bad question",
+                "answer": "Bad answer",
+                "rating": 0,  # negative (database constraint: rating IN (0, 1))
+                "explanation": "Not helpful",
+            }
+        )
 
         # Filter positive
         positive_filters = FeedbackFilterRequest(rating="positive")
@@ -227,13 +233,15 @@ class TestFeedbackWeightManagement:
         service = FeedbackService(settings=test_settings)
 
         # Add feedback with sources using unique ID
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Test",
-            "answer": "Answer",
-            "rating": 1,
-            "sources": [{"type": "faq", "title": "FAQ 1"}],
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Test",
+                "answer": "Answer",
+                "rating": 1,
+                "sources": [{"type": "faq", "title": "FAQ 1"}],
+            }
+        )
 
         # Apply weights
         result = service.apply_feedback_weights()
@@ -280,13 +288,15 @@ class TestFeedbackNegativeForFAQ:
         service = FeedbackService(settings=test_settings)
 
         # Add negative feedback with unique ID
-        await service.store_feedback({
-            "message_id": str(uuid.uuid4()),
-            "question": "Confusing question",
-            "answer": "Unclear answer",
-            "rating": 0,  # negative (database constraint: rating IN (0, 1))
-            "explanation": "Not helpful at all",
-        })
+        await service.store_feedback(
+            {
+                "message_id": str(uuid.uuid4()),
+                "question": "Confusing question",
+                "answer": "Unclear answer",
+                "rating": 0,  # negative (database constraint: rating IN (0, 1))
+                "explanation": "Not helpful at all",
+            }
+        )
 
         negative_feedback = service.get_negative_feedback_for_faq_creation()
 

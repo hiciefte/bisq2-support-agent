@@ -21,17 +21,17 @@ export async function GET() {
     `# HELP requests_total Total number of requests`,
     `# TYPE requests_total counter`,
     `requests_total ${metrics.requests_total}`,
-    
+
     `# HELP errors_total Total number of errors`,
     `# TYPE errors_total counter`,
     `errors_total ${metrics.errors_total}`,
-    
+
     `# HELP response_time_ms Response time in milliseconds`,
     `# TYPE response_time_ms gauge`,
     `response_time_ms{quantile="avg"} ${metrics.response_time_ms.avg}`,
     `response_time_ms{quantile="p95"} ${metrics.response_time_ms.p95}`,
     `response_time_ms{quantile="p99"} ${metrics.response_time_ms.p99}`,
-    
+
     `# HELP active_users Number of active users`,
     `# TYPE active_users gauge`,
     `active_users ${metrics.active_users}`
@@ -42,4 +42,4 @@ export async function GET() {
       'Content-Type': 'text/plain'
     }
   });
-} 
+}

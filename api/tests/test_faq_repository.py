@@ -9,13 +9,13 @@ Tests cover:
 - Pagination and filtering
 """
 
-import pytest
 import threading
 from pathlib import Path
-import portalocker
 
-from app.services.faq.faq_repository import FAQRepository
+import portalocker
+import pytest
 from app.models.faq import FAQItem
+from app.services.faq.faq_repository import FAQRepository
 
 
 @pytest.fixture
@@ -344,9 +344,15 @@ class TestFAQRepositoryThreadSafety:
 
         # Check results - expect most threads to succeed
         # In high-concurrency scenarios, some writes may fail due to timing
-        assert len(results) >= 8, f"Expected at least 8 successful writes, got {len(results)}"
-        assert len(errors) <= 2, f"Expected at most 2 errors, got {len(errors)}: {errors}"
+        assert (
+            len(results) >= 8
+        ), f"Expected at least 8 successful writes, got {len(results)}"
+        assert (
+            len(errors) <= 2
+        ), f"Expected at most 2 errors, got {len(errors)}: {errors}"
 
         # Verify most FAQs were written
         all_faqs = faq_repository.get_all_faqs()
-        assert len(all_faqs) >= 8, f"Expected at least 8 FAQs written, got {len(all_faqs)}"
+        assert (
+            len(all_faqs) >= 8
+        ), f"Expected at least 8 FAQs written, got {len(all_faqs)}"

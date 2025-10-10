@@ -13,7 +13,6 @@ Tests cover:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from app.services.simplified_rag_service import SimplifiedRAGService
 
 
@@ -74,7 +73,9 @@ class TestRAGQueryProcessing:
         with patch.object(
             rag_service.document_retriever, "retrieve_documents", return_value=[]
         ):
-            response = await rag_service.query("What is the meaning of life?", chat_history=[])
+            response = await rag_service.query(
+                "What is the meaning of life?", chat_history=[]
+            )
 
         assert isinstance(response, dict)
         assert "answer" in response
@@ -133,8 +134,12 @@ class TestDocumentRetrieval:
 
         # Configure mock to return documents
         mock_docs = [
-            MagicMock(page_content="Trading fee information", metadata={"source": "faq"}),
-            MagicMock(page_content="General trading guide", metadata={"source": "wiki"}),
+            MagicMock(
+                page_content="Trading fee information", metadata={"source": "faq"}
+            ),
+            MagicMock(
+                page_content="General trading guide", metadata={"source": "wiki"}
+            ),
         ]
         rag_service.document_retriever.retrieve_documents.return_value = mock_docs
 
@@ -226,8 +231,7 @@ class TestPromptManagement:
     def test_create_context_only_prompt(self, rag_service):
         """Test context-only prompt creation."""
         prompt = rag_service.prompt_manager.create_context_only_prompt(
-            question="Test question",
-            chat_history_str="Previous conversation context"
+            question="Test question", chat_history_str="Previous conversation context"
         )
 
         assert prompt is not None
@@ -320,7 +324,9 @@ class TestDocumentProcessing:
         ]
 
         # Configure mock to return formatted string
-        rag_service.document_retriever.format_documents.return_value = "First document content\nSecond document content"
+        rag_service.document_retriever.format_documents.return_value = (
+            "First document content\nSecond document content"
+        )
 
         context = rag_service.document_retriever.format_documents(docs)
 

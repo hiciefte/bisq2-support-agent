@@ -61,4 +61,4 @@ To ensure consistent formatting:
 
 3. Before committing code:
    - Ensure all linting issues are resolved
-   - Run `npm run lint` in the web directory to check for errors 
+   - Run `npm run lint` in the web directory to check for errors

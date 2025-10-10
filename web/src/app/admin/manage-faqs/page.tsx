@@ -197,14 +197,14 @@ export default function ManageFaqsPage() {
       setIsSubmitting(false);
     }
   };
-  
+
   const handleEdit = (faq: FAQ) => {
     setEditingFaq(faq);
     setFormData({ question: faq.question, answer: faq.answer, category: faq.category, source: faq.source });
     setIsFormOpen(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  
+
   const handleDelete = async (id: string) => {
     setIsSubmitting(true);
     try {
@@ -228,7 +228,7 @@ export default function ManageFaqsPage() {
       setIsSubmitting(false);
     }
   };
-  
+
   const openNewFaqForm = () => {
     setEditingFaq(null);
     setFormData({ question: '', answer: '', category: '', source: 'Manual' });
@@ -575,4 +575,4 @@ export default function ManageFaqsPage() {
         </Card>
     </div>
   );
-} 
+}

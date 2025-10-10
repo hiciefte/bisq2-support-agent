@@ -62,4 +62,4 @@ export function Rating({
       </div>
     </div>
   )
-} 
+}

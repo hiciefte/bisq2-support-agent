@@ -168,4 +168,4 @@ For detailed privacy implementation requirements, see:
 
 - [Grafana Security Documentation](https://grafana.com/docs/grafana/latest/administration/security/)
 - [Prometheus Security Documentation](https://prometheus.io/docs/operating/security/)
-- [OpenAI API Data Usage Policy](https://openai.com/policies/api-data-usage-policies) 
+- [OpenAI API Data Usage Policy](https://openai.com/policies/api-data-usage-policies)
