@@ -47,6 +47,7 @@ black
 isort
 mypy
 pip-tools
+pre-commit
 
 # Added for cross-process file locking
 portalocker
