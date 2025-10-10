@@ -486,19 +486,57 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         # Add the FAQ using the FAQ service
         new_faq = faq_service.add_faq(faq_item)
 
-        # Mark the original feedback as processed with reference to the new FAQ
-        # This helps track which feedback has been addressed and prevents duplicate FAQ creation
-        marked = feedback_service.mark_feedback_as_processed(
-            message_id=request.message_id, faq_id=new_faq.id
-        )
-
-        if not marked:
-            logger.error(
-                f"Failed to mark feedback {request.message_id} as processed after creating FAQ {new_faq.id}"
+        # Try to mark the original feedback as processed with reference to the new FAQ
+        # If marking fails, rollback by deleting the created FAQ to prevent orphaned entries
+        try:
+            marked = feedback_service.mark_feedback_as_processed(
+                message_id=request.message_id, faq_id=new_faq.id
             )
+
+            if not marked:
+                # Marking returned False - rollback the FAQ creation
+                error_msg = f"Failed to mark feedback {request.message_id} as processed"
+                logger.error(f"{error_msg} after creating FAQ {new_faq.id}")
+
+                # Attempt to delete the orphaned FAQ
+                try:
+                    faq_service.delete_faq(new_faq.id)
+                    logger.info(f"Rolled back FAQ {new_faq.id} after marking failure")
+                except Exception as delete_error:
+                    # Log delete error but preserve original error context
+                    logger.error(
+                        f"Failed to rollback FAQ {new_faq.id} during error recovery: {delete_error}",
+                        exc_info=True,
+                    )
+
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to mark feedback as processed",
+                )
+        except HTTPException:
+            # Re-raise HTTPException without wrapping
+            raise
+        except Exception as mark_error:
+            # Marking raised an exception - rollback the FAQ creation
+            logger.error(
+                f"Exception while marking feedback {request.message_id} as processed: {mark_error}",
+                exc_info=True,
+            )
+
+            # Attempt to delete the orphaned FAQ
+            try:
+                faq_service.delete_faq(new_faq.id)
+                logger.info(f"Rolled back FAQ {new_faq.id} after marking exception")
+            except Exception as delete_error:
+                # Log delete error but preserve original error context
+                logger.error(
+                    f"Failed to rollback FAQ {new_faq.id} during error recovery: {delete_error}",
+                    exc_info=True,
+                )
+
             raise HTTPException(
                 status_code=500,
-                detail="FAQ created but failed to mark feedback as processed",
+                detail=f"Failed to mark feedback as processed: {str(mark_error)}",
             )
 
         # Record FAQ creation metric
