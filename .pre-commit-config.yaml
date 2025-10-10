@@ -37,7 +37,7 @@ repos:
     hooks:
       - id: black
         name: Format Python code with Black
-        language_version: python3.11
+        language_version: python3.13
         files: ^api/
         exclude: ^(api/venv/|api/data/)
 
@@ -92,7 +92,7 @@ repos:
         language: system
         pass_filenames: false
         always_run: false
-        stages: [commit]
+        stages: [pre-commit]
         files: ^api/(app|tests)/.*\.py$
 
   # Markdown linting
@@ -134,7 +134,7 @@ exclude: |
 minimum_pre_commit_version: '3.0.0'
 
 # Default stages for hooks
-default_stages: [commit]
+default_stages: [pre-commit]
 
 # Fail fast on first error
 fail_fast: false
