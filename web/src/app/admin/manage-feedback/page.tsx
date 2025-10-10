@@ -63,6 +63,10 @@ interface FeedbackItem {
   explanation?: string;
   issues: string[];
   has_no_source_response: boolean;
+  // Feedback tracking fields
+  is_processed?: boolean;
+  processed_at?: string;
+  faq_id?: string;
 }
 
 interface FeedbackListResponse {
@@ -650,7 +654,7 @@ export default function ManageFeedbackPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {feedback.is_negative && (
+                        {feedback.is_negative && !feedback.is_processed && (
                           <Button
                             onClick={() => openCreateFAQ(feedback)}
                             size="sm"
@@ -659,6 +663,11 @@ export default function ManageFeedbackPage() {
                             <PlusCircle className="h-4 w-4" />
                             Create FAQ
                           </Button>
+                        )}
+                        {feedback.is_processed && feedback.faq_id && (
+                          <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                            ✓ FAQ Created
+                          </span>
                         )}
                       </div>
                     </div>

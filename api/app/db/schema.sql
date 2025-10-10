@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS feedback (
     answer TEXT NOT NULL,                       -- Assistant's answer
     rating INTEGER NOT NULL CHECK(rating IN (0, 1)),  -- 0=negative, 1=positive
     explanation TEXT,                           -- User's feedback explanation (optional)
+    processed INTEGER DEFAULT 0 CHECK(processed IN (0, 1)),  -- 0=not processed, 1=processed into FAQ
+    processed_at DATETIME,                      -- When feedback was processed into FAQ
+    faq_id TEXT,                                -- Reference to created FAQ (if applicable)
     timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -18,6 +21,8 @@ CREATE INDEX IF NOT EXISTS idx_feedback_message_id ON feedback(message_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_timestamp ON feedback(timestamp);
 CREATE INDEX IF NOT EXISTS idx_feedback_rating ON feedback(rating);
 CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_processed ON feedback(processed);
+CREATE INDEX IF NOT EXISTS idx_feedback_faq_id ON feedback(faq_id);
 
 -- Conversation history table (one-to-many with feedback)
 CREATE TABLE IF NOT EXISTS conversation_messages (

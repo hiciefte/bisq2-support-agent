@@ -2,6 +2,15 @@ services:
   nginx:
     ports:
       - "8080:80"  # Use port 8080 locally to avoid macOS port 80 conflicts
+    volumes:
+      # Override production config with local development config (no CSP headers)
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Keep other config files and snippets from base compose
+      - ./nginx/conf.d/snippets:/etc/nginx/conf.d/snippets:ro
+      - ./nginx/conf.d/tor-support.conf.template:/etc/nginx/conf.d/tor-support.conf.template:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+      - ./nginx/error_pages:/usr/share/nginx/html/error_pages:ro
     networks:
       - bisq-support-network
 

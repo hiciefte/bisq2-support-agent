@@ -218,7 +218,7 @@ class FeedbackRepository:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            query = "SELECT id, message_id, question, answer, rating, explanation, timestamp FROM feedback"
+            query = "SELECT id, message_id, question, answer, rating, explanation, timestamp, processed, processed_at, faq_id FROM feedback"
             params = []
 
             if rating is not None:
@@ -344,7 +344,7 @@ class FeedbackRepository:
             cursor.execute(
                 """
                 SELECT DISTINCT f.id, f.message_id, f.question, f.answer, f.rating,
-                       f.explanation, f.timestamp
+                       f.explanation, f.timestamp, f.processed, f.processed_at, f.faq_id
                 FROM feedback f
                 INNER JOIN feedback_issues fi ON f.id = fi.feedback_id
                 WHERE fi.issue_type = ?
@@ -395,6 +395,56 @@ class FeedbackRepository:
 
             return cursor.rowcount > 0
 
+    def mark_feedback_as_processed(
+        self, message_id: str, faq_id: str, processed_at: Optional[str] = None
+    ) -> bool:
+        """
+        Mark feedback entry as processed into a FAQ with atomic conditional update.
+
+        Uses an atomic UPDATE with WHERE clause to ensure only unprocessed feedback
+        can be marked as processed, preventing race conditions where concurrent
+        requests might both try to process the same feedback.
+
+        Args:
+            message_id: Message identifier
+            faq_id: ID of the created FAQ
+            processed_at: Optional UTC timestamp (defaults to now in UTC)
+
+        Returns:
+            True if updated (feedback was unprocessed), False if not updated
+            (feedback not found or already processed by another request)
+        """
+        from datetime import timezone
+
+        if processed_at is None:
+            processed_at = datetime.now(timezone.utc).isoformat()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Atomic conditional update - only succeeds if feedback exists AND is unprocessed
+            cursor.execute(
+                """
+                UPDATE feedback
+                SET processed = 1, processed_at = ?, faq_id = ?
+                WHERE message_id = ? AND processed = 0
+                """,
+                (processed_at, faq_id, message_id),
+            )
+            conn.commit()
+
+            success = cursor.rowcount > 0
+            if success:
+                logger.info(
+                    f"Marked feedback {message_id} as processed (FAQ ID: {faq_id})"
+                )
+            else:
+                logger.warning(
+                    f"Feedback {message_id} not updated - either not found or already processed"
+                )
+
+            return success
+
     def get_feedback_stats(self) -> Dict[str, Any]:
         """
         Get overall feedback statistics.
@@ -417,6 +467,18 @@ class FeedbackRepository:
             cursor.execute("SELECT COUNT(*) as negative FROM feedback WHERE rating = 0")
             negative = cursor.fetchone()["negative"]
 
+            # Processed feedback
+            cursor.execute(
+                "SELECT COUNT(*) as processed FROM feedback WHERE processed = 1"
+            )
+            processed = cursor.fetchone()["processed"]
+
+            # Unprocessed negative feedback (potential FAQs)
+            cursor.execute(
+                "SELECT COUNT(*) as unprocessed FROM feedback WHERE rating = 0 AND processed = 0"
+            )
+            unprocessed_negative = cursor.fetchone()["unprocessed"]
+
             # Most common issues
             cursor.execute(
                 """
@@ -436,6 +498,8 @@ class FeedbackRepository:
                 "total": total,
                 "positive": positive,
                 "negative": negative,
+                "processed": processed,
+                "unprocessed_negative": unprocessed_negative,
                 "positive_rate": positive / total if total > 0 else 0,
                 "common_issues": common_issues,
             }

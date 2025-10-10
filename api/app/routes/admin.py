@@ -445,12 +445,28 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
     new FAQ entries, helping to address knowledge gaps and improve future
     responses for similar questions.
 
+    The original feedback entry is automatically marked as processed with
+    a reference to the created FAQ for tracking purposes.
+
     Authentication required via API key.
     """
     logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
 
     try:
+        # Check if feedback exists (simple existence check only)
+        existing_feedback = feedback_service.repository.get_feedback_by_message_id(
+            request.message_id
+        )
+
+        if not existing_feedback:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Feedback with message_id {request.message_id} not found",
+            )
+
         # Create the FAQ item
+        # Note: We don't check if feedback is already processed here to avoid race conditions
+        # The atomic update in mark_feedback_as_processed handles concurrency safely
         faq_item = FAQItem(
             question=request.suggested_question or "Generated from feedback",
             answer=request.suggested_answer,
@@ -461,17 +477,78 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         # Add the FAQ using the FAQ service
         new_faq = faq_service.add_faq(faq_item)
 
-        # TODO: Optionally update the original feedback to mark it as processed
-        # This could be useful for tracking which feedback has been addressed
+        # Try to atomically mark the feedback as processed
+        # The repository uses an atomic UPDATE with WHERE processed = 0
+        # This ensures only one concurrent request can successfully mark it
+        try:
+            marked = feedback_service.mark_feedback_as_processed(
+                message_id=request.message_id, faq_id=new_faq.id
+            )
+
+            if not marked:
+                # Atomic update failed - feedback was already processed by another request
+                # Rollback the FAQ creation to maintain consistency
+                logger.warning(
+                    f"Feedback {request.message_id} was already processed by another request, "
+                    f"rolling back FAQ {new_faq.id}"
+                )
+
+                # Attempt to delete the orphaned FAQ
+                try:
+                    faq_service.delete_faq(new_faq.id)
+                    logger.info(
+                        f"Successfully rolled back FAQ {new_faq.id} after concurrent processing detected"
+                    )
+                except Exception as delete_error:
+                    # Log delete error but preserve original error context
+                    logger.error(
+                        f"Failed to rollback FAQ {new_faq.id} during race condition recovery: {delete_error}",
+                        exc_info=True,
+                    )
+
+                # Return 409 Conflict - feedback was already processed by concurrent request
+                raise HTTPException(
+                    status_code=409,
+                    detail="Feedback already processed by another request",
+                )
+        except HTTPException:
+            # Re-raise HTTPException without wrapping
+            raise
+        except Exception as mark_error:
+            # Marking raised an exception - rollback the FAQ creation
+            logger.error(
+                f"Exception while marking feedback {request.message_id} as processed: {mark_error}",
+                exc_info=True,
+            )
+
+            # Attempt to delete the orphaned FAQ
+            try:
+                faq_service.delete_faq(new_faq.id)
+                logger.info(f"Rolled back FAQ {new_faq.id} after marking exception")
+            except Exception as delete_error:
+                # Log delete error but preserve original error context
+                logger.error(
+                    f"Failed to rollback FAQ {new_faq.id} during error recovery: {delete_error}",
+                    exc_info=True,
+                )
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to mark feedback as processed: {mark_error}",
+            ) from mark_error
 
         # Record FAQ creation metric
         FAQ_CREATION_TOTAL.inc()
 
         logger.info(
-            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id}"
+            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id} "
+            f"(Feedback marked as processed)"
         )
         return new_faq
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (404, 409) without wrapping
+        raise
     except Exception as e:
         logger.error(
             f"Failed to create FAQ from feedback {request.message_id}: {e}",

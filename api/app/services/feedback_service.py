@@ -774,6 +774,17 @@ class FeedbackService:
                 and (item.has_no_source_response or item.explanation)
             ]
 
+        # Filter by processed status
+        if filters.processed is not None:
+            if filters.processed:
+                # Show only processed feedback
+                filtered_items = [item for item in filtered_items if item.is_processed]
+            else:
+                # Show only unprocessed feedback
+                filtered_items = [
+                    item for item in filtered_items if not item.is_processed
+                ]
+
         return filtered_items
 
     def _filter_by_date(
@@ -916,6 +927,36 @@ class FeedbackService:
         # Sort by newest first
         return sorted(feedback_items, key=lambda x: x.timestamp, reverse=True)
 
+    def mark_feedback_as_processed(
+        self, message_id: str, faq_id: str, processed_at: Optional[str] = None
+    ) -> bool:
+        """
+        Mark feedback entry as processed into a FAQ.
+
+        Args:
+            message_id: Message identifier
+            faq_id: ID of the created FAQ
+            processed_at: Optional timestamp (defaults to now)
+
+        Returns:
+            True if updated successfully
+        """
+        success = self.repository.mark_feedback_as_processed(
+            message_id, faq_id, processed_at
+        )
+
+        if success:
+            # Invalidate cache to reflect the change
+            self._feedback_cache = None
+            self._last_load_time = None
+            logger.info(
+                f"Successfully marked feedback {message_id} as processed (FAQ: {faq_id})"
+            )
+        else:
+            logger.warning(f"Failed to mark feedback {message_id} as processed")
+
+        return success
+
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard."""
         try:
@@ -946,6 +987,10 @@ class FeedbackService:
                     "common_issues": {},
                     "recent_negative_count": 0,
                     "needs_faq_count": 0,
+                    "processed_count": basic_stats.get("processed", 0),
+                    "unprocessed_negative_count": basic_stats.get(
+                        "unprocessed_negative", 0
+                    ),
                     "source_effectiveness": {},
                     "feedback_by_month": {},
                 }
@@ -1011,6 +1056,10 @@ class FeedbackService:
                 "common_issues": common_issues,
                 "recent_negative_count": len(recent_negative),
                 "needs_faq_count": len(needs_faq_items),
+                "processed_count": basic_stats.get("processed", 0),
+                "unprocessed_negative_count": basic_stats.get(
+                    "unprocessed_negative", 0
+                ),
                 "source_effectiveness": dict(source_stats),
                 "feedback_by_month": dict(monthly_counts),
             }
@@ -1025,6 +1074,8 @@ class FeedbackService:
                 "common_issues": {},
                 "recent_negative_count": 0,
                 "needs_faq_count": 0,
+                "processed_count": 0,
+                "unprocessed_negative_count": 0,
                 "source_effectiveness": {},
                 "feedback_by_month": {},
             }
