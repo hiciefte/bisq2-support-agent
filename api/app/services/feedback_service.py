@@ -1057,7 +1057,9 @@ class FeedbackService:
                 "recent_negative_count": len(recent_negative),
                 "needs_faq_count": len(needs_faq_items),
                 "processed_count": basic_stats.get("processed", 0),
-                "unprocessed_negative_count": basic_stats.get("unprocessed_negative", 0),
+                "unprocessed_negative_count": basic_stats.get(
+                    "unprocessed_negative", 0
+                ),
                 "source_effectiveness": dict(source_stats),
                 "feedback_by_month": dict(monthly_counts),
             }

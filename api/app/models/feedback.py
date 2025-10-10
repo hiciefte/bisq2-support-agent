@@ -69,9 +69,15 @@ class FeedbackItem(BaseModel):
     sources: Optional[List[Dict[str, str]]] = None
     sources_used: Optional[List[Dict[str, str]]] = None
     metadata: Optional[Dict[str, Any]] = None
-    processed: Optional[int] = Field(default=0, description="0=not processed, 1=processed into FAQ")
-    processed_at: Optional[str] = Field(default=None, description="Timestamp when processed into FAQ")
-    faq_id: Optional[str] = Field(default=None, description="ID of created FAQ if processed")
+    processed: Optional[int] = Field(
+        default=0, description="0=not processed, 1=processed into FAQ"
+    )
+    processed_at: Optional[str] = Field(
+        default=None, description="Timestamp when processed into FAQ"
+    )
+    faq_id: Optional[str] = Field(
+        default=None, description="ID of created FAQ if processed"
+    )
 
     @computed_field
     @property
@@ -143,7 +149,8 @@ class FeedbackFilterRequest(BaseModel):
         None, description="Filter for feedback that needs FAQ creation"
     )
     processed: Optional[bool] = Field(
-        None, description="Filter by processed status (True=processed, False=unprocessed)"
+        None,
+        description="Filter by processed status (True=processed, False=unprocessed)",
     )
     page: int = Field(1, ge=1, description="Page number for pagination")
     page_size: int = Field(50, ge=1, le=100, description="Number of items per page")
