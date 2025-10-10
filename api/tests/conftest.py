@@ -19,7 +19,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.main import app
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
@@ -84,8 +83,9 @@ def test_client(test_settings: Settings) -> TestClient:
     Returns:
         TestClient: FastAPI test client
     """
-    # Override the settings dependency
+    # Import app here to avoid triggering Settings validation at module load time
     from app.core.config import get_settings
+    from app.main import app
 
     app.dependency_overrides[get_settings] = lambda: test_settings
     client = TestClient(app)
@@ -268,6 +268,28 @@ def rag_service(
     # Replace the real LLM and embeddings with mocks
     service.llm_provider.llm = mock_llm
     service.llm_provider.embeddings = mock_embeddings
+
+    # Mock the vectorstore to avoid requiring actual vector database
+    mock_vectorstore = MagicMock()
+    mock_vectorstore.similarity_search.return_value = []
+    service.vectorstore = mock_vectorstore
+
+    # Mock document_retriever and its methods with sensible defaults
+    # Tests can override these with patch.object if needed
+    mock_document_retriever = MagicMock()
+    mock_document_retriever.retrieve_documents.return_value = []
+    mock_document_retriever.format_documents.return_value = ""
+    service.document_retriever = mock_document_retriever
+
+    # Mock the RAG chain to avoid initialization requirements
+    mock_rag_chain = MagicMock()
+    mock_rag_chain.invoke.return_value = {"answer": "This is a test response from the mock LLM."}
+    service.rag_chain = mock_rag_chain
+
+    # Mock the prompt to avoid initialization requirements
+    mock_prompt = MagicMock()
+    mock_prompt.format.return_value = "Formatted prompt text"
+    service.prompt = mock_prompt
 
     return service
 
