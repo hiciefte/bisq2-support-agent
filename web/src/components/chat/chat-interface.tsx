@@ -365,15 +365,29 @@ const ChatInterface = () => {
             } catch (error: unknown) {
                 // Handle AbortController error (timeout) or other fetch errors
                 let errorContent = "An error occurred while processing your request.";
+                let errorDetails = "";
 
                 if (error instanceof DOMException && error.name === "AbortError") {
                     errorContent = "The request took too long to complete. The server might be busy processing your question. Please try again later or ask a simpler question.";
                 } else {
+                    // Capture detailed error information for debugging
                     console.error("Error fetching response:", error);
-                    // Include error message in the log if available
                     if (error instanceof Error) {
+                        console.error("Error name:", error.name);
                         console.error("Error message:", error.message);
+                        console.error("Error stack:", error.stack);
+                        errorDetails = `${error.name}: ${error.message}`;
+
+                        // Add specific error type to user message in development
+                        if (process.env.NODE_ENV !== 'production') {
+                            errorContent = `An error occurred: ${error.name} - ${error.message}. Please try again.`;
+                        }
                     }
+
+                    // Log additional context
+                    console.error("Request URL:", `${apiUrl}/chat/query`);
+                    console.error("Question length:", text.length);
+                    console.error("Chat history length:", chatHistory.length);
                 }
 
                 const errorMessage: Message = {

@@ -132,7 +132,24 @@ async def query(
             response_time=result["response_time"],
         )
 
-        return JSONResponse(content=response_data.model_dump())
+        # Log response size and validate JSON serializability
+        response_dict = response_data.model_dump()
+        try:
+            import json
+
+            response_json = json.dumps(response_dict)
+            logger.info(
+                f"Response prepared: answer_length={len(result['answer'])}, "
+                f"sources_count={len(formatted_sources)}, "
+                f"total_size={len(response_json)} bytes"
+            )
+        except (TypeError, ValueError) as e:
+            logger.error(f"Response is not JSON serializable: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail="Failed to serialize response"
+            ) from e
+
+        return JSONResponse(content=response_dict)
     except Exception as e:
         logger.exception("Unexpected error processing /query")
         QUERY_ERRORS.labels(error_type="internal_error").inc()
