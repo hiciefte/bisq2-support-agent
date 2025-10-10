@@ -509,7 +509,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
                 # Return 409 Conflict - feedback was already processed by concurrent request
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Feedback already processed by another request",
+                    detail="Feedback already processed by another request",
                 )
         except HTTPException:
             # Re-raise HTTPException without wrapping
@@ -534,8 +534,8 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
 
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to mark feedback as processed: {str(mark_error)}",
-            )
+                detail=f"Failed to mark feedback as processed: {mark_error}",
+            ) from mark_error
 
         # Record FAQ creation metric
         FAQ_CREATION_TOTAL.inc()

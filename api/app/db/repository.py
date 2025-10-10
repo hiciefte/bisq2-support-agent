@@ -408,14 +408,16 @@ class FeedbackRepository:
         Args:
             message_id: Message identifier
             faq_id: ID of the created FAQ
-            processed_at: Optional timestamp (defaults to now)
+            processed_at: Optional UTC timestamp (defaults to now in UTC)
 
         Returns:
             True if updated (feedback was unprocessed), False if not updated
             (feedback not found or already processed by another request)
         """
+        from datetime import timezone
+
         if processed_at is None:
-            processed_at = datetime.now().isoformat()
+            processed_at = datetime.now(timezone.utc).isoformat()
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
