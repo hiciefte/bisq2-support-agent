@@ -453,7 +453,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
     logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
 
     try:
-        # Check if feedback is already processed to ensure idempotency
+        # Check if feedback exists (simple existence check only)
         existing_feedback = feedback_service.repository.get_feedback_by_message_id(
             request.message_id
         )
@@ -464,18 +464,9 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
                 detail=f"Feedback with message_id {request.message_id} not found",
             )
 
-        # Check if feedback is already processed
-        if existing_feedback.get("processed", 0) == 1:
-            existing_faq_id = existing_feedback.get("faq_id")
-            logger.warning(
-                f"Feedback {request.message_id} already processed into FAQ {existing_faq_id}"
-            )
-            raise HTTPException(
-                status_code=409,
-                detail=f"Feedback already processed into FAQ {existing_faq_id}",
-            )
-
         # Create the FAQ item
+        # Note: We don't check if feedback is already processed here to avoid race conditions
+        # The atomic update in mark_feedback_as_processed handles concurrency safely
         faq_item = FAQItem(
             question=request.suggested_question or "Generated from feedback",
             answer=request.suggested_answer,
@@ -486,32 +477,39 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         # Add the FAQ using the FAQ service
         new_faq = faq_service.add_faq(faq_item)
 
-        # Try to mark the original feedback as processed with reference to the new FAQ
-        # If marking fails, rollback by deleting the created FAQ to prevent orphaned entries
+        # Try to atomically mark the feedback as processed
+        # The repository uses an atomic UPDATE with WHERE processed = 0
+        # This ensures only one concurrent request can successfully mark it
         try:
             marked = feedback_service.mark_feedback_as_processed(
                 message_id=request.message_id, faq_id=new_faq.id
             )
 
             if not marked:
-                # Marking returned False - rollback the FAQ creation
-                error_msg = f"Failed to mark feedback {request.message_id} as processed"
-                logger.error(f"{error_msg} after creating FAQ {new_faq.id}")
+                # Atomic update failed - feedback was already processed by another request
+                # Rollback the FAQ creation to maintain consistency
+                logger.warning(
+                    f"Feedback {request.message_id} was already processed by another request, "
+                    f"rolling back FAQ {new_faq.id}"
+                )
 
                 # Attempt to delete the orphaned FAQ
                 try:
                     faq_service.delete_faq(new_faq.id)
-                    logger.info(f"Rolled back FAQ {new_faq.id} after marking failure")
+                    logger.info(
+                        f"Successfully rolled back FAQ {new_faq.id} after concurrent processing detected"
+                    )
                 except Exception as delete_error:
                     # Log delete error but preserve original error context
                     logger.error(
-                        f"Failed to rollback FAQ {new_faq.id} during error recovery: {delete_error}",
+                        f"Failed to rollback FAQ {new_faq.id} during race condition recovery: {delete_error}",
                         exc_info=True,
                     )
 
+                # Return 409 Conflict - feedback was already processed by concurrent request
                 raise HTTPException(
-                    status_code=500,
-                    detail="Failed to mark feedback as processed",
+                    status_code=409,
+                    detail=f"Feedback already processed by another request",
                 )
         except HTTPException:
             # Re-raise HTTPException without wrapping

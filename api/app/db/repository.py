@@ -399,7 +399,11 @@ class FeedbackRepository:
         self, message_id: str, faq_id: str, processed_at: Optional[str] = None
     ) -> bool:
         """
-        Mark feedback entry as processed into a FAQ.
+        Mark feedback entry as processed into a FAQ with atomic conditional update.
+
+        Uses an atomic UPDATE with WHERE clause to ensure only unprocessed feedback
+        can be marked as processed, preventing race conditions where concurrent
+        requests might both try to process the same feedback.
 
         Args:
             message_id: Message identifier
@@ -407,7 +411,8 @@ class FeedbackRepository:
             processed_at: Optional timestamp (defaults to now)
 
         Returns:
-            True if updated, False if not found
+            True if updated (feedback was unprocessed), False if not updated
+            (feedback not found or already processed by another request)
         """
         if processed_at is None:
             processed_at = datetime.now().isoformat()
@@ -415,11 +420,12 @@ class FeedbackRepository:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
+            # Atomic conditional update - only succeeds if feedback exists AND is unprocessed
             cursor.execute(
                 """
                 UPDATE feedback
                 SET processed = 1, processed_at = ?, faq_id = ?
-                WHERE message_id = ?
+                WHERE message_id = ? AND processed = 0
                 """,
                 (processed_at, faq_id, message_id),
             )
@@ -431,7 +437,9 @@ class FeedbackRepository:
                     f"Marked feedback {message_id} as processed (FAQ ID: {faq_id})"
                 )
             else:
-                logger.warning(f"Feedback {message_id} not found for processing")
+                logger.warning(
+                    f"Feedback {message_id} not updated - either not found or already processed"
+                )
 
             return success
 
