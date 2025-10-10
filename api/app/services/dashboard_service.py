@@ -104,8 +104,11 @@ class DashboardService:
             faq_candidates = []
             for feedback in feedback_items:
                 # Use the same criteria as feedback service: negative feedback with explanations or "no source" responses
-                if feedback.is_negative and (
-                    feedback.explanation or feedback.has_no_source_response
+                # AND exclude already-processed feedback (feedback that has been turned into FAQs)
+                if (
+                    feedback.is_negative
+                    and (feedback.explanation or feedback.has_no_source_response)
+                    and not feedback.is_processed
                 ):
 
                     faq_candidates.append(

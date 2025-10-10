@@ -445,6 +445,9 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
     new FAQ entries, helping to address knowledge gaps and improve future
     responses for similar questions.
 
+    The original feedback entry is automatically marked as processed with
+    a reference to the created FAQ for tracking purposes.
+
     Authentication required via API key.
     """
     logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
@@ -461,14 +464,18 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         # Add the FAQ using the FAQ service
         new_faq = faq_service.add_faq(faq_item)
 
-        # TODO: Optionally update the original feedback to mark it as processed
-        # This could be useful for tracking which feedback has been addressed
+        # Mark the original feedback as processed with reference to the new FAQ
+        # This helps track which feedback has been addressed and prevents duplicate FAQ creation
+        feedback_service.mark_feedback_as_processed(
+            message_id=request.message_id, faq_id=new_faq.id
+        )
 
         # Record FAQ creation metric
         FAQ_CREATION_TOTAL.inc()
 
         logger.info(
-            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id}"
+            f"Successfully created FAQ from feedback {request.message_id}: {new_faq.id} "
+            f"(Feedback marked as processed)"
         )
         return new_faq
 
