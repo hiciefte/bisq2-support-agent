@@ -45,7 +45,7 @@ test.describe('Feedback Submission', () => {
     await page.goto('http://localhost:3000/admin');
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/dashboard');
+    await page.waitForURL('**/admin/overview');
 
     // Navigate to feedback management
     await page.click('a[href="/admin/manage-feedback"]');
@@ -104,7 +104,7 @@ test.describe('Feedback Submission', () => {
     await page.goto('http://localhost:3000/admin');
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/dashboard');
+    await page.waitForURL('**/admin/overview');
 
     // Navigate to feedback management
     await page.click('a[href="/admin/manage-feedback"]');
@@ -217,7 +217,7 @@ test.describe('Feedback Submission', () => {
     await page.goto('http://localhost:3000/admin');
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/dashboard');
+    await page.waitForURL('**/admin/overview');
 
     // Navigate to feedback
     await page.click('a[href="/admin/manage-feedback"]');

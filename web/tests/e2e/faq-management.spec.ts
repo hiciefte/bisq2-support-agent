@@ -20,8 +20,8 @@ test.describe('FAQ Management', () => {
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
 
-    // Wait for redirect to dashboard
-    await page.waitForURL('**/admin/dashboard');
+    // Wait for redirect to overview
+    await page.waitForURL('**/admin/overview');
 
     // Navigate to FAQ management
     await page.click('a[href="/admin/manage-faqs"]');

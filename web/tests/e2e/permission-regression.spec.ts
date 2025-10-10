@@ -25,7 +25,7 @@ test.describe('Permission Regression Tests', () => {
     await page.goto('http://localhost:3000/admin');
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/dashboard');
+    await page.waitForURL('**/admin/overview');
     await page.click('a[href="/admin/manage-faqs"]');
     await page.waitForURL('**/admin/manage-faqs');
 
@@ -225,7 +225,7 @@ test.describe('Cross-session Permission Tests', () => {
       await page.goto('http://localhost:3000/admin');
       await page.fill('input[type="password"]', ADMIN_API_KEY);
       await page.click('button:has-text("Login")');
-      await page.waitForURL('**/admin/dashboard');
+      await page.waitForURL('**/admin/overview');
       await page.click('a[href="/admin/manage-faqs"]');
       await page.waitForURL('**/admin/manage-faqs');
     }
