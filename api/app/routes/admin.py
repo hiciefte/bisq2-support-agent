@@ -453,6 +453,28 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
     logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
 
     try:
+        # Check if feedback is already processed to ensure idempotency
+        existing_feedback = feedback_service.repository.get_feedback_by_message_id(
+            request.message_id
+        )
+
+        if not existing_feedback:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Feedback with message_id {request.message_id} not found",
+            )
+
+        # Check if feedback is already processed
+        if existing_feedback.get("processed", 0) == 1:
+            existing_faq_id = existing_feedback.get("faq_id")
+            logger.warning(
+                f"Feedback {request.message_id} already processed into FAQ {existing_faq_id}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Feedback already processed into FAQ {existing_faq_id}",
+            )
+
         # Create the FAQ item
         faq_item = FAQItem(
             question=request.suggested_question or "Generated from feedback",
@@ -479,6 +501,9 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         )
         return new_faq
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (404, 409) without wrapping
+        raise
     except Exception as e:
         logger.error(
             f"Failed to create FAQ from feedback {request.message_id}: {e}",

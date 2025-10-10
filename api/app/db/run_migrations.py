@@ -53,7 +53,7 @@ def apply_migration(conn: sqlite3.Connection, migration_name: str, sql: str) -> 
 
     except Exception as e:
         conn.rollback()
-        logger.error(f"Failed to apply migration {migration_name}: {e}")
+        logger.exception(f"Failed to apply migration {migration_name}")
         raise
 
 

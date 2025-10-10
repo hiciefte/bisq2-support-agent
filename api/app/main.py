@@ -13,6 +13,7 @@ from app.core.tor_metrics import (
     update_cookie_security_mode,
     update_tor_service_configured,
 )
+from app.db.run_migrations import run_migrations
 from app.middleware import TorDetectionMiddleware
 from app.routes import admin, chat, feedback, health, onion_verify
 from app.services.faq_service import FAQService
@@ -65,6 +66,12 @@ async def lifespan(app: FastAPI):
     # Initialize services
     settings = get_settings()
     app.state.settings = settings
+
+    # Run database migrations before initializing services
+    logger.info("Running database migrations...")
+    db_path = os.path.join(settings.DATA_DIR, "feedback.db")
+    run_migrations(db_path)
+    logger.info("Database migrations completed")
 
     logger.info("Initializing WikiService...")
     wiki_service = WikiService(settings=settings)
