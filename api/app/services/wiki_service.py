@@ -9,9 +9,12 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from langchain_core.documents import Document
+
+if TYPE_CHECKING:
+    from fastapi import Request
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -117,7 +120,7 @@ class WikiService:
             return []
 
 
-def get_wiki_service(request) -> WikiService:
+def get_wiki_service(request: "Request") -> WikiService:
     """Get the WikiService from FastAPI request state.
 
     Args:

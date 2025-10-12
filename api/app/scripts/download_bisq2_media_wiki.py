@@ -17,7 +17,15 @@ logging.basicConfig(
 
 
 # Function to extract links from wiki content
-def extract_links(content):
+def extract_links(content: str) -> list[str]:
+    """Extract wiki links from MediaWiki content.
+
+    Args:
+        content: Raw wiki content text
+
+    Returns:
+        List of unique page names referenced in the content
+    """
     links = []
 
     # Extract wiki links [[Page Name]]
@@ -32,7 +40,16 @@ def extract_links(content):
 
 
 # Function to determine if a page is related to Bisq 1, Bisq 2, or both
-def classify_bisq_version(title, content):
+def classify_bisq_version(title: str, content: str) -> str:
+    """Classify wiki page as relating to Bisq 1, Bisq 2, or general content.
+
+    Args:
+        title: Page title
+        content: Page content text
+
+    Returns:
+        Classification string: 'bisq1', 'bisq2', or 'general'
+    """
     # Direct Bisq 2 indicators in title
     bisq2_title_indicators = [
         "Bisq 2",
@@ -115,8 +132,12 @@ def validate_xml(file_path: str) -> bool:
         return False
 
 
-def main(output_dir):
-    """Main function to download and process wiki content."""
+def main(output_dir: str) -> None:
+    """Main function to download and process wiki content.
+
+    Args:
+        output_dir: Directory path where the XML dump will be saved
+    """
     logging.info("Connecting to Bisq Wiki via mwclient...")
     site = mwclient.Site("bisq.wiki", path="/")
 

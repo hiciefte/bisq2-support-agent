@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import Any, Dict
 
 from app.core.config import get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
@@ -143,7 +144,12 @@ app = FastAPI(
 
 
 # Custom OpenAPI with security scheme
-def custom_openapi():
+def custom_openapi() -> Dict[str, Any]:
+    """Generate custom OpenAPI schema with admin authentication.
+
+    Returns:
+        OpenAPI schema dictionary with security schemes configured
+    """
     if app.openapi_schema:
         return app.openapi_schema
 

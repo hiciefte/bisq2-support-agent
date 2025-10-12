@@ -124,8 +124,15 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="after")
     @classmethod
-    def parse_cors_origins(cls, v):
-        """Convert string CORS_ORIGINS to list of hosts"""
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+        """Convert string CORS_ORIGINS to list of hosts.
+
+        Args:
+            v: CORS origins as string (comma-separated) or list
+
+        Returns:
+            List of CORS origin hosts
+        """
         if isinstance(v, str):
             if v == "*":
                 return ["*"]
@@ -143,5 +150,10 @@ class Settings(BaseSettings):
 
 
 @lru_cache()
-def get_settings():
+def get_settings() -> Settings:
+    """Get cached application settings instance.
+
+    Returns:
+        Settings: Application settings object
+    """
     return Settings()
