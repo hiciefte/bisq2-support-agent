@@ -38,7 +38,7 @@ build==1.3.0
     # via
     #   chromadb
     #   pip-tools
-cachetools==6.2.0
+cachetools==6.2.1
     # via google-auth
 certifi==2025.10.5
     # via
@@ -78,7 +78,7 @@ docopt==0.6.2
     # via mwcli
 durationpy==0.10
     # via kubernetes
-fastapi==0.118.3
+fastapi==0.119.0
     # via -r api/requirements.in
 filelock==3.20.0
     # via
@@ -119,7 +119,7 @@ httpx==0.28.1
     #   chromadb
     #   langsmith
     #   openai
-httpx-sse==0.4.2
+httpx-sse==0.4.3
     # via langchain-community
 huggingface-hub==0.35.3
     # via
@@ -129,7 +129,7 @@ humanfriendly==10.0
     # via coloredlogs
 identify==2.6.15
     # via pre-commit
-idna==3.10
+idna==3.11
     # via
     #   anyio
     #   httpx
@@ -141,7 +141,7 @@ importlib-resources==6.5.2
     # via chromadb
 iniconfig==2.1.0
     # via pytest
-isort==6.1.0
+isort==7.0.0
     # via -r api/requirements.in
 jiter==0.11.0
     # via openai
@@ -530,7 +530,7 @@ uvicorn[standard]==0.37.0
     #   chromadb
 uvloop==0.21.0
     # via uvicorn
-virtualenv==20.35.1
+virtualenv==20.35.3
     # via pre-commit
 watchfiles==1.1.0
     # via uvicorn
