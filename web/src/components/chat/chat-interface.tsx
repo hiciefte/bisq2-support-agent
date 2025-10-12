@@ -666,7 +666,7 @@ const ChatInterface = () => {
             <div className="flex-1 overflow-hidden">
                 <div className="h-full overflow-y-auto" ref={scrollAreaRef}>
                     <div className="mx-auto w-full max-w-2xl px-4">
-                        <div className="flex-1 space-y-6 pb-32 pt-4">
+                        <div className="flex-1 space-y-6 pb-48 pt-4">
                             {messages.length === 0 ? (
                                 <div
                                     className="flex h-[calc(100vh-280px)] flex-col items-center justify-center">

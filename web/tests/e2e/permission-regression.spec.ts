@@ -15,7 +15,7 @@ const execAsync = promisify(exec);
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'test-admin-key';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
 
 test.describe('Permission Regression Tests', () => {
   test.skip(process.env.CI === 'true', 'Container restart tests only run locally');
@@ -23,18 +23,19 @@ test.describe('Permission Regression Tests', () => {
   test('FAQ deletion should work after container restart', async ({ page }) => {
     // Step 1: Create a test FAQ
     await page.goto('http://localhost:3000/admin');
+    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/overview');
+    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
     await page.click('a[href="/admin/manage-faqs"]');
-    await page.waitForURL('**/admin/manage-faqs');
+    await page.waitForSelector('text=FAQ', { timeout: 10000 });
 
-    await page.click('button:has-text("Create FAQ")');
+    await page.click('button:has-text("Add New FAQ")');
     const testQuestion = `Permission test ${Date.now()}`;
-    await page.fill('textarea[name="question"]', testQuestion);
-    await page.fill('textarea[name="answer"]', 'Testing permissions after restart');
-    await page.selectOption('select[name="category"]', 'General');
-    await page.click('button:has-text("Create")');
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'Testing permissions after restart');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
     await page.waitForTimeout(1000);
 
     // Step 2: Restart API container
@@ -50,22 +51,23 @@ test.describe('Permission Regression Tests', () => {
 
     // Step 3: Refresh page and try to delete the FAQ
     await page.reload();
-    await page.waitForSelector('table');
+    await page.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 10000 });
 
-    const faqRow = page.locator('tbody tr').filter({ hasText: testQuestion });
-    await expect(faqRow).toBeVisible();
+    const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+    await expect(faqCard).toBeVisible();
 
-    await faqRow.locator('button:has-text("Delete")').click();
-    await page.click('button:has-text("Confirm")');
+    const deleteButton = faqCard.locator('button').nth(1); // Second button is Trash2 icon
+    await deleteButton.click();
+    await page.click('button:has-text("Continue")');
     await page.waitForTimeout(1000);
 
     // Step 4: Verify deletion succeeded
-    const deletedFaq = page.locator('tbody tr').filter({ hasText: testQuestion });
+    const deletedFaq = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
     await expect(deletedFaq).toHaveCount(0);
 
     // Step 5: Verify deletion persisted (reload page)
     await page.reload();
-    await page.waitForSelector('table');
+    await page.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 10000 });
     await expect(deletedFaq).toHaveCount(0);
 
     // Step 6: Check API logs for permission errors
@@ -88,13 +90,20 @@ test.describe('Permission Regression Tests', () => {
 
     // Step 2: Submit feedback
     await page.goto('http://localhost:3000');
-    await page.waitForSelector('textarea[placeholder*="Type your message"]');
 
-    await page.fill('textarea[placeholder*="Type your message"]', 'Permission test message');
+    // Handle privacy notice if it appears
+    const privacyButton = page.locator('button:has-text("I Understand")');
+    if (await privacyButton.isVisible()) {
+      await privacyButton.click();
+    }
+
+    await page.getByRole('textbox').waitFor({ state: 'visible' });
+
+    await page.getByRole('textbox').fill('Permission test message');
     await page.click('button[type="submit"]');
-    await page.waitForSelector('.message-assistant', { timeout: 30000 });
+    await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
 
-    const thumbsUpButton = page.locator('button[aria-label*="Helpful"], button:has-text("👍")').last();
+    const thumbsUpButton = page.locator('button[aria-label="Rate as helpful"]').last();
     await thumbsUpButton.click();
     await page.waitForTimeout(2000);
 
@@ -103,10 +112,10 @@ test.describe('Permission Regression Tests', () => {
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
     await page.waitForURL('**/admin/manage-feedback');
-    await page.waitForSelector('table');
+    await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
 
-    const recentFeedback = page.locator('tbody tr').first();
-    const thumbsUp = recentFeedback.locator('svg.lucide-thumbs-up, [data-icon="thumbs-up"]');
+    const recentFeedback = page.locator('.border-l-4.border-l-gray-200').first();
+    const thumbsUp = recentFeedback.locator('svg.lucide-thumbs-up');
     await expect(thumbsUp).toBeVisible();
 
     // Step 4: Check for permission errors
@@ -151,27 +160,30 @@ test.describe('Permission Regression Tests', () => {
 
     // Try to create and delete FAQ
     await page.goto('http://localhost:3000/admin/manage-faqs');
+    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForURL('**/admin/manage-faqs');
+    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
+    await page.waitForSelector('text=FAQ', { timeout: 10000 });
 
     // Create FAQ
-    await page.click('button:has-text("Create FAQ")');
+    await page.click('button:has-text("Add New FAQ")');
     const testQuestion = `Multi-restart test ${Date.now()}`;
-    await page.fill('textarea[name="question"]', testQuestion);
-    await page.fill('textarea[name="answer"]', 'Testing after multiple restarts');
-    await page.selectOption('select[name="category"]', 'General');
-    await page.click('button:has-text("Create")');
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'Testing after multiple restarts');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
     await page.waitForTimeout(1000);
 
     // Delete FAQ
-    const faqRow = page.locator('tbody tr').filter({ hasText: testQuestion });
-    await faqRow.locator('button:has-text("Delete")').click();
-    await page.click('button:has-text("Confirm")');
+    const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+    const deleteButton = faqCard.locator('button').nth(1); // Second button is Trash2 icon
+    await deleteButton.click();
+    await page.click('button:has-text("Continue")');
     await page.waitForTimeout(1000);
 
     // Verify deletion
-    await expect(faqRow).toHaveCount(0);
+    await expect(faqCard).toHaveCount(0);
 
     // Check logs
     const { stdout: logs } = await execAsync(
@@ -223,37 +235,39 @@ test.describe('Cross-session Permission Tests', () => {
     // Login both admins
     for (const page of [page1, page2]) {
       await page.goto('http://localhost:3000/admin');
+      await page.waitForSelector('input[type="password"]', { timeout: 10000 });
       await page.fill('input[type="password"]', ADMIN_API_KEY);
       await page.click('button:has-text("Login")');
-      await page.waitForURL('**/admin/overview');
+      await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
       await page.click('a[href="/admin/manage-faqs"]');
-      await page.waitForURL('**/admin/manage-faqs');
+      await page.waitForSelector('text=FAQ', { timeout: 10000 });
     }
 
     // Admin 1: Create FAQ
-    await page1.click('button:has-text("Create FAQ")');
+    await page1.click('button:has-text("Add New FAQ")');
     const testQuestion = `Cross-session test ${Date.now()}`;
-    await page1.fill('textarea[name="question"]', testQuestion);
-    await page1.fill('textarea[name="answer"]', 'Cross-session test');
-    await page1.selectOption('select[name="category"]', 'General');
-    await page1.click('button:has-text("Create")');
+    await page1.fill('input#question', testQuestion);
+    await page1.fill('textarea#answer', 'Cross-session test');
+    await page1.fill('input#category', 'General');
+    await page1.click('button:has-text("Add FAQ")');
     await page1.waitForTimeout(1000);
 
     // Admin 2: Refresh and verify FAQ appears
     await page2.reload();
-    await page2.waitForSelector('table');
-    const faqOnPage2 = page2.locator('tbody tr').filter({ hasText: testQuestion });
+    await page2.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 10000 });
+    const faqOnPage2 = page2.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
     await expect(faqOnPage2).toBeVisible();
 
     // Admin 1: Delete FAQ
-    const faqOnPage1 = page1.locator('tbody tr').filter({ hasText: testQuestion });
-    await faqOnPage1.locator('button:has-text("Delete")').click();
-    await page1.click('button:has-text("Confirm")');
+    const faqOnPage1 = page1.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+    const deleteButton = faqOnPage1.locator('button').nth(1); // Second button is Trash2 icon
+    await deleteButton.click();
+    await page1.click('button:has-text("Continue")');
     await page1.waitForTimeout(1000);
 
     // Admin 2: Refresh and verify FAQ is gone
     await page2.reload();
-    await page2.waitForSelector('table');
+    await page2.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 10000 });
     await expect(faqOnPage2).toHaveCount(0);
 
     // Cleanup

@@ -1,30 +1,33 @@
 import { test, expect } from '@playwright/test';
 
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'test-admin-key';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
 
 test.describe('Conversation History Display', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to admin login
+    // Navigate to admin page (redirects to /admin/overview)
     await page.goto('http://localhost:3000/admin');
+
+    // Wait for login form to appear
+    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
 
     // Login with API key
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
 
-    // Wait for redirect to overview
-    await page.waitForURL('**/admin/overview');
+    // Wait for authenticated UI to appear (sidebar with navigation)
+    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
 
     // Navigate to feedback management
     await page.click('a[href="/admin/manage-feedback"]');
-    await page.waitForURL('**/admin/manage-feedback');
+    await page.waitForSelector('text=Feedback', { timeout: 10000 });
   });
 
   test('should show conversation history in feedback detail dialog', async ({ page }) => {
-    // Wait for feedback table to load
-    await page.waitForSelector('table', { timeout: 10000 });
+    // Wait for feedback cards to load
+    await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
 
-    // Click on the first "View Details" button
-    const viewButton = page.locator('button:has-text("View Details")').first();
+    // Click on the first view details button (Eye icon)
+    const viewButton = page.locator('button[variant="outline"]').filter({ has: page.locator('svg.lucide-eye') }).first();
     await expect(viewButton).toBeVisible();
     await viewButton.click();
 
@@ -61,10 +64,10 @@ test.describe('Conversation History Display', () => {
   });
 
   test('should show conversation history in create FAQ dialog from feedback page', async ({ page }) => {
-    // Wait for feedback table to load
-    await page.waitForSelector('table', { timeout: 10000 });
+    // Wait for feedback cards to load
+    await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
 
-    // Click on the first "Create FAQ" button
+    // Click on the first "Create FAQ" button (only visible for negative unprocessed feedback)
     const createFaqButton = page.locator('button:has-text("Create FAQ")').first();
     await expect(createFaqButton).toBeVisible();
     await createFaqButton.click();

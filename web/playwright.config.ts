@@ -35,7 +35,7 @@ export default defineConfig({
     ['list'],
   ],
 
-  /* Shared settings for all the projects below */
+  /* Test environment variables */
   use: {
     /* Base URL to use in actions like `await page.goto('/')` */
     baseURL: 'http://localhost:3000',
@@ -77,7 +77,7 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
+  webServer: process.env.SKIP_WEBSERVER ? undefined : {
     command: 'npm run dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
