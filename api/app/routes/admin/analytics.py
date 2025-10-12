@@ -36,29 +36,25 @@ feedback_service = FeedbackService(settings=settings)
 dashboard_service = DashboardService(settings=settings)
 
 # Create Prometheus metrics
-# Use Gauge for metrics that can go up and down
+# Use Gauge for metrics that can go up and down (absolute values that change)
+FEEDBACK_TOTAL = Gauge("bisq_feedback_total", "Total number of feedback entries")
+FEEDBACK_HELPFUL = Gauge("bisq_feedback_helpful", "Number of helpful feedback entries")
+FEEDBACK_UNHELPFUL = Gauge(
+    "bisq_feedback_unhelpful", "Number of unhelpful feedback entries"
+)
 FEEDBACK_HELPFUL_RATE = Gauge(
     "bisq_feedback_helpful_rate", "Percentage of helpful feedback"
+)
+SOURCE_TOTAL = Gauge(
+    "bisq_source_total", "Total usage count by source type", ["source_type"]
+)
+SOURCE_HELPFUL = Gauge(
+    "bisq_source_helpful", "Helpful count by source type", ["source_type"]
 )
 SOURCE_HELPFUL_RATE = Gauge(
     "bisq_source_helpful_rate", "Helpful rate by source type", ["source_type"]
 )
-
-# Use Counter for metrics that only increase
-FEEDBACK_TOTAL = Counter("bisq_feedback_total", "Total number of feedback entries")
-FEEDBACK_HELPFUL = Counter(
-    "bisq_feedback_helpful", "Number of helpful feedback entries"
-)
-FEEDBACK_UNHELPFUL = Counter(
-    "bisq_feedback_unhelpful", "Number of unhelpful feedback entries"
-)
-SOURCE_TOTAL = Counter(
-    "bisq_source_total", "Total usage count by source type", ["source_type"]
-)
-SOURCE_HELPFUL = Counter(
-    "bisq_source_helpful", "Helpful count by source type", ["source_type"]
-)
-ISSUE_COUNT = Counter(
+ISSUE_COUNT = Gauge(
     "bisq_issue_count", "Count of specific issues in feedback", ["issue_type"]
 )
 
@@ -87,30 +83,17 @@ async def get_metrics() -> Response:
     # Get feedback analytics
     analytics = await get_feedback_analytics()
 
-    # Reset Counters if needed (in case of server restart)
-    # We only do this for Counter types since they're cumulative
-    # Note: This is a workaround - in production you should use proper persistence
-    FEEDBACK_TOTAL._value.set(0)
-    FEEDBACK_HELPFUL._value.set(0)
-    FEEDBACK_UNHELPFUL._value.set(0)
-
-    # Update Counter metrics with current values
-    FEEDBACK_TOTAL._value.set(analytics["total_feedback"])
-    FEEDBACK_HELPFUL._value.set(analytics["helpful_count"])
-    FEEDBACK_UNHELPFUL._value.set(analytics["unhelpful_count"])
-
-    # Update Gauge metrics (these can go up or down)
+    # Update Gauge metrics with current values (Gauges are absolute values, not cumulative)
+    FEEDBACK_TOTAL.set(analytics["total_feedback"])
+    FEEDBACK_HELPFUL.set(analytics["helpful_count"])
+    FEEDBACK_UNHELPFUL.set(analytics["unhelpful_count"])
     FEEDBACK_HELPFUL_RATE.set(analytics["helpful_rate"] * 100)  # Convert to percentage
 
     # Update source metrics
     for source_type, stats in analytics["source_effectiveness"].items():
-        # Reset before setting new values
-        SOURCE_TOTAL.labels(source_type=source_type)._value.set(0)
-        SOURCE_HELPFUL.labels(source_type=source_type)._value.set(0)
-
-        # Set new values
-        SOURCE_TOTAL.labels(source_type=source_type)._value.set(stats["total"])
-        SOURCE_HELPFUL.labels(source_type=source_type)._value.set(stats["helpful"])
+        # Set Gauge values (no need to reset first, Gauges are absolute)
+        SOURCE_TOTAL.labels(source_type=source_type).set(stats["total"])
+        SOURCE_HELPFUL.labels(source_type=source_type).set(stats["helpful"])
 
         helpful_rate = stats["helpful"] / stats["total"] if stats["total"] > 0 else 0
         SOURCE_HELPFUL_RATE.labels(source_type=source_type).set(
@@ -120,11 +103,11 @@ async def get_metrics() -> Response:
     # Update issue metrics with controlled vocabulary to prevent high-cardinality
     # First clear any existing metrics to ensure removed issues don't persist
     for issue_type in [*KNOWN_ISSUE_TYPES.values(), "other"]:
-        ISSUE_COUNT.labels(issue_type=issue_type)._value.set(0)
+        ISSUE_COUNT.labels(issue_type=issue_type).set(0)
 
     # Now set the new values
     for issue_type, count in analytics["common_issues"].items():
-        ISSUE_COUNT.labels(issue_type=issue_type)._value.set(count)
+        ISSUE_COUNT.labels(issue_type=issue_type).set(count)
 
     # Return metrics in Prometheus format
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

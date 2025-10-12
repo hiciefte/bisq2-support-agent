@@ -46,8 +46,16 @@ send_webhook_alert() {
       color="danger"
     fi
 
+    # Use jq to properly escape JSON
+    local json_payload
+    json_payload=$(jq -n \
+      --arg hostname "$HOSTNAME" \
+      --arg color "$color" \
+      --arg message "$message" \
+      '{text: ("*\($hostname) Disk Alert*"), attachments: [{color: $color, text: $message}]}')
+
     curl -s -X POST -H "Content-Type: application/json" \
-      -d "{\"text\":\"*$HOSTNAME Disk Alert*\", \"attachments\":[{\"color\":\"$color\",\"text\":\"$message\"}]}" \
+      -d "$json_payload" \
       "$WEBHOOK_URL" &> /dev/null
 
     log "Webhook alert sent"

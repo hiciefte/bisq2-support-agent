@@ -184,7 +184,7 @@ def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQServ
 
 
 @pytest.fixture
-def feedback_service(
+async def feedback_service(
     test_settings: Settings, sample_feedback_data: list[dict]
 ) -> FeedbackService:
     """Create a FeedbackService instance with sample data.
@@ -207,7 +207,7 @@ def feedback_service(
 
     # Store sample feedback
     for feedback in sample_feedback_data:
-        service.store_feedback(
+        await service.store_feedback(
             question=feedback["question"],
             answer=feedback["answer"],
             helpful=feedback["helpful"],

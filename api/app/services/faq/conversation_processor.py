@@ -8,7 +8,7 @@ conversation threads based on message references and timestamps.
 import logging
 from datetime import timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 import pandas as pd
 
@@ -77,6 +77,12 @@ class ConversationProcessor:
                             )
 
                     # Create message object
+                    # Handle channel field safely (may be NaN)
+                    channel = (
+                        str(row_data["Channel"]).lower()
+                        if pd.notna(row_data["Channel"])
+                        else "unknown"
+                    )
                     msg = {
                         "msg_id": msg_id,
                         "text": row_data["Message"].strip(),
@@ -85,8 +91,8 @@ class ConversationProcessor:
                             if pd.notna(row_data["Author"])
                             else "unknown"
                         ),
-                        "channel": row_data["Channel"],
-                        "is_support": row_data["Channel"].lower() == "support",
+                        "channel": channel,
+                        "is_support": channel == "support",
                         "timestamp": timestamp,
                         "referenced_msg_id": (
                             row_data["Referenced Message ID"]
@@ -157,7 +163,7 @@ class ConversationProcessor:
         if not self.messages:
             return []
 
-        thread = []
+        thread: List[Dict] = []
         seen_messages: Set[str] = set()
         to_process = {start_msg_id}
         depth = 0

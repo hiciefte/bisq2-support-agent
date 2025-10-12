@@ -46,6 +46,7 @@ pytest-asyncio
 black
 isort
 mypy
+flake8
 pip-tools
 pre-commit
 

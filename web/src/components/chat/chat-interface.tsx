@@ -5,6 +5,7 @@
  * Refactored to use modular hooks and components
  */
 
+import { FormEvent } from "react"
 import { PrivacyWarningModal } from "@/components/privacy/privacy-warning-modal"
 import { MessageList } from "./components/message-list"
 import { ChatInput } from "./components/chat-input"
@@ -51,7 +52,7 @@ const ChatInterface = () => {
     const formattedAvgTime = formatResponseTime(avgResponseTime)
 
     // Handle form submission
-    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         if (!input.trim()) return
         await sendMessage(input)
