@@ -93,10 +93,19 @@ class StorageError(BaseAppException):
     """Raised when storage operations fail."""
 
     def __init__(self, detail: str, operation: str):
+        # Map to controlled vocabulary to prevent high cardinality
+        operation_map = {
+            "read": "READ",
+            "write": "WRITE",
+            "delete": "DELETE",
+            "create": "CREATE",
+            "update": "UPDATE",
+        }
+        normalized_op = operation_map.get(operation.lower(), "UNKNOWN")
         super().__init__(
             f"Storage {operation} failed: {detail}",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_code=f"STORAGE_{operation.upper()}_ERROR",
+            error_code=f"STORAGE_{normalized_op}_ERROR",
         )
 
 
@@ -128,10 +137,19 @@ class ExternalAPIError(BaseAppException):
     """Raised when external API calls fail."""
 
     def __init__(self, service: str, detail: str):
+        # Map to controlled vocabulary to prevent high cardinality
+        service_map = {
+            "openai": "OPENAI",
+            "xai": "XAI",
+            "wikipedia": "WIKIPEDIA",
+            "github": "GITHUB",
+            "external": "EXTERNAL",
+        }
+        normalized_service = service_map.get(service.lower(), "EXTERNAL")
         super().__init__(
             f"{service} API error: {detail}",
             status.HTTP_502_BAD_GATEWAY,
-            error_code=f"{service.upper()}_API_ERROR",
+            error_code=f"{normalized_service}_API_ERROR",
         )
 
 

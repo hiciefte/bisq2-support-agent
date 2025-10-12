@@ -93,7 +93,7 @@ class FAQRAGLoader:
                         )
                         documents.append(doc)
                     except json.JSONDecodeError:
-                        logger.error(f"Error parsing JSON line in FAQ file: {line}")
+                        logger.exception(f"Error parsing JSON line in FAQ file: {line}")
             logger.info(f"Loaded {len(documents)} FAQ documents")
             return documents
         except Exception as e:

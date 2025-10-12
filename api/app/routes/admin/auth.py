@@ -12,7 +12,7 @@ from app.core.security import (
     verify_admin_key_with_delay,
 )
 from app.models.feedback import AdminLoginRequest, AdminLoginResponse
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 
 # Setup logging
@@ -68,6 +68,9 @@ async def admin_login(
             raise AuthenticationError("Invalid credentials")
     except BaseAppException:
         # Re-raise application exceptions (like authentication errors)
+        raise
+    except HTTPException:
+        # Preserve HTTP exceptions (e.g., 503 when not configured)
         raise
     except Exception as e:
         logger.error(f"Admin login error: {e}", exc_info=True)

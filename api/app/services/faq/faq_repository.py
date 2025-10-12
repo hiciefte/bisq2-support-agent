@@ -89,8 +89,8 @@ class FAQRepository:
         except FileNotFoundError:
             logger.info("FAQ file not found on read, returning empty list.")
             return []
-        except Exception as e:
-            logger.error(f"Error reading FAQ file: {e}")
+        except (IOError, OSError, UnicodeDecodeError) as e:
+            logger.exception(f"Error reading FAQ file: {e}")
             return []
 
     def _write_all_faqs(self, faqs: List[FAQItem]):

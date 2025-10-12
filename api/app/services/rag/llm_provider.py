@@ -135,7 +135,7 @@ class LLMProvider:
                 f"xAI model initialized: {model_name} with max_tokens={self.settings.MAX_TOKENS}"
             )
         except ImportError:
-            logger.error(
+            logger.exception(
                 "langchain_xai package not installed. Please install it to use xAI models."
             )
             logger.info("Falling back to OpenAI model.")
