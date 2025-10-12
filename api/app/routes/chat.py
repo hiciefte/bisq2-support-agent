@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.core.config import Settings, get_settings
-from fastapi import APIRouter, Depends, HTTPException, Request
+from app.core.exceptions import BaseAppException, ValidationError
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel
@@ -100,7 +101,7 @@ async def query(
         except Exception as e:
             logger.warning("Validation error: %s", e)
             QUERY_ERRORS.labels(error_type="validation").inc()
-            raise HTTPException(status_code=422, detail=str(e)) from e
+            raise ValidationError(detail=str(e)) from e
 
         # Get response from simplified RAG service
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
@@ -145,12 +146,14 @@ async def query(
             )
         except (TypeError, ValueError) as e:
             logger.error(f"Response is not JSON serializable: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="Failed to serialize response"
+            raise BaseAppException(
+                detail="Failed to serialize response",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                error_code="RESPONSE_SERIALIZATION_FAILED",
             ) from e
 
         return JSONResponse(content=response_dict)
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error processing /query")
         QUERY_ERRORS.labels(error_type="internal_error").inc()
         return JSONResponse(
@@ -174,8 +177,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
         # Default values if no data is available
         stats = {
             "total_queries": 0,
-            "average_response_time": 300,  # Default to 5 minutes
-            "last_24h_average_response_time": 300,
+            "average_response_time": 300.0,  # Default to 5 minutes
+            "last_24h_average_response_time": 300.0,
         }
 
         if not feedback_dir.exists():
@@ -246,6 +249,8 @@ async def get_chat_stats(settings: Settings = Depends(get_settings)):
     except Exception as e:
         logger.error(f"Error getting chat stats: {str(e)}")
         logger.exception("Full error details:")
-        raise HTTPException(
-            status_code=500, detail="An error occurred while retrieving chat statistics"
-        )
+        raise BaseAppException(
+            detail="An error occurred while retrieving chat statistics",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="CHAT_STATS_FAILED",
+        ) from e

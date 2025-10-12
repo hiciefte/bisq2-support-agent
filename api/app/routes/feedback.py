@@ -1,12 +1,13 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from app.core.config import get_settings
+from app.core.exceptions import BaseAppException
 from app.models.feedback import FeedbackRequest
 from app.services.feedback_service import get_feedback_service
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request, status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,10 +39,12 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
         }
 
     except Exception as e:
-        logger.error(f"Error recording feedback: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail="An error occurred while recording your feedback"
-        )
+        logger.error(f"Error recording feedback: {str(e)}", exc_info=True)
+        raise BaseAppException(
+            detail="An error occurred while recording your feedback",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_SUBMISSION_FAILED",
+        ) from e
 
 
 @router.get("/feedback/stats")
@@ -79,11 +82,12 @@ async def get_feedback_stats():
         }
 
     except Exception as e:
-        logger.error(f"Error getting feedback stats: {str(e)}")
-        raise HTTPException(
-            status_code=500,
+        logger.error(f"Error getting feedback stats: {str(e)}", exc_info=True)
+        raise BaseAppException(
             detail="An error occurred while retrieving feedback statistics",
-        )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_STATS_FAILED",
+        ) from e
 
 
 @router.post("/feedback/explanation", response_model=Dict[str, Any])
