@@ -9,6 +9,8 @@ import sys
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
+from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
+from app.core.exceptions import BaseAppException
 from app.core.tor_metrics import (
     update_cookie_security_mode,
     update_tor_service_configured,
@@ -22,10 +24,9 @@ from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -222,13 +223,11 @@ async def healthcheck():
     return {"status": "healthy"}
 
 
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An internal server error occurred."},
-    )
+# Register exception handlers
+# Register specific application exceptions first
+app.add_exception_handler(BaseAppException, base_exception_handler)
+# Then register generic exception handler as fallback
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 
 if __name__ == "__main__":
