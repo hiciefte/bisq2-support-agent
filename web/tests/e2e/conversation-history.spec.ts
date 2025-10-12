@@ -27,7 +27,7 @@ test.describe('Conversation History Display', () => {
     await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
 
     // Click on the first view details button (Eye icon)
-    const viewButton = page.locator('button[variant="outline"]').filter({ has: page.locator('svg.lucide-eye') }).first();
+    const viewButton = page.locator('button').filter({ has: page.locator('svg.lucide-eye') }).first();
     await expect(viewButton).toBeVisible();
     await viewButton.click();
 

@@ -26,7 +26,12 @@ test.describe('Feedback Submission', () => {
     await page.getByRole('textbox').waitFor({ state: 'visible' });
 
     // Send a test message
-    await page.getByRole('textbox').fill('What is Bisq 2?');
+    const inputField = page.getByRole('textbox');
+    await inputField.click(); // Focus the input
+    await inputField.pressSequentially('What is Bisq 2?', { delay: 50 });
+
+    // Wait for React state to update and button to become enabled
+    await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
 
     // Wait for response
@@ -103,7 +108,12 @@ test.describe('Feedback Submission', () => {
     ];
 
     for (const message of messages) {
-      await page.getByRole('textbox').fill(message);
+      const inputField = page.getByRole('textbox');
+      await inputField.click(); // Focus the input
+      await inputField.pressSequentially(message, { delay: 50 });
+
+      // Wait for React state to update and button to become enabled
+      await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
       await page.click('button[type="submit"]');
       await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
       // Wait longer for response to fully render and state to update
@@ -209,12 +219,22 @@ test.describe('Feedback Submission', () => {
     await page.getByRole('textbox').waitFor({ state: 'visible' });
 
     // Have a conversation
-    await page.getByRole('textbox').fill('How do I install Bisq 2?');
+    let inputField = page.getByRole('textbox');
+    await inputField.click();
+    await inputField.pressSequentially('How do I install Bisq 2?', { delay: 50 });
+
+    // Wait for React state to update and button to become enabled
+    await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
     await page.waitForTimeout(2000);
 
-    await page.getByRole('textbox').fill('What operating systems does it support?');
+    inputField = page.getByRole('textbox');
+    await inputField.click();
+    await inputField.pressSequentially('What operating systems does it support?', { delay: 50 });
+
+    // Wait for React state to update and button to become enabled
+    await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
     await page.waitForTimeout(2000);
@@ -277,7 +297,12 @@ test.describe('Feedback Submission', () => {
 
     await page.getByRole('textbox').waitFor({ state: 'visible' });
 
-    await page.getByRole('textbox').fill('Test quick positive feedback');
+    const inputField = page.getByRole('textbox');
+    await inputField.click();
+    await inputField.pressSequentially('Test quick positive feedback', { delay: 50 });
+
+    // Wait for React state to update and button to become enabled
+    await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
 

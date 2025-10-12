@@ -131,8 +131,10 @@ test.describe('FAQ Management', () => {
     await page.waitForSelector('text=Filter FAQs by text search');
 
     // Click on first available category badge to filter
-    const categoryBadges = page.locator('div.space-y-2:has-text("Categories") + div .cursor-pointer');
+    // Badge components have cursor-pointer class and are clickable
+    const categoryBadges = page.locator('.cursor-pointer').filter({ hasText: /.+/ });
     const firstBadge = categoryBadges.first();
+    await firstBadge.waitFor({ state: 'visible' });
     await firstBadge.click();
 
     // Wait for filter to apply
@@ -195,12 +197,12 @@ test.describe('FAQ Management', () => {
   });
 
   test('should handle concurrent FAQ operations', async ({ page, context }) => {
-    // Open second admin page
+    // Open second admin page in same context (shares cookies)
     const page2 = await context.newPage();
     await page2.goto('http://localhost:3000/admin');
-    await page2.waitForSelector('input[type="password"]', { timeout: 10000 });
-    await page2.fill('input[type="password"]', ADMIN_API_KEY);
-    await page2.click('button:has-text("Login")');
+
+    // Since we share the browser context, we should already be authenticated
+    // Wait for the authenticated UI to appear (will redirect to /admin/overview)
     await page2.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
     await page2.click('a[href="/admin/manage-faqs"]');
     await page2.waitForSelector('text=FAQ', { timeout: 10000 });

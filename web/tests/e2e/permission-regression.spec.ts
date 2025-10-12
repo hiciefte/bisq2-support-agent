@@ -41,7 +41,7 @@ test.describe('Permission Regression Tests', () => {
     // Step 2: Restart API container
     console.log('Restarting API container...');
     try {
-      await execAsync('docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart api');
+      await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
       // Wait for API to be healthy
       await page.waitForTimeout(10000);
     } catch (error) {
@@ -72,7 +72,7 @@ test.describe('Permission Regression Tests', () => {
 
     // Step 6: Check API logs for permission errors
     const { stdout: logs } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs api --tail=50'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=50'
     );
 
     const hasPermissionError = logs.includes('Permission denied') || logs.includes('EACCES');
@@ -85,7 +85,7 @@ test.describe('Permission Regression Tests', () => {
   test('Feedback submission should work after container restart', async ({ page }) => {
     // Step 1: Restart API container
     console.log('Restarting API container...');
-    await execAsync('docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart api');
+    await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
     await page.waitForTimeout(10000);
 
     // Step 2: Submit feedback
@@ -120,7 +120,7 @@ test.describe('Permission Regression Tests', () => {
 
     // Step 4: Check for permission errors
     const { stdout: logs } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs api --tail=50'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=50'
     );
 
     expect(logs).not.toContain('Permission denied');
@@ -130,7 +130,7 @@ test.describe('Permission Regression Tests', () => {
   test('File ownership should be correct after container start', async ({ page }) => {
     // Check file permissions via API container
     const { stdout } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api ls -la /data/'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api ls -la /data/'
     );
 
     console.log('File permissions:', stdout);
@@ -154,7 +154,7 @@ test.describe('Permission Regression Tests', () => {
     // Restart container 3 times
     for (let i = 1; i <= 3; i++) {
       console.log(`Container restart ${i}/3...`);
-      await execAsync('docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart api');
+      await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
       await page.waitForTimeout(10000);
     }
 
@@ -187,7 +187,7 @@ test.describe('Permission Regression Tests', () => {
 
     // Check logs
     const { stdout: logs } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs api --tail=100'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=100'
     );
 
     expect(logs).not.toContain('Permission denied');
@@ -196,7 +196,7 @@ test.describe('Permission Regression Tests', () => {
   test('Entrypoint script should fix permissions on startup', async ({ page }) => {
     // Check if entrypoint script exists and runs
     const { stdout: dockerfileLogs } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs api --tail=200'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=200'
     );
 
     // Look for entrypoint execution logs
@@ -215,7 +215,7 @@ test.describe('Permission Regression Tests', () => {
 
     // Verify files have correct ownership
     const { stdout: permissions } = await execAsync(
-      'docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl'
+      'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl'
     );
 
     console.log('FAQ file ownership:', permissions);
