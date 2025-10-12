@@ -5,13 +5,14 @@ Admin authentication routes for the Bisq Support API.
 import logging
 from typing import Any, Dict
 
+from app.core.exceptions import AuthenticationError, BaseAppException
 from app.core.security import (
     clear_admin_cookie,
     set_admin_cookie,
     verify_admin_key_with_delay,
 )
 from app.models.feedback import AdminLoginRequest, AdminLoginResponse
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import Response
 
 # Setup logging
@@ -52,7 +53,8 @@ async def admin_login(
         AdminLoginResponse: Login success confirmation
 
     Raises:
-        HTTPException: If credentials are invalid or admin access not configured
+        AuthenticationError: If credentials are invalid or admin access not configured
+        BaseAppException: If an unexpected error occurs during login
     """
     # No logging before verification to prevent timing attacks
 
@@ -63,16 +65,16 @@ async def admin_login(
             set_admin_cookie(response)
             return AdminLoginResponse(message="Login successful", authenticated=True)
         else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
-            )
-    except HTTPException:
-        # Re-raise HTTP exceptions (like service unavailable)
+            raise AuthenticationError("Invalid credentials")
+    except BaseAppException:
+        # Re-raise application exceptions (like authentication errors)
         raise
     except Exception as e:
         logger.error(f"Admin login error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed"
+        raise BaseAppException(
+            detail="Login failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="LOGIN_FAILED",
         ) from e
 
 

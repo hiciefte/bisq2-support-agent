@@ -5,11 +5,12 @@ Admin analytics and metrics routes for the Bisq Support API.
 import logging
 
 from app.core.config import get_settings
+from app.core.exceptions import BaseAppException
 from app.core.security import verify_admin_access
 from app.models.feedback import DashboardOverviewResponse
 from app.services.dashboard_service import DashboardService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
@@ -152,6 +153,8 @@ async def get_dashboard_overview():
         return DashboardOverviewResponse(**overview_data)
     except Exception as e:
         logger.error(f"Failed to fetch dashboard overview: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch dashboard overview."
+        raise BaseAppException(
+            detail="Failed to fetch dashboard overview",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="DASHBOARD_FETCH_FAILED",
         ) from e

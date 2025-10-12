@@ -6,6 +6,11 @@ import logging
 from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
+from app.core.exceptions import (
+    BaseAppException,
+    FeedbackAlreadyProcessedError,
+    FeedbackNotFoundError,
+)
 from app.core.security import verify_admin_access
 from app.models.faq import FAQIdentifiedItem, FAQItem
 from app.models.feedback import (
@@ -16,7 +21,7 @@ from app.models.feedback import (
 )
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, status
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -251,8 +256,10 @@ async def get_feedback_list(
         return result
     except Exception as e:
         logger.error(f"Failed to fetch feedback list: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch feedback list."
+        raise BaseAppException(
+            detail="Failed to fetch feedback list",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_LIST_FETCH_FAILED",
         ) from e
 
 
@@ -276,8 +283,10 @@ async def get_feedback_stats_enhanced():
         return FeedbackStatsResponse(**stats)
     except Exception as e:
         logger.error(f"Failed to fetch feedback stats: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch feedback statistics."
+        raise BaseAppException(
+            detail="Failed to fetch feedback statistics",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_STATS_FETCH_FAILED",
         ) from e
 
 
@@ -304,8 +313,10 @@ async def get_feedback_needing_faq() -> Dict[str, Any]:
         logger.error(
             f"Failed to fetch feedback needing FAQ creation: {e}", exc_info=True
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch feedback data."
+        raise BaseAppException(
+            detail="Failed to fetch feedback data",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_FAQ_FETCH_FAILED",
         ) from e
 
 
@@ -331,10 +342,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         )
 
         if not existing_feedback:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Feedback with message_id {request.message_id} not found",
-            )
+            raise FeedbackNotFoundError(request.message_id)
 
         # Create the FAQ item
         # Note: We don't check if feedback is already processed here to avoid race conditions
@@ -379,12 +387,9 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
                     )
 
                 # Return 409 Conflict - feedback was already processed by concurrent request
-                raise HTTPException(
-                    status_code=409,
-                    detail="Feedback already processed by another request",
-                )
-        except HTTPException:
-            # Re-raise HTTPException without wrapping
+                raise FeedbackAlreadyProcessedError(request.message_id)
+        except BaseAppException:
+            # Re-raise application exceptions without wrapping
             raise
         except Exception as mark_error:
             # Marking raised an exception - rollback the FAQ creation
@@ -404,9 +409,10 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
                     exc_info=True,
                 )
 
-            raise HTTPException(
-                status_code=500,
+            raise BaseAppException(
                 detail=f"Failed to mark feedback as processed: {mark_error}",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                error_code="FEEDBACK_MARK_FAILED",
             ) from mark_error
 
         # Record FAQ creation metric
@@ -420,16 +426,18 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         )
         return new_faq
 
-    except HTTPException:
-        # Re-raise HTTP exceptions (404, 409) without wrapping
+    except BaseAppException:
+        # Re-raise application exceptions (404, 409) without wrapping
         raise
     except Exception as e:
         logger.error(
             f"Failed to create FAQ from feedback {request.message_id}: {e}",
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to create FAQ from feedback."
+        raise BaseAppException(
+            detail="Failed to create FAQ from feedback",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FAQ_FROM_FEEDBACK_FAILED",
         ) from e
 
 
@@ -451,17 +459,19 @@ async def get_feedback_details(message_id: str) -> Dict[str, Any]:
         feedback = feedback_service.repository.get_feedback_by_message_id(message_id)
 
         if not feedback:
-            raise HTTPException(status_code=404, detail="Feedback not found")
+            raise FeedbackNotFoundError(message_id)
 
         return feedback
-    except HTTPException:
+    except BaseAppException:
         raise
     except Exception as e:
         logger.error(
             f"Failed to fetch feedback details for {message_id}: {e}", exc_info=True
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch feedback details."
+        raise BaseAppException(
+            detail="Failed to fetch feedback details",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_DETAILS_FETCH_FAILED",
         ) from e
 
 
@@ -497,6 +507,8 @@ async def get_feedback_by_issues() -> Dict[str, Any]:
         return {"issues": result, "total_issues": len(result)}
     except Exception as e:
         logger.error(f"Failed to fetch feedback by issues: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch feedback by issues."
+        raise BaseAppException(
+            detail="Failed to fetch feedback by issues",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_BY_ISSUES_FETCH_FAILED",
         ) from e
