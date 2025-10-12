@@ -9,7 +9,7 @@ This module handles:
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
 from app.utils.logging import redact_pii
@@ -38,7 +38,7 @@ class PromptManager:
         """
         self.settings = settings
         self.feedback_service = feedback_service
-        self.prompt = None
+        self.prompt: Optional[ChatPromptTemplate] = None
 
         logger.info("Prompt manager initialized")
 
@@ -181,7 +181,10 @@ Answer:"""
             Callable RAG chain function
         """
 
-        def generate_response(question, chat_history=None):
+        def generate_response(
+            question: str,
+            chat_history: Union[List[Union[Dict[str, str], Any]], None] = None,
+        ) -> str:
             """Generate response using RAG pipeline.
 
             Args:

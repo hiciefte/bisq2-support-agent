@@ -552,7 +552,9 @@ class SimplifiedRAGService:
                 "feedback_created": False,
             }
 
-    def _deduplicate_sources(self, sources):
+    def _deduplicate_sources(
+        self, sources: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Delegate to document retriever for source deduplication.
 
         Args:

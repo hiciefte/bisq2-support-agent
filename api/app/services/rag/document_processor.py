@@ -84,7 +84,7 @@ class DocumentProcessor:
 
         return splits
 
-    def update_chunk_settings(self, chunk_size: int, chunk_overlap: int):
+    def update_chunk_settings(self, chunk_size: int, chunk_overlap: int) -> None:
         """Update chunk size and overlap settings.
 
         Args:
