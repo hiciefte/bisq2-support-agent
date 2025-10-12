@@ -19,6 +19,7 @@ from app.models.feedback import (
     FeedbackListResponse,
     FeedbackStatsResponse,
 )
+from app.routes.admin.analytics import FAQ_CREATION_TOTAL
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from fastapi import APIRouter, Depends, status
@@ -416,8 +417,6 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
             ) from mark_error
 
         # Record FAQ creation metric
-        from app.routes.admin.analytics import FAQ_CREATION_TOTAL
-
         FAQ_CREATION_TOTAL.inc()
 
         logger.info(

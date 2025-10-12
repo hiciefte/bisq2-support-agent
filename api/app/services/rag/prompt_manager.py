@@ -231,10 +231,10 @@ Answer:"""
 
                 # Log the complete prompt and context for debugging
                 logger.info("=== DEBUG: Complete Prompt and Context ===")
-                logger.info(f"Question: {preprocessed_question}")
-                logger.info(f"Chat History: {chat_history_str}")
+                logger.info(f"Question: {redact_pii(preprocessed_question)}")
+                logger.info(f"Chat History: {redact_pii(chat_history_str)}")
                 logger.info("Context:")
-                logger.info(context)
+                logger.info(redact_pii(context))
                 logger.info("=== End Debug Log ===")
 
                 # Format the prompt

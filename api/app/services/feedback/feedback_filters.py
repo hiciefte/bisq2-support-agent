@@ -129,14 +129,14 @@ class FeedbackFilters:
                 else:
                     item_date = datetime.fromisoformat(item.timestamp)
 
-                # Check date bounds
+                # Check date bounds (handle timezone indicators in filter dates)
                 if date_from:
-                    from_date = datetime.fromisoformat(date_from)
+                    from_date = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
                     if item_date < from_date:
                         continue
 
                 if date_to:
-                    to_date = datetime.fromisoformat(date_to)
+                    to_date = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
                     if item_date > to_date:
                         continue
 

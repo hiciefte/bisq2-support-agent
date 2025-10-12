@@ -56,7 +56,9 @@ class TestRAGQueryProcessing:
                 metadata={"source": "wiki", "bisq_version": "General"},
             )
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         response = await rag_service.query("What is Bisq?", chat_history=[])
 
@@ -71,7 +73,9 @@ class TestRAGQueryProcessing:
         """Test querying with unknown topic returns fallback response."""
         # Mock the retriever to return no documents
         with patch.object(
-            rag_service.document_retriever, "retrieve_documents", return_value=[]
+            rag_service.document_retriever,
+            "retrieve_with_version_priority",
+            return_value=[],
         ):
             response = await rag_service.query(
                 "What is the meaning of life?", chat_history=[]
@@ -96,7 +100,9 @@ class TestRAGQueryProcessing:
                 metadata={"source": "faq", "bisq_version": "Bisq 2"},
             )
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         response = await rag_service.query("How do I trade?", chat_history=chat_history)
 
@@ -141,10 +147,14 @@ class TestDocumentRetrieval:
                 page_content="General trading guide", metadata={"source": "wiki"}
             ),
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         # Test retrieval
-        docs = rag_service.document_retriever.retrieve_documents("trading fees")
+        docs = rag_service.document_retriever.retrieve_with_version_priority(
+            "trading fees"
+        )
         assert len(docs) == 2
         assert all(hasattr(doc, "page_content") for doc in docs)
 
@@ -156,10 +166,14 @@ class TestDocumentRetrieval:
             MagicMock(page_content="General", metadata={"bisq_version": "General"}),
             MagicMock(page_content="Bisq 2", metadata={"bisq_version": "Bisq 2"}),
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         # Verify retrieval works with versioned documents
-        docs = rag_service.document_retriever.retrieve_documents("test query")
+        docs = rag_service.document_retriever.retrieve_with_version_priority(
+            "test query"
+        )
         assert len(docs) == 3
         assert all("bisq_version" in doc.metadata for doc in docs)
 
@@ -170,10 +184,14 @@ class TestDocumentRetrieval:
             MagicMock(page_content="Wiki content", metadata={"source": "wiki"}),
             MagicMock(page_content="FAQ content", metadata={"source": "faq"}),
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         # Verify both source types can be retrieved
-        docs = rag_service.document_retriever.retrieve_documents("test query")
+        docs = rag_service.document_retriever.retrieve_with_version_priority(
+            "test query"
+        )
         assert len(docs) == 2
         sources = [doc.metadata["source"] for doc in docs]
         assert "wiki" in sources and "faq" in sources
@@ -267,7 +285,9 @@ class TestErrorHandling:
                 metadata={"source": "wiki", "bisq_version": "General"},
             )
         ]
-        rag_service.document_retriever.retrieve_documents.return_value = mock_docs
+        rag_service.document_retriever.retrieve_with_version_priority.return_value = (
+            mock_docs
+        )
 
         response = await rag_service.query("Test question", chat_history=[])
 
@@ -283,7 +303,7 @@ class TestErrorHandling:
         # Make retrieval raise an exception
         with patch.object(
             rag_service.document_retriever,
-            "retrieve_documents",
+            "retrieve_with_version_priority",
             side_effect=Exception("Retrieval error"),
         ):
             response = await rag_service.query("Test question", chat_history=[])
@@ -297,7 +317,9 @@ class TestErrorHandling:
         """Test that empty context is handled without errors."""
         # Mock retriever to return no documents
         with patch.object(
-            rag_service.document_retriever, "retrieve_documents", return_value=[]
+            rag_service.document_retriever,
+            "retrieve_with_version_priority",
+            return_value=[],
         ):
             response = await rag_service.query("Test question", chat_history=[])
 

@@ -263,9 +263,10 @@ class FAQService:
             processed_msg_ids_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write message IDs in JSONL format (one per line)
+            # Using JSON format for consistency with the load method
             with open(processed_msg_ids_path, "w") as f:
                 for msg_id in sorted(msg_ids):  # Sort for consistency
-                    f.write(f"{msg_id}\n")
+                    f.write(json.dumps({"msg_id": msg_id}) + "\n")
 
             logger.info(f"Saved {len(msg_ids)} processed message IDs")
         except Exception:
