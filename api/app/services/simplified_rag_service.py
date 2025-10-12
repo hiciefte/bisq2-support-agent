@@ -102,11 +102,11 @@ class SimplifiedRAGService:
 
         logger.info("Simplified RAG service initialized")
 
-    def initialize_embeddings(self):
+    def initialize_embeddings(self) -> None:
         """Delegate to LLM provider for embeddings initialization."""
         self.embeddings = self.llm_provider.initialize_embeddings()
 
-    def initialize_llm(self):
+    def initialize_llm(self) -> None:
         """Delegate to LLM provider for model initialization."""
         self.llm = self.llm_provider.initialize_llm()
 
@@ -132,7 +132,7 @@ class SimplifiedRAGService:
         """
         return self.document_retriever.format_documents(docs)
 
-    def _clean_vector_store(self):
+    def _clean_vector_store(self) -> None:
         """Clean the vector store directory."""
         logger.info("Cleaning vector store directory...")
         try:

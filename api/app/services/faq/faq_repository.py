@@ -8,7 +8,6 @@ handling file I/O with proper locking and stable ID generation.
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -169,9 +168,9 @@ class FAQRepository:
         self,
         page: int = 1,
         page_size: int = 10,
-        search_text: str = None,
-        categories: List[str] = None,
-        source: str = None,
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support.
 

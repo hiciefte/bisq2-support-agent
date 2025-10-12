@@ -6,25 +6,19 @@ processing the documents, preparing them for use in the RAG system,
 and extracting new FAQs from support chat conversations.
 """
 
-import hashlib
 import json
 import logging
 import os
-import random
-import re
 import threading
-import time
-import unicodedata
-from datetime import timedelta
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional, Set
 
 import pandas as pd
 import portalocker
 
 # Import Pydantic models
-from app.models.faq import FAQIdentifiedItem, FAQItem
+from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
@@ -112,10 +106,10 @@ class FAQService:
         self,
         page: int = 1,
         page_size: int = 10,
-        search_text: str = None,
-        categories: List[str] = None,
-        source: str = None,
-    ):
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
+    ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support."""
         return self.repository.get_faqs_paginated(
             page, page_size, search_text, categories, source
@@ -247,7 +241,7 @@ class FAQService:
 
         return processed_msg_ids
 
-    def save_processed_msg_ids(self, msg_ids: Set[str] = None):
+    def save_processed_msg_ids(self, msg_ids: Optional[Set[str]] = None) -> None:
         """Save the set of processed message IDs.
 
         Uses JSONL format with one message ID per line for privacy-preserving tracking.
@@ -285,7 +279,7 @@ class FAQService:
         )
         return self.load_processed_msg_ids()
 
-    def save_processed_conv_ids(self):
+    def save_processed_conv_ids(self) -> None:
         """Deprecated: Use save_processed_msg_ids() instead."""
         logger.warning(
             "save_processed_conv_ids() is deprecated, use save_processed_msg_ids()"
@@ -351,7 +345,7 @@ class FAQService:
         # Store the input path for further processing
         self.input_path = self.existing_input_path
 
-    def load_messages(self):
+    def load_messages(self) -> None:
         """Load messages from CSV and organize them using the conversation processor."""
         if not hasattr(self, "input_path") or not self.input_path.exists():
             logger.warning("No input file found for loading messages")
@@ -393,7 +387,7 @@ class FAQService:
         """Load existing FAQs from the JSONL file for processing or extraction tasks.
         Returns a list of dictionaries.
         """
-        faqs = []
+        faqs: List[Dict] = []
         if not hasattr(self, "_faq_file_path") or not self._faq_file_path.exists():
             logger.warning(
                 f"FAQ file not found at {getattr(self, '_faq_file_path', 'Not set')}, cannot load existing FAQs."
@@ -417,7 +411,7 @@ class FAQService:
             logger.error(f"Error in load_existing_faqs: {e!s}", exc_info=True)
         return faqs
 
-    def save_faqs(self, faqs: List[Dict]):
+    def save_faqs(self, faqs: List[Dict]) -> None:
         """
         Saves a list of FAQ dictionaries to the faq_file_path.
         This method is typically used by the FAQ extraction process.
