@@ -6,6 +6,7 @@ conversation threads based on message references and timestamps.
 """
 
 import logging
+from collections import deque
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Set
@@ -34,12 +35,13 @@ class ConversationProcessor:
     def load_messages(self, csv_path: Path) -> None:
         """Load messages from CSV and organize them.
 
+        If the CSV file doesn't exist, logs a warning and returns without error.
+
         Args:
             csv_path: Path to the CSV file containing messages
 
         Raises:
-            FileNotFoundError: If the CSV file doesn't exist
-            ValueError: If the CSV file is malformed
+            ValueError: If the CSV file is malformed or cannot be parsed
         """
         if not csv_path.exists():
             logger.warning(f"No input file found at {csv_path}")
@@ -54,16 +56,26 @@ class ConversationProcessor:
             total_lines = len(df)
             logger.info(f"Processing {total_lines} lines from input file")
 
-            # Reset message collections
+            # Reset message collections to prevent stale data
             self.messages = {}
             self.references = {}
+            self.conversations = []
 
             for _, row_data in df.iterrows():
                 try:
                     msg_id = row_data["Message ID"]
 
+                    # Validate message ID is a valid string
+                    if pd.isna(msg_id) or not isinstance(msg_id, (str, int)):
+                        logger.warning("Skipping row with invalid message ID")
+                        continue
+                    msg_id = str(msg_id)
+
                     # Skip empty or invalid messages
-                    if pd.isna(row_data["Message"]) or not row_data["Message"].strip():
+                    if (
+                        pd.isna(row_data["Message"])
+                        or not str(row_data["Message"]).strip()
+                    ):
                         continue
 
                     # Parse timestamp
@@ -71,7 +83,7 @@ class ConversationProcessor:
                     if pd.notna(row_data["Date"]):
                         try:
                             timestamp = pd.to_datetime(row_data["Date"])
-                        except Exception as exc:
+                        except (ValueError, TypeError) as exc:
                             logger.warning(
                                 f"Timestamp parse error for msg {msg_id}: {exc}"
                             )
@@ -117,7 +129,7 @@ class ConversationProcessor:
                                     ref_timestamp = pd.to_datetime(
                                         ref_rows.iloc[0]["Date"]
                                     )
-                                except Exception as exc:
+                                except (ValueError, TypeError) as exc:
                                     logger.warning(
                                         f"Ref timestamp parse error for msg {msg_id}: {exc}"
                                     )
@@ -137,15 +149,18 @@ class ConversationProcessor:
                                 "referenced_msg_id": None,
                             }
                             self.messages[msg["referenced_msg_id"]] = ref_msg
-                except Exception as e:
+                except (KeyError, ValueError, TypeError) as e:
                     logger.error(f"Error processing row: {e}", exc_info=True)
                     continue
 
             logger.info(
                 f"Loaded {len(self.messages)} messages with {len(self.references)} references"
             )
+        except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError) as e:
+            logger.error(f"CSV parsing error: {e}", exc_info=True)
+            raise ValueError(f"Failed to parse CSV file: {e}") from e
         except Exception as e:
-            logger.error(f"Error loading CSV file: {e}", exc_info=True)
+            logger.error(f"Unexpected error loading CSV file: {e}", exc_info=True)
             raise
 
     def build_conversation_thread(
@@ -165,11 +180,13 @@ class ConversationProcessor:
 
         thread: List[Dict] = []
         seen_messages: Set[str] = set()
-        to_process = {start_msg_id}
+        to_process = deque(
+            [start_msg_id]
+        )  # Use deque for deterministic FIFO processing
         depth = 0
 
         while to_process and depth < max_depth:
-            current_id = to_process.pop()
+            current_id = to_process.popleft()  # FIFO ensures consistent ordering
 
             if current_id in seen_messages or current_id not in self.messages:
                 continue
@@ -183,7 +200,7 @@ class ConversationProcessor:
 
             # Follow reference backward
             if msg["referenced_msg_id"]:
-                to_process.add(msg["referenced_msg_id"])
+                to_process.append(msg["referenced_msg_id"])
 
             # Follow references forward more conservatively
             forward_refs = [
@@ -199,7 +216,7 @@ class ConversationProcessor:
                 )
                 <= timedelta(minutes=30)
             ]
-            to_process.update(forward_refs)
+            to_process.extend(forward_refs)
 
             depth += 1
 
