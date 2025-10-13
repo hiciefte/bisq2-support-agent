@@ -428,8 +428,16 @@ class FAQService:
             with self._file_lock, open(
                 self._faq_file_path, "r+", encoding="utf-8"
             ) as f:
-                # Load existing FAQs to check for duplicates
-                existing_faqs = [json.loads(line) for line in f if line.strip()]
+                # Load existing FAQs to check for duplicates with error handling
+                existing_faqs = []
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            existing_faqs.append(json.loads(line))
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Skipping malformed JSON line: {e}")
+                            continue
 
                 # Create a set of normalized keys for existing FAQs using the extractor
                 normalized_faq_keys = {
@@ -437,13 +445,15 @@ class FAQService:
                     for faq in existing_faqs
                 }
 
-                # Filter out duplicates from the new faqs
-                new_unique_faqs = [
-                    faq
-                    for faq in faqs
-                    if self.faq_extractor.get_normalized_faq_key(faq)
-                    not in normalized_faq_keys
-                ]
+                # Filter out duplicates from the new faqs, updating set during iteration
+                new_unique_faqs = []
+                for faq in faqs:
+                    faq_key = self.faq_extractor.get_normalized_faq_key(faq)
+                    if faq_key not in normalized_faq_keys:
+                        new_unique_faqs.append(faq)
+                        normalized_faq_keys.add(
+                            faq_key
+                        )  # Update set to catch intra-list duplicates
 
                 if new_unique_faqs:
                     # Move to the end of the file to append new content
