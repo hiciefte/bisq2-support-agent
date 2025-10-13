@@ -291,7 +291,7 @@ Answer:"""
         logger.info("Custom RAG chain created successfully")
         return generate_response
 
-    def get_prompt(self) -> ChatPromptTemplate:
+    def get_prompt(self) -> Optional[ChatPromptTemplate]:
         """Get the current prompt template.
 
         Returns:
