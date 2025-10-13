@@ -120,13 +120,14 @@ class DocumentRetriever:
             return ""
 
         # Sort documents by version weight and relevance
+        # Use bisq_version metadata (matches retrieval filter key)
         sorted_docs = sorted(
             docs,
             key=lambda x: (
                 x.metadata.get("source_weight", 1.0),
-                x.metadata.get("category") == "bisq2",  # Prioritize Bisq 2 content
-                x.metadata.get("category") == "bisq1",  # Then Bisq 1 content
-                x.metadata.get("category") == "general",  # Then general content
+                x.metadata.get("bisq_version") == "Bisq 2",  # Prioritize Bisq 2 content
+                x.metadata.get("bisq_version") == "Bisq 1",  # Then Bisq 1 content
+                x.metadata.get("bisq_version") == "General",  # Then general content
             ),
             reverse=True,
         )

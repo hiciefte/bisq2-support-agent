@@ -10,7 +10,7 @@ This module handles:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.models.feedback import FeedbackFilterRequest, FeedbackItem
@@ -121,7 +121,7 @@ class FeedbackFilters:
         filtered = []
         for item in items:
             try:
-                # Parse timestamp
+                # Parse timestamp and normalize to timezone-aware UTC
                 if "T" in item.timestamp:
                     item_date = datetime.fromisoformat(
                         item.timestamp.replace("Z", "+00:00")
@@ -129,19 +129,27 @@ class FeedbackFilters:
                 else:
                     item_date = datetime.fromisoformat(item.timestamp)
 
+                # Normalize timezone-naive datetime to UTC
+                if item_date.tzinfo is None:
+                    item_date = item_date.replace(tzinfo=timezone.utc)
+
                 # Check date bounds (handle timezone indicators in filter dates)
                 if date_from:
                     from_date = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                    if from_date.tzinfo is None:
+                        from_date = from_date.replace(tzinfo=timezone.utc)
                     if item_date < from_date:
                         continue
 
                 if date_to:
                     to_date = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                    if to_date.tzinfo is None:
+                        to_date = to_date.replace(tzinfo=timezone.utc)
                     if item_date > to_date:
                         continue
 
                 filtered.append(item)
-            except Exception as e:
+            except ValueError as e:
                 logger.warning(f"Error parsing timestamp {item.timestamp}: {e}")
                 # Include items with unparseable timestamps to avoid losing data
                 filtered.append(item)

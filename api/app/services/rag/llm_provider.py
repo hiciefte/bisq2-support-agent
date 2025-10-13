@@ -44,14 +44,17 @@ class LLMProvider:
             OpenAIEmbeddings instance configured with API key and model
 
         Raises:
-            Warning if API key is not provided
+            ValueError: If OpenAI API key is not configured
         """
         logger.info("Initializing OpenAI embeddings model...")
 
         if not self.settings.OPENAI_API_KEY:
-            logger.warning(
-                "OpenAI API key not provided. Embeddings will not work properly."
+            error_msg = (
+                "OpenAI API key is required but not configured. "
+                "Please set OPENAI_API_KEY in environment variables."
             )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         self.embeddings = OpenAIEmbeddings(
             api_key=self.settings.OPENAI_API_KEY,
@@ -80,6 +83,16 @@ class LLMProvider:
         elif llm_provider == "xai" and self.settings.XAI_API_KEY:
             self._initialize_xai_llm()
         else:
+            # Validate OpenAI API key is available for fallback
+            if not self.settings.OPENAI_API_KEY:
+                error_msg = (
+                    f"LLM provider '{llm_provider}' not configured and "
+                    "OpenAI fallback requires OPENAI_API_KEY to be set. "
+                    "Please configure API keys in environment variables."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
             logger.warning(
                 f"LLM provider '{llm_provider}' not configured properly. Using OpenAI as default."
             )
