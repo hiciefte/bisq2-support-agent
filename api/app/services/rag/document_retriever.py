@@ -135,10 +135,8 @@ class DocumentRetriever:
         for doc in sorted_docs:
             # Extract metadata
             title = doc.metadata.get("title", "Unknown")
-            category = doc.metadata.get("category", "general")
             section = doc.metadata.get("section", "")
             source_type = doc.metadata.get("type", "wiki")
-            source_weight = doc.metadata.get("source_weight", 1.0)
 
             # Determine version from metadata and content
             bisq_version = doc.metadata.get("bisq_version", "General")
