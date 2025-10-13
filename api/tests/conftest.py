@@ -15,6 +15,7 @@ from typing import Generator
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
 from app.core.config import Settings
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
@@ -183,7 +184,7 @@ def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQServ
     return service
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def feedback_service(
     test_settings: Settings, sample_feedback_data: list[dict]
 ) -> FeedbackService:

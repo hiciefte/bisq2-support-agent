@@ -38,6 +38,9 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
             "needs_feedback_followup": needs_followup,
         }
 
+    except BaseAppException:
+        # Let service-level exceptions bubble up to centralized error handler
+        raise
     except Exception as e:
         logger.error(f"Error recording feedback: {str(e)}", exc_info=True)
         raise BaseAppException(
@@ -81,6 +84,9 @@ async def get_feedback_stats():
             "positive_ratio": positive_ratio,
         }
 
+    except BaseAppException:
+        # Let service-level exceptions bubble up to centralized error handler
+        raise
     except Exception as e:
         logger.error(f"Error getting feedback stats: {str(e)}", exc_info=True)
         raise BaseAppException(

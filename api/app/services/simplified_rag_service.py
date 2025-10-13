@@ -458,44 +458,11 @@ class SimplifiedRAGService:
                 logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
                 logger.debug(f"  Content: {doc.page_content[:200]}...")
 
-            # Format chat history using prompt manager
-            chat_history_str = self.prompt_manager.format_chat_history(chat_history)
-
-            # Format documents for the prompt
-            context = self._format_docs(docs)
-
-            # Check context length and truncate if necessary
-            if len(context) > self.settings.MAX_CONTEXT_LENGTH:
-                logger.warning(
-                    f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
-                )
-                context = context[: self.settings.MAX_CONTEXT_LENGTH]
-
-            # Log complete prompt and context at DEBUG level
-            logger.debug("=== DEBUG: Complete Prompt and Context ===")
-            logger.debug(f"Question: {preprocessed_question}")
-            logger.debug(f"Chat History: {chat_history_str}")
-            logger.debug(f"Context:\n{context}")
-            logger.debug("=== End Debug Log ===")
-
-            # Format the prompt
-            formatted_prompt = self.prompt.format(
-                question=preprocessed_question,
-                chat_history=chat_history_str,
-                context=context,
-            )
-
-            # Log formatted prompt at DEBUG level
-            logger.debug("=== DEBUG: Complete Formatted Prompt ===")
-            logger.debug(formatted_prompt)
-            logger.debug("=== End Debug Log ===")
-
-            # Generate response using proper LangChain invocation method
-            response = self.rag_chain.invoke(formatted_prompt)
-            # Extract text from response (handle both string and AIMessage responses)
-            response_text = (
-                response.content if hasattr(response, "content") else str(response)
-            )
+            # Generate response using the RAG chain
+            # The chain handles retrieval, formatting, and LLM invocation internally
+            # Note: We already retrieved docs above for logging/source tracking,
+            # but the chain will do its own retrieval which is fine
+            response_text = self.rag_chain(preprocessed_question, chat_history)
 
             # Calculate response time
             response_time = time.time() - start_time

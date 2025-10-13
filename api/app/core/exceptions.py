@@ -30,8 +30,12 @@ class BaseAppException(HTTPException):
 class AuthenticationError(BaseAppException):
     """Raised when authentication fails."""
 
-    def __init__(self, detail: str = "Authentication failed"):
-        super().__init__(detail, status.HTTP_401_UNAUTHORIZED, error_code="AUTH_ERROR")
+    def __init__(
+        self, detail: str = "Authentication failed", error_code: Optional[str] = None
+    ):
+        super().__init__(
+            detail, status.HTTP_401_UNAUTHORIZED, error_code=error_code or "AUTH_ERROR"
+        )
 
 
 class InvalidAPIKeyError(AuthenticationError):
