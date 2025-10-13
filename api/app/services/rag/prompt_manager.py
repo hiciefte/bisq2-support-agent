@@ -263,7 +263,11 @@ Answer:"""
                     truncated = context[: self.settings.MAX_CONTEXT_LENGTH]
                     last_period = truncated.rfind(". ")
                     # Only use sentence boundary if we don't lose more than 20% of content
-                    if last_period > self.settings.MAX_CONTEXT_LENGTH * 0.8:
+                    # Explicit check for -1 (not found) to document intent clearly
+                    if (
+                        last_period != -1
+                        and last_period > self.settings.MAX_CONTEXT_LENGTH * 0.8
+                    ):
                         context = truncated[: last_period + 1]
                     else:
                         context = truncated
