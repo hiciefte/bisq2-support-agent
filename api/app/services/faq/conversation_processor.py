@@ -138,14 +138,14 @@ class ConversationProcessor:
                             }
                             self.messages[msg["referenced_msg_id"]] = ref_msg
                 except Exception as e:
-                    logger.error(f"Error processing row: {e}")
+                    logger.error(f"Error processing row: {e}", exc_info=True)
                     continue
 
             logger.info(
                 f"Loaded {len(self.messages)} messages with {len(self.references)} references"
             )
         except Exception as e:
-            logger.error(f"Error loading CSV file: {e}")
+            logger.error(f"Error loading CSV file: {e}", exc_info=True)
             raise
 
     def build_conversation_thread(

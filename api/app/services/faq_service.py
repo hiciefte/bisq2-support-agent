@@ -319,7 +319,7 @@ class FAQService:
                     latest_df = pd.read_csv(StringIO(csv_content))
                     logger.info(f"Fetched {len(latest_df)} messages from API")
         except Exception as e:
-            logger.error(f"Failed to fetch messages from API: {e!s}")
+            logger.error(f"Failed to fetch messages from API: {e!s}", exc_info=True)
         finally:
             if bisq_api:
                 await bisq_api.cleanup()
@@ -564,7 +564,7 @@ class FAQService:
             return new_faqs
 
         except Exception as e:
-            logger.error(f"Error during FAQ extraction: {e!s}")
+            logger.error(f"Error during FAQ extraction: {e!s}", exc_info=True)
             raise
 
 

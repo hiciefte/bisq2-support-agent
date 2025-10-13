@@ -13,7 +13,7 @@ import logging
 import os
 import re
 import xml.etree.ElementTree as ET
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
 
@@ -31,7 +31,11 @@ class WikiDumpProcessor:
     def __init__(self, input_file: str, output_file: str):
         self.input_file = input_file
         self.output_file = output_file
-        self.context = {"bisq1": [], "bisq2": [], "general": []}
+        self.context: Dict[str, List[Dict[str, Any]]] = {
+            "bisq1": [],
+            "bisq2": [],
+            "general": [],
+        }
 
     def clean_text(self, text: str) -> str:
         """
@@ -45,7 +49,7 @@ class WikiDumpProcessor:
         # --- Stage 1: Regex-based MediaWiki syntax conversion ---
 
         # Keep content of <pre> blocks, protect them from further processing
-        pre_blocks = {}
+        pre_blocks: Dict[str, str] = {}
 
         def pre_tag_replacer(match):
             key = f"__PRE_BLOCK_{len(pre_blocks)}__"
@@ -234,7 +238,7 @@ class WikiDumpProcessor:
             return entry
 
         except Exception as e:
-            logger.error(f"Error processing page: {str(e)}")
+            logger.error(f"Error processing page: {str(e)}", exc_info=True)
             return None
 
     def process_dump(self):
@@ -268,7 +272,7 @@ class WikiDumpProcessor:
             logger.info(f"Processed content saved to {self.output_file}")
 
         except Exception as e:
-            logger.error(f"Error processing dump: {str(e)}")
+            logger.error(f"Error processing dump: {str(e)}", exc_info=True)
             raise
 
     def save_processed_content(self):

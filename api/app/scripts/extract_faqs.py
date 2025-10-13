@@ -61,7 +61,7 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
     """
     retry_count = 0
     new_faqs = None
-    last_error = None
+    last_error: Optional[Exception] = None
 
     while retry_count < MAX_RETRIES:
         try:
@@ -131,7 +131,8 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
     # If we reached here, all retries failed
     if last_error:
         logger.error(
-            f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}"
+            f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}",
+            exc_info=True,
         )
 
     return None
