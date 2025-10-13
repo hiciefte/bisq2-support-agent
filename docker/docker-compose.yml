@@ -122,14 +122,12 @@ services:
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
-      # Include API keys - these need to be explicitly included to be passed to container
+      # OpenAI API configuration (used by AISuite for LLM and embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
-      - XAI_API_KEY=${XAI_API_KEY}
-      - XAI_MODEL=${XAI_MODEL}
-      - XAI_API_BASE_URL=${XAI_API_BASE_URL}
+      # Admin and security configuration
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}

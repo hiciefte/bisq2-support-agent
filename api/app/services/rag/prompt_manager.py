@@ -13,8 +13,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
 from app.utils.logging import redact_pii
-from langchain.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
 
 logger = logging.getLogger(__name__)
 

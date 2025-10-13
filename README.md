@@ -343,6 +343,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - [Bisq](https://bisq.network/) - The decentralized exchange
-- [LangChain](https://langchain.com/) - For RAG implementation
+- [AISuite](https://github.com/andrewyng/aisuite) - For unified LLM interface
+- [LangChain](https://langchain.com/) - For RAG infrastructure (embeddings and vector stores)
 - [FastAPI](https://fastapi.tiangolo.com/) - For the API framework
 - [Next.js](https://nextjs.org/) - For the web frontend

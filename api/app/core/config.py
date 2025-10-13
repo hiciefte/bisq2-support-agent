@@ -28,18 +28,11 @@ class Settings(BaseSettings):
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
-    # LLM Provider setting
-    LLM_PROVIDER: str = "openai"  # Can be "openai" or "xai"
-
-    # OpenAI settings
+    # OpenAI settings (using AISuite for LLM interface)
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MODEL: str = "gpt-4o-mini"
     MAX_TOKENS: int = 4096
-
-    # xAI settings
-    XAI_API_KEY: str = ""
-    XAI_MODEL: str = "llama3-70b-8192"
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
@@ -68,6 +61,7 @@ class Settings(BaseSettings):
         env_file=".env",  # Enable .env file loading
         env_parse_json=False,  # Disable trying to parse values as JSON
         env_file_override=True,  # Ensure environment variables take precedence
+        extra="allow",  # Allow extra fields for backward compatibility during migration
     )
 
     # Path properties that return complete paths

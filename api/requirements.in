@@ -7,20 +7,19 @@ pydantic
 pydantic-settings
 
 # LLM and RAG
-langchain
-langchain-community
 langchain-core
 langchain-chroma
 chromadb
+langchain-text-splitters
 
 # LLM providers
+# AISuite for unified LLM interface
+aisuite
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
 # 2.0.0 changes Response tool-call output schema (breaking change)
 openai<2.0.0
+# Keep langchain-openai for embeddings only (not for LLM)
 langchain-openai
-langchain-huggingface
-langchain-text-splitters
-langchain-xai
 
 # Web scraping and parsing
 beautifulsoup4

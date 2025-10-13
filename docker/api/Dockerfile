@@ -73,7 +73,7 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
-COPY api /app/api
+COPY api/app /app/app
 
 # Set ownership of the app directory
 RUN chown -R bisq-support:bisq-support /app

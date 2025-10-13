@@ -144,7 +144,6 @@ class ExternalAPIError(BaseAppException):
         # Map to controlled vocabulary to prevent high cardinality
         service_map = {
             "openai": "OPENAI",
-            "xai": "XAI",
             "wikipedia": "WIKIPEDIA",
             "github": "GITHUB",
             "external": "EXTERNAL",
