@@ -75,7 +75,10 @@ const ChatInterface = () => {
     // Handle feedback dialog close
     const handleDialogOpenChange = (open: boolean) => {
         if (!open) {
+            // Reset all feedback state when dialog closes
             setFeedbackDialog(prev => ({ ...prev, isOpen: false }))
+            setFeedbackText('')
+            setSelectedIssues([])
         }
     }
 

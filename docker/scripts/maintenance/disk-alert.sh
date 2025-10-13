@@ -41,6 +41,12 @@ send_webhook_alert() {
 
   # If a webhook URL is defined
   if [ -n "$WEBHOOK_URL" ]; then
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+      log "WARNING: jq command not found, cannot send webhook alert"
+      return 1
+    fi
+
     local color="warning"
     if [ "$level" == "critical" ]; then
       color="danger"
