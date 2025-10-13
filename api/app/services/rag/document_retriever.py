@@ -8,10 +8,11 @@ This module handles intelligent document retrieval with:
 """
 
 import logging
-from typing import Any, Dict, List, Set
+from typing import Dict, List, Set
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStoreRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,12 @@ class DocumentRetriever:
     - Source deduplication to prevent repetitive results
     """
 
-    def __init__(self, vectorstore: Chroma, retriever: Any):
+    def __init__(self, vectorstore: Chroma, retriever: VectorStoreRetriever):
         """Initialize the document retriever.
 
         Args:
             vectorstore: ChromaDB vectorstore instance
-            retriever: LangChain retriever instance
+            retriever: LangChain VectorStoreRetriever instance
         """
         self.vectorstore = vectorstore
         self.retriever = retriever
@@ -87,8 +88,8 @@ class DocumentRetriever:
             )
             fallback_docs = self.retriever.get_relevant_documents(query)
 
-            # Define version priority (lower number = higher priority)
-            version_priority = {"Bisq 2": 0, "General": 1, "Bisq 1": 2}
+            # Define version priority (higher number = higher priority)
+            version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}
 
             # Sort by version priority while preserving retrieval order within each version
             sorted_docs = sorted(
@@ -96,6 +97,7 @@ class DocumentRetriever:
                 key=lambda doc: version_priority.get(
                     doc.metadata.get("bisq_version", "General"), 1
                 ),
+                reverse=True,
             )
 
             logger.info(

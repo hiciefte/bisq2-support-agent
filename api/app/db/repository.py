@@ -377,6 +377,69 @@ class FeedbackRepository:
 
             return cursor.rowcount > 0
 
+    def update_feedback_issues(self, message_id: str, issues: List[str]) -> bool:
+        """
+        Update the issues for an existing feedback entry.
+
+        This method adds new issues to the feedback entry without removing
+        existing ones, ensuring all identified issues are captured.
+
+        Args:
+            message_id: Message identifier
+            issues: List of issue types to add
+
+        Returns:
+            True if feedback entry exists and issues were added, False if not found
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # First, get the feedback_id for this message_id
+            cursor.execute(
+                "SELECT id FROM feedback WHERE message_id = ?",
+                (message_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                logger.warning(f"Feedback entry not found for message_id: {message_id}")
+                return False
+
+            feedback_id = row["id"]
+
+            # Add each issue to the feedback_issues table
+            # Skip duplicates by checking if issue already exists
+            for issue in issues:
+                if not issue:  # Skip empty strings
+                    continue
+
+                # Check if this issue already exists for this feedback
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) as count
+                    FROM feedback_issues
+                    WHERE feedback_id = ? AND issue_type = ?
+                    """,
+                    (feedback_id, issue),
+                )
+                count = cursor.fetchone()["count"]
+
+                if count == 0:
+                    # Insert the new issue
+                    cursor.execute(
+                        """
+                        INSERT INTO feedback_issues (feedback_id, issue_type)
+                        VALUES (?, ?)
+                        """,
+                        (feedback_id, issue),
+                    )
+                    logger.info(
+                        f"Added issue '{issue}' to feedback {message_id} (ID: {feedback_id})"
+                    )
+
+            conn.commit()
+            return True
+
     def delete_feedback(self, message_id: str) -> bool:
         """
         Delete feedback entry and all related data.

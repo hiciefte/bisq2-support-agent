@@ -238,32 +238,41 @@ class FeedbackService:
 
         async with self._update_lock:
             try:
-                # For explanation updates, use repository's update method
+                updated = False
+
+                # Update explanation if provided
                 if explanation is not None:
                     success = self.repository.update_feedback_explanation(
                         message_id, explanation
                     )
                     if success:
                         logger.info(f"Updated explanation for feedback {message_id}")
-                        # Invalidate cache
-                        self._feedback_cache = None
-                        self._last_load_time = None
-                        return True
+                        updated = True
                     else:
                         logger.warning(
                             f"Could not find feedback entry with message_id: {message_id}"
                         )
                         return False
 
-                # For issues, we need to update metadata
-                # This requires getting the current entry, updating it, and storing it back
-                # For now, log a warning as this functionality needs repository enhancement
+                # Update issues if provided
                 if issues is not None:
-                    logger.warning(
-                        "Issue updates not yet implemented in SQLite repository. "
-                        "This requires adding issues to an existing feedback entry."
-                    )
-                    return False
+                    success = self.repository.update_feedback_issues(message_id, issues)
+                    if success:
+                        logger.info(
+                            f"Updated {len(issues)} issues for feedback {message_id}"
+                        )
+                        updated = True
+                    else:
+                        logger.warning(
+                            f"Could not find feedback entry with message_id: {message_id}"
+                        )
+                        return False
+
+                # Invalidate cache if any update was successful
+                if updated:
+                    self._feedback_cache = None
+                    self._last_load_time = None
+                    return True
 
                 logger.warning(
                     f"No update data provided for feedback entry {message_id}"

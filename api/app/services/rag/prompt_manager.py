@@ -42,6 +42,26 @@ class PromptManager:
 
         logger.info("Prompt manager initialized")
 
+    def _format_message_by_role(self, role: str, content: str) -> Optional[str]:
+        """Format a single message with role prefix.
+
+        Args:
+            role: The role of the message sender ('user' or 'assistant')
+            content: The message content
+
+        Returns:
+            Formatted message string with prefix, or None if role is unknown
+        """
+        if role == "user":
+            return f"Human: {content}"
+        elif role == "assistant":
+            return f"Assistant: {content}"
+        else:
+            logger.warning(
+                f"Unknown exchange role in chat history: {role}. Expected 'user' or 'assistant'."
+            )
+            return None
+
     def format_chat_history(
         self, chat_history: List[Union[Dict[str, str], Any]]
     ) -> str:
@@ -66,32 +86,22 @@ class PromptManager:
         for exchange in recent_history:
             # Check if this is a ChatMessage object with role/content attributes
             if hasattr(exchange, "role") and hasattr(exchange, "content"):
-                role = exchange.role
-                content = exchange.content
-                if role == "user":
-                    formatted_history.append(f"Human: {content}")
-                elif role == "assistant":
-                    formatted_history.append(f"Assistant: {content}")
-                else:
-                    logger.warning(
-                        f"Unknown exchange role in chat history: {role}. Expected 'user' or 'assistant'."
-                    )
+                formatted = self._format_message_by_role(
+                    exchange.role, exchange.content
+                )
+                if formatted:
+                    formatted_history.append(formatted)
             # Check if this is a dictionary with role/content keys (standard format)
             elif (
                 isinstance(exchange, dict)
                 and "role" in exchange
                 and "content" in exchange
             ):
-                role = exchange["role"]
-                content = exchange["content"]
-                if role == "user":
-                    formatted_history.append(f"Human: {content}")
-                elif role == "assistant":
-                    formatted_history.append(f"Assistant: {content}")
-                else:
-                    logger.warning(
-                        f"Unknown exchange role in chat history: {role}. Expected 'user' or 'assistant'."
-                    )
+                formatted = self._format_message_by_role(
+                    exchange["role"], exchange["content"]
+                )
+                if formatted:
+                    formatted_history.append(formatted)
             # Check if this is a dictionary with user/assistant keys (legacy format)
             elif isinstance(exchange, dict):
                 user_msg = exchange.get("user", "")
@@ -249,7 +259,14 @@ Answer:"""
                     logger.warning(
                         f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
                     )
-                    context = context[: self.settings.MAX_CONTEXT_LENGTH]
+                    # Try to truncate at last sentence boundary to avoid cutting mid-sentence
+                    truncated = context[: self.settings.MAX_CONTEXT_LENGTH]
+                    last_period = truncated.rfind(". ")
+                    # Only use sentence boundary if we don't lose more than 20% of content
+                    if last_period > self.settings.MAX_CONTEXT_LENGTH * 0.8:
+                        context = truncated[: last_period + 1]
+                    else:
+                        context = truncated
 
                 # Log the complete prompt and context for debugging
                 logger.info("=== DEBUG: Complete Prompt and Context ===")
@@ -258,6 +275,12 @@ Answer:"""
                 logger.info("Context:")
                 logger.info(redact_pii(context))
                 logger.info("=== End Debug Log ===")
+
+                # Ensure prompt is initialized before formatting
+                if self.prompt is None:
+                    raise RuntimeError(
+                        "RAG prompt not initialized. Call create_rag_prompt() before using the RAG chain."
+                    )
 
                 # Format the prompt
                 formatted_prompt = self.prompt.format(

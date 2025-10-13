@@ -311,7 +311,7 @@
                     "Admin Feedback"
                 ],
                 "summary": "Get Feedback Analytics",
-                "description": "Get analytics about user feedback.\n\nThis endpoint requires admin authentication via the API key.\nAuthentication can be provided through:\n- Authorization header with Bearer token\n- api_key query parameter",
+                "description": "Get analytics about user feedback.\n\nThis endpoint requires admin authentication via Authorization header with Bearer token.",
                 "operationId": "get_feedback_analytics_admin_feedback_get",
                 "responses": {
                     "200": {
@@ -1018,7 +1018,7 @@
                     "Admin Analytics"
                 ],
                 "summary": "Get Metrics",
-                "description": "Get feedback metrics in Prometheus format.\n\nThis endpoint requires admin authentication via the API key.\nAuthentication can be provided through:\n- Authorization header with Bearer token\n- api_key query parameter",
+                "description": "Get feedback metrics in Prometheus format.\n\nThis endpoint requires admin authentication via Authorization header with Bearer token.",
                 "operationId": "get_metrics_admin_metrics_get",
                 "responses": {
                     "200": {
