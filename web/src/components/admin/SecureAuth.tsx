@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
+import { loginWithApiKey, logout, makeAuthenticatedRequest, registerSessionTimeoutCallback } from '@/lib/auth';
 
 interface SecureAuthProps {
   children: React.ReactNode;
@@ -20,8 +20,16 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
 
   useEffect(() => {
+    // Register session timeout callback
+    registerSessionTimeoutCallback(() => {
+      console.log('Session timeout detected, redirecting to login');
+      setIsAuthenticated(false);
+      onAuthChange?.(false);
+      setLoginError('Your session has expired. Please log in again.');
+    });
+
     checkAuthentication();
-  }, []);
+  }, [onAuthChange]);
 
   const checkAuthentication = async () => {
     try {

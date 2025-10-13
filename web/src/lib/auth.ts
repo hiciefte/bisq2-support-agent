@@ -14,6 +14,25 @@ export interface LogoutResponse {
   authenticated: boolean;
 }
 
+// Session timeout callback - will be set by SecureAuth component
+let sessionTimeoutCallback: (() => void) | null = null;
+
+/**
+ * Register callback to handle session timeout
+ */
+export function registerSessionTimeoutCallback(callback: () => void): void {
+  sessionTimeoutCallback = callback;
+}
+
+/**
+ * Handle session timeout by calling registered callback
+ */
+function handleSessionTimeout(): void {
+  if (sessionTimeoutCallback) {
+    sessionTimeoutCallback();
+  }
+}
+
 /**
  * Login with API key using secure cookie-based authentication
  */
@@ -59,7 +78,7 @@ export async function logout(): Promise<LogoutResponse> {
 }
 
 /**
- * Make authenticated API request with automatic cookie handling
+ * Make authenticated API request with automatic cookie handling and session timeout detection
  */
 export async function makeAuthenticatedRequest(
   endpoint: string,
@@ -67,7 +86,7 @@ export async function makeAuthenticatedRequest(
 ): Promise<Response> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
 
-  return fetch(url, {
+  const response = await fetch(url, {
     ...options,
     credentials: 'include', // Important: include cookies in requests
     headers: {
@@ -75,6 +94,14 @@ export async function makeAuthenticatedRequest(
       ...options.headers,
     },
   });
+
+  // Detect session timeout (401 Unauthorized)
+  if (response.status === 401) {
+    console.warn('Session expired (401 Unauthorized), triggering logout');
+    handleSessionTimeout();
+  }
+
+  return response;
 }
 
 /**
