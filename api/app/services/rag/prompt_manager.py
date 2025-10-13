@@ -19,6 +19,15 @@ from langchain_core.documents import Document
 logger = logging.getLogger(__name__)
 
 
+class RAGPromptNotInitializedError(RuntimeError):
+    """Raised when RAG chain is used before prompt initialization."""
+
+    def __init__(self):
+        super().__init__(
+            "RAG prompt not initialized. Call create_rag_prompt() before using the RAG chain."
+        )
+
+
 class PromptManager:
     """Manager for RAG prompts and chat history formatting.
 
@@ -282,9 +291,7 @@ Answer:"""
 
                 # Ensure prompt is initialized before formatting
                 if self.prompt is None:
-                    raise RuntimeError(
-                        "RAG prompt not initialized. Call create_rag_prompt() before using the RAG chain."
-                    )
+                    raise RAGPromptNotInitializedError()
 
                 # Format the prompt
                 formatted_prompt = self.prompt.format(

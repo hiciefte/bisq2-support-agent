@@ -87,7 +87,7 @@ class FAQRAGLoader:
                                     else question
                                 ),
                                 "type": "faq",
-                                "source_weight": self.source_weights.get("faq", 1.0),
+                                "source_weight": self.source_weights.get("faq", 1.2),
                                 "category": category,
                                 "bisq_version": "General",  # FAQs apply to all versions
                             },
