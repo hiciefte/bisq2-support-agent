@@ -5,8 +5,6 @@ Security utilities for the Bisq Support API.
 import asyncio
 import logging
 import secrets
-from datetime import datetime, timedelta
-from typing import Optional
 
 from app.core.config import get_settings
 from fastapi import HTTPException, Request, Response, status

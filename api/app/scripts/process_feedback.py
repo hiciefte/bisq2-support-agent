@@ -9,8 +9,8 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from app.core.config import get_settings
-from app.services.feedback_service import FeedbackService
+from app.core.config import get_settings  # noqa: E402
+from app.services.feedback_service import FeedbackService  # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
