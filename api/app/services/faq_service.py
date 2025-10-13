@@ -54,6 +54,10 @@ class FAQService:
         if not hasattr(self, "initialized"):
             self.settings = settings
             data_dir = Path(self.settings.DATA_DIR)
+
+            # Ensure data directory exists before creating locks/files
+            data_dir.mkdir(parents=True, exist_ok=True)
+
             self._faq_file_path = data_dir / "extracted_faq.jsonl"
             self.processed_convs_path = data_dir / "processed_conversations.json"
             self.processed_msg_ids_path = data_dir / "processed_message_ids.jsonl"
@@ -256,7 +260,8 @@ class FAQService:
                 return
             msg_ids = self.processed_msg_ids
 
-        processed_msg_ids_path = Path(self.settings.PROCESSED_MESSAGE_IDS_FILE_PATH)
+        # Use the same path used during reads to avoid divergence
+        processed_msg_ids_path = self.processed_msg_ids_path
 
         try:
             # Ensure parent directory exists
@@ -504,9 +509,8 @@ class FAQService:
             all_conversations = self.group_conversations()
 
             # Save conversations only if not in privacy mode
-            if (
-                hasattr(self, "conversations_path")
-                and not self.settings.ENABLE_PRIVACY_MODE
+            if hasattr(self, "conversations_path") and not getattr(
+                self.settings, "ENABLE_PRIVACY_MODE", False
             ):
                 with self.conversations_path.open("w", encoding="utf-8") as f:
                     for conv in all_conversations:
@@ -515,7 +519,7 @@ class FAQService:
                 logger.info(
                     f"Saved {len(all_conversations)} conversations to {self.conversations_path}"
                 )
-            elif self.settings.ENABLE_PRIVACY_MODE:
+            elif getattr(self.settings, "ENABLE_PRIVACY_MODE", False):
                 logger.info(
                     "Privacy mode enabled: skipping full conversation persistence"
                 )

@@ -17,9 +17,8 @@ import re
 import shutil
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import portalocker
 from app.db.database import get_database
 from app.db.repository import FeedbackRepository
 from app.models.feedback import (
@@ -66,6 +65,15 @@ class FeedbackService:
             self.initialized = True
             if self._update_lock is None:
                 self._update_lock = asyncio.Lock()
+
+            # Guard against missing DATA_DIR setting
+            if not hasattr(self.settings, "DATA_DIR") or not self.settings.DATA_DIR:
+                raise ValueError(
+                    "DATA_DIR setting is required but not configured in settings"
+                )
+
+            # Ensure DATA_DIR exists before initializing database
+            os.makedirs(self.settings.DATA_DIR, exist_ok=True)
 
             # Initialize database and repository
             db_path = os.path.join(self.settings.DATA_DIR, "feedback.db")
@@ -398,7 +406,8 @@ class FeedbackService:
         Returns:
             Dict with migration statistics
         """
-        migration_stats = {
+        # Explicitly type the dictionary values to help mypy
+        migration_stats: Dict[str, Any] = {
             "total_entries_migrated": 0,
             "legacy_files_processed": 0,
             "entries_by_month": {},

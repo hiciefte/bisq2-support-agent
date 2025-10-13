@@ -151,13 +151,24 @@ class SimplifiedRAGService:
             logger.error(f"Error cleaning vector store: {e!s}", exc_info=True)
             raise
 
-    async def setup(self):
-        """Set up the complete system."""
+    async def setup(self, force_rebuild: bool = False):
+        """Set up the complete system.
+
+        Args:
+            force_rebuild: If True, force rebuilding the vector store from scratch.
+                          Otherwise, reuse existing vector store if available.
+        """
         try:
             logger.info("Starting simplified RAG service setup...")
 
-            # Clean vector store
-            self._clean_vector_store()
+            # Only clean vector store if force rebuild is requested
+            if force_rebuild:
+                logger.info("Force rebuild requested - cleaning vector store")
+                self._clean_vector_store()
+            else:
+                logger.info(
+                    "Reusing existing vector store if available (use force_rebuild=True to rebuild)"
+                )
 
             # Load documents
             logger.info("Loading documents...")
@@ -479,8 +490,12 @@ class SimplifiedRAGService:
             logger.debug(formatted_prompt)
             logger.debug("=== End Debug Log ===")
 
-            # Generate response
-            response_text = self.rag_chain(formatted_prompt)
+            # Generate response using proper LangChain invocation method
+            response = self.rag_chain.invoke(formatted_prompt)
+            # Extract text from response (handle both string and AIMessage responses)
+            response_text = (
+                response.content if hasattr(response, "content") else str(response)
+            )
 
             # Calculate response time
             response_time = time.time() - start_time

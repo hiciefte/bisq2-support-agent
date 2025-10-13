@@ -178,13 +178,16 @@ def custom_openapi() -> Dict[str, Any]:
     }
 
     # Apply security to admin routes
-    for path in openapi_schema["paths"]:
-        if path.startswith("/admin/"):
-            for method in openapi_schema["paths"][path]:
-                openapi_schema["paths"][path][method]["security"] = [
-                    {"AdminApiKeyAuth": []},
-                    {"AdminApiKeyQuery": []},
-                ]
+    for path, operations in openapi_schema["paths"].items():
+        if not path.startswith("/admin/"):
+            continue
+        for method, operation in operations.items():
+            if method == "parameters" or not isinstance(operation, dict):
+                continue
+            operation["security"] = [
+                {"AdminApiKeyAuth": []},
+                {"AdminApiKeyQuery": []},
+            ]
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

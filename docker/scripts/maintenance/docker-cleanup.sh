@@ -59,9 +59,9 @@ if check_disk_usage; then
   log "Removing all unused images"
   docker image prune -a -f --filter "until=24h" >> "$LOG_FILE" 2>&1
 
-  # Remove unused build cache
-  log "Removing build cache"
-  docker builder prune -f >> "$LOG_FILE" 2>&1
+  # Remove unused build cache older than 24 hours to preserve recent builds
+  log "Removing build cache older than 24 hours"
+  docker builder prune -f --filter "until=24h" >> "$LOG_FILE" 2>&1
 
   # Remove unused networks
   log "Removing unused networks"
