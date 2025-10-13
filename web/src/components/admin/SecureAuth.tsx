@@ -20,15 +20,19 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
 
   useEffect(() => {
-    // Register session timeout callback
-    registerSessionTimeoutCallback(() => {
+    // Register session timeout callback and get unsubscribe function
+    const unsubscribe = registerSessionTimeoutCallback(() => {
       console.log('Session timeout detected, redirecting to login');
       setIsAuthenticated(false);
       onAuthChange?.(false);
       setLoginError('Your session has expired. Please log in again.');
     });
 
+    // Check authentication after callback is registered
     checkAuthentication();
+
+    // Cleanup: unregister callback on component unmount
+    return unsubscribe;
   }, [onAuthChange]);
 
   const checkAuthentication = async () => {

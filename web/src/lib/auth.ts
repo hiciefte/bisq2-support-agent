@@ -19,9 +19,15 @@ let sessionTimeoutCallback: (() => void) | null = null;
 
 /**
  * Register callback to handle session timeout
+ * Returns an unsubscribe function to clean up the callback
  */
-export function registerSessionTimeoutCallback(callback: () => void): void {
+export function registerSessionTimeoutCallback(callback: () => void): () => void {
   sessionTimeoutCallback = callback;
+
+  // Return unsubscribe function
+  return () => {
+    sessionTimeoutCallback = null;
+  };
 }
 
 /**

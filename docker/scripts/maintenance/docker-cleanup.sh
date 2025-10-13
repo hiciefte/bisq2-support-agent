@@ -6,7 +6,7 @@
 
 # Log file setup
 LOG_DIR="/var/log/bisq-support"
-mkdir -p $LOG_DIR
+mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/docker-cleanup-$(date +%Y%m%d).log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -21,6 +21,12 @@ check_disk_usage() {
   local threshold=75
   local usage
   usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+
+  # Ensure numeric usage to avoid integer comparison errors
+  if ! [[ "$usage" =~ ^[0-9]+$ ]]; then
+    log "ERROR: Failed to parse disk usage: '$usage'"
+    return 1
+  fi
 
   if [ "$usage" -gt "$threshold" ]; then
     log "Disk usage is at ${usage}%, above threshold of ${threshold}%. Proceeding with cleanup."
@@ -37,7 +43,12 @@ cd "$PROJECT_DIR" || { log "ERROR: Failed to change to project directory"; exit 
 
 # Stop containers if disk space is critical (>90%)
 critical_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
-if [ "$critical_usage" -gt 90 ]; then
+
+# Ensure numeric critical_usage to avoid integer comparison errors
+if ! [[ "$critical_usage" =~ ^[0-9]+$ ]]; then
+  log "ERROR: Failed to parse critical disk usage: '$critical_usage'. Skipping container stop."
+  critical_usage=0  # Set to 0 to prevent restart logic from triggering
+elif [ "$critical_usage" -gt 90 ]; then
   log "CRITICAL: Disk usage at ${critical_usage}%. Stopping all containers to prevent data loss."
   log "Running: docker compose -f docker/docker-compose.yml down"
   docker compose -f docker/docker-compose.yml down >> "$LOG_FILE" 2>&1
@@ -91,10 +102,19 @@ else
   log "Standard cleanup complete - build cache preserved"
 fi
 
-# If services were stopped, restart them
+# If services were stopped, restart them only if usage is now safe
 if [ "$critical_usage" -gt 90 ]; then
-  log "Restarting services"
-  docker compose -f docker/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
+  final_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+
+  # Ensure numeric final_usage
+  if ! [[ "$final_usage" =~ ^[0-9]+$ ]]; then
+    log "ERROR: Failed to parse final disk usage: '$final_usage'. Skipping restart."
+  elif [ "$final_usage" -lt 85 ]; then
+    log "Disk usage now ${final_usage}%. Restarting services."
+    docker compose -f docker/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
+  else
+    log "Disk usage still high at ${final_usage}%. Skipping restart."
+  fi
 fi
 
 log "Docker cleanup process completed"
