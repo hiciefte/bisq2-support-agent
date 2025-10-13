@@ -82,9 +82,13 @@ if check_disk_usage; then
   after_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
   log "Disk usage after aggressive cleanup: ${after_usage}%"
 else
-  # Just do a system prune without volumes if disk usage isn't critical
-  log "Performing standard cleanup"
-  docker system prune -f >> "$LOG_FILE" 2>&1
+  # Perform light cleanup that preserves build cache
+  log "Performing standard cleanup (preserving build cache)"
+  # Remove stopped containers only
+  docker container prune -f >> "$LOG_FILE" 2>&1
+  # Remove dangling images only (not all unused images)
+  docker image prune -f >> "$LOG_FILE" 2>&1
+  log "Standard cleanup complete - build cache preserved"
 fi
 
 # If services were stopped, restart them
