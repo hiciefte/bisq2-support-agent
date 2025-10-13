@@ -3,13 +3,22 @@
 # Docker System Cleanup Script
 # This script safely cleans Docker resources to prevent disk space issues
 #
+set -Eeuo pipefail
+trap 'log "ERROR: Line $LINENO failed with exit code $?."' ERR
 
-# Log file setup
+# Log file setup with fallback for non-root execution
 LOG_DIR="/var/log/bisq-support"
-mkdir -p "$LOG_DIR"
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+  LOG_DIR="/tmp/bisq-support"
+  mkdir -p "$LOG_DIR"
+fi
 LOG_FILE="$LOG_DIR/docker-cleanup-$(date +%Y%m%d).log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# Determine docker compose command (docker compose vs docker-compose)
+DOCKER_COMPOSE="docker compose"
+$DOCKER_COMPOSE version >> /dev/null 2>&1 || DOCKER_COMPOSE="docker-compose"
 
 # Log function
 log() {
@@ -50,8 +59,8 @@ if ! [[ "$critical_usage" =~ ^[0-9]+$ ]]; then
   critical_usage=0  # Set to 0 to prevent restart logic from triggering
 elif [ "$critical_usage" -gt 90 ]; then
   log "CRITICAL: Disk usage at ${critical_usage}%. Stopping all containers to prevent data loss."
-  log "Running: docker compose -f docker/docker-compose.yml down"
-  docker compose -f docker/docker-compose.yml down >> "$LOG_FILE" 2>&1
+  log "Running: $DOCKER_COMPOSE -f docker/docker-compose.yml down"
+  $DOCKER_COMPOSE -f docker/docker-compose.yml down >> "$LOG_FILE" 2>&1
 fi
 
 # Remove stopped containers
@@ -66,13 +75,14 @@ docker image prune -f >> "$LOG_FILE" 2>&1
 if check_disk_usage; then
   log "Performing aggressive cleanup due to high disk usage"
 
-  # Remove all unused images, not just dangling ones
-  log "Removing all unused images"
+  # Remove unused images older than 24 hours (not just dangling ones)
+  log "Removing unused images older than 24 hours"
   docker image prune -a -f --filter "until=24h" >> "$LOG_FILE" 2>&1
 
   # Remove unused build cache older than 24 hours to preserve recent builds
   log "Removing build cache older than 24 hours"
-  docker builder prune -f --filter "until=24h" >> "$LOG_FILE" 2>&1
+  docker builder prune -f --all --filter "until=24h" >> "$LOG_FILE" 2>&1 || \
+    log "builder prune not supported; skipping"
 
   # Remove unused networks
   log "Removing unused networks"
@@ -82,10 +92,10 @@ if check_disk_usage; then
   log "Removing unused volumes"
   docker volume prune -f >> "$LOG_FILE" 2>&1
 
-  # Clean up logs
+  # Clean up Docker container logs
   log "Cleaning up Docker logs"
   if [ -d /var/lib/docker/containers ]; then
-    find /var/lib/docker/containers -type f -name "*.log" -exec truncate -s 0 {} \;
+    find /var/lib/docker/containers -type f -name "*.log" -exec truncate -s 0 {} \; >> "$LOG_FILE" 2>&1
     log "Docker logs have been truncated"
   fi
 
@@ -95,10 +105,6 @@ if check_disk_usage; then
 else
   # Perform light cleanup that preserves build cache
   log "Performing standard cleanup (preserving build cache)"
-  # Remove stopped containers only
-  docker container prune -f >> "$LOG_FILE" 2>&1
-  # Remove dangling images only (not all unused images)
-  docker image prune -f >> "$LOG_FILE" 2>&1
   log "Standard cleanup complete - build cache preserved"
 fi
 
@@ -111,7 +117,7 @@ if [ "$critical_usage" -gt 90 ]; then
     log "ERROR: Failed to parse final disk usage: '$final_usage'. Skipping restart."
   elif [ "$final_usage" -lt 85 ]; then
     log "Disk usage now ${final_usage}%. Restarting services."
-    docker compose -f docker/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
+    $DOCKER_COMPOSE -f docker/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
   else
     log "Disk usage still high at ${final_usage}%. Skipping restart."
   fi

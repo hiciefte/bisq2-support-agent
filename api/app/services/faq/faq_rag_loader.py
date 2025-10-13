@@ -95,8 +95,9 @@ class FAQRAGLoader:
                         documents.append(doc)
                     except json.JSONDecodeError:
                         logger.exception(f"Error parsing JSON line in FAQ file: {line}")
-            logger.info(f"Loaded {len(documents)} FAQ documents")
-            return documents
         except Exception as e:
             logger.error(f"Error loading FAQ data: {e!s}", exc_info=True)
             return []
+        else:
+            logger.info(f"Loaded {len(documents)} FAQ documents")
+            return documents

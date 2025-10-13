@@ -273,12 +273,12 @@ Answer:"""
                         context = truncated
 
                 # Log the complete prompt and context for debugging
-                logger.info("=== DEBUG: Complete Prompt and Context ===")
-                logger.info(f"Question: {redact_pii(preprocessed_question)}")
-                logger.info(f"Chat History: {redact_pii(chat_history_str)}")
-                logger.info("Context:")
-                logger.info(redact_pii(context))
-                logger.info("=== End Debug Log ===")
+                logger.debug("=== DEBUG: Complete Prompt and Context ===")
+                logger.debug(f"Question: {redact_pii(preprocessed_question)}")
+                logger.debug(f"Chat History: {redact_pii(chat_history_str)}")
+                logger.debug("Context:")
+                logger.debug(redact_pii(context))
+                logger.debug("=== End Debug Log ===")
 
                 # Ensure prompt is initialized before formatting
                 if self.prompt is None:
