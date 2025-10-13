@@ -72,7 +72,27 @@ class PromptManager:
                     formatted_history.append(f"Human: {content}")
                 elif role == "assistant":
                     formatted_history.append(f"Assistant: {content}")
-            # Check if this is a dictionary with user/assistant keys
+                else:
+                    logger.warning(
+                        f"Unknown exchange role in chat history: {role}. Expected 'user' or 'assistant'."
+                    )
+            # Check if this is a dictionary with role/content keys (standard format)
+            elif (
+                isinstance(exchange, dict)
+                and "role" in exchange
+                and "content" in exchange
+            ):
+                role = exchange["role"]
+                content = exchange["content"]
+                if role == "user":
+                    formatted_history.append(f"Human: {content}")
+                elif role == "assistant":
+                    formatted_history.append(f"Assistant: {content}")
+                else:
+                    logger.warning(
+                        f"Unknown exchange role in chat history: {role}. Expected 'user' or 'assistant'."
+                    )
+            # Check if this is a dictionary with user/assistant keys (legacy format)
             elif isinstance(exchange, dict):
                 user_msg = exchange.get("user", "")
                 ai_msg = exchange.get("assistant", "")

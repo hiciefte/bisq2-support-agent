@@ -78,9 +78,6 @@ class DocumentRetriever:
                 )
                 logger.info(f"Found {len(bisq1_docs)} Bisq 1 documents")
                 all_docs.extend(bisq1_docs)
-
-            logger.info(f"Total documents retrieved: {len(all_docs)}")
-            return all_docs
         except Exception as e:
             logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
             # Fallback: retrieve documents and post-sort by version priority
@@ -105,6 +102,9 @@ class DocumentRetriever:
                 f"Fallback retrieved {len(sorted_docs)} documents, sorted by version priority"
             )
             return sorted_docs
+        else:
+            logger.info(f"Total documents retrieved: {len(all_docs)}")
+            return all_docs
 
     def format_documents(self, docs: List[Document]) -> str:
         """Format retrieved documents with version-aware processing.
@@ -120,13 +120,14 @@ class DocumentRetriever:
 
         # Sort documents by version weight and relevance
         # Use bisq_version metadata (matches retrieval filter key)
+        # Define version priority (lower number = higher priority)
+        version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}
+
         sorted_docs = sorted(
             docs,
             key=lambda x: (
                 x.metadata.get("source_weight", 1.0),
-                x.metadata.get("bisq_version") == "Bisq 2",  # Prioritize Bisq 2 content
-                x.metadata.get("bisq_version") == "Bisq 1",  # Then Bisq 1 content
-                x.metadata.get("bisq_version") == "General",  # Then general content
+                version_priority.get(x.metadata.get("bisq_version", "General"), 1),
             ),
             reverse=True,
         )

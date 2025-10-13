@@ -42,7 +42,7 @@ async def submit_feedback(request: Request, feedback: FeedbackRequest):
         # Let service-level exceptions bubble up to centralized error handler
         raise
     except Exception as e:
-        logger.error(f"Error recording feedback: {str(e)}", exc_info=True)
+        logger.error(f"Error recording feedback: {e!s}", exc_info=True)
         raise BaseAppException(
             detail="An error occurred while recording your feedback",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -88,7 +88,7 @@ async def get_feedback_stats():
         # Let service-level exceptions bubble up to centralized error handler
         raise
     except Exception as e:
-        logger.error(f"Error getting feedback stats: {str(e)}", exc_info=True)
+        logger.error(f"Error getting feedback stats: {e!s}", exc_info=True)
         raise BaseAppException(
             detail="An error occurred while retrieving feedback statistics",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -157,7 +157,7 @@ async def submit_feedback_explanation(
         # Let service-level exceptions bubble up to centralized error handler
         raise
     except Exception as e:
-        logger.error(f"Error submitting feedback explanation: {str(e)}", exc_info=True)
+        logger.error(f"Error submitting feedback explanation: {e!s}", exc_info=True)
         raise BaseAppException(
             detail="An error occurred while submitting feedback explanation",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

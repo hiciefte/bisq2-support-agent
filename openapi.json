@@ -3,7 +3,7 @@
     "info": {
         "title": "BISQ Support",
         "version": "0.1.0",
-        "description": "BISQ Support API - A RAG-based support assistant with admin authentication.\n\n## Security\n\n### Transport Security (CKV_OPENAPI_20)\nProduction deployments use HTTPS exclusively via nginx reverse proxy configuration.\nAPI keys are only transmitted over secure channels in production.\nLocal development uses HTTP for debugging convenience.\n\n### Authentication Design (CKV_OPENAPI_4, CKV_OPENAPI_5)\nThis API uses **per-endpoint security** by design:\n- Public endpoints: /health, /chat, /feedback (no authentication)\n- Admin endpoints: /admin/* (require AdminApiKeyAuth or AdminApiKeyQuery)\n\nNo global security is defined because public and authenticated endpoints coexist.\n\n### Array Limits (CKV_OPENAPI_21)\nArray properties intentionally omit maxItems to allow flexible data volumes.\nActual limits are enforced by:\n- Application logic (e.g., FeedbackRequest.conversation_history maxItems=50)\n- Backend validation in FastAPI route handlers\n- Database constraints and query limits"
+        "description": "BISQ Support API - A RAG-based support assistant with admin authentication.\n\n## Security\n\n### Transport Security (CKV_OPENAPI_20)\nProduction deployments use HTTPS exclusively via nginx reverse proxy configuration.\nAPI keys are only transmitted over secure channels in production.\nLocal development uses HTTP for debugging convenience.\n\n### Authentication Design (CKV_OPENAPI_4, CKV_OPENAPI_5)\nThis API uses **per-endpoint security** by design:\n- Public endpoints: /health, /chat, /feedback (no authentication)\n- Admin endpoints: /admin/* (require AdminApiKeyAuth header)\n- Exception: /admin/auth/logout is public (no authentication required)\n\nNo global security is defined because public and authenticated endpoints coexist.\n\n### Array Limits (CKV_OPENAPI_21)\nArray properties intentionally omit maxItems to allow flexible data volumes.\nActual limits are enforced by:\n- Application logic (e.g., FeedbackRequest.conversation_history maxItems=50)\n- Backend validation in FastAPI route handlers\n- Database constraints and query limits"
     },
     "paths": {
         "/metrics": {
@@ -277,9 +277,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -304,22 +301,8 @@
                                 }
                             }
                         }
-                    },
-                    "401": {
-                        "description": "Unauthorized - Invalid or missing API key"
-                    },
-                    "403": {
-                        "description": "Forbidden - Insufficient permissions"
                     }
-                },
-                "security": [
-                    {
-                        "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
-                    }
-                ]
+                }
             }
         },
         "/admin/feedback": {
@@ -353,9 +336,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -543,9 +523,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -579,9 +556,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -617,9 +591,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -673,9 +644,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -732,9 +700,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -770,9 +735,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -886,9 +848,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             },
@@ -940,9 +899,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -1007,9 +963,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             },
@@ -1055,9 +1008,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -1084,9 +1034,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -1120,9 +1067,6 @@
                 "security": [
                     {
                         "AdminApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyQuery": []
                     }
                 ]
             }
@@ -1981,12 +1925,6 @@
                 "in": "header",
                 "name": "Authorization",
                 "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`"
-            },
-            "AdminApiKeyQuery": {
-                "type": "apiKey",
-                "in": "query",
-                "name": "api_key",
-                "description": "API key for admin authentication as a query parameter"
             }
         }
     }
