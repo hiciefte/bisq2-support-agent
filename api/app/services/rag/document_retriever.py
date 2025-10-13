@@ -81,7 +81,6 @@ class DocumentRetriever:
 
             logger.info(f"Total documents retrieved: {len(all_docs)}")
             return all_docs
-
         except Exception as e:
             logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
             # Fallback: retrieve documents and post-sort by version priority

@@ -106,40 +106,60 @@ async def submit_feedback_explanation(
     This endpoint receives explanations about why an answer was unhelpful.
     It updates the existing feedback with the explanation and categorizes issues.
     """
-    feedback_service = get_feedback_service(request)
+    try:
+        feedback_service = get_feedback_service(request)
 
-    # Extract required fields
-    message_id = explanation_data.get("message_id")
-    explanation = explanation_data.get("explanation")
+        # Extract required fields
+        message_id = explanation_data.get("message_id")
+        explanation = explanation_data.get("explanation")
 
-    if message_id is None or not explanation:
-        return {"success": False, "error": "Missing required fields"}
+        if message_id is None or not explanation:
+            raise BaseAppException(
+                detail="Missing required fields: message_id and explanation are required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="MISSING_REQUIRED_FIELDS",
+            )
 
-    # Extract any specific issues mentioned by the user
-    user_provided_issues = explanation_data.get("issues", [])
+        # Extract any specific issues mentioned by the user
+        user_provided_issues = explanation_data.get("issues", [])
 
-    # Analyze explanation text for common issues ONLY if no specific issues provided by user
-    detected_issues_from_text = []
-    if explanation and not user_provided_issues:
-        detected_issues_from_text = await feedback_service.analyze_feedback_text(
-            explanation
+        # Analyze explanation text for common issues ONLY if no specific issues provided by user
+        detected_issues_from_text = []
+        if explanation and not user_provided_issues:
+            detected_issues_from_text = await feedback_service.analyze_feedback_text(
+                explanation
+            )
+
+        # Combine user-provided issues and detected issues. Prioritize user-provided ones.
+        all_issues_to_pass = list(user_provided_issues)
+        for detected_issue in detected_issues_from_text:
+            if detected_issue not in all_issues_to_pass:
+                all_issues_to_pass.append(detected_issue)
+
+        success = await feedback_service.update_feedback_entry(
+            message_id=message_id, explanation=explanation, issues=all_issues_to_pass
         )
 
-    # Combine user-provided issues and detected issues. Prioritize user-provided ones.
-    all_issues_to_pass = list(user_provided_issues)
-    for detected_issue in detected_issues_from_text:
-        if detected_issue not in all_issues_to_pass:
-            all_issues_to_pass.append(detected_issue)
+        if not success:
+            raise BaseAppException(
+                detail="Feedback entry not found or update failed",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="FEEDBACK_NOT_FOUND",
+            )
 
-    success = await feedback_service.update_feedback_entry(
-        message_id=message_id, explanation=explanation, issues=all_issues_to_pass
-    )
+        return {
+            "success": True,
+            "message": "Feedback explanation received",
+            "issues": all_issues_to_pass,
+        }
 
-    if not success:
-        return {"success": False, "error": "Feedback entry not found or update failed"}
-
-    return {
-        "success": True,
-        "message": "Feedback explanation received",
-        "issues": all_issues_to_pass,
-    }
+    except BaseAppException:
+        # Let service-level exceptions bubble up to centralized error handler
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting feedback explanation: {str(e)}", exc_info=True)
+        raise BaseAppException(
+            detail="An error occurred while submitting feedback explanation",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_EXPLANATION_FAILED",
+        ) from e

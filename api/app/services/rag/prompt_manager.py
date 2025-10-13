@@ -279,11 +279,10 @@ Answer:"""
                             else response_content
                         )
                         logger.info(f"Content sample: {redact_pii(sample)}")
+                    return response_content
                 else:
                     logger.warning("Empty response received from LLM")
                     return "I apologize, but I couldn't generate a proper response based on the available information."
-
-                return response_content
             except Exception as e:
                 logger.error(f"Error generating response: {e!s}", exc_info=True)
                 return "I apologize, but I'm having technical difficulties processing your request. Please try again later."

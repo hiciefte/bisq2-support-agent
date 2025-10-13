@@ -69,7 +69,7 @@ class TestRAGQueryProcessing:
         # Verifying response structure is sufficient for this test
 
     @pytest.mark.asyncio
-    async def test_query_with_unknown_topic(self, rag_service, mock_llm):
+    async def test_query_with_unknown_topic(self, rag_service):
         """Test querying with unknown topic returns fallback response."""
         # Mock the retriever to return no documents
         with patch.object(
@@ -315,7 +315,7 @@ class TestErrorHandling:
         assert "answer" in response
 
     @pytest.mark.asyncio
-    async def test_handles_empty_context_gracefully(self, rag_service, mock_llm):
+    async def test_handles_empty_context_gracefully(self, rag_service):
         """Test that empty context is handled without errors."""
         # Mock retriever to return no documents
         with patch.object(

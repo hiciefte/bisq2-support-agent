@@ -89,6 +89,7 @@ class FAQRAGLoader:
                                 "type": "faq",
                                 "source_weight": self.source_weights.get("faq", 1.0),
                                 "category": category,
+                                "bisq_version": "General",  # FAQs apply to all versions
                             },
                         )
                         documents.append(doc)
