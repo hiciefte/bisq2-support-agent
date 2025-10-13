@@ -245,22 +245,31 @@ rebuild_services() {
         return 1
     }
 
-    log_info "Stopping services..."
-    if ! docker compose -f "$compose_file" down; then
-        log_error "Failed to stop containers"
+    # Define services that need rebuilding (excludes nginx and monitoring)
+    local rebuild_services=("api" "web" "bisq2-api")
+
+    log_info "Stopping backend services (nginx stays running for maintenance page)..."
+    if ! docker compose -f "$compose_file" stop "${rebuild_services[@]}"; then
+        log_error "Failed to stop backend services"
         return 1
     fi
 
-    log_info "Building containers (pulling fresh base images)..."
-    if ! docker compose -f "$compose_file" build --pull; then
-        log_error "Failed to rebuild containers"
+    log_info "Building backend containers (pulling fresh base images)..."
+    if ! docker compose -f "$compose_file" build --pull "${rebuild_services[@]}"; then
+        log_error "Failed to rebuild backend containers"
         return 1
     fi
 
-    log_info "Starting rebuilt containers..."
-    if ! docker compose -f "$compose_file" up -d; then
-        log_error "Failed to start containers"
+    log_info "Starting rebuilt backend containers..."
+    if ! docker compose -f "$compose_file" up -d "${rebuild_services[@]}"; then
+        log_error "Failed to start backend containers"
         return 1
+    fi
+
+    log_info "Ensuring nginx and dependent services are running..."
+    # Make sure nginx is up (in case it wasn't running)
+    if ! docker compose -f "$compose_file" up -d nginx; then
+        log_warning "Failed to ensure nginx is running"
     fi
 
     return 0
