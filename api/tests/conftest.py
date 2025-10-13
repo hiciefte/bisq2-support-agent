@@ -208,13 +208,15 @@ async def feedback_service(
 
     # Store sample feedback
     for feedback in sample_feedback_data:
-        await service.store_feedback(
-            question=feedback["question"],
-            answer=feedback["answer"],
-            helpful=feedback["helpful"],
-            explanation=feedback.get("explanation"),
-            sources_used=feedback.get("sources_used", []),
-        )
+        payload = {
+            "question": feedback["question"],
+            "answer": feedback["answer"],
+            "rating": 1 if feedback.get("helpful") else 0,
+            "explanation": feedback.get("explanation"),
+            "sources_used": feedback.get("sources_used", []),
+            "timestamp": feedback.get("timestamp"),
+        }
+        await service.store_feedback(payload)
 
     return service
 
