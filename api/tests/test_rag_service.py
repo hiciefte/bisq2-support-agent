@@ -253,7 +253,9 @@ class TestPromptManagement:
         )
 
         assert prompt is not None
-        assert hasattr(prompt, "format")
+        assert isinstance(prompt, str)  # context_only_prompt returns a string
+        assert len(prompt) > 0
+        assert "Test question" in prompt  # Question should be in prompt
 
     def test_prompt_includes_feedback_guidance(self, rag_service):
         """Test that prompts include feedback-based guidance."""

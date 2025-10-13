@@ -101,10 +101,12 @@ class PromptManager:
         if self.feedback_service:
             guidance = self.feedback_service.get_prompt_guidance()
             if guidance:
+                # Join guidance list into a single string with proper formatting
+                guidance_text = "\n".join(f"- {item}" for item in guidance)
                 additional_guidance = (
-                    f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance}"
+                    f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance_text}"
                 )
-                logger.info(f"Added prompt guidance: {guidance}")
+                logger.info(f"Added prompt guidance: {guidance_text}")
 
         # Custom system template with proper sections for context, chat history, and question
         system_template = f"""You are an assistant for question-answering tasks about Bisq 2.
