@@ -42,8 +42,8 @@ test.describe('Permission Regression Tests', () => {
     console.log('Restarting API container...');
     try {
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-      // Wait for API to be healthy
-      await page.waitForTimeout(10000);
+      // Wait for API to be healthy (longer timeout for RAG initialization)
+      await page.waitForTimeout(20000);
     } catch (error) {
       console.error('Failed to restart container:', error);
       throw error;
@@ -51,7 +51,7 @@ test.describe('Permission Regression Tests', () => {
 
     // Step 3: Refresh page and try to delete the FAQ
     await page.reload();
-    await page.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 10000 });
+    await page.waitForSelector('.bg-card.border.border-border.rounded-lg', { timeout: 30000 });
 
     const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
     await expect(faqCard).toBeVisible();
@@ -86,7 +86,7 @@ test.describe('Permission Regression Tests', () => {
     // Step 1: Restart API container
     console.log('Restarting API container...');
     await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-    await page.waitForTimeout(10000);
+    await page.waitForTimeout(20000);
 
     // Step 2: Submit feedback
     await page.goto('http://localhost:3000');
@@ -151,20 +151,23 @@ test.describe('Permission Regression Tests', () => {
   });
 
   test('Multiple container restarts should not break permissions', async ({ page }) => {
+    // Set longer timeout for this test (3 restarts + operations)
+    test.setTimeout(120000); // 2 minutes
+
     // Restart container 3 times
     for (let i = 1; i <= 3; i++) {
       console.log(`Container restart ${i}/3...`);
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-      await page.waitForTimeout(10000);
+      await page.waitForTimeout(20000);
     }
 
     // Try to create and delete FAQ
     await page.goto('http://localhost:3000/admin/manage-faqs');
-    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+    await page.waitForSelector('input[type="password"]', { timeout: 15000 });
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
-    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
-    await page.waitForSelector('text=FAQ', { timeout: 10000 });
+    await page.waitForSelector('text=Admin Dashboard', { timeout: 15000 });
+    await page.waitForSelector('text=FAQ', { timeout: 30000 });
 
     // Create FAQ
     await page.click('button:has-text("Add New FAQ")');
