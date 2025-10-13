@@ -4,7 +4,6 @@
 # This script safely cleans Docker resources to prevent disk space issues
 #
 set -Eeuo pipefail
-trap 'log "ERROR: Line $LINENO failed with exit code $?."' ERR
 
 # Log file setup with fallback for non-root execution
 LOG_DIR="/var/log/bisq-support"
@@ -24,6 +23,9 @@ $DOCKER_COMPOSE version >> /dev/null 2>&1 || DOCKER_COMPOSE="docker-compose"
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
+
+# Register ERR trap after log function is defined
+trap 'log "ERROR: Line $LINENO failed with exit code $?."' ERR
 
 # Check if cleanup is needed (>75% disk usage)
 check_disk_usage() {
