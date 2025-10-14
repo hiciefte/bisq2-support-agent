@@ -344,7 +344,7 @@ pip-compile api/requirements.in -o api/requirements.txt
 **✅ Do this instead (creates cross-platform compatible dependencies):**
 ```bash
 # Use Docker to generate requirements.txt in the same Linux environment as CI
-docker compose -f docker/docker-compose.yml -f docker/dso .yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
 ```
 
 This ensures the generated `requirements.txt` is compatible with both your local development environment and the Linux-based GitHub Actions CI environment.
