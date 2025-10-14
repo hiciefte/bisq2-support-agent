@@ -213,7 +213,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                     logger.info(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    logger.error("Max retries reached for OpenAI API call")
+                    logger.exception("Max retries reached for OpenAI API call")
 
         return None
 

@@ -134,6 +134,8 @@ if check_disk_usage; then
 else
   # Perform light cleanup that preserves build cache
   log "Performing standard cleanup (preserving build cache)"
+  # Only remove dangling images and stopped containers (already done above)
+  # Preserve build cache entirely for faster future builds
   log "Standard cleanup complete - build cache preserved"
 fi
 

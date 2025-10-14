@@ -56,17 +56,27 @@ class AISuiteLLMWrapper:
 
         Returns:
             Response object with 'content' attribute containing the response text
+
+        Raises:
+            RuntimeError: If LLM invocation fails
         """
         messages = [{"role": "user", "content": prompt}]
 
-        response = self.client.chat.completions.create(
-            model=self.model_id,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-
-        return LLMResponse(content=response.choices[0].message.content)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_id,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+            return LLMResponse(content=response.choices[0].message.content)
+        except Exception as e:
+            error_msg = (
+                f"Failed to invoke LLM (model={self.model_id}, "
+                f"prompt_length={len(prompt)}): {e}"
+            )
+            logger.exception(error_msg)
+            raise RuntimeError(error_msg) from e
 
 
 class LLMProvider:
@@ -92,7 +102,7 @@ class LLMProvider:
             logger.info("LLM provider initialized with AISuite client")
         except Exception as e:
             error_msg = f"Failed to initialize AISuite client: {e}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             raise RuntimeError(error_msg) from e
 
     def _validate_openai_api_key(self) -> None:
@@ -130,7 +140,7 @@ class LLMProvider:
             return self.embeddings
         except Exception as e:
             error_msg = f"Failed to initialize OpenAI embeddings: {e}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             raise RuntimeError(error_msg) from e
 
     def initialize_llm(self) -> Any:
@@ -153,7 +163,7 @@ class LLMProvider:
             return self.llm
         except Exception as e:
             error_msg = f"Failed to initialize LLM wrapper: {e}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             raise RuntimeError(error_msg) from e
 
     def get_embeddings(self) -> OpenAIEmbeddings | None:

@@ -20,6 +20,7 @@ aisuite
 openai<2.0.0
 # Keep langchain-openai for embeddings only (not for LLM)
 langchain-openai
+# Note: httpx is pinned to 0.27.2 in requirements.txt (aisuite requires httpx<0.28)
 
 # Web scraping and parsing
 beautifulsoup4

@@ -117,6 +117,24 @@ class Settings(BaseSettings):
         """
         return os.path.join(self.DATA_DIR, *path_parts)
 
+    @field_validator("LLM_TEMPERATURE")
+    @classmethod
+    def validate_temperature(cls, v: float) -> float:
+        """Validate LLM temperature is within acceptable range.
+
+        Args:
+            v: Temperature value
+
+        Returns:
+            Validated temperature value
+
+        Raises:
+            ValueError: If temperature is outside acceptable range
+        """
+        if not 0.0 <= v <= 2.0:
+            raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
+        return v
+
     @field_validator("CORS_ORIGINS", mode="after")
     @classmethod
     def parse_cors_origins(cls, v: str) -> list[str]:
