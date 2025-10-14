@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.db.database import get_database
@@ -155,10 +155,12 @@ class FeedbackService:
             conversation_history = feedback_data.get("conversation_history")
             metadata = feedback_data.get("metadata", {})
             timestamp = feedback_data.get("timestamp")
+            sources = feedback_data.get("sources")
+            sources_used = feedback_data.get("sources_used")
 
             # Add timestamp if not already present
             if timestamp is None:
-                timestamp = datetime.now().isoformat()
+                timestamp = datetime.now(timezone.utc).isoformat()
 
             # Store in database using repository
             feedback_id = self.repository.store_feedback(
@@ -170,6 +172,8 @@ class FeedbackService:
                 conversation_history=conversation_history,
                 metadata=metadata,
                 timestamp=timestamp,
+                sources=sources,
+                sources_used=sources_used,
             )
 
             # Log conversation history details

@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     ENABLE_PRIVACY_MODE: bool = True  # Enable privacy-preserving features
     PII_DETECTION_ENABLED: bool = True  # Enable PII detection in logs
 
+    # Support agent configuration
+    SUPPORT_AGENT_NICKNAMES: str | list[str] = ""  # Comma-separated or list (required)
+
     # Environment settings
     ENVIRONMENT: str = "development"
 
@@ -133,6 +136,37 @@ class Settings(BaseSettings):
         if not 0.0 <= v <= 2.0:
             raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
         return v
+
+    @field_validator("SUPPORT_AGENT_NICKNAMES", mode="before")
+    @classmethod
+    def parse_support_agent_nicknames(cls, v: str | list[str]) -> list[str]:
+        """Normalize SUPPORT_AGENT_NICKNAMES to list of nicknames.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles trimming whitespace and ignores empty entries.
+
+        Args:
+            v: Support agent nicknames as string (comma-separated) or list of strings
+
+        Returns:
+            List of support agent nicknames with whitespace trimmed and empty entries removed
+        """
+        # Handle list input
+        if isinstance(v, list):
+            # Filter out empty strings and trim whitespace
+            return [
+                nickname.strip()
+                for nickname in v
+                if isinstance(nickname, str) and nickname.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            # Split by comma, trim whitespace, filter empty entries
+            return [nickname.strip() for nickname in v.split(",") if nickname.strip()]
+
+        # Fallback for unexpected types
+        return []
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

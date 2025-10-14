@@ -1,17 +1,16 @@
 """
 Conversation Processor for organizing chat messages into meaningful conversation threads.
 
-This module handles loading messages from CSV files and organizing them into
+This module handles loading messages from JSON export and organizing them into
 conversation threads based on message references and timestamps.
 """
 
+import json
 import logging
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Set
-
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -26,141 +25,153 @@ class ConversationProcessor:
     - Group messages into structured conversations
     """
 
-    def __init__(self):
-        """Initialize the conversation processor."""
+    def __init__(self, support_agent_nicknames: List[str] | None = None):
+        """Initialize the conversation processor.
+
+        Args:
+            support_agent_nicknames: List of nicknames that identify support agents.
+                If None or empty, no messages will be marked as support messages.
+        """
         self.messages: Dict[str, Dict] = {}
         self.references: Dict[str, str] = {}
         self.conversations: List[Dict] = []
+        self.support_agent_nicknames = set(support_agent_nicknames or [])
 
-    def load_messages(self, csv_path: Path) -> None:
-        """Load messages from CSV and organize them.
-
-        If the CSV file doesn't exist, logs a warning and returns without error.
+    def _is_support_message(self, author: str) -> bool:
+        """Determine if a message is from a support agent.
 
         Args:
-            csv_path: Path to the CSV file containing messages
+            author: The author's nickname
+
+        Returns:
+            True if the message is from a support agent, False otherwise
+        """
+        # Check if author is a known support agent
+        # If no support agent nicknames configured, no messages are marked as support
+        return author in self.support_agent_nicknames
+
+    def load_messages_from_json(self, json_data: Dict) -> None:
+        """Load messages from JSON export data (from API or dict).
+
+        Args:
+            json_data: JSON dict matching bisq2 API export format
 
         Raises:
-            ValueError: If the CSV file is malformed or cannot be parsed
+            ValueError: If the JSON data is malformed or cannot be parsed
         """
-        if not csv_path.exists():
-            logger.warning(f"No input file found at {csv_path}")
-            return
-
-        logger.info(f"Loading messages from CSV: {csv_path}")
+        logger.info("Loading messages from JSON data")
 
         try:
-            # Read the CSV file
-            df = pd.read_csv(csv_path)
-            logger.debug(f"CSV columns: {list(df.columns)}")
-            total_lines = len(df)
-            logger.info(f"Processing {total_lines} lines from input file")
-
             # Reset message collections to prevent stale data
             self.messages = {}
             self.references = {}
             self.conversations = []
 
-            for _, row_data in df.iterrows():
-                try:
-                    msg_id = row_data["Message ID"]
+            messages_list = json_data.get("messages", [])
+            logger.info(f"Processing {len(messages_list)} messages from JSON")
 
-                    # Validate message ID is a valid string
-                    if pd.isna(msg_id) or not isinstance(msg_id, (str, int)):
-                        logger.warning("Skipping row with invalid message ID")
-                        continue
-                    msg_id = str(msg_id)
+            for msg_data in messages_list:
+                try:
+                    msg_id = msg_data["messageId"]
 
                     # Skip empty or invalid messages
-                    if (
-                        pd.isna(row_data["Message"])
-                        or not str(row_data["Message"]).strip()
-                    ):
+                    if not msg_data.get("message", "").strip():
+                        logger.warning(f"Skipping empty message: {msg_id}")
                         continue
 
-                    # Parse timestamp
+                    # Parse ISO 8601 timestamp
                     timestamp = None
-                    if pd.notna(row_data["Date"]):
+                    if msg_data.get("date"):
                         try:
-                            timestamp = pd.to_datetime(row_data["Date"])
+                            # Parse ISO 8601 format with timezone
+                            timestamp = datetime.fromisoformat(
+                                msg_data["date"].replace("Z", "+00:00")
+                            )
                         except (ValueError, TypeError) as exc:
                             logger.warning(
                                 f"Timestamp parse error for msg {msg_id}: {exc}"
                             )
 
+                    # Check if message has citation (is a reply/support message)
+                    citation = msg_data.get("citation")
+                    referenced_msg_id = citation.get("messageId") if citation else None
+
+                    # Determine if this is a support message
+                    author = msg_data.get("author", "unknown")
+                    is_support = self._is_support_message(author)
+
                     # Create message object
-                    # Handle channel field safely (may be NaN)
-                    channel = (
-                        str(row_data["Channel"]).lower()
-                        if pd.notna(row_data["Channel"])
-                        else "unknown"
-                    )
                     msg = {
                         "msg_id": msg_id,
-                        "text": row_data["Message"].strip(),
-                        "author": (
-                            row_data["Author"]
-                            if pd.notna(row_data["Author"])
-                            else "unknown"
-                        ),
-                        "channel": channel,
-                        "is_support": channel == "support",
+                        "text": msg_data["message"].strip(),
+                        "author": author,
+                        "channel": msg_data.get("channel", "unknown").lower(),
+                        "is_support": is_support,
                         "timestamp": timestamp,
-                        "referenced_msg_id": (
-                            row_data["Referenced Message ID"]
-                            if pd.notna(row_data["Referenced Message ID"])
-                            else None
-                        ),
+                        "referenced_msg_id": referenced_msg_id,
                     }
                     self.messages[msg_id] = msg
 
                     # Store reference if it exists
-                    if msg["referenced_msg_id"]:
-                        self.references[msg_id] = msg["referenced_msg_id"]
-                        if msg["referenced_msg_id"] not in self.messages and pd.notna(
-                            row_data["Referenced Message Text"]
-                        ):
-                            ref_timestamp = None
-                            ref_rows = df[df["Message ID"] == msg["referenced_msg_id"]]
-                            if not ref_rows.empty and pd.notna(
-                                ref_rows.iloc[0]["Date"]
-                            ):
-                                try:
-                                    ref_timestamp = pd.to_datetime(
-                                        ref_rows.iloc[0]["Date"]
-                                    )
-                                except (ValueError, TypeError) as exc:
-                                    logger.warning(
-                                        f"Ref timestamp parse error for msg {msg_id}: {exc}"
-                                    )
-                            if ref_timestamp is None and timestamp is not None:
-                                ref_timestamp = timestamp - pd.Timedelta(seconds=1)
+                    if referenced_msg_id:
+                        self.references[msg_id] = referenced_msg_id
+
+                        # Create referenced message if it doesn't exist yet
+                        if referenced_msg_id not in self.messages and citation:
+                            ref_timestamp = timestamp
+                            if ref_timestamp:
+                                # Referenced message is earlier
+                                ref_timestamp = timestamp - timedelta(seconds=1)
+
                             ref_msg = {
-                                "msg_id": msg["referenced_msg_id"],
-                                "text": row_data["Referenced Message Text"].strip(),
-                                "author": (
-                                    row_data["Referenced Message Author"]
-                                    if pd.notna(row_data["Referenced Message Author"])
-                                    else "unknown"
-                                ),
+                                "msg_id": referenced_msg_id,
+                                "text": citation.get("text", ""),
+                                "author": citation.get("author", "unknown"),
                                 "channel": "user",
                                 "is_support": False,
                                 "timestamp": ref_timestamp,
                                 "referenced_msg_id": None,
                             }
-                            self.messages[msg["referenced_msg_id"]] = ref_msg
+                            self.messages[referenced_msg_id] = ref_msg
+
                 except (KeyError, ValueError, TypeError) as e:
-                    logger.error(f"Error processing row: {e}", exc_info=True)
+                    logger.error(f"Error processing message: {e}", exc_info=True)
                     continue
 
             logger.info(
                 f"Loaded {len(self.messages)} messages with {len(self.references)} references"
             )
-        except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError) as e:
-            logger.error(f"CSV parsing error: {e}", exc_info=True)
-            raise ValueError(f"Failed to parse CSV file: {e}") from e
+
         except Exception as e:
-            logger.error(f"Unexpected error loading CSV file: {e}", exc_info=True)
+            logger.error(f"Unexpected error loading JSON data: {e}", exc_info=True)
+            raise ValueError(f"Failed to parse JSON data: {e}") from e
+
+    def load_messages_from_file(self, json_path: Path) -> None:
+        """Load messages from JSON file.
+
+        Args:
+            json_path: Path to the JSON file containing messages
+
+        Raises:
+            ValueError: If the JSON file is malformed or cannot be parsed
+        """
+        if not json_path.exists():
+            logger.warning(f"No input file found at {json_path}")
+            return
+
+        logger.info(f"Loading messages from JSON file: {json_path}")
+
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                json_data = json.load(f)
+
+            self.load_messages_from_json(json_data)
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}", exc_info=True)
+            raise ValueError(f"Failed to parse JSON file: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error loading JSON file: {e}", exc_info=True)
             raise
 
     def build_conversation_thread(
@@ -223,7 +234,7 @@ class ConversationProcessor:
         # Sort thread by timestamp, using the original position as tie-breaker
         thread.sort(
             key=lambda x: (
-                x["timestamp"] if x["timestamp"] is not None else pd.Timestamp.min,
+                x["timestamp"] if x["timestamp"] is not None else datetime.min,
                 x["original_index"],
             )
         )

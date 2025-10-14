@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import aiohttp
@@ -18,9 +18,10 @@ class Bisq2API:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def setup(self):
-        """Initialize the API client."""
+        """Initialize the API client with timeouts."""
         if not self._session:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=10, connect=3, sock_read=10)
+            self._session = aiohttp.ClientSession(timeout=timeout)
 
     async def cleanup(self):
         """Clean up resources."""
@@ -51,19 +52,44 @@ class Bisq2API:
         since: Optional[datetime] = None,
         max_retries: int = 3,
         retry_delay: int = 2,
-    ) -> str:
-        """Export chat messages from Bisq API with retries."""
+    ) -> Dict:
+        """Export chat messages from Bisq API with retries.
+
+        Returns:
+            Dictionary containing export data with structure:
+            {
+                "exportDate": "2025-10-14T15:30:00Z",
+                "exportMetadata": {
+                    "channelCount": 2,
+                    "messageCount": 100,
+                    "dataRetentionDays": 10,
+                    "timezone": "UTC"
+                },
+                "messages": [...]
+            }
+        """
         if not self._session:
             await self.setup()
 
         for attempt in range(max_retries):
             try:
-                url = f"{self.base_url}/api/v1/support/export/csv"
+                url = f"{self.base_url}/api/v1/support/export"
                 params = {}
                 if since:
-                    params["since"] = since.isoformat()
+                    # Ensure timezone-aware UTC, seconds precision, RFC3339 "Z"
+                    if since.tzinfo is None:
+                        since = since.replace(tzinfo=timezone.utc)
+                    since_utc = (
+                        since.astimezone(timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
+                    params["since"] = since_utc
 
-                async with self._session.get(url, params=params) as response:
+                async with self._session.get(
+                    url, params=params, headers={"Accept": "application/json"}
+                ) as response:
                     if response.status != 200:
                         logger.warning(
                             f"Attempt {attempt + 1}/{max_retries}: Error {response.status} from Bisq API"
@@ -71,8 +97,8 @@ class Bisq2API:
                         if attempt < max_retries - 1:
                             await asyncio.sleep(retry_delay)
                             continue
-                        return ""
-                    return await response.text()
+                        return {}
+                    return await response.json()
 
             except Exception as e:
                 logger.warning(
@@ -85,7 +111,7 @@ class Bisq2API:
                     f"Failed to export chat messages after {max_retries} attempts: {str(e)}",
                     exc_info=True,
                 )
-                return ""
+                return {}
 
-        # Fallback in case loop completes without returning (should not happen)
-        return ""
+        # Unreachable: loop always returns on success or terminal failure
+        return {}

@@ -1,0 +1,146 @@
+{
+  "exportDate": "2025-10-14T18:00:00Z",
+  "exportMetadata": {
+    "channelCount": 1,
+    "messageCount": 10,
+    "dataRetentionDays": 30,
+    "timezone": "UTC"
+  },
+  "messages": [
+    {
+      "date": "2025-09-21T18:00:00Z",
+      "dateFormatted": "2025-09-21 18:00:00",
+      "channel": "support",
+      "author": "user_hash_1",
+      "authorId": "user_hash_1",
+      "message": "How do I cancel an open trade?",
+      "messageId": "msg_user_1",
+      "wasEdited": false,
+      "citation": null
+    },
+    {
+      "date": "2025-09-21T18:00:34Z",
+      "dateFormatted": "2025-09-21 18:00:34",
+      "channel": "support",
+      "author": "test_support_1",
+      "authorId": "support_hash_1",
+      "message": "Hi, you can go to open trades and on the top right corner you will see \"refuse trade\", once you click on this button and confirm the trade is refused, you will see \"close trade\", you can then archive the trade or simply confirm it.",
+      "messageId": "msg_support_1",
+      "wasEdited": false,
+      "citation": {
+        "messageId": "msg_user_1",
+        "author": "user_hash_1",
+        "authorId": "user_hash_1",
+        "text": "How do I cancel an open trade?"
+      }
+    },
+    {
+      "date": "2025-09-21T18:01:00Z",
+      "dateFormatted": "2025-09-21 18:01:00",
+      "channel": "support",
+      "author": "user_hash_2",
+      "authorId": "user_hash_2",
+      "message": "Should I report a non-responding trader?",
+      "messageId": "msg_user_2",
+      "wasEdited": false,
+      "citation": null
+    },
+    {
+      "date": "2025-09-21T18:01:32Z",
+      "dateFormatted": "2025-09-21 18:01:32",
+      "channel": "support",
+      "author": "test_support_2",
+      "authorId": "support_hash_2",
+      "message": "Imo you should wait some 72hours as we are on the week-end days.",
+      "messageId": "msg_support_2",
+      "wasEdited": false,
+      "citation": {
+        "messageId": "msg_user_2",
+        "author": "user_hash_2",
+        "authorId": "user_hash_2",
+        "text": "Should I report a non-responding trader?"
+      }
+    },
+    {
+      "date": "2025-09-22T01:25:00Z",
+      "dateFormatted": "2025-09-22 01:25:00",
+      "channel": "support",
+      "author": "user_hash_3",
+      "authorId": "user_hash_3",
+      "message": "What is the fee structure for trading?",
+      "messageId": "msg_user_3",
+      "wasEdited": false,
+      "citation": null
+    },
+    {
+      "date": "2025-09-22T01:25:34Z",
+      "dateFormatted": "2025-09-22 01:25:34",
+      "channel": "support",
+      "author": "test_support_3",
+      "authorId": "support_hash_3",
+      "message": "Trading fees are 0.1% for makers and 0.3% for takers.",
+      "messageId": "msg_support_3",
+      "wasEdited": false,
+      "citation": {
+        "messageId": "msg_user_3",
+        "author": "user_hash_3",
+        "authorId": "user_hash_3",
+        "text": "What is the fee structure for trading?"
+      }
+    },
+    {
+      "date": "2025-09-22T08:04:00Z",
+      "dateFormatted": "2025-09-22 08:04:00",
+      "channel": "support",
+      "author": "user_hash_4",
+      "authorId": "user_hash_4",
+      "message": "I cannot see the \"refuse trade\" button mentioned.",
+      "messageId": "msg_user_4",
+      "wasEdited": false,
+      "citation": null
+    },
+    {
+      "date": "2025-09-22T08:04:46Z",
+      "dateFormatted": "2025-09-22 08:04:46",
+      "channel": "support",
+      "author": "test_support_1",
+      "authorId": "support_hash_4",
+      "message": "The button appears only when the trade is in the correct state. Check if your trade is still pending.",
+      "messageId": "msg_support_4",
+      "wasEdited": false,
+      "citation": {
+        "messageId": "msg_user_4",
+        "author": "user_hash_4",
+        "authorId": "user_hash_4",
+        "text": "I cannot see the \"refuse trade\" button mentioned."
+      }
+    },
+    {
+      "date": "2025-09-22T15:47:00Z",
+      "dateFormatted": "2025-09-22 15:47:00",
+      "channel": "support",
+      "author": "user_hash_5",
+      "authorId": "user_hash_5",
+      "message": "How do I recover a lost profile?",
+      "messageId": "msg_user_5",
+      "wasEdited": false,
+      "citation": null
+    },
+    {
+      "date": "2025-09-22T15:47:24Z",
+      "dateFormatted": "2025-09-22 15:47:24",
+      "channel": "support",
+      "author": "test_support_2",
+      "authorId": "support_hash_5",
+      "message": "It depends on whether you still have the same hard drive and haven't erased the data. If yes, what is your operating system?",
+      "messageId": "msg_support_5",
+      "wasEdited": false,
+      "citation": {
+        "messageId": "msg_user_5",
+        "author": "user_hash_5",
+        "authorId": "user_hash_5",
+        "text": "How do I recover a lost profile?"
+      }
+    }
+  ]
+}

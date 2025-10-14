@@ -33,6 +33,8 @@ class FeedbackRepository:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         timestamp: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None,
+        sources_used: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """
         Store feedback entry in the database.
@@ -46,6 +48,8 @@ class FeedbackRepository:
             conversation_history: Optional list of conversation messages
             metadata: Optional metadata dictionary
             timestamp: Optional ISO timestamp (defaults to now)
+            sources: Optional list of source documents used in RAG response
+            sources_used: Optional list of sources actually used (typically same as sources)
 
         Returns:
             int: Feedback ID of the inserted entry
@@ -56,16 +60,29 @@ class FeedbackRepository:
         if timestamp is None:
             timestamp = datetime.now().isoformat()
 
+        # Convert sources to JSON strings for storage
+        sources_json = json.dumps(sources) if sources else None
+        sources_used_json = json.dumps(sources_used) if sources_used else None
+
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Insert main feedback entry
+            # Insert main feedback entry with sources
             cursor.execute(
                 """
-                INSERT INTO feedback (message_id, question, answer, rating, explanation, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO feedback (message_id, question, answer, rating, explanation, sources, sources_used, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, question, answer, rating, explanation, timestamp),
+                (
+                    message_id,
+                    question,
+                    answer,
+                    rating,
+                    explanation,
+                    sources_json,
+                    sources_used_json,
+                    timestamp,
+                ),
             )
             feedback_id = cursor.lastrowid
 
@@ -218,7 +235,7 @@ class FeedbackRepository:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            query = "SELECT id, message_id, question, answer, rating, explanation, timestamp, processed, processed_at, faq_id FROM feedback"
+            query = "SELECT id, message_id, question, answer, rating, explanation, sources, sources_used, timestamp, processed, processed_at, faq_id FROM feedback"
             params = []
 
             if rating is not None:
@@ -300,6 +317,19 @@ class FeedbackRepository:
 
                 if metadata:
                     feedback["metadata"] = metadata
+
+                # Deserialize sources from JSON strings
+                if feedback.get("sources"):
+                    try:
+                        feedback["sources"] = json.loads(feedback["sources"])
+                    except (json.JSONDecodeError, TypeError):
+                        feedback["sources"] = None
+
+                if feedback.get("sources_used"):
+                    try:
+                        feedback["sources_used"] = json.loads(feedback["sources_used"])
+                    except (json.JSONDecodeError, TypeError):
+                        feedback["sources_used"] = None
 
                 feedback_list.append(feedback)
 

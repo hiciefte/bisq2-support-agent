@@ -318,7 +318,7 @@ pybase64==1.4.2
     # via chromadb
 pycodestyle==2.14.0
     # via flake8
-pydantic==2.12.1
+pydantic==2.12.2
     # via
     #   -r api/requirements.in
     #   aisuite
@@ -328,7 +328,7 @@ pydantic==2.12.1
     #   langsmith
     #   openai
     #   pydantic-settings
-pydantic-core==2.41.3
+pydantic-core==2.41.4
     # via pydantic
 pydantic-settings==2.11.0
     # via -r api/requirements.in
@@ -491,7 +491,7 @@ uvloop==0.21.0
     # via uvicorn
 virtualenv==20.35.3
     # via pre-commit
-watchfiles==1.1.0
+watchfiles==1.1.1
     # via uvicorn
 websocket-client==1.9.0
     # via kubernetes
