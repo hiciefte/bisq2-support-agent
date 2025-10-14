@@ -9,7 +9,6 @@ This module handles initialization of language models and embeddings:
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 import aisuite as ai
 from app.core.config import Settings
@@ -48,14 +47,14 @@ class AISuiteLLMWrapper:
         self.max_tokens = max_tokens
         self.temperature = temperature
 
-    def invoke(self, prompt: str) -> Any:
+    def invoke(self, prompt: str) -> LLMResponse:
         """Invoke the LLM with a prompt string.
 
         Args:
             prompt: The prompt text
 
         Returns:
-            Response object with 'content' attribute containing the response text
+            LLMResponse object with 'content' attribute containing the response text
 
         Raises:
             RuntimeError: If LLM invocation fails
@@ -143,7 +142,7 @@ class LLMProvider:
             logger.exception(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def initialize_llm(self) -> Any:
+    def initialize_llm(self) -> AISuiteLLMWrapper:
         """Initialize the language model using AISuite.
 
         Returns:

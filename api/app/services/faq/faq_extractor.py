@@ -190,9 +190,15 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
                 response = self.aisuite_client.chat.completions.create(
                     model=model_id,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=2000,
-                    temperature=0.7,
+                    max_tokens=min(2000, self.settings.MAX_TOKENS),
+                    temperature=self.settings.LLM_TEMPERATURE,
                 )
+
+                # Validate response has choices
+                if not getattr(response, "choices", None):
+                    logger.error("LLM returned no choices in response")
+                    raise ValueError("Empty response from LLM")
+
                 return response.choices[0].message.content.strip()
 
             except Exception as e:
