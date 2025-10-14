@@ -9,7 +9,8 @@ set -Eeuo pipefail
 LOG_DIR="/var/log/bisq-support"
 if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
   LOG_DIR="/tmp/bisq-support"
-  mkdir -p -m 0755 "$LOG_DIR"
+  # Use install -d instead of mkdir -p -m to ensure correct permissions (SC2174)
+  install -d -m 0755 "$LOG_DIR"
 fi
 LOG_FILE="$LOG_DIR/docker-cleanup-$(date +%Y%m%d).log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +47,13 @@ log() {
 }
 
 # Register ERR trap after log function is defined
-trap 'log "ERROR: Line $LINENO failed with exit code $?."' ERR
+trap 'log "ERROR: Line $LINENO: \"$BASH_COMMAND\" exited with $?"' ERR
+
+# Helper function to get disk usage percentage for a given path
+get_usage() {
+  local path="${1:-/}"
+  df -P "$path" | awk 'NR==2{gsub(/%/,"",$5); print $5}'
+}
 
 # Check if cleanup is needed (>75% disk usage)
 check_disk_usage() {
@@ -61,7 +68,7 @@ check_disk_usage() {
     [ -n "$root" ] && target_path="$root"
   fi
 
-  usage=$(df -P "$target_path" | awk 'NR==2{gsub(/%/,"",$5); print $5}')
+  usage=$(get_usage "$target_path")
 
   # Ensure numeric usage to avoid integer comparison errors
   if ! [[ "$usage" =~ ^[0-9]+$ ]]; then
@@ -83,7 +90,7 @@ log "Starting Docker cleanup process"
 cd "$PROJECT_DIR" || { log "ERROR: Failed to change to project directory"; exit 1; }
 
 # Stop containers if disk space is critical (>90%)
-critical_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+critical_usage=$(get_usage /)
 
 # Ensure numeric critical_usage to avoid integer comparison errors
 if ! [[ "$critical_usage" =~ ^[0-9]+$ ]]; then
@@ -140,7 +147,7 @@ if check_disk_usage; then
   fi
 
   # Check disk usage after cleanup
-  after_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+  after_usage=$(get_usage /)
   log "Disk usage after aggressive cleanup: ${after_usage}%"
 else
   # Perform light cleanup that preserves build cache
@@ -152,7 +159,7 @@ fi
 
 # If services were stopped, restart them only if usage is now safe
 if [ "$critical_usage" -gt 90 ]; then
-  final_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+  final_usage=$(get_usage /)
 
   # Ensure numeric final_usage
   if ! [[ "$final_usage" =~ ^[0-9]+$ ]]; then
