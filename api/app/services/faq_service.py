@@ -10,13 +10,11 @@ import json
 import logging
 import os
 import threading
-from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 # Import AISuite
 import aisuite as ai
-import pandas as pd
 import portalocker
 
 # Import Pydantic models
@@ -61,7 +59,7 @@ class FAQService:
             self.processed_convs_path = data_dir / "processed_conversations.json"
             self.processed_msg_ids_path = data_dir / "processed_message_ids.jsonl"
             self.conversations_path = data_dir / "conversations.jsonl"
-            self.existing_input_path = data_dir / "support_chat_export.csv"
+            self.existing_input_path = data_dir / "support_chat_export.json"
 
             self._file_lock = portalocker.Lock(
                 str(self._faq_file_path) + ".lock", timeout=10
@@ -71,7 +69,9 @@ class FAQService:
             self.repository = FAQRepository(self._faq_file_path, self._file_lock)
 
             # Initialize conversation processor for message threading
-            self.conversation_processor = ConversationProcessor()
+            self.conversation_processor = ConversationProcessor(
+                support_agent_nicknames=self.settings.SUPPORT_AGENT_NICKNAMES
+            )
 
             # Initialize FAQ RAG loader for document preparation
             self.rag_loader = FAQRAGLoader(source_weights={"faq": 1.2})
@@ -290,72 +290,108 @@ class FAQService:
         if hasattr(self, "processed_conv_ids"):
             self.save_processed_msg_ids(self.processed_conv_ids)
 
-    async def merge_csv_files(self, bisq_api=None):
+    async def fetch_and_merge_messages(self, bisq_api=None):
         """Fetch latest messages from API and merge with existing ones.
 
         Args:
             bisq_api: Optional Bisq2API instance to fetch data from
         """
         if not hasattr(self, "existing_input_path"):
-            logger.warning("Cannot merge CSV files: paths not set")
+            logger.warning("Cannot merge messages: paths not set")
             return
 
         logger.info("Fetching latest messages from Bisq 2 API...")
 
-        # Read existing CSV if it exists
-        existing_df = pd.DataFrame()
+        # Read existing JSON if it exists
+        existing_data = {"messages": []}
         logger.debug(f"Looking for existing messages at: {self.existing_input_path}")
         if self.existing_input_path.exists():
-            existing_df = pd.read_csv(self.existing_input_path)
-            logger.info(f"Found {len(existing_df)} existing messages")
+            try:
+                with open(self.existing_input_path, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+                logger.info(
+                    f"Found {len(existing_data.get('messages', []))} existing messages"
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse existing JSON: {e}")
+                existing_data = {"messages": []}
         else:
             logger.warning(f"No existing messages found at {self.existing_input_path}")
 
         # Fetch latest messages from API
-        latest_df = pd.DataFrame()
+        latest_data = {}
         try:
             if bisq_api:
                 await bisq_api.setup()
-                csv_content = await bisq_api.export_chat_messages()
-                if csv_content:
-                    latest_df = pd.read_csv(StringIO(csv_content))
-                    logger.info(f"Fetched {len(latest_df)} messages from API")
+                latest_data = await bisq_api.export_chat_messages()
+                if latest_data:
+                    logger.info(
+                        f"Fetched {len(latest_data.get('messages', []))} messages from API"
+                    )
         except Exception as e:
             logger.error(f"Failed to fetch messages from API: {e!s}", exc_info=True)
         finally:
             if bisq_api:
                 await bisq_api.cleanup()
 
-        # If both DataFrames are empty, we have no data to work with
-        if existing_df.empty and latest_df.empty:
+        # If both datasets are empty, we have no data to work with
+        existing_messages = existing_data.get("messages", [])
+        latest_messages = latest_data.get("messages", [])
+
+        if not existing_messages and not latest_messages:
             logger.warning("No messages available for processing")
             return
 
-        # Combine DataFrames and drop duplicates based on Message ID
-        combined_df = pd.concat([existing_df, latest_df], ignore_index=True)
-        combined_df.drop_duplicates(subset=["Message ID"], keep="last", inplace=True)
+        # Merge messages, using latest_data's metadata if available
+        # Deduplicate by messageId, keeping latest version
+        message_dict = {}
 
-        # Sort by date if available
-        if "Date" in combined_df.columns:
-            combined_df["Date"] = pd.to_datetime(combined_df["Date"], errors="coerce")
-            combined_df.sort_values("Date", inplace=True)
+        # Add existing messages first
+        for msg in existing_messages:
+            message_dict[msg["messageId"]] = msg
+
+        # Add/update with latest messages (overwrites duplicates)
+        for msg in latest_messages:
+            message_dict[msg["messageId"]] = msg
+
+        # Create merged dataset
+        merged_messages = list(message_dict.values())
+
+        # Sort by date
+        merged_messages.sort(key=lambda m: m.get("date", ""))
+
+        # Use latest metadata if available, otherwise use existing or create default
+        merged_data = latest_data if latest_data else existing_data
+        merged_data["messages"] = merged_messages
+
+        # Update message count in metadata
+        if "exportMetadata" in merged_data:
+            merged_data["exportMetadata"]["messageCount"] = len(merged_messages)
 
         # Save the merged result
         self.existing_input_path.parent.mkdir(parents=True, exist_ok=True)
-        combined_df.to_csv(self.existing_input_path, index=False)
-        logger.info(f"Saved {len(combined_df)} messages to {self.existing_input_path}")
+        with open(self.existing_input_path, "w", encoding="utf-8") as f:
+            json.dump(merged_data, f, ensure_ascii=False, indent=2)
+        logger.info(
+            f"Saved {len(merged_messages)} messages to {self.existing_input_path}"
+        )
 
-        # Store the input path for further processing
-        self.input_path = self.existing_input_path
+        # Store the merged data for processing
+        self.current_json_data = merged_data
 
     def load_messages(self) -> None:
-        """Load messages from CSV and organize them using the conversation processor."""
-        if not hasattr(self, "input_path") or not self.input_path.exists():
-            logger.warning("No input file found for loading messages")
+        """Load messages from JSON and organize them using the conversation processor."""
+        # Use the merged JSON data if available (from fetch_and_merge_messages)
+        if hasattr(self, "current_json_data") and self.current_json_data:
+            self.conversation_processor.load_messages_from_json(self.current_json_data)
+        # Otherwise try to load from existing file
+        elif hasattr(self, "existing_input_path") and self.existing_input_path.exists():
+            self.conversation_processor.load_messages_from_file(
+                self.existing_input_path
+            )
+        else:
+            logger.warning("No JSON data available for loading messages")
             return
-
-        # Delegate to conversation processor
-        self.conversation_processor.load_messages(self.input_path)
 
     def build_conversation_thread(
         self, start_msg_id: str, max_depth: int = 10
@@ -507,7 +543,7 @@ class FAQService:
             self.faq_extractor.seed_duplicate_tracker(existing_faqs)
 
             # Merge existing and new messages from the API
-            await self.merge_csv_files(bisq_api)
+            await self.fetch_and_merge_messages(bisq_api)
 
             # Load and process messages into memory
             self.load_messages()

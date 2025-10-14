@@ -51,14 +51,28 @@ class Bisq2API:
         since: Optional[datetime] = None,
         max_retries: int = 3,
         retry_delay: int = 2,
-    ) -> str:
-        """Export chat messages from Bisq API with retries."""
+    ) -> Dict:
+        """Export chat messages from Bisq API with retries.
+
+        Returns:
+            Dictionary containing export data with structure:
+            {
+                "exportDate": "2025-10-14T15:30:00Z",
+                "exportMetadata": {
+                    "channelCount": 2,
+                    "messageCount": 100,
+                    "dataRetentionDays": 10,
+                    "timezone": "UTC"
+                },
+                "messages": [...]
+            }
+        """
         if not self._session:
             await self.setup()
 
         for attempt in range(max_retries):
             try:
-                url = f"{self.base_url}/api/v1/support/export/csv"
+                url = f"{self.base_url}/api/v1/support/export"
                 params = {}
                 if since:
                     params["since"] = since.isoformat()
@@ -71,8 +85,8 @@ class Bisq2API:
                         if attempt < max_retries - 1:
                             await asyncio.sleep(retry_delay)
                             continue
-                        return ""
-                    return await response.text()
+                        return {}
+                    return await response.json()
 
             except Exception as e:
                 logger.warning(
@@ -85,7 +99,7 @@ class Bisq2API:
                     f"Failed to export chat messages after {max_retries} attempts: {str(e)}",
                     exc_info=True,
                 )
-                return ""
+                return {}
 
         # Fallback in case loop completes without returning (should not happen)
-        return ""
+        return {}
