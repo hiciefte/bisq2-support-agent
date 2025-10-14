@@ -119,8 +119,8 @@ async def get_feedback_analytics() -> Dict[str, Any]:
     # Source effectiveness
     source_stats = {}
     for item in feedback:
-        # Try sources_used first, then fall back to sources if sources_used doesn't exist
-        sources_list = item.get("sources_used", item.get("sources", []))
+        # Try sources_used first, then fall back to sources if sources_used doesn't exist or is None
+        sources_list = item.get("sources_used") or item.get("sources") or []
         for source in sources_list:
             source_type = source.get("type", "unknown")
             if source_type not in source_stats:

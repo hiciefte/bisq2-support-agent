@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     answer TEXT NOT NULL,                       -- Assistant's answer
     rating INTEGER NOT NULL CHECK(rating IN (0, 1)),  -- 0=negative, 1=positive
     explanation TEXT,                           -- User's feedback explanation (optional)
+    sources TEXT,                               -- JSON array of source documents used in RAG response
+    sources_used TEXT,                          -- JSON array of sources actually used (same as sources typically)
     processed INTEGER DEFAULT 0 CHECK(processed IN (0, 1)),  -- 0=not processed, 1=processed into FAQ
     processed_at DATETIME,                      -- When feedback was processed into FAQ
     faq_id TEXT,                                -- Reference to created FAQ (if applicable)
@@ -23,6 +25,8 @@ CREATE INDEX IF NOT EXISTS idx_feedback_rating ON feedback(rating);
 CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_processed ON feedback(processed);
 CREATE INDEX IF NOT EXISTS idx_feedback_faq_id ON feedback(faq_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_sources ON feedback(sources) WHERE sources IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_feedback_sources_used ON feedback(sources_used) WHERE sources_used IS NOT NULL;
 
 -- Conversation history table (one-to-many with feedback)
 CREATE TABLE IF NOT EXISTS conversation_messages (

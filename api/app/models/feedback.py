@@ -32,6 +32,12 @@ class FeedbackRequest(BaseModel):
     conversation_history: Optional[List[ConversationMessage]] = Field(
         None, max_length=50, description="Conversation context (max 50 messages)"
     )
+    sources: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Source documents used in RAG response"
+    )
+    sources_used: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Source documents actually used in response generation"
+    )
 
     @field_validator("conversation_history")
     @classmethod
