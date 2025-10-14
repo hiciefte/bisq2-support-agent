@@ -5,11 +5,11 @@ Tests the new JSON format from bisq2 API /api/v1/support/export endpoint.
 """
 
 import json
-import pytest
+import tempfile
 from datetime import datetime
 from pathlib import Path
-import tempfile
 
+import pytest
 from app.services.faq.conversation_processor import ConversationProcessor
 
 
@@ -43,7 +43,7 @@ class TestJSONConversationProcessor:
                     "date": "2025-10-14T12:05:00Z",
                     "dateFormatted": "2025-10-14 12:05:00",
                     "channel": "support",
-                    "author": "suddenwhipvapor",
+                    "author": "test_support_1",
                     "authorId": "hash_support1",
                     "message": "Click the forgot password link on the login page",
                     "messageId": "msg_002",
@@ -70,7 +70,7 @@ class TestJSONConversationProcessor:
                     "date": "2025-10-14T12:15:00Z",
                     "dateFormatted": "2025-10-14 12:15:00",
                     "channel": "support",
-                    "author": "strayorigin",
+                    "author": "test_support_2",
                     "authorId": "hash_support2",
                     "message": "Yes, you can create offers for BTC/USD trading pairs",
                     "messageId": "msg_004",
@@ -97,7 +97,7 @@ class TestJSONConversationProcessor:
     def test_load_messages_from_json_dict(self, sample_json_export):
         """Test loading messages from JSON dict (from API response)."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
 
@@ -116,14 +116,14 @@ class TestJSONConversationProcessor:
         # Verify support message with citation
         support_msg = messages["msg_002"]
         assert support_msg["msg_id"] == "msg_002"
-        assert support_msg["author"] == "suddenwhipvapor"
+        assert support_msg["author"] == "test_support_1"
         assert support_msg["is_support"] is True
         assert support_msg["referenced_msg_id"] == "msg_001"
 
     def test_load_messages_from_json_file(self, temp_json_file):
         """Test loading messages from JSON file."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_file(temp_json_file)
 
@@ -133,7 +133,7 @@ class TestJSONConversationProcessor:
     def test_group_conversations_from_json(self, sample_json_export):
         """Test grouping messages into conversations from JSON data."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
         conversations = processor.group_conversations()
@@ -154,7 +154,7 @@ class TestJSONConversationProcessor:
     def test_identify_support_agents_from_nicknames(self, sample_json_export):
         """Test that we can identify support agents by their nicknames."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
 
@@ -167,15 +167,15 @@ class TestJSONConversationProcessor:
                 support_agents.add(msg["author"])
 
         # Should identify support agents by their actual nicknames
-        assert "suddenwhipvapor" in support_agents
-        assert "strayorigin" in support_agents
+        assert "test_support_1" in support_agents
+        assert "test_support_2" in support_agents
         assert "user123" not in support_agents
         assert "user456" not in support_agents
 
     def test_parse_timestamps_correctly(self, sample_json_export):
         """Test that ISO 8601 timestamps are parsed correctly."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
 
@@ -201,7 +201,7 @@ class TestJSONConversationProcessor:
         }
 
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(empty_export)
 
@@ -214,7 +214,7 @@ class TestJSONConversationProcessor:
     def test_handle_message_without_citation(self, sample_json_export):
         """Test handling of messages without citations."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
 
@@ -227,7 +227,7 @@ class TestJSONConversationProcessor:
     def test_conversation_ordering_by_timestamp(self, sample_json_export):
         """Test that messages in conversations are ordered by timestamp."""
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin"]
+            support_agent_nicknames=["test_support_1", "test_support_2"]
         )
         processor.load_messages_from_json(sample_json_export)
         conversations = processor.group_conversations()

@@ -5,9 +5,9 @@ This test demonstrates the bug where independent question-answer pairs
 get incorrectly grouped into a single conversation.
 """
 
-import pytest
 from pathlib import Path
 
+import pytest
 from app.services.faq.conversation_processor import ConversationProcessor
 
 
@@ -31,7 +31,11 @@ class TestConversationGroupingBug:
         EXPECTED: Three separate conversations, one for each Q&A pair
         """
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin", "toruk-makto"]
+            support_agent_nicknames=[
+                "test_support_1",
+                "test_support_2",
+                "test_support_3",
+            ]
         )
         processor.load_messages_from_file(sample_json_with_independent_conversations)
         conversations = processor.group_conversations()
@@ -66,7 +70,11 @@ class TestConversationGroupingBug:
         EXPECTED: Each support message creates its own conversation
         """
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin", "toruk-makto"]
+            support_agent_nicknames=[
+                "test_support_1",
+                "test_support_2",
+                "test_support_3",
+            ]
         )
         processor.load_messages_from_file(sample_json_with_independent_conversations)
         conversations = processor.group_conversations()
@@ -98,7 +106,11 @@ class TestConversationGroupingBug:
         EXPECTED: Each conversation has unique ID based on its support message
         """
         processor = ConversationProcessor(
-            support_agent_nicknames=["suddenwhipvapor", "strayorigin", "toruk-makto"]
+            support_agent_nicknames=[
+                "test_support_1",
+                "test_support_2",
+                "test_support_3",
+            ]
         )
         processor.load_messages_from_file(sample_json_with_independent_conversations)
         conversations = processor.group_conversations()
