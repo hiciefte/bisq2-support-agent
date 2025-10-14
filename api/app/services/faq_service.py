@@ -14,6 +14,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+# Import AISuite
+import aisuite as ai
 import pandas as pd
 import portalocker
 
@@ -25,9 +27,6 @@ from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository import FAQRepository
 from fastapi import Request
 from langchain_core.documents import Document
-
-# Import OpenAI client
-from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -77,26 +76,24 @@ class FAQService:
             # Initialize FAQ RAG loader for document preparation
             self.rag_loader = FAQRAGLoader(source_weights={"faq": 1.2})
 
-            # Initialize OpenAI client for FAQ extraction
-            openai_client = None
+            # Initialize AISuite client for FAQ extraction
+            aisuite_client = None
             if (
                 hasattr(self.settings, "OPENAI_API_KEY")
                 and self.settings.OPENAI_API_KEY
             ):
                 try:
-                    openai_client = OpenAI(
-                        api_key=self.settings.OPENAI_API_KEY, timeout=30.0
-                    )
-                    logger.info("OpenAI client initialized for FAQ extraction")
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to initialize OpenAI client: {e}")
+                    aisuite_client = ai.Client()
+                    logger.info("AISuite client initialized for FAQ extraction")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize AISuite client: {e}")
             else:
                 logger.warning(
                     "OPENAI_API_KEY not provided. FAQ extraction will not work."
                 )
 
-            # Initialize FAQ extractor for OpenAI-based extraction
-            self.faq_extractor = FAQExtractor(openai_client, self.settings)
+            # Initialize FAQ extractor for AISuite-based extraction
+            self.faq_extractor = FAQExtractor(aisuite_client, self.settings)
 
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")

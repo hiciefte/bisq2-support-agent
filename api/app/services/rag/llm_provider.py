@@ -8,6 +8,7 @@ This module handles initialization of language models and embeddings:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import aisuite as ai
@@ -17,6 +18,13 @@ from langchain_openai import OpenAIEmbeddings
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class LLMResponse:
+    """Response from LLM invocation compatible with LangChain interface."""
+
+    content: str
+
+
 class AISuiteLLMWrapper:
     """Wrapper class to make AISuite compatible with existing RAG code.
 
@@ -24,17 +32,21 @@ class AISuiteLLMWrapper:
     allowing the RAG system to use AISuite without major refactoring.
     """
 
-    def __init__(self, client: ai.Client, model: str, max_tokens: int):
+    def __init__(
+        self, client: ai.Client, model: str, max_tokens: int, temperature: float
+    ):
         """Initialize the AISuite LLM wrapper.
 
         Args:
             client: AISuite Client instance
-            model: Model name (e.g., "gpt-4o", "gpt-3.5-turbo")
+            model: Full model identifier with provider prefix (e.g., "openai:gpt-4o-mini")
             max_tokens: Maximum tokens for completion
+            temperature: Temperature for response generation (0.0-2.0)
         """
         self.client = client
-        self.model_id = f"openai:{model}"
+        self.model_id = model  # Use directly, expect "provider:model" format
         self.max_tokens = max_tokens
+        self.temperature = temperature
 
     def invoke(self, prompt: str) -> Any:
         """Invoke the LLM with a prompt string.
@@ -50,17 +62,11 @@ class AISuiteLLMWrapper:
         response = self.client.chat.completions.create(
             model=self.model_id,
             messages=messages,
-            temperature=0.7,
+            temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
 
-        # Create a simple response object with content attribute
-        # to match LangChain's interface
-        class Response:
-            def __init__(self, content: str):
-                self.content = content
-
-        return Response(content=response.choices[0].message.content)
+        return LLMResponse(content=response.choices[0].message.content)
 
 
 class LLMProvider:
@@ -80,9 +86,28 @@ class LLMProvider:
         self.settings = settings
         self.embeddings: OpenAIEmbeddings | None = None
         self.llm: AISuiteLLMWrapper | None = None
-        self.ai_client = ai.Client()
 
-        logger.info("LLM provider initialized with AISuite client")
+        try:
+            self.ai_client = ai.Client()
+            logger.info("LLM provider initialized with AISuite client")
+        except Exception as e:
+            error_msg = f"Failed to initialize AISuite client: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
+
+    def _validate_openai_api_key(self) -> None:
+        """Validate that OpenAI API key is configured.
+
+        Raises:
+            ValueError: If OpenAI API key is not configured
+        """
+        if not self.settings.OPENAI_API_KEY:
+            error_msg = (
+                "OpenAI API key is required but not configured. "
+                "Please set OPENAI_API_KEY in environment variables."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def initialize_embeddings(self) -> OpenAIEmbeddings:
         """Initialize the OpenAI embedding model.
@@ -94,22 +119,19 @@ class LLMProvider:
             ValueError: If OpenAI API key is not configured
         """
         logger.info("Initializing OpenAI embeddings model...")
+        self._validate_openai_api_key()
 
-        if not self.settings.OPENAI_API_KEY:
-            error_msg = (
-                "OpenAI API key is required but not configured. "
-                "Please set OPENAI_API_KEY in environment variables."
+        try:
+            self.embeddings = OpenAIEmbeddings(
+                api_key=self.settings.OPENAI_API_KEY,
+                model=self.settings.OPENAI_EMBEDDING_MODEL,
             )
+            logger.info("OpenAI embeddings model initialized")
+            return self.embeddings
+        except Exception as e:
+            error_msg = f"Failed to initialize OpenAI embeddings: {e}"
             logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        self.embeddings = OpenAIEmbeddings(
-            api_key=self.settings.OPENAI_API_KEY,
-            model=self.settings.OPENAI_EMBEDDING_MODEL,
-        )
-
-        logger.info("OpenAI embeddings model initialized")
-        return self.embeddings
+            raise RuntimeError(error_msg) from e
 
     def initialize_llm(self) -> Any:
         """Initialize the language model using AISuite.
@@ -118,26 +140,23 @@ class LLMProvider:
             Initialized LLM wrapper with AISuite client
         """
         logger.info("Initializing language model with AISuite...")
+        self._validate_openai_api_key()
 
-        if not self.settings.OPENAI_API_KEY:
-            error_msg = (
-                "OpenAI API key is required but not configured. "
-                "Please set OPENAI_API_KEY in environment variables."
+        try:
+            self.llm = AISuiteLLMWrapper(
+                client=self.ai_client,
+                model=self.settings.OPENAI_MODEL,
+                max_tokens=self.settings.MAX_TOKENS,
+                temperature=self.settings.LLM_TEMPERATURE,
             )
+            logger.info(f"LLM initialized with model: {self.settings.OPENAI_MODEL}")
+            return self.llm
+        except Exception as e:
+            error_msg = f"Failed to initialize LLM wrapper: {e}"
             logger.error(error_msg)
-            raise ValueError(error_msg)
+            raise RuntimeError(error_msg) from e
 
-        # Create LLM wrapper that works with AISuite
-        self.llm = AISuiteLLMWrapper(
-            client=self.ai_client,
-            model=self.settings.OPENAI_MODEL,
-            max_tokens=self.settings.MAX_TOKENS,
-        )
-
-        logger.info(f"LLM initialized with model: openai:{self.settings.OPENAI_MODEL}")
-        return self.llm
-
-    def get_embeddings(self) -> OpenAIEmbeddings:
+    def get_embeddings(self) -> OpenAIEmbeddings | None:
         """Get the initialized embeddings model.
 
         Returns:
@@ -145,10 +164,10 @@ class LLMProvider:
         """
         return self.embeddings
 
-    def get_llm(self) -> Any:
+    def get_llm(self) -> AISuiteLLMWrapper | None:
         """Get the initialized LLM.
 
         Returns:
-            LLM instance or None if not initialized
+            LLM wrapper instance or None if not initialized
         """
         return self.llm

@@ -14,7 +14,7 @@ import time
 import unicodedata
 from typing import Any, Dict, List, Optional, Set
 
-from openai import OpenAI
+import aisuite as ai
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +32,16 @@ class FAQExtractor:
 
     def __init__(
         self,
-        openai_client: Optional[OpenAI],
+        aisuite_client: Optional[ai.Client],
         settings: Any,
     ):
         """Initialize the FAQ extractor.
 
         Args:
-            openai_client: Initialized OpenAI client instance
+            aisuite_client: Initialized AISuite client instance
             settings: Settings object containing OPENAI_MODEL and other config
         """
-        self.openai_client = openai_client
+        self.aisuite_client = aisuite_client
         self.settings = settings
         self.normalized_faq_keys: Set[str] = set()
 
@@ -167,7 +167,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         )
 
     def _call_openai_api(self, prompt: str) -> Optional[str]:
-        """Call the OpenAI API with retries and error handling.
+        """Call the OpenAI API via AISuite with retries and error handling.
 
         Args:
             prompt: The prompt to send to the API
@@ -175,8 +175,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         Returns:
             Response text if successful, None otherwise
         """
-        if not self.openai_client:
-            logger.error("OpenAI client not initialized")
+        if not self.aisuite_client:
+            logger.error("AISuite client not initialized")
             return None
 
         max_retries = 3
@@ -184,11 +184,14 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         for attempt in range(max_retries):
             try:
-                response = self.openai_client.chat.completions.create(
-                    model=self.settings.OPENAI_MODEL,
+                # Build full model ID with provider prefix
+                model_id = f"openai:{self.settings.OPENAI_MODEL}"
+
+                response = self.aisuite_client.chat.completions.create(
+                    model=model_id,
                     messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=2000,
-                    timeout=30.0,
+                    max_tokens=2000,
+                    temperature=0.7,
                 )
                 return response.choices[0].message.content.strip()
 
@@ -223,7 +226,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         Returns:
             List of extracted FAQ dictionaries
         """
-        faqs = []
+        faqs: List[Dict[str, Any]] = []
 
         if not response_text:
             return faqs
@@ -264,7 +267,7 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
     def extract_faqs_with_openai(
         self, conversations_to_process: List[Dict], batch_size: int = 5
     ) -> List[Dict]:
-        """Extract FAQs from conversations using OpenAI.
+        """Extract FAQs from conversations using AISuite.
 
         Args:
             conversations_to_process: List of conversation dictionaries to process
@@ -273,8 +276,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
         Returns:
             List of extracted FAQ dictionaries
         """
-        if not self.openai_client:
-            logger.error("OpenAI client not initialized. Cannot extract FAQs.")
+        if not self.aisuite_client:
+            logger.error("AISuite client not initialized. Cannot extract FAQs.")
             return []
 
         if not conversations_to_process:

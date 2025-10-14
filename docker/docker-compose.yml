@@ -132,7 +132,7 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
-      - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
+      - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090} # URL for the containerized Bisq2 API service
       # Tor hidden service configuration
       - TOR_HIDDEN_SERVICE=${TOR_HIDDEN_SERVICE}
       # Privacy and security settings

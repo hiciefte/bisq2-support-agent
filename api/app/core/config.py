@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "BISQ Support"
 
-    # CORS settings
-    # Start with string to avoid JSON parsing, we'll convert it in validator
+    # CORS settings - stored as list, supports comma-separated string input via validator
+    # Using str type annotation to avoid Pydantic's automatic parsing, validator converts to list
     CORS_ORIGINS: str = "*"
 
     # Directory settings
@@ -31,8 +31,9 @@ class Settings(BaseSettings):
     # OpenAI settings (using AISuite for LLM interface)
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "openai:gpt-4o-mini"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
+    LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
@@ -118,20 +119,18 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="after")
     @classmethod
-    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+    def parse_cors_origins(cls, v: str) -> list[str]:
         """Convert string CORS_ORIGINS to list of hosts.
 
         Args:
-            v: CORS origins as string (comma-separated) or list
+            v: CORS origins as string (comma-separated) or "*" for all
 
         Returns:
             List of CORS origin hosts
         """
-        if isinstance(v, str):
-            if v == "*":
-                return ["*"]
-            return [host.strip() for host in v.split(",") if host.strip()]
-        return v
+        if v == "*":
+            return ["*"]
+        return [host.strip() for host in v.split(",") if host.strip()]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
