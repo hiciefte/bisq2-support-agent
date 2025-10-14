@@ -47,7 +47,7 @@ certifi==2025.10.5
     #   requests
 cfgv==3.4.0
     # via pre-commit
-charset-normalizer==3.4.3
+charset-normalizer==3.4.4
     # via requests
 chromadb==1.1.1
     # via
@@ -113,8 +113,6 @@ httpcore==1.0.9
     # via httpx
 httptools==0.7.1
     # via uvicorn
-# Pinned to 0.27.2 to satisfy aisuite constraint (httpx<0.28.0)
-# This version includes all upstream security fixes (no known CVEs post-0.23.0)
 httpx==0.27.2
     # via
     #   aisuite
@@ -320,7 +318,7 @@ pybase64==1.4.2
     # via chromadb
 pycodestyle==2.14.0
     # via flake8
-pydantic==2.12.0
+pydantic==2.12.1
     # via
     #   -r api/requirements.in
     #   aisuite
@@ -330,7 +328,7 @@ pydantic==2.12.0
     #   langsmith
     #   openai
     #   pydantic-settings
-pydantic-core==2.41.1
+pydantic-core==2.41.3
     # via pydantic
 pydantic-settings==2.11.0
     # via -r api/requirements.in
