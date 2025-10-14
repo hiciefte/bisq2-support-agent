@@ -7,24 +7,27 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import Any, Dict
 
 from app.core.config import get_settings
+from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
+from app.core.exceptions import BaseAppException
 from app.core.tor_metrics import (
     update_cookie_security_mode,
     update_tor_service_configured,
 )
 from app.db.run_migrations import run_migrations
 from app.middleware import TorDetectionMiddleware
-from app.routes import admin, chat, feedback, health, onion_verify
+from app.routes import chat, feedback_routes, health, onion_verify
+from app.routes.admin import include_admin_routers
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -50,7 +53,7 @@ logger.info("Loading settings...")
 try:
     # Use the cached settings function
     settings = get_settings()
-    logger.info(f"Settings loaded successfully")
+    logger.info("Settings loaded successfully")
     logger.info(f"CORS_ORIGINS = {settings.CORS_ORIGINS}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 except Exception as e:
@@ -141,7 +144,12 @@ app = FastAPI(
 
 
 # Custom OpenAPI with security scheme
-def custom_openapi():
+def custom_openapi() -> Dict[str, Any]:
+    """Generate custom OpenAPI schema with admin authentication.
+
+    Returns:
+        OpenAPI schema dictionary with security schemes configured
+    """
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -170,13 +178,16 @@ def custom_openapi():
     }
 
     # Apply security to admin routes
-    for path in openapi_schema["paths"]:
-        if path.startswith("/admin/"):
-            for method in openapi_schema["paths"][path]:
-                openapi_schema["paths"][path][method]["security"] = [
-                    {"AdminApiKeyAuth": []},
-                    {"AdminApiKeyQuery": []},
-                ]
+    for path, operations in openapi_schema["paths"].items():
+        if not path.startswith("/admin/"):
+            continue
+        for method, operation in operations.items():
+            if method == "parameters" or not isinstance(operation, dict):
+                continue
+            operation["security"] = [
+                {"AdminApiKeyAuth": []},
+                {"AdminApiKeyQuery": []},
+            ]
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -211,9 +222,8 @@ async def metrics():
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(feedback.router, tags=["Feedback"])
-app.include_router(admin.router, tags=["Admin"])
-app.include_router(admin.auth_router, tags=["Admin Auth"])
+app.include_router(feedback_routes.router, tags=["Feedback"])
+include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 
 
@@ -222,13 +232,11 @@ async def healthcheck():
     return {"status": "healthy"}
 
 
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An internal server error occurred."},
-    )
+# Register exception handlers
+# Register specific application exceptions first
+app.add_exception_handler(BaseAppException, base_exception_handler)
+# Then register generic exception handler as fallback
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 
 if __name__ == "__main__":

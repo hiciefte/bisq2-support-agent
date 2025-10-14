@@ -15,9 +15,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "BISQ Support"
 
-    # CORS settings
-    # Start with string to avoid JSON parsing, we'll convert it in validator
-    CORS_ORIGINS: str = "*"
+    # CORS settings - accepts string or list, normalized to list[str] by validator
+    CORS_ORIGINS: str | list[str] = "*"
 
     # Directory settings
     DATA_DIR: str = "api/data"
@@ -28,18 +27,12 @@ class Settings(BaseSettings):
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
-    # LLM Provider setting
-    LLM_PROVIDER: str = "openai"  # Can be "openai" or "xai"
-
-    # OpenAI settings
+    # OpenAI settings (using AISuite for LLM interface)
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "openai:gpt-4o-mini"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
-
-    # xAI settings
-    XAI_API_KEY: str = ""
-    XAI_MODEL: str = "llama3-70b-8192"
+    LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
@@ -68,6 +61,7 @@ class Settings(BaseSettings):
         env_file=".env",  # Enable .env file loading
         env_parse_json=False,  # Disable trying to parse values as JSON
         env_file_override=True,  # Ensure environment variables take precedence
+        extra="allow",  # Allow extra fields for backward compatibility during migration
     )
 
     # Path properties that return complete paths
@@ -122,15 +116,55 @@ class Settings(BaseSettings):
         """
         return os.path.join(self.DATA_DIR, *path_parts)
 
-    @field_validator("CORS_ORIGINS", mode="after")
+    @field_validator("LLM_TEMPERATURE")
     @classmethod
-    def parse_cors_origins(cls, v):
-        """Convert string CORS_ORIGINS to list of hosts"""
-        if isinstance(v, str):
-            if v == "*":
-                return ["*"]
-            return [host.strip() for host in v.split(",") if host.strip()]
+    def validate_temperature(cls, v: float) -> float:
+        """Validate LLM temperature is within acceptable range.
+
+        Args:
+            v: Temperature value
+
+        Returns:
+            Validated temperature value
+
+        Raises:
+            ValueError: If temperature is outside acceptable range
+        """
+        if not 0.0 <= v <= 2.0:
+            raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
         return v
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+        """Normalize CORS_ORIGINS to list of hosts.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles wildcards, trims whitespace, and ignores empty entries.
+
+        Args:
+            v: CORS origins as string (comma-separated), list of strings, or "*" for all
+
+        Returns:
+            List of CORS origin hosts with whitespace trimmed and empty entries removed
+        """
+        # Handle list input
+        if isinstance(v, list):
+            # Filter out empty strings and trim whitespace
+            return [
+                host.strip() for host in v if isinstance(host, str) and host.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            # Handle wildcard
+            if v.strip() == "*":
+                return ["*"]
+            # Split by comma, trim whitespace, filter empty entries
+            return [host.strip() for host in v.split(",") if host.strip()]
+
+        # Fallback for unexpected types
+        return ["*"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -143,5 +177,10 @@ class Settings(BaseSettings):
 
 
 @lru_cache()
-def get_settings():
+def get_settings() -> Settings:
+    """Get cached application settings instance.
+
+    Returns:
+        Settings: Application settings object
+    """
     return Settings()

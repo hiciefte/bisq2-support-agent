@@ -22,7 +22,7 @@ log() {
 send_email_alert() {
   local subject="$1"
   local message="$2"
-  
+
   if command -v mail &> /dev/null; then
     echo "$message" | mail -s "$subject" "$ALERT_EMAIL"
     log "Email alert sent to $ALERT_EMAIL"
@@ -38,18 +38,32 @@ send_email_alert() {
 send_webhook_alert() {
   local message="$1"
   local level="$2"
-  
+
   # If a webhook URL is defined
   if [ -n "$WEBHOOK_URL" ]; then
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+      log "WARNING: jq command not found, cannot send webhook alert"
+      return 1
+    fi
+
     local color="warning"
     if [ "$level" == "critical" ]; then
       color="danger"
     fi
-    
+
+    # Use jq to properly escape JSON
+    local json_payload
+    json_payload=$(jq -n \
+      --arg hostname "$HOSTNAME" \
+      --arg color "$color" \
+      --arg message "$message" \
+      '{text: ("*\($hostname) Disk Alert*"), attachments: [{color: $color, text: $message}]}')
+
     curl -s -X POST -H "Content-Type: application/json" \
-      -d "{\"text\":\"*$HOSTNAME Disk Alert*\", \"attachments\":[{\"color\":\"$color\",\"text\":\"$message\"}]}" \
+      -d "$json_payload" \
       "$WEBHOOK_URL" &> /dev/null
-    
+
     log "Webhook alert sent"
   fi
 }
@@ -57,13 +71,13 @@ send_webhook_alert() {
 # Check disk usage
 check_disk_usage() {
   log "Checking disk usage"
-  
+
   # Get disk usage percentage
   local disk_usage
   disk_usage=$(df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
-  
+
   log "Current disk usage: ${disk_usage}%"
-  
+
   # Critical alert (highest priority)
   if [ "$disk_usage" -ge "$CRITICAL_THRESHOLD" ]; then
     local subject
@@ -81,19 +95,19 @@ Action Required:
 Disk usage details:
 $(df -h)
     "
-    
+
     log "CRITICAL: Disk usage at ${disk_usage}%, sending alert"
     send_email_alert "$subject" "$message"
     send_webhook_alert "$message" "critical"
-    
+
     # Attempt automatic cleanup
     if [ -f "$(dirname "$0")/docker-cleanup.sh" ]; then
       log "Attempting automatic cleanup"
       "$(dirname "$0")/docker-cleanup.sh"
     fi
-    
+
     return 2
-  
+
   # Warning alert
   elif [ "$disk_usage" -ge "$WARNING_THRESHOLD" ]; then
     local subject
@@ -111,11 +125,11 @@ Recommended actions:
 Disk usage details:
 $(df -h)
     "
-    
+
     log "WARNING: Disk usage at ${disk_usage}%, sending alert"
     send_email_alert "$subject" "$message"
     send_webhook_alert "$message" "warning"
-    
+
     return 1
   else
     log "Disk usage is normal at ${disk_usage}%"
@@ -128,4 +142,4 @@ log "Starting disk usage monitoring"
 check_disk_usage
 exit_code=$?
 log "Disk monitoring completed with status $exit_code"
-exit $exit_code 
+exit $exit_code

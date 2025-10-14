@@ -2,7 +2,7 @@
  * Authentication utilities for admin interface
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from './config';
 
 export interface LoginResponse {
   message: string;
@@ -12,6 +12,31 @@ export interface LoginResponse {
 export interface LogoutResponse {
   message: string;
   authenticated: boolean;
+}
+
+// Session timeout callback - will be set by SecureAuth component
+let sessionTimeoutCallback: (() => void) | null = null;
+
+/**
+ * Register callback to handle session timeout
+ * Returns an unsubscribe function to clean up the callback
+ */
+export function registerSessionTimeoutCallback(callback: () => void): () => void {
+  sessionTimeoutCallback = callback;
+
+  // Return unsubscribe function
+  return () => {
+    sessionTimeoutCallback = null;
+  };
+}
+
+/**
+ * Handle session timeout by calling registered callback
+ */
+function handleSessionTimeout(): void {
+  if (sessionTimeoutCallback) {
+    sessionTimeoutCallback();
+  }
 }
 
 /**
@@ -59,7 +84,7 @@ export async function logout(): Promise<LogoutResponse> {
 }
 
 /**
- * Make authenticated API request with automatic cookie handling
+ * Make authenticated API request with automatic cookie handling and session timeout detection
  */
 export async function makeAuthenticatedRequest(
   endpoint: string,
@@ -67,7 +92,7 @@ export async function makeAuthenticatedRequest(
 ): Promise<Response> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
 
-  return fetch(url, {
+  const response = await fetch(url, {
     ...options,
     credentials: 'include', // Important: include cookies in requests
     headers: {
@@ -75,6 +100,14 @@ export async function makeAuthenticatedRequest(
       ...options.headers,
     },
   });
+
+  // Detect session timeout (401 Unauthorized)
+  if (response.status === 401) {
+    console.warn('Session expired (401 Unauthorized), triggering logout');
+    handleSessionTimeout();
+  }
+
+  return response;
 }
 
 /**

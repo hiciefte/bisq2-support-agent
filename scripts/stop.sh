@@ -31,4 +31,4 @@ cd "$DOCKER_DIR" || {
 echo "Stopping and removing containers..."
 docker compose -f docker-compose.yml down
 
-echo "Application stopped successfully." 
+echo "Application stopped successfully."

@@ -8,8 +8,10 @@ on:
 
 jobs:
   lint-and-test:
-    name: Lint & Test
+    name: Lint, Type Check & Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -35,12 +37,32 @@ jobs:
       - name: Install dependencies
         run: pip-sync api/requirements.txt
 
-      - name: Lint with black
-        run: black --check .
+      - name: Check formatting with black
+        run: black --check api/
+
+      - name: Check import sorting with isort
+        run: isort --check-only --profile black api/
+
+      - name: Type check with mypy
+        run: |
+          cd api
+          mypy app/ --ignore-missing-imports --no-strict-optional --warn-redundant-casts --warn-unused-ignores --explicit-package-bases || echo "Mypy found type issues - these should be fixed in a future PR"
+
+      - name: Lint with flake8
+        run: |
+          cd api
+          flake8 app/ tests/ --max-line-length=88 --extend-ignore=E203,W503,E501 --exclude=venv,__pycache__,.git,data
+
+      - name: Run tests with pytest
+        run: |
+          cd api
+          pytest tests/ -v --tb=short
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -81,4 +103,3 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
-

@@ -282,6 +282,39 @@ needs_web_restart() {
     return 1  # False, no restart needed
 }
 
+# Function to check if Nginx restart is needed
+needs_nginx_restart() {
+    local repo_dir="${1:-.}"
+    local prev_head="${2:-$PREV_HEAD}"
+
+    cd "$repo_dir" || return 2
+
+    if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+        local base
+        base=$(git merge-base HEAD "${GIT_REMOTE:-origin}/${GIT_BRANCH:-main}" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+        if [ -n "$base" ]; then
+            if git diff --name-only "$base" HEAD | grep -qE '^docker/nginx/'; then
+                return 0  # True, needs restart
+            fi
+        else
+            log_warning "Unable to determine git base for comparison. Assuming nginx restart needed"
+            return 0
+        fi
+    else
+        if [ -n "$prev_head" ]; then
+            if git diff --name-only "$prev_head" HEAD | grep -qE '^docker/nginx/'; then
+                return 0  # True, needs restart
+            fi
+        else
+            if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^docker/nginx/'; then
+                return 0  # True, needs restart
+            fi
+        fi
+    fi
+
+    return 1  # False, no restart needed
+}
+
 # Function to create a backup reference
 create_backup_reference() {
     local repo_dir="${1:-.}"
@@ -390,6 +423,7 @@ export -f update_repository
 export -f needs_rebuild
 export -f needs_api_restart
 export -f needs_web_restart
+export -f needs_nginx_restart
 export -f create_backup_reference
 export -f rollback_to_ref
 export -f get_latest_backup

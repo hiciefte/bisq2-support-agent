@@ -77,7 +77,7 @@ If you see errors related to missing environment variables:
    ```bash
    # For Docker:
    ls -la /path/to/bisq2-support-agent/docker/.env
-   
+
    # For API:
    ls -la /path/to/bisq2-support-agent/api/.env
    ```
@@ -86,7 +86,7 @@ If you see errors related to missing environment variables:
    ```bash
    # For Docker:
    cp /path/to/bisq2-support-agent/docker/.env.example /path/to/bisq2-support-agent/docker/.env
-   
+
    # For API:
    cp /path/to/bisq2-support-agent/api/.env.example /path/to/bisq2-support-agent/api/.env
    ```
@@ -95,7 +95,7 @@ If you see errors related to missing environment variables:
    ```bash
    # For Docker:
    nano /path/to/bisq2-support-agent/docker/.env
-   
+
    # For API:
    nano /path/to/bisq2-support-agent/api/.env
    ```
@@ -143,7 +143,7 @@ If the web UI shows a timeout when connecting to the API:
    ```bash
    # For production in docker/.env:
    NEXT_PUBLIC_API_URL=/api
-   
+
    # For local development in docker-compose.local.yml:
    NEXT_PUBLIC_API_URL=http://localhost:8000
    ```
@@ -292,7 +292,7 @@ If you're still experiencing issues:
    ```bash
    # Check Docker environment
    cat docker/.env
-   
+
    # Check API environment (for local development)
    cat api/.env
-   ``` 
+   ```

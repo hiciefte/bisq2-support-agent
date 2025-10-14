@@ -204,6 +204,7 @@ analyze_changes() {
     REBUILD_NEEDED=false
     API_RESTART_NEEDED=false
     WEB_RESTART_NEEDED=false
+    NGINX_RESTART_NEEDED=false
 
     if needs_rebuild "$INSTALL_DIR"; then
         log_warning "Dependency changes detected. Full rebuild needed"
@@ -220,11 +221,17 @@ analyze_changes() {
             log_warning "Web code changes detected. Web restart needed"
             WEB_RESTART_NEEDED=true
         fi
+
+        if needs_nginx_restart "$INSTALL_DIR"; then
+            log_warning "Nginx config changes detected. Nginx restart needed"
+            NGINX_RESTART_NEEDED=true
+        fi
     fi
 
     export REBUILD_NEEDED
     export API_RESTART_NEEDED
     export WEB_RESTART_NEEDED
+    export NGINX_RESTART_NEEDED
 }
 
 # Apply updates
@@ -298,7 +305,24 @@ apply_updates() {
             log_success "Web service restarted and verified successfully!"
         fi
 
-        if [ "$API_RESTART_NEEDED" = "false" ] && [ "$WEB_RESTART_NEEDED" = "false" ]; then
+        if [ "$NGINX_RESTART_NEEDED" = "true" ]; then
+            log_info "Restarting Nginx service..."
+
+            if ! docker compose -f "$COMPOSE_FILE" restart nginx; then
+                log_error "Failed to restart Nginx service"
+                rollback_update "Nginx restart failed"
+            fi
+
+            # Check Nginx health
+            sleep 5
+            if ! wait_for_healthy "nginx" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Nginx health check failed after restart"
+            fi
+
+            log_success "Nginx service restarted and verified successfully!"
+        fi
+
+        if [ "$API_RESTART_NEEDED" = "false" ] && [ "$WEB_RESTART_NEEDED" = "false" ] && [ "$NGINX_RESTART_NEEDED" = "false" ]; then
             log_info "No service restarts needed. Configuration or non-service files changed"
         fi
     fi

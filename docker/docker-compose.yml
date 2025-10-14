@@ -14,6 +14,8 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./logs/nginx:/var/log/nginx
       - ./nginx/error_pages:/usr/share/nginx/html/error_pages:ro
+      # Mount maintenance page
+      - ./maintenance/maintenance.html:/usr/share/nginx/html/maintenance.html:ro
     ports:
       # Bind to all interfaces for clearnet and Tor access
       - "0.0.0.0:80:80"
@@ -120,19 +122,17 @@ services:
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
-      # Include API keys - these need to be explicitly included to be passed to container
+      # OpenAI API configuration (used by AISuite for LLM and embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
       - MAX_TOKENS=${MAX_TOKENS}
-      - XAI_API_KEY=${XAI_API_KEY}
-      - XAI_MODEL=${XAI_MODEL}
-      - XAI_API_BASE_URL=${XAI_API_BASE_URL}
+      # Admin and security configuration
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
-      - BISQ_API_URL=${BISQ_API_URL} # URL for the containerized Bisq2 API service
+      - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090} # URL for the containerized Bisq2 API service
       # Tor hidden service configuration
       - TOR_HIDDEN_SERVICE=${TOR_HIDDEN_SERVICE}
       # Privacy and security settings

@@ -122,5 +122,8 @@ pnpm-lock.yaml
 # Git worktrees directory - used for parallel feature development
 /.trees/
 onion-keys/
-/web/tests/e2e/
+
+# Playwright test artifacts (keep test source files, ignore results)
 /web/test-results/
+/web/playwright-report/
+/web/playwright/.cache/

@@ -71,6 +71,9 @@ def update_tor_service_configured(
     Args:
         configured: True if hidden service is configured
         onion_address: The .onion address if configured
+
+    Returns:
+        None
     """
     tor_hidden_service_configured.set(1 if configured else 0)
 

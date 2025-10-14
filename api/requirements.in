@@ -7,20 +7,20 @@ pydantic
 pydantic-settings
 
 # LLM and RAG
-langchain
-langchain-community
 langchain-core
 langchain-chroma
 chromadb
+langchain-text-splitters
 
 # LLM providers
+# AISuite for unified LLM interface (pinned for reproducible builds)
+aisuite==0.1.12
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
 # 2.0.0 changes Response tool-call output schema (breaking change)
 openai<2.0.0
+# Keep langchain-openai for embeddings only (not for LLM)
 langchain-openai
-langchain-huggingface
-langchain-text-splitters
-langchain-xai
+# Note: httpx is pinned to 0.27.2 in requirements.txt (aisuite requires httpx<0.28)
 
 # Web scraping and parsing
 beautifulsoup4
@@ -46,7 +46,9 @@ pytest-asyncio
 black
 isort
 mypy
+flake8
 pip-tools
+pre-commit
 
 # Added for cross-process file locking
 portalocker
@@ -54,4 +56,4 @@ portalocker
 # Data science libs
 matplotlib
 scikit-learn
-pillow>=11.3.0 
+pillow>=11.3.0

@@ -1,1 +1,1931 @@
-{"openapi":"3.1.0","info":{"title":"Bisq Support Assistant API","description":"API for the Bisq Support Assistant chatbot using simplified RAG implementation","version":"1.0.0"},"paths":{"/metrics":{"get":{"summary":"Metrics","operationId":"metrics_metrics_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/health":{"get":{"tags":["Health"],"summary":"Health Check","description":"Health check endpoint that monitors system resources and service status.","operationId":"health_check_health_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/health/ready":{"get":{"tags":["Health"],"summary":"Readiness Check","description":"Readiness probe that checks if the service is ready to handle requests.","operationId":"readiness_check_health_ready_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/health/live":{"get":{"tags":["Health"],"summary":"Liveness Check","description":"Liveness probe that checks if the service is running.","operationId":"liveness_check_health_live_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/chat/query":{"post":{"tags":["Chat"],"summary":"Query","description":"Process a query and return a response with sources.","operationId":"query_chat_query_post","requestBody":{"content":{"application/json":{"schema":{"type":"object","title":"Body Payload"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/chat/stats":{"get":{"tags":["Chat"],"summary":"Get Chat Stats","description":"Get statistics about chat responses including average response time.","operationId":"get_chat_stats_chat_stats_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/feedback/submit":{"post":{"tags":["Feedback"],"summary":"Submit Feedback","description":"Submit feedback for a chat response.","operationId":"submit_feedback_feedback_submit_post","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/FeedbackRequest"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/feedback/stats":{"get":{"tags":["Feedback"],"summary":"Get Feedback Stats","description":"Get aggregated feedback statistics.","operationId":"get_feedback_stats_feedback_stats_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/admin/feedback":{"get":{"tags":["Admin","admin"],"summary":"Get Feedback Analytics","description":"Get analytics about user feedback.\n\nThis endpoint requires admin authentication.","operationId":"get_feedback_analytics_admin_feedback_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"type":"object","title":"Response Get Feedback Analytics Admin Feedback Get"}}}},"404":{"description":"Not found"}}}}},"components":{"schemas":{"FeedbackRequest":{"properties":{"message_id":{"type":"string","title":"Message Id"},"question":{"type":"string","title":"Question"},"answer":{"type":"string","title":"Answer"},"rating":{"type":"integer","title":"Rating"},"sources":{"anyOf":[{"items":{"additionalProperties":{"type":"string"},"type":"object"},"type":"array"},{"type":"null"}],"title":"Sources"},"metadata":{"anyOf":[{"type":"object"},{"type":"null"}],"title":"Metadata"}},"type":"object","required":["message_id","question","answer","rating"],"title":"FeedbackRequest"},"HTTPValidationError":{"properties":{"detail":{"items":{"$ref":"#/components/schemas/ValidationError"},"type":"array","title":"Detail"}},"type":"object","title":"HTTPValidationError"},"ValidationError":{"properties":{"loc":{"items":{"anyOf":[{"type":"string"},{"type":"integer"}]},"type":"array","title":"Location"},"msg":{"type":"string","title":"Message"},"type":{"type":"string","title":"Error Type"}},"type":"object","required":["loc","msg","type"],"title":"ValidationError"}}}}
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "BISQ Support",
+        "version": "0.1.0",
+        "description": "BISQ Support API - A RAG-based support assistant with admin authentication.\n\n## Security\n\n### Transport Security (CKV_OPENAPI_20)\nProduction deployments use HTTPS exclusively via nginx reverse proxy configuration.\nAPI keys are only transmitted over secure channels in production.\nLocal development uses HTTP for debugging convenience.\n\n### Authentication Design (CKV_OPENAPI_4, CKV_OPENAPI_5)\nThis API uses **per-endpoint security** by design:\n- Public endpoints: /health, /chat, /feedback (no authentication)\n- Admin endpoints: /admin/* (require AdminApiKeyAuth header)\n- Exception: /admin/auth/logout is public (no authentication required)\n\nNo global security is defined because public and authenticated endpoints coexist.\n\n### Array Limits (CKV_OPENAPI_21)\nArray properties intentionally omit maxItems to allow flexible data volumes.\nActual limits are enforced by:\n- Application logic (e.g., FeedbackRequest.conversation_history maxItems=50)\n- Backend validation in FastAPI route handlers\n- Database constraints and query limits"
+    },
+    "paths": {
+        "/metrics": {
+            "get": {
+                "summary": "Metrics",
+                "operationId": "metrics_metrics_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Health Check",
+                "description": "Health check endpoint that monitors system resources and service status.",
+                "operationId": "health_check_health_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health/ready": {
+            "get": {
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Readiness Check",
+                "description": "Readiness probe that checks if the service is ready to handle requests.",
+                "operationId": "readiness_check_health_ready_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health/live": {
+            "get": {
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Liveness Check",
+                "description": "Liveness probe that checks if the service is running.",
+                "operationId": "liveness_check_health_live_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/chat/query": {
+            "post": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Query",
+                "description": "Process a query and return a response with sources.",
+                "operationId": "query_chat_query_post",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/chat/stats": {
+            "get": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Get Chat Stats",
+                "description": "Get statistics about chat responses including average response time.",
+                "operationId": "get_chat_stats_chat_stats_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/feedback/submit": {
+            "post": {
+                "tags": [
+                    "Feedback"
+                ],
+                "summary": "Submit Feedback",
+                "description": "Submit feedback for a chat response.",
+                "operationId": "submit_feedback_feedback_submit_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FeedbackRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/feedback/stats": {
+            "get": {
+                "tags": [
+                    "Feedback"
+                ],
+                "summary": "Get Feedback Stats",
+                "description": "Get aggregated feedback statistics.",
+                "operationId": "get_feedback_stats_feedback_stats_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/feedback/explanation": {
+            "post": {
+                "tags": [
+                    "Feedback"
+                ],
+                "summary": "Submit Feedback Explanation",
+                "description": "Submit explanation for negative feedback.\n\nThis endpoint receives explanations about why an answer was unhelpful.\nIt updates the existing feedback with the explanation and categorizes issues.",
+                "operationId": "submit_feedback_explanation_feedback_explanation_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "title": "Explanation Data"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "type": "object",
+                                    "title": "Response Submit Feedback Explanation Feedback Explanation Post"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/auth/login": {
+            "post": {
+                "tags": [
+                    "Admin Auth"
+                ],
+                "summary": "Admin Login",
+                "description": "Authenticate admin user and set secure session cookie.\n\nThis endpoint validates the provided API key with timing attack resistance\nand sets an HTTP-only cookie for secure session management. The cookie prevents\nXSS attacks and provides automatic CSRF protection.\n\nSecurity features:\n- Constant-time key comparison\n- Random delay to prevent timing attacks (50-150ms)\n- Deferred logging to avoid information leakage\n\nArgs:\n    login_request: Login credentials containing API key\n    response: FastAPI response object for setting cookies\n    request: FastAPI request object for logging\n\nReturns:\n    AdminLoginResponse: Login success confirmation\n\nRaises:\n    AuthenticationError: If credentials are invalid or admin access not configured\n    BaseAppException: If an unexpected error occurs during login",
+                "operationId": "admin_login_admin_auth_login_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AdminLoginRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AdminLoginResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/auth/logout": {
+            "post": {
+                "tags": [
+                    "Admin Auth"
+                ],
+                "summary": "Admin Logout",
+                "description": "Logout admin user by clearing authentication cookie.\n\nThis endpoint clears the secure session cookie, effectively logging out\nthe admin user. No authentication is required for logout.\n\nArgs:\n    response: FastAPI response object for clearing cookies\n\nReturns:\n    dict: Logout confirmation message",
+                "operationId": "admin_logout_admin_auth_logout_post",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "type": "object",
+                                    "title": "Response Admin Logout Admin Auth Logout Post"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/feedback": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback Analytics",
+                "description": "Get analytics about user feedback.\n\nThis endpoint requires admin authentication via Authorization header with Bearer token.",
+                "operationId": "get_feedback_analytics_admin_feedback_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "type": "object",
+                                    "title": "Response Get Feedback Analytics Admin Feedback Get"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/list": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback List",
+                "description": "Get filtered and paginated feedback list for admin interface.\n\nThis endpoint provides comprehensive feedback management capabilities:\n- Filter by rating (positive/negative/all)\n- Filter by date range\n- Filter by issue types\n- Filter by source types\n- Text search across questions/answers/explanations\n- Filter for feedback needing FAQ creation\n- Pagination and sorting support\n\nAuthentication required via API key.",
+                "operationId": "get_feedback_list_admin_feedback_list_get",
+                "parameters": [
+                    {
+                        "name": "rating",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Rating"
+                        }
+                    },
+                    {
+                        "name": "date_from",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Date From"
+                        }
+                    },
+                    {
+                        "name": "date_to",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Date To"
+                        }
+                    },
+                    {
+                        "name": "issues",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Issues"
+                        }
+                    },
+                    {
+                        "name": "source_types",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Source Types"
+                        }
+                    },
+                    {
+                        "name": "search_text",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Search Text"
+                        }
+                    },
+                    {
+                        "name": "needs_faq",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "boolean"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Needs Faq"
+                        }
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 1,
+                            "title": "Page"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 50,
+                            "title": "Page Size"
+                        }
+                    },
+                    {
+                        "name": "sort_by",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "default": "newest",
+                            "title": "Sort By"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FeedbackListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/stats": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback Stats Enhanced",
+                "description": "Get enhanced feedback statistics for admin dashboard.\n\nProvides comprehensive analytics including:\n- Basic counts and rates\n- Common issues breakdown\n- Source effectiveness metrics\n- Recent activity trends\n- Items needing FAQ creation\n\nAuthentication required via API key.",
+                "operationId": "get_feedback_stats_enhanced_admin_feedback_stats_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FeedbackStatsResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/needs-faq": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback Needing Faq",
+                "description": "Get negative feedback that would benefit from FAQ creation.\n\nReturns feedback items that:\n- Have negative ratings\n- Include explanations from users about why the answer was unhelpful\n- Have responses indicating the LLM had no source information\n\nThis endpoint is specifically designed to help support agents identify\nknowledge gaps that should be addressed with new FAQs.\n\nAuthentication required via API key.",
+                "operationId": "get_feedback_needing_faq_admin_feedback_needs_faq_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "type": "object",
+                                    "title": "Response Get Feedback Needing Faq Admin Feedback Needs Faq Get"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/create-faq": {
+            "post": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Create Faq From Feedback",
+                "description": "Create a new FAQ based on feedback.\n\nThis endpoint allows support agents to convert negative feedback into\nnew FAQ entries, helping to address knowledge gaps and improve future\nresponses for similar questions.\n\nThe original feedback entry is automatically marked as processed with\na reference to the created FAQ for tracking purposes.\n\nAuthentication required via API key.",
+                "operationId": "create_faq_from_feedback_admin_feedback_create_faq_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateFAQFromFeedbackRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FAQIdentifiedItem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/{message_id}": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback Details",
+                "description": "Get complete feedback details including full conversation history.\n\nThis endpoint retrieves a single feedback entry with all associated data:\n- Question, answer, rating, and explanation\n- Complete conversation history with all messages\n- Metadata and issue types\n- Timestamps\n\nAuthentication required via API key.",
+                "operationId": "get_feedback_details_admin_feedback__message_id__get",
+                "parameters": [
+                    {
+                        "name": "message_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Message Id"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true,
+                                    "title": "Response Get Feedback Details Admin Feedback  Message Id  Get"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/feedback/by-issues": {
+            "get": {
+                "tags": [
+                    "Admin Feedback"
+                ],
+                "summary": "Get Feedback By Issues",
+                "description": "Get feedback grouped by issue types for pattern analysis.\n\nThis endpoint helps support agents understand common problems\nby grouping negative feedback by issue categories such as:\n- too_verbose, too_technical, inaccurate, etc.\n\nAuthentication required via API key.",
+                "operationId": "get_feedback_by_issues_admin_feedback_by_issues_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": true,
+                                    "type": "object",
+                                    "title": "Response Get Feedback By Issues Admin Feedback By Issues Get"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/faqs": {
+            "get": {
+                "tags": [
+                    "Admin FAQs"
+                ],
+                "summary": "Get All Faqs For Admin Route",
+                "description": "Get FAQs for the admin interface with pagination and filtering support.",
+                "operationId": "get_all_faqs_for_admin_route_admin_faqs_get",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 1,
+                            "title": "Page"
+                        }
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "default": 10,
+                            "title": "Page Size"
+                        }
+                    },
+                    {
+                        "name": "search_text",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Search Text"
+                        }
+                    },
+                    {
+                        "name": "categories",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Categories"
+                        }
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Source"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FAQListResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "Admin FAQs"
+                ],
+                "summary": "Add New Faq Route",
+                "description": "Add a new FAQ.",
+                "operationId": "add_new_faq_route_admin_faqs_post",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FAQItem"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FAQIdentifiedItem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/faqs/{faq_id}": {
+            "put": {
+                "tags": [
+                    "Admin FAQs"
+                ],
+                "summary": "Update Existing Faq Route",
+                "description": "Update an existing FAQ by its ID.",
+                "operationId": "update_existing_faq_route_admin_faqs__faq_id__put",
+                "parameters": [
+                    {
+                        "name": "faq_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Faq Id"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FAQItem"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FAQIdentifiedItem"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Admin FAQs"
+                ],
+                "summary": "Delete Existing Faq Route",
+                "description": "Delete an existing FAQ by its ID.",
+                "operationId": "delete_existing_faq_route_admin_faqs__faq_id__delete",
+                "parameters": [
+                    {
+                        "name": "faq_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Faq Id"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Successful Response"
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/metrics": {
+            "get": {
+                "tags": [
+                    "Admin Analytics"
+                ],
+                "summary": "Get Metrics",
+                "description": "Get feedback metrics in Prometheus format.\n\nThis endpoint requires admin authentication via Authorization header with Bearer token.",
+                "operationId": "get_metrics_admin_metrics_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response"
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/dashboard/overview": {
+            "get": {
+                "tags": [
+                    "Admin Analytics"
+                ],
+                "summary": "Get Dashboard Overview",
+                "description": "Get comprehensive dashboard overview with metrics and analytics.\n\nThis endpoint provides a complete dashboard overview combining:\n- Real-time feedback statistics and trends\n- Average response time metrics\n- Feedback items that would benefit from FAQ creation\n- System uptime and query statistics\n- Historical trend data for performance monitoring\n\nAuthentication required via API key.",
+                "operationId": "get_dashboard_overview_admin_dashboard_overview_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DashboardOverviewResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "403": {
+                        "description": "Forbidden - Insufficient permissions"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ]
+            }
+        },
+        "/.well-known/onion-verify/bisq-support.txt": {
+            "get": {
+                "tags": [
+                    "Onion Verification",
+                    "Onion Verification"
+                ],
+                "summary": "Onion Verification",
+                "description": "Return .onion verification file.\n\nThis endpoint provides cryptographic proof that the clearnet site\ncontrols the .onion address. The verification file contains:\n- The .onion address\n- Static timestamp (generated at module load, consistent across requests)\n- SHA256 hash of the verification data\n- Human-readable verification instructions\n\nReturns:\n    Response: Plain text verification file",
+                "operationId": "onion_verification__well_known_onion_verify_bisq_support_txt_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/.well-known/onion-verify/verification-info": {
+            "get": {
+                "tags": [
+                    "Onion Verification",
+                    "Onion Verification"
+                ],
+                "summary": "Verification Info",
+                "description": "Return JSON verification information.\n\nProvides structured verification data for programmatic access.\n\nReturns:\n    Union[Dict, JSONResponse]: JSON object with verification details or error response",
+                "operationId": "verification_info__well_known_onion_verify_verification_info_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/healthcheck": {
+            "get": {
+                "summary": "Healthcheck",
+                "operationId": "healthcheck_healthcheck_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "AdminLoginRequest": {
+                "properties": {
+                    "api_key": {
+                        "type": "string",
+                        "title": "Api Key",
+                        "description": "Admin API key for authentication"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "api_key"
+                ],
+                "title": "AdminLoginRequest",
+                "description": "Request model for admin login."
+            },
+            "AdminLoginResponse": {
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "title": "Message",
+                        "description": "Login success message"
+                    },
+                    "authenticated": {
+                        "type": "boolean",
+                        "title": "Authenticated",
+                        "description": "Authentication status"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "message",
+                    "authenticated"
+                ],
+                "title": "AdminLoginResponse",
+                "description": "Response model for successful admin login."
+            },
+            "ConversationMessage": {
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "user",
+                            "assistant"
+                        ],
+                        "title": "Role",
+                        "description": "Message role"
+                    },
+                    "content": {
+                        "type": "string",
+                        "maxLength": 10000,
+                        "title": "Content",
+                        "description": "Message content (max 10KB)"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "role",
+                    "content"
+                ],
+                "title": "ConversationMessage",
+                "description": "Individual message in a conversation."
+            },
+            "CreateFAQFromFeedbackRequest": {
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "title": "Message Id"
+                    },
+                    "suggested_question": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Suggested Question",
+                        "description": "Override the original question"
+                    },
+                    "suggested_answer": {
+                        "type": "string",
+                        "title": "Suggested Answer",
+                        "description": "The improved answer for the FAQ"
+                    },
+                    "category": {
+                        "type": "string",
+                        "title": "Category",
+                        "description": "Category for the new FAQ"
+                    },
+                    "additional_notes": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Additional Notes",
+                        "description": "Additional context or notes"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "message_id",
+                    "suggested_answer",
+                    "category"
+                ],
+                "title": "CreateFAQFromFeedbackRequest",
+                "description": "Request model for creating FAQ from feedback."
+            },
+            "DashboardOverviewResponse": {
+                "properties": {
+                    "helpful_rate": {
+                        "type": "number",
+                        "title": "Helpful Rate",
+                        "description": "Helpful rate as percentage"
+                    },
+                    "helpful_rate_trend": {
+                        "type": "number",
+                        "title": "Helpful Rate Trend",
+                        "description": "24h trend in helpful rate"
+                    },
+                    "average_response_time": {
+                        "type": "number",
+                        "title": "Average Response Time",
+                        "description": "Average response time in seconds"
+                    },
+                    "response_time_trend": {
+                        "type": "number",
+                        "title": "Response Time Trend",
+                        "description": "Response time trend (negative = improvement)"
+                    },
+                    "negative_feedback_count": {
+                        "type": "integer",
+                        "title": "Negative Feedback Count",
+                        "description": "Recent negative feedback count"
+                    },
+                    "negative_feedback_trend": {
+                        "type": "number",
+                        "title": "Negative Feedback Trend",
+                        "description": "Negative feedback trend percentage"
+                    },
+                    "feedback_items_for_faq": {
+                        "items": {
+                            "$ref": "#/components/schemas/FeedbackForFAQItem"
+                        },
+                        "type": "array",
+                        "title": "Feedback Items For Faq",
+                        "description": "Feedback items that would benefit from FAQ creation"
+                    },
+                    "feedback_items_for_faq_count": {
+                        "type": "integer",
+                        "title": "Feedback Items For Faq Count",
+                        "description": "Count of feedback items for FAQ creation"
+                    },
+                    "system_uptime": {
+                        "type": "number",
+                        "title": "System Uptime",
+                        "description": "System uptime in seconds"
+                    },
+                    "total_queries": {
+                        "type": "integer",
+                        "title": "Total Queries",
+                        "description": "Total queries processed"
+                    },
+                    "total_faqs_created": {
+                        "type": "integer",
+                        "title": "Total Faqs Created",
+                        "description": "Total FAQs created from feedback"
+                    },
+                    "total_feedback": {
+                        "type": "integer",
+                        "title": "Total Feedback",
+                        "description": "Total feedback entries"
+                    },
+                    "total_faqs": {
+                        "type": "integer",
+                        "title": "Total Faqs",
+                        "description": "Total FAQs in system"
+                    },
+                    "last_updated": {
+                        "type": "string",
+                        "title": "Last Updated",
+                        "description": "When the data was last updated"
+                    },
+                    "fallback": {
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Fallback",
+                        "description": "Whether this is fallback data"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "helpful_rate",
+                    "helpful_rate_trend",
+                    "average_response_time",
+                    "response_time_trend",
+                    "negative_feedback_count",
+                    "negative_feedback_trend",
+                    "feedback_items_for_faq",
+                    "feedback_items_for_faq_count",
+                    "system_uptime",
+                    "total_queries",
+                    "total_faqs_created",
+                    "total_feedback",
+                    "total_faqs",
+                    "last_updated"
+                ],
+                "title": "DashboardOverviewResponse",
+                "description": "Response model for dashboard overview data."
+            },
+            "FAQIdentifiedItem": {
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "title": "Question"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "title": "Answer"
+                    },
+                    "category": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Category",
+                        "default": "General"
+                    },
+                    "source": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Source",
+                        "default": "Manual"
+                    },
+                    "id": {
+                        "type": "string",
+                        "title": "Id"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "question",
+                    "answer",
+                    "id"
+                ],
+                "title": "FAQIdentifiedItem"
+            },
+            "FAQItem": {
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "title": "Question"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "title": "Answer"
+                    },
+                    "category": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Category",
+                        "default": "General"
+                    },
+                    "source": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Source",
+                        "default": "Manual"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "question",
+                    "answer"
+                ],
+                "title": "FAQItem"
+            },
+            "FAQListResponse": {
+                "properties": {
+                    "faqs": {
+                        "items": {
+                            "$ref": "#/components/schemas/FAQIdentifiedItem"
+                        },
+                        "type": "array",
+                        "title": "Faqs"
+                    },
+                    "total_count": {
+                        "type": "integer",
+                        "minimum": 0.0,
+                        "title": "Total Count"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1.0,
+                        "title": "Page"
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1.0,
+                        "title": "Page Size"
+                    },
+                    "total_pages": {
+                        "type": "integer",
+                        "minimum": 1.0,
+                        "title": "Total Pages"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "faqs",
+                    "total_count",
+                    "page",
+                    "page_size",
+                    "total_pages"
+                ],
+                "title": "FAQListResponse"
+            },
+            "FeedbackForFAQItem": {
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "title": "Message Id"
+                    },
+                    "question": {
+                        "type": "string",
+                        "title": "Question"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "title": "Answer"
+                    },
+                    "explanation": {
+                        "type": "string",
+                        "title": "Explanation"
+                    },
+                    "issues": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "title": "Issues"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "title": "Timestamp"
+                    },
+                    "potential_category": {
+                        "type": "string",
+                        "title": "Potential Category"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "message_id",
+                    "question",
+                    "answer",
+                    "explanation",
+                    "issues",
+                    "timestamp",
+                    "potential_category"
+                ],
+                "title": "FeedbackForFAQItem",
+                "description": "Feedback item that could benefit from FAQ creation."
+            },
+            "FeedbackItem": {
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "title": "Message Id"
+                    },
+                    "question": {
+                        "type": "string",
+                        "title": "Question"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "title": "Answer"
+                    },
+                    "rating": {
+                        "type": "integer",
+                        "title": "Rating",
+                        "description": "0 for negative, 1 for positive"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "title": "Timestamp"
+                    },
+                    "sources": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Sources"
+                    },
+                    "sources_used": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Sources Used"
+                    },
+                    "metadata": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": true,
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Metadata"
+                    },
+                    "processed": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Processed",
+                        "description": "0=not processed, 1=processed into FAQ",
+                        "default": 0
+                    },
+                    "processed_at": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Processed At",
+                        "description": "Timestamp when processed into FAQ"
+                    },
+                    "faq_id": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Faq Id",
+                        "description": "ID of created FAQ if processed"
+                    },
+                    "is_positive": {
+                        "type": "boolean",
+                        "title": "Is Positive",
+                        "description": "Check if feedback is positive.",
+                        "readOnly": true
+                    },
+                    "is_negative": {
+                        "type": "boolean",
+                        "title": "Is Negative",
+                        "description": "Check if feedback is negative.",
+                        "readOnly": true
+                    },
+                    "explanation": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Explanation",
+                        "description": "Get explanation from metadata if available.",
+                        "readOnly": true
+                    },
+                    "issues": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "title": "Issues",
+                        "description": "Get list of issues from metadata.",
+                        "readOnly": true
+                    },
+                    "has_no_source_response": {
+                        "type": "boolean",
+                        "title": "Has No Source Response",
+                        "description": "Check if LLM responded that it has no source to rely on.",
+                        "readOnly": true
+                    },
+                    "is_processed": {
+                        "type": "boolean",
+                        "title": "Is Processed",
+                        "description": "Check if feedback has been processed into a FAQ.",
+                        "readOnly": true
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "message_id",
+                    "question",
+                    "answer",
+                    "rating",
+                    "timestamp",
+                    "is_positive",
+                    "is_negative",
+                    "explanation",
+                    "issues",
+                    "has_no_source_response",
+                    "is_processed"
+                ],
+                "title": "FeedbackItem",
+                "description": "Individual feedback entry model."
+            },
+            "FeedbackListResponse": {
+                "properties": {
+                    "feedback_items": {
+                        "items": {
+                            "$ref": "#/components/schemas/FeedbackItem"
+                        },
+                        "type": "array",
+                        "title": "Feedback Items"
+                    },
+                    "total_count": {
+                        "type": "integer",
+                        "title": "Total Count"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "title": "Page"
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "title": "Page Size"
+                    },
+                    "total_pages": {
+                        "type": "integer",
+                        "title": "Total Pages"
+                    },
+                    "filters_applied": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "title": "Filters Applied"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "feedback_items",
+                    "total_count",
+                    "page",
+                    "page_size",
+                    "total_pages",
+                    "filters_applied"
+                ],
+                "title": "FeedbackListResponse",
+                "description": "Response model for paginated feedback list."
+            },
+            "FeedbackRequest": {
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9-]{36}$",
+                        "title": "Message Id",
+                        "description": "UUID of the message"
+                    },
+                    "question": {
+                        "type": "string",
+                        "maxLength": 5000,
+                        "title": "Question",
+                        "description": "User question"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "maxLength": 20000,
+                        "title": "Answer",
+                        "description": "Assistant answer"
+                    },
+                    "rating": {
+                        "type": "integer",
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "title": "Rating",
+                        "description": "0 for negative, 1 for positive"
+                    },
+                    "explanation": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "maxLength": 5000
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Explanation",
+                        "description": "Feedback explanation"
+                    },
+                    "conversation_history": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "$ref": "#/components/schemas/ConversationMessage"
+                                },
+                                "type": "array",
+                                "maxItems": 50
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Conversation History",
+                        "description": "Conversation context (max 50 messages)"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "message_id",
+                    "question",
+                    "answer",
+                    "rating"
+                ],
+                "title": "FeedbackRequest",
+                "description": "Request model for submitting feedback."
+            },
+            "FeedbackStatsResponse": {
+                "properties": {
+                    "total_feedback": {
+                        "type": "integer",
+                        "title": "Total Feedback"
+                    },
+                    "positive_count": {
+                        "type": "integer",
+                        "title": "Positive Count"
+                    },
+                    "negative_count": {
+                        "type": "integer",
+                        "title": "Negative Count"
+                    },
+                    "helpful_rate": {
+                        "type": "number",
+                        "title": "Helpful Rate"
+                    },
+                    "common_issues": {
+                        "additionalProperties": {
+                            "type": "integer"
+                        },
+                        "type": "object",
+                        "title": "Common Issues"
+                    },
+                    "recent_negative_count": {
+                        "type": "integer",
+                        "title": "Recent Negative Count"
+                    },
+                    "needs_faq_count": {
+                        "type": "integer",
+                        "title": "Needs Faq Count"
+                    },
+                    "source_effectiveness": {
+                        "additionalProperties": {
+                            "additionalProperties": true,
+                            "type": "object"
+                        },
+                        "type": "object",
+                        "title": "Source Effectiveness"
+                    },
+                    "feedback_by_month": {
+                        "additionalProperties": {
+                            "type": "integer"
+                        },
+                        "type": "object",
+                        "title": "Feedback By Month"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "total_feedback",
+                    "positive_count",
+                    "negative_count",
+                    "helpful_rate",
+                    "common_issues",
+                    "recent_negative_count",
+                    "needs_faq_count",
+                    "source_effectiveness",
+                    "feedback_by_month"
+                ],
+                "title": "FeedbackStatsResponse",
+                "description": "Response model for feedback statistics."
+            },
+            "HTTPValidationError": {
+                "properties": {
+                    "detail": {
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        },
+                        "type": "array",
+                        "title": "Detail"
+                    }
+                },
+                "type": "object",
+                "title": "HTTPValidationError"
+            },
+            "ValidationError": {
+                "properties": {
+                    "loc": {
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "integer"
+                                }
+                            ]
+                        },
+                        "type": "array",
+                        "title": "Location"
+                    },
+                    "msg": {
+                        "type": "string",
+                        "title": "Message"
+                    },
+                    "type": {
+                        "type": "string",
+                        "title": "Error Type"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "loc",
+                    "msg",
+                    "type"
+                ],
+                "title": "ValidationError"
+            }
+        },
+        "securitySchemes": {
+            "AdminApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "Authorization",
+                "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`"
+            }
+        }
+    }
+}

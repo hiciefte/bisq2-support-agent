@@ -43,7 +43,7 @@ class Bisq2API:
                     return await response.json()
                 return {"content": await response.text()}
         except aiohttp.ClientError as e:
-            logger.error(f"Error making request to Bisq2 API: {e}")
+            logger.error(f"Error making request to Bisq2 API: {e}", exc_info=True)
             raise
 
     async def export_chat_messages(
@@ -82,6 +82,10 @@ class Bisq2API:
                     await asyncio.sleep(retry_delay)
                     continue
                 logger.error(
-                    f"Failed to export chat messages after {max_retries} attempts: {str(e)}"
+                    f"Failed to export chat messages after {max_retries} attempts: {str(e)}",
+                    exc_info=True,
                 )
                 return ""
+
+        # Fallback in case loop completes without returning (should not happen)
+        return ""

@@ -16,6 +16,7 @@ fi
 
 # Fix app directory permissions
 if [ -d "/app" ]; then
+    echo "Fixing /app directory permissions..."
     chown -R bisq-support:bisq-support /app || true
     echo "✓ /app permissions fixed"
 fi

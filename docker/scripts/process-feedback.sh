@@ -26,4 +26,4 @@ if ! docker exec $API_CONTAINER python -m app.scripts.process_feedback; then
 fi
 
 log "Feedback processing completed successfully"
-exit 0 
+exit 0

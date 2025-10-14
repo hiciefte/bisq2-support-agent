@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -79,19 +78,19 @@ class FeedbackItem(BaseModel):
         default=None, description="ID of created FAQ if processed"
     )
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_positive(self) -> bool:
         """Check if feedback is positive."""
         return self.rating == 1
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_negative(self) -> bool:
         """Check if feedback is negative."""
         return self.rating == 0
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def explanation(self) -> Optional[str]:
         """Get explanation from metadata if available."""
@@ -99,7 +98,7 @@ class FeedbackItem(BaseModel):
             return self.metadata["explanation"]
         return None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def issues(self) -> List[str]:
         """Get list of issues from metadata."""
@@ -107,7 +106,7 @@ class FeedbackItem(BaseModel):
             return self.metadata["issues"]
         return []
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def has_no_source_response(self) -> bool:
         """Check if LLM responded that it has no source to rely on."""
@@ -125,7 +124,7 @@ class FeedbackItem(BaseModel):
         ]
         return any(indicator in answer_lower for indicator in no_source_indicators)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_processed(self) -> bool:
         """Check if feedback has been processed into a FAQ."""

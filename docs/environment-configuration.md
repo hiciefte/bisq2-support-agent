@@ -32,28 +32,16 @@ These variables are typically set in the shell or sourced from `/etc/bisq-suppor
 These variables configure the application services running inside Docker containers. They are primarily set in the `docker/.env` file located within the installation directory (`$BISQ_SUPPORT_INSTALL_DIR/docker/.env`). The deployment script copies `docker/.env.example` if `.env` doesn't exist and injects some secrets.
 
 *   **`OPENAI_API_KEY`**
-    *   Description: (Required) Your API key from OpenAI, used for the primary RAG and embedding models.
+    *   Description: (Required) Your API key from OpenAI, used for LLM operations via AISuite and embeddings.
 *   **`OPENAI_MODEL`**
-    *   Description: The OpenAI model ID to use for generating chat responses.
+    *   Description: The OpenAI model ID to use for generating chat responses via AISuite.
   *   Default: `gpt-4o-mini`
 *   **`OPENAI_EMBEDDING_MODEL`**
     *   Description: The OpenAI model ID to use for creating text embeddings.
     *   Default: `text-embedding-3-small`
 *   **`MAX_TOKENS`**
-    *   Description: The maximum number of tokens to generate in an OpenAI completion.
+    *   Description: The maximum number of tokens to generate in LLM completions.
     *   Default: `4096`
-*   **`LLM_PROVIDER`**
-    *   Description: Specifies which Language Model provider to use.
-    *   Values: `openai` or `xai`
-    *   Default: `openai`
-*   **`XAI_API_KEY`**
-    *   Description: (Required if `LLM_PROVIDER=xai`) Your API key from xAI.
-*   **`XAI_MODEL`**
-    *   Description: (Used if `LLM_PROVIDER=xai`) The xAI model ID to use.
-    *   Default: `llama3-70b-8192`
-*   **`XAI_API_BASE_URL`**
-    *   Description: (Used if `LLM_PROVIDER=xai`) The base URL for the xAI API.
-    *   Default: `https://api.xai.com/v1`
 *   **`ADMIN_API_KEY`**
     *   Description: A secret key required to access administrative API endpoints (e.g., feedback processing). The deployment script generates a random key and stores it in `$BISQ_SUPPORT_SECRETS_DIR/admin_api_key`, then injects it into `.env`.
     *   Default in `.env.example`: `dev_admin_key`
@@ -89,4 +77,4 @@ These variables configure the application services running inside Docker contain
     *   Default: `prometheuspassword`
 *   **`NEXT_PUBLIC_PROJECT_NAME`**
     *   Description: A name for the project, potentially used in the UI.
-    *   Default: `Bisq 2 Support Agent` 
+    *   Default: `Bisq 2 Support Agent`

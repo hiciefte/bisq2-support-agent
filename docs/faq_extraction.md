@@ -44,7 +44,7 @@ The `faq-extractor` service in the Docker Compose configuration:
 
 The FAQ extraction process follows these steps:
 
-1. **Data Collection**: 
+1. **Data Collection**:
    - Fetch new messages from the Bisq API
    - Combine with existing messages from previous runs
 
@@ -182,4 +182,4 @@ For better performance:
 
 ## Conclusion
 
-The FAQ extraction process is a critical component for keeping the support agent's knowledge base up-to-date with real user questions and expert answers. By automatically processing support chats into structured FAQs, it enables the RAG system to provide more accurate and relevant responses to user queries. 
+The FAQ extraction process is a critical component for keeping the support agent's knowledge base up-to-date with real user questions and expert answers. By automatically processing support chats into structured FAQs, it enables the RAG system to provide more accurate and relevant responses to user queries.

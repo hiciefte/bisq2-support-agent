@@ -7,8 +7,8 @@ from Prometheus to provide comprehensive dashboard statistics.
 
 import logging
 import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List
 
 from app.core.config import Settings
 from app.services.faq_service import FAQService
@@ -131,7 +131,7 @@ class DashboardService:
             ]
 
         except Exception as e:
-            logger.error(f"Failed to get feedback items for FAQ: {e}")
+            logger.error(f"Failed to get feedback items for FAQ: {e}", exc_info=True)
             return []
 
     async def _get_faq_creation_stats(self) -> Dict[str, int]:
@@ -147,7 +147,7 @@ class DashboardService:
                 "total_manual": len([f for f in all_faqs if f.source == "Manual"]),
             }
         except Exception as e:
-            logger.error(f"Failed to get FAQ creation stats: {e}")
+            logger.error(f"Failed to get FAQ creation stats: {e}", exc_info=True)
             return {
                 "total_faqs": 0,
                 "total_created_from_feedback": 0,
@@ -165,7 +165,7 @@ class DashboardService:
             # Example: rate(bisq_query_response_time_seconds_sum[1h]) / rate(bisq_query_response_time_seconds_count[1h])
             return 2.3  # seconds
         except Exception as e:
-            logger.error(f"Failed to get average response time: {e}")
+            logger.error(f"Failed to get average response time: {e}", exc_info=True)
             return 5.0  # fallback
 
     async def _get_total_query_count(self) -> int:
@@ -178,7 +178,7 @@ class DashboardService:
             # In production: query bisq_queries_total from Prometheus
             return 1247  # simulated
         except Exception as e:
-            logger.error(f"Failed to get total query count: {e}")
+            logger.error(f"Failed to get total query count: {e}", exc_info=True)
             return 0
 
     async def _calculate_helpful_rate_trend(self) -> float:
@@ -188,7 +188,7 @@ class DashboardService:
             # using Prometheus time-series data
             return 2.3  # +2.3% improvement
         except Exception as e:
-            logger.error(f"Failed to calculate helpful rate trend: {e}")
+            logger.error(f"Failed to calculate helpful rate trend: {e}", exc_info=True)
             return 0.0
 
     async def _calculate_response_time_trend(self) -> float:
@@ -197,7 +197,7 @@ class DashboardService:
             # Simplified calculation - in production would use Prometheus
             return -0.8  # -0.8 seconds improvement
         except Exception as e:
-            logger.error(f"Failed to calculate response time trend: {e}")
+            logger.error(f"Failed to calculate response time trend: {e}", exc_info=True)
             return 0.0
 
     async def _calculate_negative_feedback_trend(self) -> float:
@@ -206,7 +206,9 @@ class DashboardService:
             # Simplified calculation - in production would use Prometheus
             return -5.2  # -5.2% reduction in negative feedback
         except Exception as e:
-            logger.error(f"Failed to calculate negative feedback trend: {e}")
+            logger.error(
+                f"Failed to calculate negative feedback trend: {e}", exc_info=True
+            )
             return 0.0
 
     def _suggest_faq_category(self, issues: List[str]) -> str:

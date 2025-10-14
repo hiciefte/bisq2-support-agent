@@ -7,7 +7,7 @@ Provides cryptographic proof of .onion address ownership.
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 
 from app.core.config import get_settings
 from app.core.tor_metrics import record_verification_request
@@ -25,8 +25,12 @@ VERIFICATION_TIMESTAMP = datetime.now(timezone.utc).isoformat().replace("+00:00"
 
 
 # Compute verification data and hash once at module load
-def _get_verification_data():
-    """Precompute verification data and hash at module load time."""
+def _get_verification_data() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Precompute verification data and hash at module load time.
+
+    Returns:
+        Tuple of (onion_address, verification_data, data_hash) or (None, None, None) if not configured
+    """
     onion_address = settings.TOR_HIDDEN_SERVICE
     if not onion_address:
         return None, None, None
@@ -124,10 +128,16 @@ async def verification_info() -> Union[Dict[str, str], JSONResponse]:
         )
 
     # Use precomputed values from module load
+    # These are guaranteed to be non-None because ONION_ADDRESS is checked above
     onion_address = ONION_ADDRESS
     timestamp = VERIFICATION_TIMESTAMP
     verification_data = VERIFICATION_DATA
     data_hash = VERIFICATION_HASH
+
+    # Type assertions for mypy - these are guaranteed non-None at this point
+    assert onion_address is not None
+    assert verification_data is not None
+    assert data_hash is not None
 
     record_verification_request("verification-info", 200)
     return {

@@ -6,11 +6,10 @@ thread safety, and migration support.
 """
 
 import logging
-import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +72,7 @@ class FeedbackDatabase:
         logger.info("Database schema created successfully")
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """
         Get a database connection with proper context management.
 

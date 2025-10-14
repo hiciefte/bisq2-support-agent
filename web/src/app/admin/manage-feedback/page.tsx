@@ -432,6 +432,17 @@ export default function ManageFeedbackPage() {
   const exportFeedback = async () => {
     if (!feedbackData || feedbackData.feedback_items.length === 0) return;
 
+    // Helper function to escape CSV values properly
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      // Escape double quotes by doubling them, and wrap in quotes if contains comma, quote, or newline
+      if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
     const csvData = feedbackData.feedback_items.map(item => ({
       message_id: item.message_id,
       timestamp: item.timestamp,
@@ -445,7 +456,7 @@ export default function ManageFeedbackPage() {
 
     const csvContent = [
       Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
+      ...csvData.map(row => Object.values(row).map(val => escapeCSV(val)).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
