@@ -15,9 +15,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "BISQ Support"
 
-    # CORS settings - stored as list, supports comma-separated string input via validator
-    # Using str type annotation to avoid Pydantic's automatic parsing, validator converts to list
-    CORS_ORIGINS: str = "*"
+    # CORS settings - accepts string or list, normalized to list[str] by validator
+    CORS_ORIGINS: str | list[str] = "*"
 
     # Directory settings
     DATA_DIR: str = "api/data"
@@ -135,20 +134,37 @@ class Settings(BaseSettings):
             raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
         return v
 
-    @field_validator("CORS_ORIGINS", mode="after")
+    @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: str) -> list[str]:
-        """Convert string CORS_ORIGINS to list of hosts.
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+        """Normalize CORS_ORIGINS to list of hosts.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles wildcards, trims whitespace, and ignores empty entries.
 
         Args:
-            v: CORS origins as string (comma-separated) or "*" for all
+            v: CORS origins as string (comma-separated), list of strings, or "*" for all
 
         Returns:
-            List of CORS origin hosts
+            List of CORS origin hosts with whitespace trimmed and empty entries removed
         """
-        if v == "*":
-            return ["*"]
-        return [host.strip() for host in v.split(",") if host.strip()]
+        # Handle list input
+        if isinstance(v, list):
+            # Filter out empty strings and trim whitespace
+            return [
+                host.strip() for host in v if isinstance(host, str) and host.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            # Handle wildcard
+            if v.strip() == "*":
+                return ["*"]
+            # Split by comma, trim whitespace, filter empty entries
+            return [host.strip() for host in v.split(",") if host.strip()]
+
+        # Fallback for unexpected types
+        return ["*"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
