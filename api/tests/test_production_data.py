@@ -94,6 +94,7 @@ class TestProductionDataProcessing:
 
         print("\nProduction data statistics:")
         print(f"  Total messages: {len(processor.messages)}")
-        print(f"  Support messages (with references): {len(support_msgs)}")
-        print(f"  User messages (no references): {len(user_msgs)}")
+        print(f"  Support messages: {len(support_msgs)}")
+        print(f"  Support messages (with references): {len(support_msgs_with_refs)}")
+        print(f"  User messages: {len(user_msgs)}")
         print(f"  Conversations generated: {len(processor.group_conversations())}")

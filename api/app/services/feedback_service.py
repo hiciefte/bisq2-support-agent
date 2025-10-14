@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.db.database import get_database
@@ -160,7 +160,7 @@ class FeedbackService:
 
             # Add timestamp if not already present
             if timestamp is None:
-                timestamp = datetime.now().isoformat()
+                timestamp = datetime.now(timezone.utc).isoformat()
 
             # Store in database using repository
             feedback_id = self.repository.store_feedback(

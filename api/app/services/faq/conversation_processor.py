@@ -37,12 +37,11 @@ class ConversationProcessor:
         self.conversations: List[Dict] = []
         self.support_agent_nicknames = set(support_agent_nicknames or [])
 
-    def _is_support_message(self, author: str, referenced_msg_id: str | None) -> bool:
+    def _is_support_message(self, author: str) -> bool:
         """Determine if a message is from a support agent.
 
         Args:
             author: The author's nickname
-            referenced_msg_id: The ID of the message being replied to (if any)
 
         Returns:
             True if the message is from a support agent, False otherwise
@@ -99,7 +98,7 @@ class ConversationProcessor:
 
                     # Determine if this is a support message
                     author = msg_data.get("author", "unknown")
-                    is_support = self._is_support_message(author, referenced_msg_id)
+                    is_support = self._is_support_message(author)
 
                     # Create message object
                     msg = {

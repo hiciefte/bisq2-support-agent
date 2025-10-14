@@ -27,8 +27,8 @@ class TestConversationGroupingBug:
         """
         Test that independent question-answer pairs create separate conversations.
 
-        CURRENT BUG: All messages get grouped into ONE conversation
-        EXPECTED: Three separate conversations, one for each Q&A pair
+        Regression guard: this should PASS with the fixed implementation.
+        EXPECTED: Five separate conversations, one for each Q&A pair
         """
         processor = ConversationProcessor(
             support_agent_nicknames=[
@@ -40,9 +40,8 @@ class TestConversationGroupingBug:
         processor.load_messages_from_file(sample_json_with_independent_conversations)
         conversations = processor.group_conversations()
 
-        # This test will FAIL with current implementation
+        # Regression guard: this should PASS with the fixed implementation
         # Expected: 5 conversations (5 independent Q&A pairs)
-        # Current bug: 0 or 1 conversation
         assert (
             len(conversations) == 5
         ), f"Expected 5 conversations, got {len(conversations)}"
