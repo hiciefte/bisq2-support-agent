@@ -1,0 +1,6 @@
+Date,Channel,Author,Message,Message ID,Was Edited,Referenced Message ID,Referenced Message Author,Referenced Message Text
+2025-09-21 18:00:34,support,support_hash_1,"Hi, you can go to open trades and on the top right corner you will see ""refuse trade"", once you click on this button and confirm the trade is refused, you will see ""close trade"", you can then archive the trade or simply confirm it.",msg_support_1,False,msg_user_1,user_hash_1,How do I cancel an open trade?
+2025-09-21 18:01:32,support,support_hash_2,"Imo you should wait some 72hours as we are on the week-end days.",msg_support_2,False,msg_user_2,user_hash_2,Should I report a non-responding trader?
+2025-09-22 01:25:34,support,support_hash_3,"Trading fees are 0.1% for makers and 0.3% for takers.",msg_support_3,False,msg_user_3,user_hash_3,What is the fee structure for trading?
+2025-09-22 08:04:46,support,support_hash_4,The button appears only when the trade is in the correct state. Check if your trade is still pending.,msg_support_4,False,msg_user_4,user_hash_4,"I cannot see the ""refuse trade"" button mentioned."
+2025-09-22 15:47:24,support,support_hash_5,"It depends on whether you still have the same hard drive and haven't erased the data. If yes, what is your operating system?",msg_support_5,False,msg_user_5,user_hash_5,How do I recover a lost profile?
