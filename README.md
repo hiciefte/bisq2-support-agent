@@ -186,6 +186,40 @@ The feedback system has been migrated from JSONL files to SQLite for better data
 
 For new deployments, no migration is needed - the database will be created automatically on first startup.
 
+## Support Agent Configuration
+
+The FAQ extraction system needs to identify which users in the support chat are official support agents. This is configured using the `SUPPORT_AGENT_NICKNAMES` environment variable.
+
+### Setting Up Support Agent Detection
+
+Add support agent nicknames to your environment configuration:
+
+```bash
+# Single support agent
+SUPPORT_AGENT_NICKNAMES=suddenwhipvapor
+
+# Multiple support agents (comma-separated)
+SUPPORT_AGENT_NICKNAMES=suddenwhipvapor,strayorigin,toruk-makto
+```
+
+**Important Notes:**
+- **Required for FAQ extraction**: If not configured, no messages will be marked as support messages
+- **No fallback behavior**: The system will NOT automatically detect support agents if this is not configured
+- **Case-sensitive**: Nicknames must match exactly as they appear in the support chat
+- **Comma-separated**: Use commas to separate multiple nicknames (no spaces recommended)
+
+### How Support Detection Works
+
+When processing support chat conversations:
+1. Messages from configured nicknames are marked as support messages
+2. Support messages are used to identify Q&A conversations for FAQ extraction
+3. Only conversations with both user questions and support answers are extracted as FAQs
+
+If `SUPPORT_AGENT_NICKNAMES` is not configured:
+- ❌ No messages will be marked as support messages
+- ❌ No FAQs will be extracted from conversations
+- ⚠️ The system will operate normally for answering questions, but won't learn from new support chats
+
 ## RAG System Content
 
 The RAG system's knowledge base is built from two sources:
