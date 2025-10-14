@@ -30,6 +30,16 @@ if ! $DOCKER_COMPOSE version >/dev/null 2>&1; then
   fi
 fi
 
+# Verify docker CLI is present and daemon is reachable
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: docker CLI not found in PATH"
+  exit 1
+fi
+if ! docker version >/dev/null 2>&1; then
+  echo "ERROR: Cannot connect to Docker daemon. Is the Docker service running?"
+  exit 1
+fi
+
 # Log function
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
@@ -102,9 +112,8 @@ if check_disk_usage; then
   log "Performing aggressive cleanup due to high disk usage"
 
   # Remove unused images older than 24 hours (not just dangling ones)
-  # Preserve images labeled with keep=true for important base images
   log "Removing unused images older than 24 hours"
-  docker image prune -a -f --filter "until=24h" --filter "label!=keep=true" >> "$LOG_FILE" 2>&1
+  docker image prune -a -f --filter "until=24h" >> "$LOG_FILE" 2>&1
 
   # Remove unused build cache older than 24 hours to preserve recent builds
   log "Removing build cache older than 24 hours"
@@ -124,8 +133,10 @@ if check_disk_usage; then
   # logging section or use logrotate for /var/lib/docker/containers to prevent unbounded growth
   log "Cleaning up Docker logs"
   if [ -d /var/lib/docker/containers ]; then
-    find /var/lib/docker/containers -type f -name "*.log" -exec truncate -s 0 {} \; >> "$LOG_FILE" 2>&1
-    log "Docker logs have been truncated"
+    # Use || true to prevent permission errors from aborting the script
+    # Errors are still logged but won't trigger the ERR trap
+    find /var/lib/docker/containers -type f -name "*.log" -exec truncate -s 0 {} \; >> "$LOG_FILE" 2>&1 || true
+    log "Docker logs have been truncated (permission errors ignored)"
   fi
 
   # Check disk usage after cleanup
