@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw } from 'lucide-react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw, Eye, Trash2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -65,6 +66,15 @@ export default function AdminOverview() {
   const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
   const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [customCategory, setCustomCategory] = useState('');
+
+  // View feedback dialog state
+  const [showViewFeedback, setShowViewFeedback] = useState(false);
+  const [viewedFeedback, setViewedFeedback] = useState<FeedbackForFAQ | null>(null);
+
+  // Delete feedback dialog state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [feedbackToDelete, setFeedbackToDelete] = useState<FeedbackForFAQ | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const router = useRouter();
 
@@ -189,6 +199,66 @@ export default function AdminOverview() {
     } finally {
       setIsSubmittingFAQ(false);
     }
+  };
+
+  const handleViewFeedback = async (item: FeedbackForFAQ) => {
+    let feedbackWithHistory = item;
+
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
+
+      if (response.ok) {
+        const fullFeedback = await response.json();
+        feedbackWithHistory = {
+          ...item,
+          conversation_history: Array.isArray(fullFeedback.conversation_history)
+            ? fullFeedback.conversation_history
+            : []
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching feedback details:', error);
+    }
+
+    setViewedFeedback(feedbackWithHistory);
+    setShowViewFeedback(true);
+  };
+
+  const handleDeleteFeedback = async () => {
+    if (!feedbackToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedbackToDelete.message_id}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok || response.status === 204) {
+        setShowDeleteConfirm(false);
+        setFeedbackToDelete(null);
+        await fetchDashboardData();
+        setError(null);
+      } else if (response.status === 404) {
+        setError('Feedback not found. It may have already been deleted.');
+        setShowDeleteConfirm(false);
+        setFeedbackToDelete(null);
+        await fetchDashboardData();
+      } else {
+        const errorText = `Failed to delete feedback. Status: ${response.status}`;
+        setError(errorText);
+      }
+    } catch (error) {
+      const errorText = 'An unexpected error occurred while deleting feedback.';
+      setError(errorText);
+      console.error('Delete feedback error:', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const openDeleteConfirmation = (item: FeedbackForFAQ) => {
+    setFeedbackToDelete(item);
+    setShowDeleteConfirm(true);
   };
 
   const formatUptime = (seconds: number) => {
@@ -389,7 +459,7 @@ export default function AdminOverview() {
                   key={item.message_id}
                   className="border rounded-lg p-4 hover:bg-accent/50 transition-colors"
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start justify-between">
                     <div className="flex-1 space-y-2">
                       <div>
                         <h4 className="font-medium text-sm leading-relaxed">{item.question}</h4>
@@ -414,15 +484,34 @@ export default function AdminOverview() {
                           </Badge>
                         )}
                       </div>
+                      <div className="pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleCreateFAQClick(item)}
+                        >
+                          <PlusCircle className="h-3 w-3 mr-1" />
+                          Create FAQ
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-2">
+
+                    <div className="flex items-center gap-1 ml-4">
                       <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleCreateFAQClick(item)}
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleViewFeedback(item)}
+                        title="View feedback details"
                       >
-                        <PlusCircle className="h-3 w-3 mr-1" />
-                        Create FAQ
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openDeleteConfirmation(item)}
+                        title="Delete feedback"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>
                     </div>
                   </div>
@@ -552,6 +641,99 @@ export default function AdminOverview() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* View Feedback Dialog */}
+      <Dialog open={showViewFeedback} onOpenChange={setShowViewFeedback}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Feedback Details</DialogTitle>
+            <DialogDescription>
+              Complete feedback information and response details
+            </DialogDescription>
+          </DialogHeader>
+          {viewedFeedback && (
+            <div className="space-y-4">
+              <div>
+                <span className="font-medium text-card-foreground">Question:</span>
+                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{viewedFeedback.question}</p>
+              </div>
+
+              <div>
+                <span className="font-medium text-card-foreground">Answer:</span>
+                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{viewedFeedback.answer}</p>
+              </div>
+
+              {viewedFeedback.explanation && (
+                <div>
+                  <span className="font-medium text-card-foreground">User Feedback:</span>
+                  <p className="mt-1 p-3 bg-red-50 rounded border-l-4 border-red-200 text-red-900">{viewedFeedback.explanation}</p>
+                </div>
+              )}
+
+              {viewedFeedback.conversation_history && viewedFeedback.conversation_history.length > 1 && (
+                <ConversationHistory messages={viewedFeedback.conversation_history} />
+              )}
+
+              {viewedFeedback.issues && viewedFeedback.issues.length > 0 && (
+                <div>
+                  <span className="font-medium text-card-foreground">Issues Identified:</span>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {viewedFeedback.issues.map((issue, idx) => (
+                      <Badge key={idx} variant="secondary" className="text-xs">
+                        {issue.replace('_', ' ')}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <span className="font-medium text-card-foreground">Category:</span>
+                <Badge variant="outline" className="ml-2">{viewedFeedback.potential_category}</Badge>
+              </div>
+
+              <div>
+                <span className="font-medium text-card-foreground">Timestamp:</span>
+                <p className="mt-1">{new Date(viewedFeedback.timestamp).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Feedback</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this feedback entry? This action cannot be undone.
+              {feedbackToDelete && (
+                <div className="mt-4 p-3 bg-accent rounded border border-border">
+                  <p className="text-sm font-medium text-card-foreground mb-1">Question:</p>
+                  <p className="text-sm text-muted-foreground">{feedbackToDelete.question.substring(0, 100)}{feedbackToDelete.question.length > 100 ? '...' : ''}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowDeleteConfirm(false);
+              setFeedbackToDelete(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteFeedback}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600 text-white"
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

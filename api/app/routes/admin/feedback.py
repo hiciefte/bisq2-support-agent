@@ -356,7 +356,18 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
         )
 
         # Add the FAQ using the FAQ service
-        new_faq = faq_service.add_faq(faq_item)
+        try:
+            new_faq = faq_service.add_faq(faq_item)
+        except ValueError as e:
+            # FAQ already exists (duplicate content detected)
+            logger.warning(
+                f"Attempt to create duplicate FAQ from feedback {request.message_id}: {e}"
+            )
+            raise BaseAppException(
+                detail=str(e),
+                status_code=status.HTTP_409_CONFLICT,
+                error_code="DUPLICATE_FAQ",
+            ) from e
 
         # Try to atomically mark the feedback as processed
         # The repository uses an atomic UPDATE with WHERE processed = 0
@@ -510,4 +521,45 @@ async def get_feedback_by_issues() -> Dict[str, Any]:
             detail="Failed to fetch feedback by issues",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="FEEDBACK_BY_ISSUES_FETCH_FAILED",
+        ) from e
+
+
+@router.delete("/feedback/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_feedback(message_id: str):
+    """Delete a feedback entry.
+
+    This endpoint allows support agents to remove feedback entries that are
+    not suitable for FAQ creation (e.g., spam, test data, invalid feedback).
+
+    The deletion is permanent and cannot be undone.
+
+    Authentication required via API key.
+
+    Args:
+        message_id: The unique identifier of the feedback to delete
+
+    Returns:
+        204 No Content on success
+        404 Not Found if feedback doesn't exist
+    """
+    logger.info(f"Admin request to delete feedback: {message_id}")
+
+    try:
+        success = feedback_service.delete_feedback(message_id)
+
+        if not success:
+            raise FeedbackNotFoundError(message_id)
+
+        logger.info(f"Successfully deleted feedback {message_id}")
+        return None  # 204 No Content
+
+    except BaseAppException:
+        # Re-raise application exceptions (404) without wrapping
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete feedback {message_id}: {e}", exc_info=True)
+        raise BaseAppException(
+            detail="Failed to delete feedback",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FEEDBACK_DELETE_FAILED",
         ) from e

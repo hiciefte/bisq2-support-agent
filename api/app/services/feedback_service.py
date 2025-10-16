@@ -670,6 +670,28 @@ class FeedbackService:
 
         return success
 
+    def delete_feedback(self, message_id: str) -> bool:
+        """
+        Delete feedback entry and all related data.
+
+        Args:
+            message_id: Message identifier
+
+        Returns:
+            True if deleted, False if not found
+        """
+        success = self.repository.delete_feedback(message_id)
+
+        if success:
+            # Invalidate cache to reflect the deletion
+            self._feedback_cache = None
+            self._last_load_time = None
+            logger.info(f"Successfully deleted feedback {message_id}")
+        else:
+            logger.warning(f"Failed to delete feedback {message_id} - not found")
+
+        return success
+
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard.
 
