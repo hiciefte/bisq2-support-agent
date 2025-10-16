@@ -171,7 +171,7 @@ langchain-openai==0.3.35
     # via -r api/requirements.in
 langchain-text-splitters==0.3.11
     # via -r api/requirements.in
-langsmith==0.4.34
+langsmith==0.4.35
     # via langchain-core
 markdown-it-py==4.0.0
     # via rich
@@ -364,7 +364,7 @@ python-dotenv==1.1.1
     #   uvicorn
 python-json-logger==4.0.0
     # via -r api/requirements.in
-pytokens==0.1.10
+pytokens==0.2.0
     # via black
 pytz==2025.2
     # via pandas
