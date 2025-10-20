@@ -72,17 +72,6 @@ export default function AdminOverview() {
   const [showViewFeedback, setShowViewFeedback] = useState(false);
   const [viewedFeedback, setViewedFeedback] = useState<FeedbackForFAQ | null>(null);
 
-  // Delete feedback hook
-  const {
-    showDeleteConfirm,
-    feedbackToDelete,
-    isDeleting,
-    error: deleteError,
-    openDeleteConfirmation,
-    closeDeleteConfirmation,
-    handleDelete,
-  } = useFeedbackDeletion(fetchDashboardData);
-
   const router = useRouter();
 
   const fetchDashboardData = useCallback(async (isRefresh = false) => {
@@ -110,6 +99,17 @@ export default function AdminOverview() {
       setIsRefreshing(false);
     }
   }, []);
+
+  // Delete feedback hook
+  const {
+    showDeleteConfirm,
+    feedbackToDelete,
+    isDeleting,
+    error: deleteError,
+    openDeleteConfirmation,
+    closeDeleteConfirmation,
+    handleDelete,
+  } = useFeedbackDeletion(fetchDashboardData);
 
   useEffect(() => {
     // Authentication is handled by SecureAuth wrapper in layout
@@ -675,7 +675,7 @@ export default function AdminOverview() {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+      <AlertDialog open={showDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Feedback</AlertDialogTitle>
