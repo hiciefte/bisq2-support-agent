@@ -306,7 +306,7 @@ protobuf==6.32.1
     #   googleapis-common-protos
     #   onnxruntime
     #   opentelemetry-proto
-psutil==7.1.0
+psutil==7.1.1
     # via -r api/requirements.in
 pyasn1==0.6.1
     # via
@@ -318,7 +318,7 @@ pybase64==1.4.2
     # via chromadb
 pycodestyle==2.14.0
     # via flake8
-pydantic==2.12.2
+pydantic==2.12.3
     # via
     #   -r api/requirements.in
     #   aisuite
@@ -483,11 +483,11 @@ urllib3==2.3.0
     # via
     #   kubernetes
     #   requests
-uvicorn[standard]==0.37.0
+uvicorn[standard]==0.38.0
     # via
     #   -r api/requirements.in
     #   chromadb
-uvloop==0.21.0
+uvloop==0.22.1
     # via uvicorn
 virtualenv==20.35.3
     # via pre-commit
