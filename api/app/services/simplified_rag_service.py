@@ -12,6 +12,7 @@ File Naming Conventions:
   - negative_feedback.jsonl (special purpose file)
 """
 
+import asyncio
 import logging
 import os
 import shutil
@@ -23,6 +24,7 @@ from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.prompt_manager import PromptManager
+from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.utils.logging import redact_pii
 from fastapi import Request
 
@@ -61,6 +63,11 @@ class SimplifiedRAGService:
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
 
+        # Initialize vector store manager for change detection and rebuilds
+        self.vectorstore_manager = VectorStoreManager(
+            vectorstore_path=self.db_path, data_dir=self.settings.DATA_DIR
+        )
+
         # Initialize document processor for text splitting
         self.document_processor = DocumentProcessor(
             chunk_size=2000,  # Increased from 1500 to preserve more context per chunk
@@ -89,6 +96,9 @@ class SimplifiedRAGService:
         self.rag_chain = None
         self.prompt = None
 
+        # Initialize lock for rebuild serialization to prevent concurrent rebuilds
+        self._setup_lock = asyncio.Lock()
+
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
         if self.feedback_service:
@@ -100,7 +110,44 @@ class SimplifiedRAGService:
                 "wiki": 1.1,  # Slightly increased weight for wiki content
             }
 
+        # Register callback for runtime vector store updates
+        # Wrap async callback in create_task to avoid un-awaited coroutine
+        self.vectorstore_manager.register_update_callback(
+            lambda src: asyncio.create_task(self._handle_source_update(src))
+        )
+
+        # Register with FAQ service for FAQ updates
+        if self.faq_service:
+            self.faq_service.register_update_callback(
+                lambda: self.vectorstore_manager.trigger_update("faq")
+            )
+            logger.info("Registered FAQ service update callback")
+
         logger.info("Simplified RAG service initialized")
+
+    async def _handle_source_update(self, source_name: str) -> None:
+        """Handle runtime updates to source files (FAQ or wiki).
+
+        This callback is triggered when source files are updated at runtime
+        (e.g., new FAQs extracted, wiki updated). It rebuilds the vector store
+        to ensure new content is searchable.
+
+        Args:
+            source_name: Name of the source that was updated ("faq" or "wiki")
+        """
+        logger.info(
+            f"Source '{source_name}' updated at runtime, triggering vector store rebuild..."
+        )
+        try:
+            # Trigger a rebuild by calling setup again
+            # This will detect changes and rebuild the vector store
+            await self.setup()
+            logger.info(f"Vector store successfully rebuilt after {source_name} update")
+        except Exception as e:
+            logger.error(
+                f"Failed to rebuild vector store after {source_name} update: {e}",
+                exc_info=True,
+            )
 
     def initialize_embeddings(self) -> None:
         """Delegate to LLM provider for embeddings initialization."""
@@ -158,146 +205,161 @@ class SimplifiedRAGService:
             force_rebuild: If True, force rebuilding the vector store from scratch.
                           Otherwise, reuse existing vector store if available.
         """
-        try:
-            logger.info("Starting simplified RAG service setup...")
+        # Acquire lock to prevent concurrent rebuilds
+        async with self._setup_lock:
+            try:
+                logger.info("Starting simplified RAG service setup...")
 
-            # Only clean vector store if force rebuild is requested
-            if force_rebuild:
-                logger.info("Force rebuild requested - cleaning vector store")
-                self._clean_vector_store()
-            else:
-                logger.info(
-                    "Reusing existing vector store if available (use force_rebuild=True to rebuild)"
-                )
-
-            # Load documents
-            logger.info("Loading documents...")
-
-            # Load wiki data from WikiService
-            wiki_docs = []
-            if self.wiki_service:
-                wiki_docs = self.wiki_service.load_wiki_data()
-            else:
-                logger.warning("WikiService not provided, skipping wiki data loading")
-
-            # Load FAQ data from FAQService
-            faq_docs = []
-            if self.faq_service:
-                faq_docs = self.faq_service.load_faq_data()
-            else:
-                logger.warning("FAQService not provided, skipping FAQ data loading")
-
-            # Combine all documents
-            all_docs = wiki_docs + faq_docs
-            logger.info(
-                f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents"
-            )
-
-            if not all_docs:
-                logger.warning("No documents loaded. Check your data paths.")
-                return False
-
-            # Apply feedback-based improvements if we have a feedback service
-            if self.feedback_service:
-                logger.info("Applying feedback-based improvements...")
-                # Update source weights from feedback service
-                self.source_weights = self.feedback_service.get_source_weights()
-                logger.info(
-                    f"Updated source weights from feedback service: {self.source_weights}"
-                )
-
-                # Update service weights
-                if self.wiki_service:
-                    self.wiki_service.update_source_weights(self.source_weights)
-                if self.faq_service:
-                    self.faq_service.update_source_weights(self.source_weights)
-
-            # Split documents using document processor
-            splits = self.document_processor.split_documents(all_docs)
-
-            # Initialize embeddings
-            logger.info("Initializing embedding model...")
-            self.initialize_embeddings()
-
-            # Create vector store
-            logger.info("Creating vector store...")
-
-            # Check if the vector store directory exists
-            vector_store_exists = os.path.exists(self.db_path) and os.path.isdir(
-                self.db_path
-            )
-
-            # Check if we have a persisted vector store by looking for the config file
-            if vector_store_exists and any(
-                f.endswith(".parquet") for f in os.listdir(self.db_path)
-            ):
-                # Load existing vector store
-                logger.info("Loading existing vector store...")
-                self.vectorstore = Chroma(
-                    persist_directory=self.db_path,
-                    embedding_function=self.embeddings,
-                )
-                logger.info("Vector store loaded successfully")
-
-                # Update vector store with new documents
-                if splits:
+                # Only clean vector store if force rebuild is requested
+                if force_rebuild:
+                    logger.info("Force rebuild requested - cleaning vector store")
+                    self._clean_vector_store()
+                else:
                     logger.info(
-                        f"Updating vector store with {len(splits)} documents..."
+                        "Reusing existing vector store if available (use force_rebuild=True to rebuild)"
                     )
 
-                    # Use add_documents to add any new documents
-                    # This avoids reprocessing already embedded documents
-                    self.vectorstore.add_documents(splits)
-                    logger.info("Vector store updated successfully")
-            else:
-                # Create new vector store
-                logger.info("Creating new vector store...")
-                self.vectorstore = Chroma(
-                    persist_directory=self.db_path, embedding_function=self.embeddings
+                # Load documents
+                logger.info("Loading documents...")
+
+                # Load wiki data from WikiService
+                wiki_docs = []
+                if self.wiki_service:
+                    wiki_docs = self.wiki_service.load_wiki_data()
+                else:
+                    logger.warning(
+                        "WikiService not provided, skipping wiki data loading"
+                    )
+
+                # Load FAQ data from FAQService
+                faq_docs = []
+                if self.faq_service:
+                    faq_docs = self.faq_service.load_faq_data()
+                else:
+                    logger.warning("FAQService not provided, skipping FAQ data loading")
+
+                # Combine all documents
+                all_docs = wiki_docs + faq_docs
+                logger.info(
+                    f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents"
                 )
 
-                # Add documents to the new vector store
-                logger.info("Adding documents to new vector store...")
-                self.vectorstore.add_documents(splits)
-                logger.info(f"Added {len(splits)} documents to new vector store")
+                if not all_docs:
+                    logger.warning("No documents loaded. Check your data paths.")
+                    return False
 
-            # Create retriever
-            self.retriever = self.vectorstore.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={
-                    "k": 8,  # Increased from 5 to 8
-                    "score_threshold": 0.3,  # Lowered threshold to allow more matches
-                },
-            )
+                # Apply feedback-based improvements if we have a feedback service
+                if self.feedback_service:
+                    logger.info("Applying feedback-based improvements...")
+                    # Update source weights from feedback service
+                    self.source_weights = self.feedback_service.get_source_weights()
+                    logger.info(
+                        f"Updated source weights from feedback service: {self.source_weights}"
+                    )
 
-            # Initialize document retriever for version-aware retrieval
-            self.document_retriever = DocumentRetriever(
-                vectorstore=self.vectorstore, retriever=self.retriever
-            )
-            logger.info("Document retriever initialized")
+                    # Update service weights
+                    if self.wiki_service:
+                        self.wiki_service.update_source_weights(self.source_weights)
+                    if self.faq_service:
+                        self.faq_service.update_source_weights(self.source_weights)
 
-            # Initialize language model
-            logger.info("Initializing language model...")
-            self.initialize_llm()
+                # Split documents using document processor
+                splits = self.document_processor.split_documents(all_docs)
 
-            # Create RAG chain
-            logger.info("Creating RAG chain...")
-            # Create prompt template
-            self.prompt = self.prompt_manager.create_rag_prompt()
-            # Create RAG chain with dependencies
-            self.rag_chain = self.prompt_manager.create_rag_chain(
-                llm=self.llm,
-                retrieve_func=self._retrieve_with_version_priority,
-                format_docs_func=self._format_docs,
-            )
+                # Initialize embeddings
+                logger.info("Initializing embedding model...")
+                self.initialize_embeddings()
 
-            logger.info("Simplified RAG service setup complete")
-            return True
-        except Exception as e:
-            logger.error(
-                f"Error during simplified RAG service setup: {e!s}", exc_info=True
-            )
-            raise
+                # Create vector store with change detection
+                logger.info("Checking if vector store rebuild is needed...")
+
+                # Check if we need to rebuild based on source file changes
+                if self.vectorstore_manager.should_rebuild():
+                    rebuild_reason = self.vectorstore_manager.get_rebuild_reason()
+                    logger.info(f"Rebuilding vector store: {rebuild_reason}")
+
+                    # Release file handles before cleaning
+                    if self.vectorstore and hasattr(self.vectorstore, "persist"):
+                        try:
+                            self.vectorstore.persist()
+                        except Exception as e:
+                            logger.warning(f"Persist before cleanup failed: {e!s}")
+                    self.vectorstore = None
+
+                    # Clean existing vector store before rebuilding
+                    self._clean_vector_store()
+
+                    # Create new vector store
+                    logger.info("Creating new vector store...")
+                    self.vectorstore = Chroma(
+                        persist_directory=self.db_path,
+                        embedding_function=self.embeddings,
+                    )
+
+                    # Add documents to the new vector store
+                    logger.info(
+                        f"Adding {len(splits)} documents to new vector store..."
+                    )
+                    self.vectorstore.add_documents(splits)
+                    logger.info(f"Added {len(splits)} documents to new vector store")
+
+                    # Persist for durability
+                    if hasattr(self.vectorstore, "persist"):
+                        self.vectorstore.persist()
+                        logger.info("Vector store persisted to disk")
+
+                    # Save metadata after successful build
+                    metadata = self.vectorstore_manager.collect_source_metadata()
+                    self.vectorstore_manager.save_metadata(metadata)
+                    logger.info("Saved vector store metadata for change detection")
+                else:
+                    # Load existing vector store from cache
+                    logger.info("Loading existing vector store from cache...")
+                    self.vectorstore = Chroma(
+                        persist_directory=self.db_path,
+                        embedding_function=self.embeddings,
+                    )
+                    logger.info(
+                        f"Vector store loaded successfully from cache (skipping re-embedding of {len(splits)} documents)"
+                    )
+
+                # Create retriever
+                self.retriever = self.vectorstore.as_retriever(
+                    search_type="similarity_score_threshold",
+                    search_kwargs={
+                        "k": 8,  # Increased from 5 to 8
+                        "score_threshold": 0.3,  # Lowered threshold to allow more matches
+                    },
+                )
+
+                # Initialize document retriever for version-aware retrieval
+                self.document_retriever = DocumentRetriever(
+                    vectorstore=self.vectorstore, retriever=self.retriever
+                )
+                logger.info("Document retriever initialized")
+
+                # Initialize language model
+                logger.info("Initializing language model...")
+                self.initialize_llm()
+
+                # Create RAG chain
+                logger.info("Creating RAG chain...")
+                # Create prompt template
+                self.prompt = self.prompt_manager.create_rag_prompt()
+                # Create RAG chain with dependencies
+                self.rag_chain = self.prompt_manager.create_rag_chain(
+                    llm=self.llm,
+                    retrieve_func=self._retrieve_with_version_priority,
+                    format_docs_func=self._format_docs,
+                )
+
+                logger.info("Simplified RAG service setup complete")
+                return True
+            except Exception as e:
+                logger.error(
+                    f"Error during simplified RAG service setup: {e!s}", exc_info=True
+                )
+                raise
 
     async def cleanup(self):
         """Clean up resources."""

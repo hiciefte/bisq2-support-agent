@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 # Import AISuite
 import aisuite as ai
@@ -95,8 +95,47 @@ class FAQService:
             # Initialize FAQ extractor for AISuite-based extraction
             self.faq_extractor = FAQExtractor(aisuite_client, self.settings)
 
+            # Callback mechanism for vector store updates
+            self._update_callbacks: List[Callable[[], None]] = []
+
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
+
+    def register_update_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback to be called when FAQs are updated.
+
+        Args:
+            callback: Function to call when FAQs are updated (no parameters)
+        """
+        if callback not in self._update_callbacks:
+            self._update_callbacks.append(callback)
+            callback_name = getattr(callback, "__name__", repr(callback))
+            logger.debug(f"Registered FAQ update callback: {callback_name}")
+
+    def unregister_update_callback(self, callback: Callable[[], None]) -> None:
+        """Unregister a previously registered FAQ update callback.
+
+        Args:
+            callback: Function to unregister
+        """
+        if callback in self._update_callbacks:
+            self._update_callbacks.remove(callback)
+            callback_name = getattr(callback, "__name__", repr(callback))
+            logger.debug(f"Unregistered FAQ update callback: {callback_name}")
+
+    def _trigger_update(self) -> None:
+        """Trigger all registered update callbacks when FAQs are modified."""
+        logger.info("FAQ data updated, triggering update callbacks...")
+        # Snapshot callbacks to avoid mutation during iteration
+        for callback in tuple(self._update_callbacks):
+            try:
+                callback()
+            except Exception as e:
+                callback_name = getattr(callback, "__name__", repr(callback))
+                logger.error(
+                    f"Error calling FAQ update callback {callback_name}: {e}",
+                    exc_info=True,
+                )
 
     # CRUD operations - delegated to repository
     def get_all_faqs(self) -> List[FAQIdentifiedItem]:
@@ -118,17 +157,25 @@ class FAQService:
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
         """Adds a new FAQ to the FAQ file after checking for duplicates."""
-        return self.repository.add_faq(faq_item)
+        result = self.repository.add_faq(faq_item)
+        self._trigger_update()  # Trigger vector store rebuild
+        return result
 
     def update_faq(
         self, faq_id: str, updated_data: FAQItem
     ) -> Optional[FAQIdentifiedItem]:
         """Updates an existing FAQ by finding it via its stable ID."""
-        return self.repository.update_faq(faq_id, updated_data)
+        result = self.repository.update_faq(faq_id, updated_data)
+        if result is not None:
+            self._trigger_update()  # Trigger vector store rebuild
+        return result
 
     def delete_faq(self, faq_id: str) -> bool:
         """Deletes an FAQ by finding it via its stable ID."""
-        return self.repository.delete_faq(faq_id)
+        result = self.repository.delete_faq(faq_id)
+        if result:
+            self._trigger_update()  # Trigger vector store rebuild
+        return result
 
     def normalize_text(self, text: str) -> str:
         """Normalize text using the FAQ extractor.
