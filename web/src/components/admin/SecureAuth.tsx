@@ -28,11 +28,22 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
       setLoginError('Your session has expired. Please log in again.');
     });
 
+    // Listen for auth changes from other components (e.g., sidebar logout)
+    const handleAuthChange = () => {
+      console.log('Auth change detected, re-checking authentication');
+      checkAuthentication();
+    };
+
+    window.addEventListener('admin-auth-changed', handleAuthChange);
+
     // Check authentication after callback is registered
     checkAuthentication();
 
-    // Cleanup: unregister callback on component unmount
-    return unsubscribe;
+    // Cleanup: unregister callback and event listener on component unmount
+    return () => {
+      unsubscribe();
+      window.removeEventListener('admin-auth-changed', handleAuthChange);
+    };
   }, [onAuthChange]);
 
   const checkAuthentication = async () => {

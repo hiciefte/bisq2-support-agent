@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut } from "lucide-react"
@@ -32,7 +32,6 @@ export function AdminSidebar() {
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
   const pathname = usePathname()
-  const router = useRouter()
 
   useEffect(() => {
     // Since we now use SecureAuth wrapper, we're only rendered when authenticated
@@ -63,14 +62,12 @@ export function AdminSidebar() {
       // Import logout function dynamically to avoid import issues
       const { logout } = await import('@/lib/auth');
       await logout();
-      // Notify layout of auth change
+      // Notify SecureAuth to re-check authentication (will show login form)
       window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-      // Use Next.js router for navigation
-      router.push('/admin/overview');
     } catch (error) {
       console.error('Logout error:', error);
-      // Fallback: still redirect even if logout fails
-      router.push('/admin/overview');
+      // Even on error, trigger auth recheck to show login form
+      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
     }
   }
 
