@@ -77,7 +77,7 @@ docstring-parser==0.14.1
     # via aisuite
 durationpy==0.10
     # via kubernetes
-fastapi==0.119.0
+fastapi==0.119.1
     # via -r api/requirements.in
 filelock==3.20.0
     # via
@@ -97,7 +97,7 @@ fsspec==2025.9.0
     # via huggingface-hub
 google-auth==2.41.1
     # via kubernetes
-googleapis-common-protos==1.70.0
+googleapis-common-protos==1.71.0
     # via opentelemetry-exporter-otlp-proto-grpc
 grpcio==1.75.1
     # via
