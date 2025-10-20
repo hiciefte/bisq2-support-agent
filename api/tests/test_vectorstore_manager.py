@@ -143,8 +143,8 @@ class TestVectorStoreManager:
         metadata = manager.collect_source_metadata()
         manager.save_metadata(metadata)
 
-        # Wait a bit to ensure different mtime
-        time.sleep(0.1)
+        # Wait to ensure different mtime (1.1s for filesystems with 1s resolution)
+        time.sleep(1.1)
 
         # Modify a source file
         sample_source_files["wiki"].write_text('{"title": "Updated Wiki"}\n')
@@ -213,7 +213,7 @@ class TestVectorStoreManager:
         assert reason is None
 
         # Modify file case
-        time.sleep(0.1)
+        time.sleep(1.1)  # Wait for filesystems with 1s mtime resolution
         sample_source_files["wiki"].write_text('{"title": "Modified"}\n')
         reason = manager.get_rebuild_reason()
         assert "wiki" in reason.lower()

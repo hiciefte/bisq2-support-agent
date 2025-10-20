@@ -175,6 +175,17 @@ class VectorStoreManager:
                 )
                 return True
 
+        # Check for deleted sources (present in metadata, missing now)
+        old_sources = set(metadata.get("sources", {}).keys())
+        current_sources = set(current_metadata.get("sources", {}).keys())
+        removed_sources = old_sources - current_sources
+        if removed_sources:
+            logger.info(
+                f"Source file(s) removed: {', '.join(sorted(removed_sources))}, "
+                f"rebuild required"
+            )
+            return True
+
         logger.info("No source file changes detected, using cached vector store")
         return False
 
@@ -211,6 +222,13 @@ class VectorStoreManager:
             # Check file size
             if current_info.get("size", 0) != old_info.get("size", 0):
                 return f"Source file {source_name} size changed"
+
+        # Check for deleted sources (present in metadata, missing now)
+        old_sources = set(metadata.get("sources", {}).keys())
+        current_sources = set(current_metadata.get("sources", {}).keys())
+        removed_sources = old_sources - current_sources
+        if removed_sources:
+            return f"Source file(s) removed: {', '.join(sorted(removed_sources))}"
 
         return None
 
@@ -252,7 +270,8 @@ class VectorStoreManager:
             try:
                 callback(source_name)
             except Exception as e:
+                cb_name = getattr(callback, "__name__", repr(callback))
                 logger.error(
-                    f"Error calling update callback {callback.__name__}: {e}",
+                    f"Error calling update callback {cb_name}: {e}",
                     exc_info=True,
                 )
