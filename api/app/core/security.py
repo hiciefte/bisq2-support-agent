@@ -102,11 +102,16 @@ def verify_admin_key(provided_key: str) -> bool:
     return secrets.compare_digest(provided_key, admin_api_key)
 
 
-def verify_admin_access(request: Request) -> bool:
+def verify_admin_access(request: Request, response: Response) -> bool:
     """Verify that the request has admin access via cookie or header.
+
+    Implements sliding session window by refreshing the authentication cookie
+    on each successful verification. This extends the session as long as the
+    user remains active, while inactive sessions expire after ADMIN_SESSION_MAX_AGE.
 
     Args:
         request: The FastAPI request object
+        response: The FastAPI response object (for refreshing cookie)
 
     Returns:
         bool: True if access is granted
@@ -120,6 +125,8 @@ def verify_admin_access(request: Request) -> bool:
         logger.debug(
             f"Admin access granted via cookie from {request.client.host if request.client else 'unknown'}"
         )
+        # Refresh cookie to implement sliding session window
+        set_admin_cookie(response)
         return True
 
     # Fallback to API key in headers (for backward compatibility)
@@ -163,11 +170,15 @@ def verify_admin_access(request: Request) -> bool:
 
 
 def set_admin_cookie(response: Response) -> None:
-    """Set secure admin authentication cookie.
+    """Set secure admin authentication cookie with sliding session window.
 
     This function sets a secure HTTP-only cookie with appropriate security flags
     based on the deployment environment. For Tor .onion domains or HTTP development
     environments, the secure flag can be disabled via COOKIE_SECURE setting.
+
+    The cookie implements a sliding session window - it is refreshed on each
+    authenticated request, extending the session as long as the user remains active.
+    Inactive sessions will expire after ADMIN_SESSION_MAX_AGE seconds.
 
     Args:
         response: FastAPI response object to set cookie on
@@ -175,7 +186,7 @@ def set_admin_cookie(response: Response) -> None:
     response.set_cookie(
         key="admin_authenticated",
         value="true",
-        max_age=24 * 60 * 60,  # 24 hours
+        max_age=settings.ADMIN_SESSION_MAX_AGE,  # Configurable session duration
         httponly=True,  # Prevents XSS access
         secure=settings.COOKIE_SECURE,  # Configurable for .onion/HTTP environments
         samesite="lax",  # Provides CSRF protection while allowing cross-site navigation

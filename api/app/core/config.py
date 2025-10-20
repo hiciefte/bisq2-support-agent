@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
+    ADMIN_SESSION_MAX_AGE: int = (
+        86400  # Session duration in seconds (default: 24 hours)
+    )
 
     # Privacy and data protection settings
     DATA_RETENTION_DAYS: int = 30  # Days to retain personal data before cleanup
