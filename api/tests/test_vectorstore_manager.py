@@ -62,6 +62,7 @@ class TestVectorStoreManager:
 
     def test_collect_source_metadata(self, manager, sample_source_files):
         """Test collection of source file metadata."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         metadata = manager.collect_source_metadata()
 
         assert "last_build" in metadata
@@ -85,6 +86,7 @@ class TestVectorStoreManager:
 
     def test_save_and_load_metadata(self, manager, sample_source_files):
         """Test metadata persistence."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         # Collect and save metadata
         metadata = manager.collect_source_metadata()
         manager.save_metadata(metadata)
@@ -103,10 +105,12 @@ class TestVectorStoreManager:
 
     def test_should_rebuild_no_metadata(self, manager, sample_source_files):
         """Test rebuild decision when no metadata exists."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         assert manager.should_rebuild() is True
 
     def test_should_rebuild_no_chroma_db(self, manager, sample_source_files):
         """Test rebuild decision when ChromaDB doesn't exist."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         # Save metadata but don't create chroma.sqlite3
         metadata = manager.collect_source_metadata()
         manager.save_metadata(metadata)
@@ -115,6 +119,7 @@ class TestVectorStoreManager:
 
     def test_should_rebuild_no_changes(self, manager, sample_source_files, temp_dir):
         """Test rebuild decision when no changes detected."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         # Create chroma.sqlite3
         vectorstore_dir = temp_dir / "vectorstore"
         vectorstore_dir.mkdir(parents=True, exist_ok=True)
@@ -174,6 +179,7 @@ class TestVectorStoreManager:
         self, manager, sample_source_files, temp_dir
     ):
         """Test rebuild decision when new source file appears."""
+        _ = sample_source_files  # ensure fixture evaluated (ruff: ARG002)
         # Create chroma.sqlite3
         vectorstore_dir = temp_dir / "vectorstore"
         vectorstore_dir.mkdir(parents=True, exist_ok=True)
@@ -204,7 +210,7 @@ class TestVectorStoreManager:
 
         # No changes case
         reason = manager.get_rebuild_reason()
-        assert "No changes detected" in reason or reason is None
+        assert reason is None
 
         # Modify file case
         time.sleep(0.1)

@@ -69,19 +69,21 @@ class VectorStoreManager:
         # Track wiki file
         wiki_file = self.data_dir / "wiki" / "processed_wiki.jsonl"
         if wiki_file.exists():
+            st = wiki_file.stat()
             sources["wiki"] = {
                 "path": str(wiki_file),
-                "mtime": wiki_file.stat().st_mtime,
-                "size": wiki_file.stat().st_size,
+                "mtime": st.st_mtime,
+                "size": st.st_size,
             }
 
         # Track FAQ file
         faq_file = self.data_dir / "extracted_faq.jsonl"
         if faq_file.exists():
+            st = faq_file.stat()
             sources["faq"] = {
                 "path": str(faq_file),
-                "mtime": faq_file.stat().st_mtime,
-                "size": faq_file.stat().st_size,
+                "mtime": st.st_mtime,
+                "size": st.st_size,
             }
 
         return metadata
@@ -97,12 +99,12 @@ class VectorStoreManager:
             # Ensure directory exists
             metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(metadata_path, "w") as f:
+            with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
 
             logger.info(f"Saved vector store metadata to {metadata_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save build metadata: {e}")
+        except OSError as e:
+            logger.warning(f"Failed to save build metadata to {metadata_path}: {e}")
 
     def load_metadata(self) -> Dict[str, Any]:
         """Load build metadata from disk.
@@ -115,10 +117,13 @@ class VectorStoreManager:
             return {}
 
         try:
-            with open(metadata_path, "r") as f:
+            with open(metadata_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load build metadata: {e}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Corrupted build metadata at {metadata_path}: {e}")
+            return {}
+        except OSError as e:
+            logger.warning(f"Failed to read build metadata at {metadata_path}: {e}")
             return {}
 
     def should_rebuild(self) -> bool:
@@ -207,7 +212,7 @@ class VectorStoreManager:
             if current_info.get("size", 0) != old_info.get("size", 0):
                 return f"Source file {source_name} size changed"
 
-        return "No changes detected"
+        return None
 
     def register_update_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback to be called when updates are triggered.
@@ -242,7 +247,8 @@ class VectorStoreManager:
         """
         logger.info(f"Triggering update for source: {source_name}")
 
-        for callback in self._update_callbacks:
+        # Snapshot callbacks to avoid mutation during iteration
+        for callback in tuple(self._update_callbacks):
             try:
                 callback(source_name)
             except Exception as e:

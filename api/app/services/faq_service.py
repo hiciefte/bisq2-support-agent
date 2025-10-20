@@ -112,10 +112,22 @@ class FAQService:
             callback_name = getattr(callback, "__name__", repr(callback))
             logger.debug(f"Registered FAQ update callback: {callback_name}")
 
+    def unregister_update_callback(self, callback: Callable[[], None]) -> None:
+        """Unregister a previously registered FAQ update callback.
+
+        Args:
+            callback: Function to unregister
+        """
+        if callback in self._update_callbacks:
+            self._update_callbacks.remove(callback)
+            callback_name = getattr(callback, "__name__", repr(callback))
+            logger.debug(f"Unregistered FAQ update callback: {callback_name}")
+
     def _trigger_update(self) -> None:
         """Trigger all registered update callbacks when FAQs are modified."""
         logger.info("FAQ data updated, triggering update callbacks...")
-        for callback in self._update_callbacks:
+        # Snapshot callbacks to avoid mutation during iteration
+        for callback in tuple(self._update_callbacks):
             try:
                 callback()
             except Exception as e:
