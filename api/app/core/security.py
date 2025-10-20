@@ -3,8 +3,13 @@ Security utilities for the Bisq Support API.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import secrets
+import time
 
 from app.core.config import get_settings
 from fastapi import HTTPException, Request, Response, status
@@ -102,11 +107,90 @@ def verify_admin_key(provided_key: str) -> bool:
     return secrets.compare_digest(provided_key, admin_api_key)
 
 
-def verify_admin_access(request: Request) -> bool:
+def _b64url(data: bytes) -> str:
+    """Base64 URL-safe encoding without padding."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(s: str) -> bytes:
+    """Base64 URL-safe decoding with padding restoration."""
+    padding = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + padding)
+
+
+def _sign(data: bytes, key: str) -> str:
+    """Create HMAC signature of data using the admin API key."""
+    mac = hmac.new(key.encode(), data, hashlib.sha256).digest()
+    return _b64url(mac)
+
+
+def generate_admin_session_token(now: int | None = None) -> str:
+    """Generate a signed, time-bounded session token.
+
+    Creates a stateless session token containing:
+    - Subject: "admin"
+    - Issued at: current timestamp
+    - Expiration: issued at + ADMIN_SESSION_MAX_AGE
+
+    The token is signed with HMAC-SHA256 using the ADMIN_API_KEY,
+    preventing forgery without knowledge of the key.
+
+    Args:
+        now: Current timestamp (optional, for testing)
+
+    Returns:
+        Signed session token in format: base64(payload).base64(signature)
+    """
+    now = now or int(time.time())
+    payload = {
+        "sub": "admin",
+        "iat": now,
+        "exp": now + settings.ADMIN_SESSION_MAX_AGE,
+    }
+    body = _b64url(json.dumps(payload, separators=(",", ":")).encode())
+    sig = _sign(body.encode(), settings.ADMIN_API_KEY)
+    return f"{body}.{sig}"
+
+
+def verify_admin_session_token(token: str) -> bool:
+    """Verify a signed session token.
+
+    Validates:
+    1. Token signature using HMAC-SHA256
+    2. Token has not expired
+
+    Args:
+        token: Session token to verify
+
+    Returns:
+        True if token is valid and not expired, False otherwise
+    """
+    try:
+        body_b64, sig = token.split(".", 1)
+        expected = _sign(body_b64.encode(), settings.ADMIN_API_KEY)
+        if not hmac.compare_digest(sig, expected):
+            logger.warning("Invalid session token signature")
+            return False
+        payload = json.loads(_b64url_decode(body_b64))
+        if int(payload.get("exp", 0)) < int(time.time()):
+            logger.debug("Session token has expired")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Session token verification failed: {e}")
+        return False
+
+
+def verify_admin_access(request: Request, response: Response) -> bool:
     """Verify that the request has admin access via cookie or header.
+
+    Implements sliding session window by refreshing the authentication cookie
+    on each successful verification. This extends the session as long as the
+    user remains active, while inactive sessions expire after ADMIN_SESSION_MAX_AGE.
 
     Args:
         request: The FastAPI request object
+        response: The FastAPI response object (for refreshing cookie)
 
     Returns:
         bool: True if access is granted
@@ -116,10 +200,12 @@ def verify_admin_access(request: Request) -> bool:
     """
     # First, check for authentication cookie
     auth_cookie = request.cookies.get("admin_authenticated")
-    if auth_cookie == "true":
+    if auth_cookie and verify_admin_session_token(auth_cookie):
         logger.debug(
             f"Admin access granted via cookie from {request.client.host if request.client else 'unknown'}"
         )
+        # Refresh cookie to implement sliding session window
+        set_admin_cookie(response)
         return True
 
     # Fallback to API key in headers (for backward compatibility)
@@ -143,6 +229,8 @@ def verify_admin_access(request: Request) -> bool:
                 logger.debug(
                     f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
                 )
+            # Set session cookie after successful header-based auth for better UX
+            set_admin_cookie(response)
             return True
         else:
             logger.warning(
@@ -163,19 +251,24 @@ def verify_admin_access(request: Request) -> bool:
 
 
 def set_admin_cookie(response: Response) -> None:
-    """Set secure admin authentication cookie.
+    """Set secure admin authentication cookie with sliding session window.
 
     This function sets a secure HTTP-only cookie with appropriate security flags
     based on the deployment environment. For Tor .onion domains or HTTP development
     environments, the secure flag can be disabled via COOKIE_SECURE setting.
 
+    The cookie implements a sliding session window - it is refreshed on each
+    authenticated request, extending the session as long as the user remains active.
+    Inactive sessions will expire after ADMIN_SESSION_MAX_AGE seconds.
+
     Args:
         response: FastAPI response object to set cookie on
     """
+    token = generate_admin_session_token()
     response.set_cookie(
         key="admin_authenticated",
-        value="true",
-        max_age=24 * 60 * 60,  # 24 hours
+        value=token,
+        max_age=settings.ADMIN_SESSION_MAX_AGE,  # Configurable session duration
         httponly=True,  # Prevents XSS access
         secure=settings.COOKIE_SECURE,  # Configurable for .onion/HTTP environments
         samesite="lax",  # Provides CSRF protection while allowing cross-site navigation

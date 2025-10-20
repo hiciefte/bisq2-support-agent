@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
+    ADMIN_SESSION_MAX_AGE: int = (
+        86400  # Session duration in seconds (default: 24 hours)
+    )
 
     # Privacy and data protection settings
     DATA_RETENTION_DAYS: int = 30  # Days to retain personal data before cleanup
@@ -135,6 +138,26 @@ class Settings(BaseSettings):
         """
         if not 0.0 <= v <= 2.0:
             raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
+        return v
+
+    @field_validator("ADMIN_SESSION_MAX_AGE")
+    @classmethod
+    def validate_admin_session_max_age(cls, v: int) -> int:
+        """Validate admin session max age is within acceptable range.
+
+        Args:
+            v: Session max age in seconds
+
+        Returns:
+            Validated session max age
+
+        Raises:
+            ValueError: If session max age is outside acceptable range
+        """
+        if v < 60:
+            raise ValueError("ADMIN_SESSION_MAX_AGE must be at least 60 seconds")
+        if v > 30 * 24 * 3600:  # 30 days
+            raise ValueError("ADMIN_SESSION_MAX_AGE must be ≤ 30 days")
         return v
 
     @field_validator("SUPPORT_AGENT_NICKNAMES", mode="before")

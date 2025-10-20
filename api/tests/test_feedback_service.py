@@ -314,3 +314,172 @@ class TestFeedbackGrouping:
         grouped = service.get_feedback_by_issues()
 
         assert isinstance(grouped, dict)
+
+
+class TestFeedbackDeletion:
+    """Test feedback deletion functionality."""
+
+    @pytest.mark.asyncio
+    async def test_delete_feedback_returns_true_when_exists(self, test_settings):
+        """Test that deleting existing feedback returns True."""
+        service = FeedbackService(settings=test_settings)
+
+        # Create a feedback entry
+        message_id = str(uuid.uuid4())
+        await service.store_feedback(
+            {
+                "message_id": message_id,
+                "question": "Test question",
+                "answer": "Test answer",
+                "rating": 1,
+                "explanation": "Test explanation",
+            }
+        )
+
+        # Delete the feedback
+        result = service.delete_feedback(message_id)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_delete_feedback_returns_false_when_not_exists(self, test_settings):
+        """Test that deleting non-existent feedback returns False."""
+        service = FeedbackService(settings=test_settings)
+
+        # Try to delete feedback that doesn't exist
+        result = service.delete_feedback(str(uuid.uuid4()))
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_feedback_removes_entry_from_database(self, test_settings):
+        """Test that deleted feedback cannot be retrieved."""
+        service = FeedbackService(settings=test_settings)
+
+        # Create a feedback entry
+        message_id = str(uuid.uuid4())
+        await service.store_feedback(
+            {
+                "message_id": message_id,
+                "question": "Test question",
+                "answer": "Test answer",
+                "rating": 1,
+            }
+        )
+
+        # Verify it exists
+        feedback = service.repository.get_feedback_by_message_id(message_id)
+        assert feedback is not None
+
+        # Delete the feedback
+        service.delete_feedback(message_id)
+
+        # Verify it's gone
+        feedback = service.repository.get_feedback_by_message_id(message_id)
+        assert feedback is None
+
+    @pytest.mark.asyncio
+    async def test_delete_feedback_invalidates_cache(self, test_settings):
+        """Test that deleting feedback invalidates the cache."""
+        service = FeedbackService(settings=test_settings)
+
+        # Create a feedback entry
+        message_id = str(uuid.uuid4())
+        await service.store_feedback(
+            {
+                "message_id": message_id,
+                "question": "Test question",
+                "answer": "Test answer",
+                "rating": 1,
+            }
+        )
+
+        # Load to populate cache
+        initial_count = len(service.load_feedback())
+
+        # Delete the feedback
+        service.delete_feedback(message_id)
+
+        # Load again - should reflect deletion
+        final_count = len(service.load_feedback())
+
+        assert final_count == initial_count - 1
+
+
+class TestFeedbackDuplication:
+    """Test duplicate feedback handling."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_feedback_raises_integrity_error(self, test_settings):
+        """Test that storing duplicate feedback raises IntegrityError."""
+        import sqlite3
+
+        service = FeedbackService(settings=test_settings)
+
+        # Create a feedback entry
+        message_id = str(uuid.uuid4())
+        feedback_data = {
+            "message_id": message_id,
+            "question": "Test question",
+            "answer": "Test answer",
+            "rating": 1,
+        }
+
+        # Store once - should succeed
+        result1 = await service.store_feedback(feedback_data)
+        assert result1 is True
+
+        # Try to store duplicate - should raise IntegrityError
+        with pytest.raises(sqlite3.IntegrityError):
+            service.repository.store_feedback(**feedback_data)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_content_different_ids_allowed(self, test_settings):
+        """Test that identical content with different message_ids is allowed."""
+        service = FeedbackService(settings=test_settings)
+
+        # Create two feedback entries with same content but different IDs
+        feedback_data1 = {
+            "message_id": str(uuid.uuid4()),
+            "question": "Identical question",
+            "answer": "Identical answer",
+            "rating": 1,
+            "explanation": "Identical explanation",
+        }
+
+        feedback_data2 = {
+            "message_id": str(uuid.uuid4()),
+            "question": "Identical question",
+            "answer": "Identical answer",
+            "rating": 1,
+            "explanation": "Identical explanation",
+        }
+
+        # Both should succeed
+        result1 = await service.store_feedback(feedback_data1)
+        result2 = await service.store_feedback(feedback_data2)
+
+        assert result1 is True
+        assert result2 is True
+
+    @pytest.mark.asyncio
+    async def test_store_feedback_handles_duplicate_gracefully(self, test_settings):
+        """Test that store_feedback returns False on duplicate instead of crashing."""
+        service = FeedbackService(settings=test_settings)
+
+        # Create a feedback entry
+        message_id = str(uuid.uuid4())
+        feedback_data = {
+            "message_id": message_id,
+            "question": "Test question",
+            "answer": "Test answer",
+            "rating": 1,
+        }
+
+        # Store once - should succeed
+        result1 = await service.store_feedback(feedback_data)
+        assert result1 is True
+
+        # Try to store duplicate - should return False, not crash
+        result2 = await service.store_feedback(feedback_data)
+        assert result2 is False

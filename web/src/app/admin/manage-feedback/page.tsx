@@ -28,13 +28,15 @@ import {
   Download,
   AlertTriangle,
   TrendingUp,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
+import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
 
 interface FeedbackItem {
   message_id: string;
@@ -137,6 +139,20 @@ export default function ManageFeedbackPage() {
   const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
   const [customCategory, setCustomCategory] = useState('');
   const [isCustomCategory, setIsCustomCategory] = useState(false);
+
+  // Delete feedback hook
+  const {
+    showDeleteConfirm,
+    feedbackToDelete,
+    isDeleting,
+    error: deleteError,
+    openDeleteConfirmation,
+    closeDeleteConfirmation,
+    handleDelete,
+  } = useFeedbackDeletion(async () => {
+    await fetchData();
+    setError(null);
+  });
 
   // Common FAQ categories
   const predefinedCategories = [
@@ -429,6 +445,7 @@ export default function ManageFeedbackPage() {
     }
   };
 
+
   const exportFeedback = async () => {
     if (!feedbackData || feedbackData.feedback_items.length === 0) return;
 
@@ -641,70 +658,86 @@ export default function ManageFeedbackPage() {
               {feedbackData.feedback_items.map((feedback) => (
                 <Card key={feedback.message_id} className="border-l-4 border-l-gray-200">
                   <CardContent className="p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center space-x-2">
-                        {feedback.is_positive ? (
-                          <ThumbsUp className="h-5 w-5 text-primary" />
-                        ) : (
-                          <ThumbsDown className="h-5 w-5 text-red-500" />
-                        )}
-                        <span className="text-sm text-muted-foreground">
-                          {formatDate(feedback.timestamp)}
-                        </span>
-                        {feedback.has_no_source_response && (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                            No Source Available
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center space-x-2">
+                          {feedback.is_positive ? (
+                            <ThumbsUp className="h-5 w-5 text-primary" />
+                          ) : (
+                            <ThumbsDown className="h-5 w-5 text-red-500" />
+                          )}
+                          <span className="text-sm text-muted-foreground">
+                            {formatDate(feedback.timestamp)}
                           </span>
+                          {feedback.has_no_source_response && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                              No Source Available
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <span className="font-medium text-sm text-muted-foreground">Question:</span>
+                          <p className="text-sm mt-1">{feedback.question}</p>
+                        </div>
+
+                        {feedback.explanation && (
+                          <div>
+                            <span className="font-medium text-sm text-muted-foreground">User Feedback:</span>
+                            <p className="text-sm mt-1 text-red-700">{feedback.explanation}</p>
+                          </div>
+                        )}
+
+                        {feedback.issues && feedback.issues.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {feedback.issues.map((issue, idx) => (
+                              <span key={idx} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getIssueColor(issue)}`}>
+                                {issue.replace('_', ' ')}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {feedback.is_negative && !feedback.is_processed && (
+                          <div className="pt-1">
+                            <Button
+                              onClick={() => openCreateFAQ(feedback)}
+                              size="sm"
+                              variant="outline"
+                            >
+                              <PlusCircle className="h-4 w-4 mr-1" />
+                              Create FAQ
+                            </Button>
+                          </div>
+                        )}
+
+                        {feedback.is_processed && feedback.faq_id && (
+                          <div className="pt-1">
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                              ✓ FAQ Created
+                            </span>
+                          </div>
                         )}
                       </div>
-                      <div className="flex space-x-2">
+
+                      <div className="flex items-center gap-1 ml-4">
                         <Button
                           onClick={() => openFeedbackDetail(feedback)}
-                          size="sm"
-                          variant="outline"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="View feedback details"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {feedback.is_negative && !feedback.is_processed && (
-                          <Button
-                            onClick={() => openCreateFAQ(feedback)}
-                            size="sm"
-                            variant="outline"
-                          >
-                            <PlusCircle className="h-4 w-4" />
-                            Create FAQ
-                          </Button>
-                        )}
-                        {feedback.is_processed && feedback.faq_id && (
-                          <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                            ✓ FAQ Created
-                          </span>
-                        )}
+                        <Button
+                          onClick={() => openDeleteConfirmation(feedback)}
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete feedback"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
                       </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div>
-                        <span className="font-medium text-sm text-muted-foreground">Question:</span>
-                        <p className="text-sm mt-1">{feedback.question}</p>
-                      </div>
-
-                      {feedback.explanation && (
-                        <div>
-                          <span className="font-medium text-sm text-muted-foreground">User Feedback:</span>
-                          <p className="text-sm mt-1 text-red-700">{feedback.explanation}</p>
-                        </div>
-                      )}
-
-                      {feedback.issues && feedback.issues.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {feedback.issues.map((issue, idx) => (
-                            <span key={idx} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getIssueColor(issue)}`}>
-                              {issue.replace('_', ' ')}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1004,6 +1037,47 @@ export default function ManageFeedbackPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Feedback</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this feedback entry? This action cannot be undone.
+              {feedbackToDelete && (
+                <div className="mt-4 p-3 bg-accent rounded border border-border">
+                  <p className="text-sm font-medium text-card-foreground mb-1">Message ID: {feedbackToDelete.message_id}</p>
+                  <p className="text-sm font-medium text-card-foreground mb-1">Question:</p>
+                  <p className="text-sm text-muted-foreground">{feedbackToDelete.question.substring(0, 100)}{feedbackToDelete.question.length > 100 ? '...' : ''}</p>
+                </div>
+              )}
+              {deleteError && (
+                <div className="mt-4 p-3 bg-red-500/10 rounded border border-red-500/50">
+                  <p className="text-sm text-red-600">{deleteError}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={closeDeleteConfirmation}
+              disabled={isDeleting}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600 text-white"
+              aria-label="Confirm delete feedback"
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
