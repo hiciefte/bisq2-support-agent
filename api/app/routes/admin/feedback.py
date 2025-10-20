@@ -22,7 +22,7 @@ from app.models.feedback import (
 from app.routes.admin.analytics import FAQ_CREATION_TOTAL
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -546,13 +546,6 @@ async def delete_feedback(message_id: str):
 
     try:
         success = feedback_service.delete_feedback(message_id)
-
-        if not success:
-            raise FeedbackNotFoundError(message_id)
-
-        logger.info(f"Successfully deleted feedback {message_id}")
-        return None  # 204 No Content
-
     except BaseAppException:
         # Re-raise application exceptions (404) without wrapping
         raise
@@ -563,3 +556,9 @@ async def delete_feedback(message_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="FEEDBACK_DELETE_FAILED",
         ) from e
+    else:
+        if not success:
+            raise FeedbackNotFoundError(message_id)
+
+        logger.info(f"Successfully deleted feedback {message_id}")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)

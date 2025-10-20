@@ -36,6 +36,7 @@ import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
+import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
 
 interface FeedbackItem {
   message_id: string;
@@ -139,10 +140,19 @@ export default function ManageFeedbackPage() {
   const [customCategory, setCustomCategory] = useState('');
   const [isCustomCategory, setIsCustomCategory] = useState(false);
 
-  // Delete feedback state
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [feedbackToDelete, setFeedbackToDelete] = useState<FeedbackItem | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  // Delete feedback hook
+  const {
+    showDeleteConfirm,
+    feedbackToDelete,
+    isDeleting,
+    error: deleteError,
+    openDeleteConfirmation,
+    closeDeleteConfirmation,
+    handleDelete,
+  } = useFeedbackDeletion(async () => {
+    await fetchData();
+    setError(null);
+  });
 
   // Common FAQ categories
   const predefinedCategories = [
@@ -435,45 +445,6 @@ export default function ManageFeedbackPage() {
     }
   };
 
-  const handleDeleteFeedback = async () => {
-    if (!feedbackToDelete) return;
-
-    setIsDeleting(true);
-    try {
-      const response = await makeAuthenticatedRequest(`/admin/feedback/${feedbackToDelete.message_id}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok || response.status === 204) {
-        // Success - close dialog and refresh data
-        setShowDeleteConfirm(false);
-        setFeedbackToDelete(null);
-        // Refresh data to reflect deletion
-        await fetchData();
-        setError(null);
-      } else if (response.status === 404) {
-        setError('Feedback not found. It may have already been deleted.');
-        setShowDeleteConfirm(false);
-        setFeedbackToDelete(null);
-        // Refresh to sync with server state
-        await fetchData();
-      } else {
-        const errorText = `Failed to delete feedback. Status: ${response.status}`;
-        setError(errorText);
-      }
-    } catch (error) {
-      const errorText = 'An unexpected error occurred while deleting feedback.';
-      setError(errorText);
-      console.error('Delete feedback error:', error);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  const openDeleteConfirmation = (feedback: FeedbackItem) => {
-    setFeedbackToDelete(feedback);
-    setShowDeleteConfirm(true);
-  };
 
   const exportFeedback = async () => {
     if (!feedbackData || feedbackData.feedback_items.length === 0) return;
@@ -754,6 +725,7 @@ export default function ManageFeedbackPage() {
                           onClick={() => openFeedbackDetail(feedback)}
                           variant="ghost"
                           size="icon"
+                          aria-label="View feedback details"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
@@ -761,6 +733,7 @@ export default function ManageFeedbackPage() {
                           onClick={() => openDeleteConfirmation(feedback)}
                           variant="ghost"
                           size="icon"
+                          aria-label="Delete feedback"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -1074,23 +1047,30 @@ export default function ManageFeedbackPage() {
               Are you sure you want to delete this feedback entry? This action cannot be undone.
               {feedbackToDelete && (
                 <div className="mt-4 p-3 bg-accent rounded border border-border">
+                  <p className="text-sm font-medium text-card-foreground mb-1">Message ID: {feedbackToDelete.message_id}</p>
                   <p className="text-sm font-medium text-card-foreground mb-1">Question:</p>
                   <p className="text-sm text-muted-foreground">{feedbackToDelete.question.substring(0, 100)}{feedbackToDelete.question.length > 100 ? '...' : ''}</p>
+                </div>
+              )}
+              {deleteError && (
+                <div className="mt-4 p-3 bg-red-500/10 rounded border border-red-500/50">
+                  <p className="text-sm text-red-600">{deleteError}</p>
                 </div>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => {
-              setShowDeleteConfirm(false);
-              setFeedbackToDelete(null);
-            }}>
+            <AlertDialogCancel
+              onClick={closeDeleteConfirmation}
+              disabled={isDeleting}
+            >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteFeedback}
+              onClick={handleDelete}
               disabled={isDeleting}
               className="bg-red-600 hover:bg-red-700 focus:ring-red-600 text-white"
+              aria-label="Confirm delete feedback"
             >
               {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
