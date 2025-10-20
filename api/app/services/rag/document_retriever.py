@@ -86,7 +86,7 @@ class DocumentRetriever:
             logger.warning(
                 "Metadata filtering failed, falling back to post-retrieval sorting"
             )
-            fallback_docs = self.retriever.get_relevant_documents(query)
+            fallback_docs = self.retriever.invoke(query)
 
             # Define version priority (higher number = higher priority)
             version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}

@@ -23,6 +23,7 @@ from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.prompt_manager import PromptManager
+from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.utils.logging import redact_pii
 from fastapi import Request
 
@@ -60,6 +61,11 @@ class SimplifiedRAGService:
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
+
+        # Initialize vector store manager for change detection and rebuilds
+        self.vectorstore_manager = VectorStoreManager(
+            vectorstore_path=self.db_path, data_dir=self.settings.DATA_DIR
+        )
 
         # Initialize document processor for text splitting
         self.document_processor = DocumentProcessor(
@@ -100,7 +106,41 @@ class SimplifiedRAGService:
                 "wiki": 1.1,  # Slightly increased weight for wiki content
             }
 
+        # Register callback for runtime vector store updates
+        self.vectorstore_manager.register_update_callback(self._handle_source_update)
+
+        # Register with FAQ service for FAQ updates
+        if self.faq_service:
+            self.faq_service.register_update_callback(
+                lambda: self.vectorstore_manager.trigger_update("faq")
+            )
+            logger.info("Registered FAQ service update callback")
+
         logger.info("Simplified RAG service initialized")
+
+    async def _handle_source_update(self, source_name: str) -> None:
+        """Handle runtime updates to source files (FAQ or wiki).
+
+        This callback is triggered when source files are updated at runtime
+        (e.g., new FAQs extracted, wiki updated). It rebuilds the vector store
+        to ensure new content is searchable.
+
+        Args:
+            source_name: Name of the source that was updated ("faq" or "wiki")
+        """
+        logger.info(
+            f"Source '{source_name}' updated at runtime, triggering vector store rebuild..."
+        )
+        try:
+            # Trigger a rebuild by calling setup again
+            # This will detect changes and rebuild the vector store
+            await self.setup()
+            logger.info(f"Vector store successfully rebuilt after {source_name} update")
+        except Exception as e:
+            logger.error(
+                f"Failed to rebuild vector store after {source_name} update: {e}",
+                exc_info=True,
+            )
 
     def initialize_embeddings(self) -> None:
         """Delegate to LLM provider for embeddings initialization."""
@@ -219,37 +259,17 @@ class SimplifiedRAGService:
             logger.info("Initializing embedding model...")
             self.initialize_embeddings()
 
-            # Create vector store
-            logger.info("Creating vector store...")
+            # Create vector store with change detection
+            logger.info("Checking if vector store rebuild is needed...")
 
-            # Check if the vector store directory exists
-            vector_store_exists = os.path.exists(self.db_path) and os.path.isdir(
-                self.db_path
-            )
+            # Check if we need to rebuild based on source file changes
+            if self.vectorstore_manager.should_rebuild():
+                rebuild_reason = self.vectorstore_manager.get_rebuild_reason()
+                logger.info(f"Rebuilding vector store: {rebuild_reason}")
 
-            # Check if we have a persisted vector store by looking for the config file
-            if vector_store_exists and any(
-                f.endswith(".parquet") for f in os.listdir(self.db_path)
-            ):
-                # Load existing vector store
-                logger.info("Loading existing vector store...")
-                self.vectorstore = Chroma(
-                    persist_directory=self.db_path,
-                    embedding_function=self.embeddings,
-                )
-                logger.info("Vector store loaded successfully")
+                # Clean existing vector store before rebuilding
+                self._clean_vector_store()
 
-                # Update vector store with new documents
-                if splits:
-                    logger.info(
-                        f"Updating vector store with {len(splits)} documents..."
-                    )
-
-                    # Use add_documents to add any new documents
-                    # This avoids reprocessing already embedded documents
-                    self.vectorstore.add_documents(splits)
-                    logger.info("Vector store updated successfully")
-            else:
                 # Create new vector store
                 logger.info("Creating new vector store...")
                 self.vectorstore = Chroma(
@@ -257,9 +277,24 @@ class SimplifiedRAGService:
                 )
 
                 # Add documents to the new vector store
-                logger.info("Adding documents to new vector store...")
+                logger.info(f"Adding {len(splits)} documents to new vector store...")
                 self.vectorstore.add_documents(splits)
                 logger.info(f"Added {len(splits)} documents to new vector store")
+
+                # Save metadata after successful build
+                metadata = self.vectorstore_manager.collect_source_metadata()
+                self.vectorstore_manager.save_metadata(metadata)
+                logger.info("Saved vector store metadata for change detection")
+            else:
+                # Load existing vector store from cache
+                logger.info("Loading existing vector store from cache...")
+                self.vectorstore = Chroma(
+                    persist_directory=self.db_path,
+                    embedding_function=self.embeddings,
+                )
+                logger.info(
+                    f"Vector store loaded successfully from cache (skipping re-embedding of {len(splits)} documents)"
+                )
 
             # Create retriever
             self.retriever = self.vectorstore.as_retriever(
