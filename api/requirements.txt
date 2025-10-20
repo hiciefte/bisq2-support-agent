@@ -49,7 +49,7 @@ cfgv==3.4.0
     # via pre-commit
 charset-normalizer==3.4.4
     # via requests
-chromadb==1.2.0
+chromadb==1.2.1
     # via
     #   -r api/requirements.in
     #   langchain-chroma
@@ -448,7 +448,7 @@ tqdm==4.67.1
     #   chromadb
     #   huggingface-hub
     #   openai
-typer==0.19.2
+typer==0.20.0
     # via chromadb
 typing-extensions==4.15.0
     # via
