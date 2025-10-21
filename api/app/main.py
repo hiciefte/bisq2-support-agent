@@ -216,6 +216,61 @@ logger.info("Prometheus metrics instrumentation initialized")
 # Create a dedicated metrics endpoint
 @app.get("/metrics", include_in_schema=True)
 async def metrics():
+    """
+    Prometheus metrics endpoint (internal-only via nginx).
+
+    This endpoint updates all feedback analytics metrics before exposing them.
+    Access is restricted to internal networks (127.0.0.1, Docker networks) via nginx.
+    """
+    # Import here to avoid circular dependency
+    from app.routes.admin.analytics import (
+        FEEDBACK_HELPFUL,
+        FEEDBACK_HELPFUL_RATE,
+        FEEDBACK_TOTAL,
+        FEEDBACK_UNHELPFUL,
+        ISSUE_COUNT,
+        SOURCE_HELPFUL,
+        SOURCE_HELPFUL_RATE,
+        SOURCE_TOTAL,
+    )
+    from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
+
+    try:
+        # Get feedback analytics without authentication (internal endpoint)
+        analytics = await get_feedback_analytics()
+
+        # Update Gauge metrics with current values
+        FEEDBACK_TOTAL.set(analytics["total_feedback"])
+        FEEDBACK_HELPFUL.set(analytics["helpful_count"])
+        FEEDBACK_UNHELPFUL.set(analytics["unhelpful_count"])
+        FEEDBACK_HELPFUL_RATE.set(
+            analytics["helpful_rate"] * 100
+        )  # Convert to percentage
+
+        # Update source metrics
+        for source_type, stats in analytics["source_effectiveness"].items():
+            SOURCE_TOTAL.labels(source_type=source_type).set(stats["total"])
+            SOURCE_HELPFUL.labels(source_type=source_type).set(stats["helpful"])
+
+            helpful_rate = (
+                stats["helpful"] / stats["total"] if stats["total"] > 0 else 0
+            )
+            SOURCE_HELPFUL_RATE.labels(source_type=source_type).set(
+                helpful_rate * 100
+            )  # Convert to percentage
+
+        # Update issue metrics with controlled vocabulary to prevent high-cardinality
+        # First clear any existing metrics to ensure removed issues don't persist
+        for issue_type in [*KNOWN_ISSUE_TYPES.values(), "other"]:
+            ISSUE_COUNT.labels(issue_type=issue_type).set(0)
+
+        # Now set the new values
+        for issue_type, count in analytics["common_issues"].items():
+            ISSUE_COUNT.labels(issue_type=issue_type).set(count)
+    except Exception as e:
+        # Log error but continue to expose other metrics
+        logger.error(f"Failed to update feedback metrics: {e}", exc_info=True)
+
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
