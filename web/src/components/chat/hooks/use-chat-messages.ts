@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react"
 import { v4 as uuidv4 } from 'uuid'
+import { API_BASE_URL } from '@/lib/config'
 import type { Message } from "../types/chat.types"
 
 // Constants
@@ -90,9 +91,7 @@ export const useChatMessages = () => {
     useEffect(() => {
         const fetchGlobalStats = async () => {
             try {
-                const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${hostname}:8000`
-                const statsUrl = `${apiUrl}/chat/stats`
+                const statsUrl = `${API_BASE_URL}/chat/stats`
                 console.log(`Fetching stats from: ${statsUrl}`)
 
                 const response = await fetch(statsUrl)

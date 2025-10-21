@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+import { API_BASE_URL } from '@/lib/config';
 
 interface FAQ {
   id: string;
@@ -28,8 +29,6 @@ interface FAQListResponse {
   page_size: number;
   total_pages: number;
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function ManageFaqsPage() {
   const [faqData, setFaqData] = useState<FAQListResponse | null>(null);

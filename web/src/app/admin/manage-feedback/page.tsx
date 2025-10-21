@@ -34,6 +34,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
+import { API_BASE_URL } from '@/lib/config';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
@@ -91,8 +92,6 @@ interface FeedbackStats {
   source_effectiveness: Record<string, any>;
   feedback_by_month: Record<string, number>;
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function ManageFeedbackPage() {
   // Authentication state
