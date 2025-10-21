@@ -191,6 +191,12 @@
         // Load last message index from localStorage to persist across reloads
         let currentIndex = parseInt(localStorage.getItem('maintenanceMessageIndex') || '0', 10);
 
+        // Validate and sanitize the index
+        if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= messages.length) {
+            currentIndex = 0;
+            localStorage.setItem('maintenanceMessageIndex', '0');
+        }
+
         // Display initial message
         document.getElementById('message').textContent = messages[currentIndex];
 
