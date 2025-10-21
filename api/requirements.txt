@@ -380,7 +380,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2025.9.18
+regex==2025.10.22
     # via tiktoken
 requests==2.32.5
     # via
