@@ -8,30 +8,20 @@ Ensures that:
 4. Metrics format is valid Prometheus format
 """
 
-import pytest
-from app.main import app
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def client():
-    """Create test client."""
-    return TestClient(app)
-
 
 class TestMetricsEndpoint:
     """Test suite for /metrics endpoint."""
 
-    def test_metrics_endpoint_accessible(self, client):
+    def test_metrics_endpoint_accessible(self, test_client):
         """Test that /metrics endpoint is accessible."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         assert response.status_code == 200
         # Prometheus format includes version
         assert "text/plain" in response.headers["content-type"]
 
-    def test_metrics_prometheus_format(self, client):
+    def test_metrics_prometheus_format(self, test_client):
         """Test that metrics are in valid Prometheus format."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Check for Prometheus format markers
@@ -50,9 +40,9 @@ class TestMetricsEndpoint:
             parts = line.split()
             assert len(parts) >= 2, f"Invalid metric line: {line}"
 
-    def test_feedback_metrics_exposed(self, client):
+    def test_feedback_metrics_exposed(self, test_client):
         """Test that feedback analytics metrics are exposed."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Check for feedback metrics
@@ -66,9 +56,9 @@ class TestMetricsEndpoint:
         for metric in required_metrics:
             assert metric in content, f"Missing required metric: {metric}"
 
-    def test_feedback_metrics_have_values(self, client):
+    def test_feedback_metrics_have_values(self, test_client):
         """Test that feedback metrics are updated with actual values."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Extract metric values
@@ -92,9 +82,9 @@ class TestMetricsEndpoint:
         # The important thing is the metrics are present and numeric
         assert isinstance(metrics["bisq_feedback_total"], float)
 
-    def test_source_effectiveness_metrics_exposed(self, client):
+    def test_source_effectiveness_metrics_exposed(self, test_client):
         """Test that source effectiveness metrics are exposed with labels."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Check for source metrics (these use labels)
@@ -102,17 +92,17 @@ class TestMetricsEndpoint:
         assert "bisq_source_helpful" in content
         assert "bisq_source_helpful_rate" in content
 
-    def test_issue_count_metrics_exposed(self, client):
+    def test_issue_count_metrics_exposed(self, test_client):
         """Test that issue count metrics are exposed with labels."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Check for issue metrics (these use labels)
         assert "bisq_issue_count" in content
 
-    def test_tor_metrics_exposed(self, client):
+    def test_tor_metrics_exposed(self, test_client):
         """Test that Tor-related metrics are exposed."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Check for Tor metrics
@@ -127,9 +117,9 @@ class TestMetricsEndpoint:
         for metric in tor_metrics:
             assert metric in content, f"Missing Tor metric: {metric}"
 
-    def test_system_metrics_exposed(self, client):
+    def test_system_metrics_exposed(self, test_client):
         """Test that standard system metrics are exposed."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Standard Python/process metrics from prometheus_client
@@ -142,11 +132,11 @@ class TestMetricsEndpoint:
         for metric in system_metrics:
             assert metric in content, f"Missing system metric: {metric}"
 
-    def test_metrics_idempotent(self, client):
+    def test_metrics_idempotent(self, test_client):
         """Test that calling /metrics multiple times doesn't break anything."""
         # Call metrics endpoint multiple times
         for _ in range(3):
-            response = client.get("/metrics")
+            response = test_client.get("/metrics")
             assert response.status_code == 200
 
         # Verify content is still valid
@@ -158,7 +148,7 @@ class TestMetricsEndpoint:
 class TestMetricsErrorHandling:
     """Test error handling in metrics endpoint."""
 
-    def test_metrics_endpoint_handles_errors_gracefully(self, client, monkeypatch):
+    def test_metrics_endpoint_handles_errors_gracefully(self, test_client, monkeypatch):
         """Test that metrics endpoint continues to work even if feedback analytics fails."""
         from app.routes.admin import feedback
 
@@ -171,7 +161,7 @@ class TestMetricsErrorHandling:
         )
 
         # Metrics endpoint should still return 200 with other metrics
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         assert response.status_code == 200
 
         content = response.text
@@ -186,9 +176,9 @@ class TestMetricsErrorHandling:
 class TestMetricsConsistency:
     """Test that metrics values are consistent and logical."""
 
-    def test_feedback_total_equals_sum_of_helpful_and_unhelpful(self, client):
+    def test_feedback_total_equals_sum_of_helpful_and_unhelpful(self, test_client):
         """Test that total feedback equals helpful + unhelpful."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Extract metric values
@@ -215,9 +205,9 @@ class TestMetricsConsistency:
             f"helpful={helpful}, unhelpful={unhelpful}"
         )
 
-    def test_helpful_rate_calculation_correct(self, client):
+    def test_helpful_rate_calculation_correct(self, test_client):
         """Test that helpful rate is calculated correctly."""
-        response = client.get("/metrics")
+        response = test_client.get("/metrics")
         content = response.text
 
         # Extract metric values
