@@ -14,9 +14,6 @@ import time
 from app.core.config import get_settings
 from fastapi import HTTPException, Request, Response, status
 
-# Get settings instance
-settings = get_settings()
-
 # Minimum length for secure API keys
 MIN_API_KEY_LENGTH = 24
 
@@ -43,6 +40,7 @@ async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bo
     Raises:
         HTTPException: If admin access is not configured
     """
+    settings = get_settings()
     admin_api_key = settings.ADMIN_API_KEY
 
     if not admin_api_key:
@@ -90,6 +88,7 @@ def verify_admin_key(provided_key: str) -> bool:
     Raises:
         HTTPException: If admin access is not configured
     """
+    settings = get_settings()
     admin_api_key = settings.ADMIN_API_KEY
 
     if not admin_api_key:
@@ -141,6 +140,7 @@ def generate_admin_session_token(now: int | None = None) -> str:
     Returns:
         Signed session token in format: base64(payload).base64(signature)
     """
+    settings = get_settings()
     now = now or int(time.time())
     payload = {
         "sub": "admin",
@@ -166,6 +166,7 @@ def verify_admin_session_token(token: str) -> bool:
         True if token is valid and not expired, False otherwise
     """
     try:
+        settings = get_settings()
         body_b64, sig = token.split(".", 1)
         expected = _sign(body_b64.encode(), settings.ADMIN_API_KEY)
         if not hmac.compare_digest(sig, expected):
@@ -264,6 +265,7 @@ def set_admin_cookie(response: Response) -> None:
     Args:
         response: FastAPI response object to set cookie on
     """
+    settings = get_settings()
     token = generate_admin_session_token()
     response.set_cookie(
         key="admin_authenticated",

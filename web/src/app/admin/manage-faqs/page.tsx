@@ -29,8 +29,6 @@ interface FAQListResponse {
   total_pages: number;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
 export default function ManageFaqsPage() {
   const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);

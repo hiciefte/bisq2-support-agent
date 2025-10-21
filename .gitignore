@@ -13,6 +13,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!web/src/lib/
 parts/
 sdist/
 var/
@@ -127,3 +128,4 @@ onion-keys/
 /web/test-results/
 /web/playwright-report/
 /web/playwright/.cache/
+web/tsconfig.tsbuildinfo

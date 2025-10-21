@@ -16,9 +16,6 @@ from fastapi.responses import Response
 # Setup logging
 logger = logging.getLogger(__name__)
 
-# Get settings
-settings = get_settings()
-
 # Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
     prefix="/admin",
@@ -30,7 +27,8 @@ router = APIRouter(
     },
 )
 
-# Create singleton instance
+# Initialize settings and services
+settings = get_settings()
 faq_service = FAQService(settings=settings)
 
 

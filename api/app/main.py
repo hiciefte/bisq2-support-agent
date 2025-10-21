@@ -3,6 +3,7 @@ FastAPI application for the Bisq Support Assistant.
 This module sets up the API server with routes, middleware, and error handling.
 """
 
+import ipaddress
 import logging
 import os
 import sys
@@ -25,7 +26,7 @@ from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -40,25 +41,11 @@ logging.basicConfig(
 
 logger = logging.getLogger("app.main")
 
-# Log environment variables (redacting sensitive ones)
-logger.info("Environment variables:")
-for key, value in sorted(os.environ.items()):
-    if key in ["OPENAI_API_KEY", "XAI_API_KEY", "ADMIN_API_KEY"]:
-        logger.info(f"  {key}=***REDACTED***")
-    else:
-        logger.info(f"  {key}={value}")
+# Settings will be lazily initialized when first accessed
+# No module-level initialization to avoid side effects during imports/testing
 
-# Load settings
-logger.info("Loading settings...")
-try:
-    # Use the cached settings function
-    settings = get_settings()
-    logger.info("Settings loaded successfully")
-    logger.info(f"CORS_ORIGINS = {settings.CORS_ORIGINS}")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-except Exception as e:
-    logger.error(f"Error loading settings: {e}", exc_info=True)
-    raise
+# Environment variable logging removed due to secret leakage risk
+# For local debugging, manually inspect specific variables as needed
 
 
 @asynccontextmanager
@@ -69,6 +56,10 @@ async def lifespan(app: FastAPI):
     # Initialize services
     settings = get_settings()
     app.state.settings = settings
+
+    # Create data directories (avoid import-time I/O)
+    logger.info("Creating data directories...")
+    settings.ensure_data_dirs()
 
     # Run database migrations before initializing services
     logger.info("Running database migrations...")
@@ -136,9 +127,9 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title=settings.PROJECT_NAME,
+    title=get_settings().PROJECT_NAME,
     docs_url="/api/docs",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_url=f"{get_settings().API_V1_STR}/openapi.json",
     lifespan=lifespan,
 )
 
@@ -196,10 +187,12 @@ def custom_openapi() -> Dict[str, Any]:
 app.openapi = custom_openapi
 
 # Configure CORS
+# Toggle credentials off when wildcard is used (Starlette forbids wildcard + credentials)
+_origins = get_settings().CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=False if _origins == ["*"] else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -214,8 +207,88 @@ logger.info("Prometheus metrics instrumentation initialized")
 
 
 # Create a dedicated metrics endpoint
-@app.get("/metrics", include_in_schema=True)
-async def metrics():
+@app.get("/metrics", include_in_schema=False)
+async def metrics(request: Request):
+    """
+    Prometheus metrics endpoint (internal-only via nginx).
+
+    This endpoint updates all feedback analytics metrics before exposing them.
+    Access is restricted to internal networks (127.0.0.1, Docker networks) via nginx.
+    Defense-in-depth: Also enforces IP allowlist in production to fail closed if nginx misconfigured.
+    """
+    # Import here to avoid circular dependency
+    from app.routes.admin.analytics import (
+        FEEDBACK_HELPFUL,
+        FEEDBACK_HELPFUL_RATE,
+        FEEDBACK_TOTAL,
+        FEEDBACK_UNHELPFUL,
+        ISSUE_COUNT,
+        SOURCE_HELPFUL,
+        SOURCE_HELPFUL_RATE,
+        SOURCE_TOTAL,
+    )
+    from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
+
+    # Defense-in-depth: restrict in-app in production
+    _s = get_settings()
+    if str(_s.ENVIRONMENT).strip().lower() in {"production", "prod"}:
+        client_host = (request.client.host if request.client else "") or ""
+
+        # Parse client IP address (strip IPv6 brackets and port)
+        # Treat "localhost" as private
+        is_private = False
+        if client_host == "localhost":
+            is_private = True
+        else:
+            # Strip IPv6 brackets, split only on last colon to preserve IPv6 addresses
+            # e.g., "[2001:db8::1]:8000" → "2001:db8::1", "127.0.0.1:8000" → "127.0.0.1"
+            parsed_host = client_host.strip("[]").rsplit(":", 1)[0]
+            try:
+                ip = ipaddress.ip_address(parsed_host)
+                is_private = ip.is_private or ip.is_loopback or ip.is_link_local
+            except ValueError:
+                # Unparsable address - deny (fail closed)
+                is_private = False
+
+        if not is_private:
+            raise HTTPException(status_code=404)
+
+    try:
+        # Get feedback analytics without authentication (internal endpoint)
+        analytics = await get_feedback_analytics()
+
+        # Update Gauge metrics with current values
+        FEEDBACK_TOTAL.set(analytics["total_feedback"])
+        FEEDBACK_HELPFUL.set(analytics["helpful_count"])
+        FEEDBACK_UNHELPFUL.set(analytics["unhelpful_count"])
+        FEEDBACK_HELPFUL_RATE.set(
+            analytics["helpful_rate"] * 100
+        )  # Convert to percentage
+
+        # Update source metrics
+        for source_type, stats in analytics["source_effectiveness"].items():
+            SOURCE_TOTAL.labels(source_type=source_type).set(stats["total"])
+            SOURCE_HELPFUL.labels(source_type=source_type).set(stats["helpful"])
+
+            helpful_rate = (
+                stats["helpful"] / stats["total"] if stats["total"] > 0 else 0
+            )
+            SOURCE_HELPFUL_RATE.labels(source_type=source_type).set(
+                helpful_rate * 100
+            )  # Convert to percentage
+
+        # Update issue metrics with controlled vocabulary to prevent high-cardinality
+        # First clear any existing metrics to ensure removed issues don't persist
+        for issue_type in [*KNOWN_ISSUE_TYPES.values(), "other"]:
+            ISSUE_COUNT.labels(issue_type=issue_type).set(0)
+
+        # Now set the new values
+        for issue_type, count in analytics["common_issues"].items():
+            ISSUE_COUNT.labels(issue_type=issue_type).set(count)
+    except Exception as e:
+        # Log error but continue to expose other metrics
+        logger.error(f"Failed to update feedback metrics: {e}", exc_info=True)
+
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -242,4 +315,14 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=settings.DEBUG)
+    settings = get_settings()
+    # Bind to 0.0.0.0 only in DEBUG mode (container/development)
+    # Otherwise bind to 127.0.0.1 for local security
+    host = "0.0.0.0" if settings.DEBUG else "127.0.0.1"
+
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=8000,
+        reload=settings.DEBUG,
+    )

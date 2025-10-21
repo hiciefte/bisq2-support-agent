@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
-    ADMIN_API_KEY: str  # No default, must be set via environment
+    ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
 
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
@@ -220,24 +220,103 @@ class Settings(BaseSettings):
             # Split by comma, trim whitespace, filter empty entries
             return [host.strip() for host in v.split(",") if host.strip()]
 
-        # Fallback for unexpected types
-        return ["*"]
+        # Fallback for unexpected types: fail-closed (deny all origins)
+        return []
+
+    @classmethod
+    def _is_production(cls, info: ValidationInfo) -> bool:
+        """Check if ENVIRONMENT indicates production.
+
+        Args:
+            info: Validation info containing other field values
+
+        Returns:
+            True if environment is production, False otherwise
+        """
+        raw_env = info.data.get("ENVIRONMENT", "development")
+        environment = str(raw_env).strip().lower()
+        # Normalize "prod" alias to "production"
+        if environment in {"prod"}:
+            environment = "production"
+        return environment == "production"
+
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def validate_cors_in_production(cls, v: list[str], info) -> list[str]:
+        """Reject wildcard CORS in production environments.
+
+        Args:
+            v: Normalized CORS origins list
+            info: Validation info containing other field values
+
+        Returns:
+            Validated CORS origins list
+
+        Raises:
+            ValueError: If wildcard CORS is used in production
+        """
+        # Reject wildcard in production
+        if cls._is_production(info) and v == ["*"]:
+            raise ValueError("CORS wildcard '*' not allowed in production")
+
+        return v
+
+    @field_validator("ADMIN_API_KEY")
+    @classmethod
+    def validate_admin_key_in_production(cls, v: str, info) -> str:
+        """Ensure ADMIN_API_KEY is set in production environments.
+
+        Args:
+            v: The ADMIN_API_KEY value
+            info: Validation info containing other field values
+
+        Returns:
+            The validated and stripped ADMIN_API_KEY
+
+        Raises:
+            ValueError: If ADMIN_API_KEY is empty in production
+        """
+        # Require ADMIN_API_KEY in production
+        if cls._is_production(info) and not v.strip():
+            raise ValueError("ADMIN_API_KEY required in production")
+
+        return v.strip()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Make paths absolute
         self.DATA_DIR = os.path.abspath(self.DATA_DIR)
 
-        # Create directories if they don't exist
+    def ensure_data_dirs(self) -> None:
+        """Create required data directories if they don't exist.
+
+        This method is called during application startup (lifespan) to avoid
+        import-time side effects and I/O operations.
+        """
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.VECTOR_STORE_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 
-@lru_cache()
+# Thread-safe lazy initialization using lru_cache
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Get cached application settings instance.
+    """Get cached application settings instance with lazy initialization.
+
+    Settings are only created once on first access, then cached for subsequent calls.
+    This prevents module-level side effects and allows testing without environment variables.
+    Thread-safe via lru_cache mechanism.
 
     Returns:
         Settings: Application settings object
     """
     return Settings()
+
+
+def reset_settings() -> None:
+    """Reset the cached settings instance.
+
+    Useful for testing when you need to reload settings with different values.
+    """
+    get_settings.cache_clear()

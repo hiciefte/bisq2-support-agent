@@ -7,6 +7,9 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Bisq 2 Support Assistant",
   description: "AI-powered support assistant for Bisq 2",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

@@ -17,9 +17,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_late
 # Setup logging
 logger = logging.getLogger(__name__)
 
-# Get settings
-settings = get_settings()
-
 # Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
     prefix="/admin",
@@ -31,7 +28,8 @@ router = APIRouter(
     },
 )
 
-# Create singleton instances
+# Initialize settings and services
+settings = get_settings()
 feedback_service = FeedbackService(settings=settings)
 dashboard_service = DashboardService(settings=settings)
 
