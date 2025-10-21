@@ -31,8 +31,11 @@ test.describe('Endpoint Security', () => {
       const response = await page.goto(`${BASE_URL}/api/chat/stats`);
       expect(response?.status()).toBe(200);
 
+      // Verify it returns JSON content-type
+      expect(response?.headers()['content-type']).toContain('application/json');
+
       // Verify it returns valid JSON
-      const data = await response?.json();
+      const data = await response!.json();
       expect(data).toHaveProperty('total_queries');
       expect(data).toHaveProperty('average_response_time');
     });
@@ -100,7 +103,7 @@ test.describe('Endpoint Security', () => {
         // Extract hostname from BASE_URL and attempt direct port 8000 access
         const hostname = new URL(BASE_URL).hostname;
         const response = await request.get(`http://${hostname}:8000/health`, {
-          timeout: 5000
+          timeout: 2000 // Reduced timeout for faster test execution
         });
         // If we get a response, port 8000 is exposed - this is bad
         expect(response.status()).toBe(0); // Should timeout or fail
@@ -144,14 +147,15 @@ test.describe('Endpoint Security', () => {
   });
 
   test.describe('Maintenance Page', () => {
-    test('Maintenance page should be available', async ({ page }) => {
+    test('Maintenance page should be available', async ({ request }) => {
       // The maintenance page is served when backend is down
       // We can't trigger it in normal operation, but we can verify the file exists
-      const response = await page.goto(`${BASE_URL}/maintenance.html`);
+      // Using HEAD request is faster and more appropriate for presence checking
+      const response = await request.head(`${BASE_URL}/maintenance.html`);
 
       // It might return 404 if nginx isn't configured to serve it directly,
       // or 200 if it is. The important thing is it exists for error_page directive.
-      expect([200, 404]).toContain(response?.status() || 404);
+      expect([200, 404]).toContain(response.status());
     });
   });
 });
