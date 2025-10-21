@@ -32,7 +32,6 @@ export async function waitForAssistantMessage(
   timeout: number = 30000
 ): Promise<void> {
   await page.waitForSelector('img[alt="Bisq AI"]', { timeout });
-  console.log('Chat response received from assistant');
 }
 
 /**

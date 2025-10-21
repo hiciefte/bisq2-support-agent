@@ -6,6 +6,11 @@
  */
 
 /**
+ * Default API URL for local development
+ */
+const DEFAULT_API_URL = 'http://localhost:8000';
+
+/**
  * Normalize API URL to ensure it's absolute
  *
  * Handles cases where NEXT_PUBLIC_API_URL might be:
@@ -17,12 +22,12 @@
  * @returns Absolute URL string
  */
 export const normalizeApiUrl = (url: string | undefined): string => {
-  const defaultUrl = 'http://localhost:8000';
+  const defaultUrl = DEFAULT_API_URL;
   if (!url) return defaultUrl;
 
   // If URL starts with '/', prepend base origin
   if (url.startsWith('/')) {
-    const baseOrigin = process.env.TEST_BASE_ORIGIN || 'http://localhost:8000';
+    const baseOrigin = process.env.TEST_BASE_ORIGIN || DEFAULT_API_URL;
     return `${baseOrigin}${url}`;
   }
 

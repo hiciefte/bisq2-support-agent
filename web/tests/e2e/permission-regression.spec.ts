@@ -196,7 +196,11 @@ test.describe('Permission Regression Tests', () => {
       'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=100'
     );
 
-      expect(logs).not.toContain('Permission denied');
+      const permissionError = hasPermissionErrors(logs);
+      if (permissionError) {
+        console.error('Permission errors found in logs:', logs);
+      }
+      expect(permissionError).toBe(false);
     } finally {
       // Clean up
       await context.close();
