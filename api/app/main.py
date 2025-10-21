@@ -3,6 +3,7 @@ FastAPI application for the Bisq Support Assistant.
 This module sets up the API server with routes, middleware, and error handling.
 """
 
+import ipaddress
 import logging
 import os
 import sys
@@ -125,11 +126,10 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI application
-settings = get_settings()
 app = FastAPI(
-    title=settings.PROJECT_NAME,
+    title=get_settings().PROJECT_NAME,
     docs_url="/api/docs",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_url=f"{get_settings().API_V1_STR}/openapi.json",
     lifespan=lifespan,
 )
 
@@ -187,10 +187,12 @@ def custom_openapi() -> Dict[str, Any]:
 app.openapi = custom_openapi
 
 # Configure CORS
+# Toggle credentials off when wildcard is used (Starlette forbids wildcard + credentials)
+_origins = get_settings().CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_settings().CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=False if _origins == ["*"] else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -230,11 +232,23 @@ async def metrics(request: Request):
     # Defense-in-depth: restrict in-app in production
     _s = get_settings()
     if str(_s.ENVIRONMENT).strip().lower() in {"production", "prod"}:
-        client_ip = (request.client.host if request.client else "") or ""
-        is_private = (
-            client_ip.startswith(("10.", "172.", "192.168.", "127.", "::1"))
-            or client_ip == "localhost"
-        )
+        client_host = (request.client.host if request.client else "") or ""
+
+        # Parse client IP address (strip IPv6 brackets and port)
+        # Treat "localhost" as private
+        is_private = False
+        if client_host == "localhost":
+            is_private = True
+        else:
+            # Strip IPv6 brackets and port if present
+            parsed_host = client_host.strip("[]").split(":")[0]
+            try:
+                ip = ipaddress.ip_address(parsed_host)
+                is_private = ip.is_private or ip.is_loopback or ip.is_link_local
+            except ValueError:
+                # Unparsable address - deny (fail closed)
+                is_private = False
+
         if not is_private:
             raise HTTPException(status_code=404)
 

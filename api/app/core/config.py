@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -220,11 +220,11 @@ class Settings(BaseSettings):
             # Split by comma, trim whitespace, filter empty entries
             return [host.strip() for host in v.split(",") if host.strip()]
 
-        # Fallback for unexpected types
-        return ["*"]
+        # Fallback for unexpected types: fail-closed (deny all origins)
+        return []
 
     @classmethod
-    def _is_production(cls, info) -> bool:
+    def _is_production(cls, info: ValidationInfo) -> bool:
         """Check if ENVIRONMENT indicates production.
 
         Args:
@@ -295,6 +295,8 @@ class Settings(BaseSettings):
         """
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.VECTOR_STORE_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 
 # Thread-safe lazy initialization using lru_cache
