@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import field_validator
@@ -222,6 +223,33 @@ class Settings(BaseSettings):
         # Fallback for unexpected types
         return ["*"]
 
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def validate_cors_in_production(cls, v: list[str], info) -> list[str]:
+        """Reject wildcard CORS in production environments.
+
+        Args:
+            v: Normalized CORS origins list
+            info: Validation info containing other field values
+
+        Returns:
+            Validated CORS origins list
+
+        Raises:
+            ValueError: If wildcard CORS is used in production
+        """
+        # Get environment from data if available and normalize
+        raw_env = info.data.get("ENVIRONMENT", "development")
+        environment = str(raw_env).strip().lower()
+        if environment in {"prod"}:
+            environment = "production"
+
+        # Reject wildcard in production
+        if environment == "production" and v == ["*"]:
+            raise ValueError("CORS wildcard '*' not allowed in production")
+
+        return v
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Make paths absolute
@@ -246,36 +274,32 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If ADMIN_API_KEY is empty in production
         """
-        # Get environment from data if available
-        environment = info.data.get("ENVIRONMENT", "development")
+        # Get environment from data if available and normalize
+        raw_env = info.data.get("ENVIRONMENT", "development")
+        environment = str(raw_env).strip().lower()
+        if environment in {"prod"}:
+            environment = "production"
 
         # Require ADMIN_API_KEY in production
         if environment == "production" and not v:
-            raise ValueError(
-                "ADMIN_API_KEY is required in production environment. "
-                "Set the ADMIN_API_KEY environment variable."
-            )
+            raise ValueError("ADMIN_API_KEY required in production")
 
         return v
 
 
-# Lazy initialization pattern - settings only created when first accessed
-_settings: Settings | None = None
-
-
+# Thread-safe lazy initialization using lru_cache
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Get cached application settings instance with lazy initialization.
 
     Settings are only created once on first access, then cached for subsequent calls.
     This prevents module-level side effects and allows testing without environment variables.
+    Thread-safe via lru_cache mechanism.
 
     Returns:
         Settings: Application settings object
     """
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    return Settings()
 
 
 def reset_settings() -> None:
@@ -283,5 +307,4 @@ def reset_settings() -> None:
 
     Useful for testing when you need to reload settings with different values.
     """
-    global _settings
-    _settings = None
+    get_settings.cache_clear()

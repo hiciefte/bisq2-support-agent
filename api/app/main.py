@@ -40,16 +40,11 @@ logging.basicConfig(
 
 logger = logging.getLogger("app.main")
 
-# Log environment variables (redacting sensitive ones)
-logger.info("Environment variables:")
-for key, value in sorted(os.environ.items()):
-    if key in ["OPENAI_API_KEY", "XAI_API_KEY", "ADMIN_API_KEY"]:
-        logger.info(f"  {key}=***REDACTED***")
-    else:
-        logger.info(f"  {key}={value}")
-
 # Settings will be lazily initialized when first accessed
 # No module-level initialization to avoid side effects during imports/testing
+
+# Environment variable logging removed due to secret leakage risk
+# For local debugging, manually inspect specific variables as needed
 
 
 @asynccontextmanager
@@ -126,10 +121,11 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI application
+settings = get_settings()
 app = FastAPI(
-    title=get_settings().PROJECT_NAME,
+    title=settings.PROJECT_NAME,
     docs_url="/api/docs",
-    openapi_url=f"{get_settings().API_V1_STR}/openapi.json",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan,
 )
 
@@ -205,7 +201,7 @@ logger.info("Prometheus metrics instrumentation initialized")
 
 
 # Create a dedicated metrics endpoint
-@app.get("/metrics", include_in_schema=True)
+@app.get("/metrics", include_in_schema=False)
 async def metrics():
     """
     Prometheus metrics endpoint (internal-only via nginx).
