@@ -240,8 +240,9 @@ async def metrics(request: Request):
         if client_host == "localhost":
             is_private = True
         else:
-            # Strip IPv6 brackets and port if present
-            parsed_host = client_host.strip("[]").split(":")[0]
+            # Strip IPv6 brackets, split only on last colon to preserve IPv6 addresses
+            # e.g., "[2001:db8::1]:8000" → "2001:db8::1", "127.0.0.1:8000" → "127.0.0.1"
+            parsed_host = client_host.strip("[]").rsplit(":", 1)[0]
             try:
                 ip = ipaddress.ip_address(parsed_host)
                 is_private = ip.is_private or ip.is_loopback or ip.is_link_local
