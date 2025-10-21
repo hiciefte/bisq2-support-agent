@@ -108,9 +108,8 @@ test.describe('Permission Regression Tests', () => {
     await page.waitForTimeout(2000);
 
     // Step 3: Verify feedback was saved
+    await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
     await page.goto(`${WEB_BASE_URL}/admin/manage-feedback`);
-    await page.fill('input[type="password"]', ADMIN_API_KEY);
-    await page.click('button:has-text("Login")');
     await page.waitForURL('**/admin/manage-feedback');
     await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
 
@@ -123,8 +122,7 @@ test.describe('Permission Regression Tests', () => {
       'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=50'
     );
 
-    expect(logs).not.toContain('Permission denied');
-    expect(logs).not.toContain('[Errno 13]');
+    expect(hasPermissionErrors(logs)).toBe(false);
   });
 
   test('File ownership should be correct after container start', async ({ page }) => {
