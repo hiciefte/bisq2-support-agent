@@ -150,16 +150,21 @@ test.describe('Permission Regression Tests', () => {
     }
   });
 
-  test('Multiple container restarts should not break permissions', async ({ page }) => {
+  test('Multiple container restarts should not break permissions', async ({ browser }) => {
     // Set longer timeout for this test (3 restarts + operations)
     test.setTimeout(120000); // 2 minutes
 
-    // Restart container 3 times
+    // Restart container 3 times (without using page context which gets closed)
     for (let i = 1; i <= 3; i++) {
       console.log(`Container restart ${i}/3...`);
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-      await page.waitForTimeout(20000);
+      // Wait for container to be fully ready using simple sleep
+      await new Promise(resolve => setTimeout(resolve, 20000));
     }
+
+    // Create a fresh page context after restarts
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
     // Try to create and delete FAQ
     await page.goto('http://localhost:3000/admin/manage-faqs');
@@ -194,6 +199,9 @@ test.describe('Permission Regression Tests', () => {
     );
 
     expect(logs).not.toContain('Permission denied');
+
+    // Clean up
+    await context.close();
   });
 
   test('Entrypoint script should fix permissions on startup', async ({ page }) => {
@@ -242,7 +250,11 @@ test.describe('Cross-session Permission Tests', () => {
       await page.fill('input[type="password"]', ADMIN_API_KEY);
       await page.click('button:has-text("Login")');
       await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
-      await page.click('a[href="/admin/manage-faqs"]');
+
+      // Wait for navigation menu to be fully loaded and visible
+      const faqLink = page.locator('a[href="/admin/manage-faqs"]').first();
+      await faqLink.waitFor({ state: 'visible', timeout: 15000 });
+      await faqLink.click();
       await page.waitForSelector('text=FAQ', { timeout: 10000 });
     }
 
