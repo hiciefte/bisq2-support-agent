@@ -221,8 +221,13 @@ test.describe('Metrics Endpoint Regression Prevention', () => {
     ];
 
     for (const metric of criticalMetrics) {
-      const regex = new RegExp(`${metric}\\s+[\\d.e+-]+`, 'm');
-      expect(body).toMatch(regex);
+      // Match metric name followed by whitespace and numeric value
+      const metricPattern = `${metric} `;
+      expect(body).toContain(metricPattern);
+      // Additionally verify it has a numeric value on the same line
+      const lines = body.split('\n').filter(line => line.startsWith(metric + ' '));
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines[0]).toMatch(/\s+[\d.e+-]+$/);
     }
   });
 

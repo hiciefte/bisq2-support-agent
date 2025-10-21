@@ -44,7 +44,7 @@ def _get_verification_data() -> tuple[Optional[str], Optional[str], Optional[str
 # Initialize verification data at module load, with fallback for testing
 try:
     ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
-except Exception as e:
+except (ValueError, KeyError) as e:
     # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
     # initialize with None values. The endpoint handlers check for None.
     logger.warning(f"Failed to initialize onion verification data: {e}")
