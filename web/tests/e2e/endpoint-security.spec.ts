@@ -99,18 +99,17 @@ test.describe('Endpoint Security', () => {
     });
 
     test('Direct port 8000 access should be blocked', async ({ request }) => {
-      try {
-        // Extract hostname from BASE_URL and attempt direct port 8000 access
-        const hostname = new URL(BASE_URL).hostname;
+      // Extract hostname from BASE_URL and attempt direct port 8000 access
+      const hostname = new URL(BASE_URL).hostname;
+
+      await expect(async () => {
         const response = await request.get(`http://${hostname}:8000/health`, {
-          timeout: 2000 // Reduced timeout for faster test execution
+          timeout: 2000
         });
-        // If we get a response, port 8000 is exposed - this is bad
-        expect(response.status()).toBe(0); // Should timeout or fail
-      } catch (error) {
-        // Expected: connection should fail or timeout
-        expect(error).toBeDefined();
-      }
+        // If we reach here, port 8000 is exposed - fail the test
+        expect(response.status()).not.toBe(200);
+      }).rejects.toThrow();
+      // Expected: connection should fail or timeout (throws error)
     });
   });
 
