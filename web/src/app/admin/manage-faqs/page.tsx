@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
-import { API_BASE_URL } from '@/lib/config';
 
 interface FAQ {
   id: string;

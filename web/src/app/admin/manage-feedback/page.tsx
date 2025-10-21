@@ -34,7 +34,6 @@ import {
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
-import { API_BASE_URL } from '@/lib/config';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';

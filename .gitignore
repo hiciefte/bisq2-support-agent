@@ -128,3 +128,4 @@ onion-keys/
 /web/test-results/
 /web/playwright-report/
 /web/playwright/.cache/
+web/tsconfig.tsbuildinfo
