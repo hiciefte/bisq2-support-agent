@@ -25,7 +25,7 @@ from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
     # Initialize services
     settings = get_settings()
     app.state.settings = settings
+
+    # Create data directories (avoid import-time I/O)
+    logger.info("Creating data directories...")
+    settings.ensure_data_dirs()
 
     # Run database migrations before initializing services
     logger.info("Running database migrations...")
@@ -202,12 +206,13 @@ logger.info("Prometheus metrics instrumentation initialized")
 
 # Create a dedicated metrics endpoint
 @app.get("/metrics", include_in_schema=False)
-async def metrics():
+async def metrics(request: Request):
     """
     Prometheus metrics endpoint (internal-only via nginx).
 
     This endpoint updates all feedback analytics metrics before exposing them.
     Access is restricted to internal networks (127.0.0.1, Docker networks) via nginx.
+    Defense-in-depth: Also enforces IP allowlist in production to fail closed if nginx misconfigured.
     """
     # Import here to avoid circular dependency
     from app.routes.admin.analytics import (
@@ -221,6 +226,17 @@ async def metrics():
         SOURCE_TOTAL,
     )
     from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
+
+    # Defense-in-depth: restrict in-app in production
+    _s = get_settings()
+    if str(_s.ENVIRONMENT).strip().lower() in {"production", "prod"}:
+        client_ip = (request.client.host if request.client else "") or ""
+        is_private = (
+            client_ip.startswith(("10.", "172.", "192.168.", "127.", "::1"))
+            or client_ip == "localhost"
+        )
+        if not is_private:
+            raise HTTPException(status_code=404)
 
     try:
         # Get feedback analytics without authentication (internal endpoint)
@@ -284,9 +300,14 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 if __name__ == "__main__":
     import uvicorn
 
+    settings = get_settings()
+    # Bind to 0.0.0.0 only in DEBUG mode (container/development)
+    # Otherwise bind to 127.0.0.1 for local security
+    host = "0.0.0.0" if settings.DEBUG else "127.0.0.1"
+
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host=host,
         port=8000,
-        reload=get_settings().DEBUG,
+        reload=settings.DEBUG,
     )
