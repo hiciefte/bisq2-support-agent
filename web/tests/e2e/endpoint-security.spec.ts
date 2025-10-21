@@ -47,15 +47,13 @@ test.describe('Endpoint Security', () => {
       // Should return 401 for invalid credentials, not 403 or 404
       expect(response.status()).toBe(401);
     });
-
-    test('/api/admin/faqs - Public FAQ listing should be accessible', async ({ request }) => {
-      const response = await request.get(`${BASE_URL}/api/admin/faqs`);
-      // This endpoint is documented as public in nginx configuration (CLAUDE.md)
-      expect(response.status()).toBe(200);
-    });
   });
 
   test.describe('Admin Endpoints - Should Be Restricted', () => {
+    test('/api/admin/faqs - Should require authentication', async ({ request }) => {
+      const response = await request.get(`${BASE_URL}/api/admin/faqs`);
+      expect([401, 403]).toContain(response.status());
+    });
     test('/api/admin/dashboard/overview - Should require authentication', async ({ request }) => {
       const response = await request.get(`${BASE_URL}/api/admin/dashboard/overview`);
       // Should return 401 (unauthorized) or 403 (forbidden), NOT 200
