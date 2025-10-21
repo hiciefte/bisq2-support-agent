@@ -15,7 +15,7 @@ const execAsync = promisify(exec);
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const WEB_BASE_URL = process.env.TEST_BASE_URL || `${WEB_BASE_URL}';
+const WEB_BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
 
 test.describe('Permission Regression Tests', () => {
@@ -23,7 +23,7 @@ test.describe('Permission Regression Tests', () => {
 
   test('FAQ deletion should work after container restart', async ({ page }) => {
     // Step 1: Create a test FAQ
-    await page.goto(`${WEB_BASE_URL}/admin');
+    await page.goto(`${WEB_BASE_URL}/admin`);
     await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
@@ -43,8 +43,15 @@ test.describe('Permission Regression Tests', () => {
     console.log('Restarting API container...');
     try {
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-      // Wait for API to be healthy (longer timeout for RAG initialization)
-      await page.waitForTimeout(20000);
+      // Wait for API to be healthy (poll /health)
+      await expect.poll(async () => {
+        try {
+          const res = await fetch(`${API_BASE_URL}/health`);
+          return res.status;
+        } catch {
+          return 0;
+        }
+      }, { timeout: 60000, intervals: [1000, 2000, 3000] }).toBe(200);
     } catch (error) {
       console.error('Failed to restart container:', error);
       throw error;
@@ -90,7 +97,7 @@ test.describe('Permission Regression Tests', () => {
     await page.waitForTimeout(20000);
 
     // Step 2: Submit feedback
-    await page.goto(`${WEB_BASE_URL}');
+    await page.goto(`${WEB_BASE_URL}`);
 
     // Handle privacy notice if it appears
     const privacyButton = page.locator('button:has-text("I Understand")');
@@ -109,7 +116,7 @@ test.describe('Permission Regression Tests', () => {
     await page.waitForTimeout(2000);
 
     // Step 3: Verify feedback was saved
-    await page.goto(`${WEB_BASE_URL}/admin/manage-feedback');
+    await page.goto(`${WEB_BASE_URL}/admin/manage-feedback`);
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
     await page.waitForURL('**/admin/manage-feedback');
@@ -177,7 +184,7 @@ test.describe('Permission Regression Tests', () => {
       const page = await context.newPage();
 
     // Try to create and delete FAQ
-    await page.goto(`${WEB_BASE_URL}/admin/manage-faqs');
+    await page.goto(`${WEB_BASE_URL}/admin/manage-faqs`);
     await page.waitForSelector('input[type="password"]', { timeout: 15000 });
     await page.fill('input[type="password"]', ADMIN_API_KEY);
     await page.click('button:has-text("Login")');
@@ -256,7 +263,7 @@ test.describe('Cross-session Permission Tests', () => {
 
     // Login both admins
     for (const page of [page1, page2]) {
-      await page.goto(`${WEB_BASE_URL}/admin');
+      await page.goto(`${WEB_BASE_URL}/admin`);
       await page.waitForSelector('input[type="password"]', { timeout: 10000 });
       await page.fill('input[type="password"]', ADMIN_API_KEY);
       await page.click('button:has-text("Login")');
