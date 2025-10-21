@@ -15,7 +15,6 @@ from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 router = APIRouter(prefix="/.well-known/onion-verify", tags=["Onion Verification"])
 
@@ -31,6 +30,7 @@ def _get_verification_data() -> tuple[Optional[str], Optional[str], Optional[str
     Returns:
         Tuple of (onion_address, verification_data, data_hash) or (None, None, None) if not configured
     """
+    settings = get_settings()  # Get settings at function level, not module level
     onion_address = settings.TOR_HIDDEN_SERVICE
     if not onion_address:
         return None, None, None
@@ -41,7 +41,16 @@ def _get_verification_data() -> tuple[Optional[str], Optional[str], Optional[str
     return onion_address, verification_data, data_hash
 
 
-ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
+# Initialize verification data at module load, with fallback for testing
+try:
+    ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
+except Exception as e:
+    # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
+    # initialize with None values. The endpoint handlers check for None.
+    logger.warning(f"Failed to initialize onion verification data: {e}")
+    ONION_ADDRESS = None
+    VERIFICATION_DATA = None
+    VERIFICATION_HASH = None
 
 
 @router.get("/bisq-support.txt")
