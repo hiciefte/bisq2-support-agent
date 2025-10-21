@@ -48,17 +48,8 @@ for key, value in sorted(os.environ.items()):
     else:
         logger.info(f"  {key}={value}")
 
-# Load settings
-logger.info("Loading settings...")
-try:
-    # Use the cached settings function
-    settings = get_settings()
-    logger.info("Settings loaded successfully")
-    logger.info(f"CORS_ORIGINS = {settings.CORS_ORIGINS}")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-except Exception as e:
-    logger.error(f"Error loading settings: {e}", exc_info=True)
-    raise
+# Settings will be lazily initialized when first accessed
+# No module-level initialization to avoid side effects during imports/testing
 
 
 @asynccontextmanager
@@ -136,9 +127,9 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title=settings.PROJECT_NAME,
+    title=get_settings().PROJECT_NAME,
     docs_url="/api/docs",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_url=f"{get_settings().API_V1_STR}/openapi.json",
     lifespan=lifespan,
 )
 
@@ -198,7 +189,7 @@ app.openapi = custom_openapi
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=get_settings().CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -297,4 +288,9 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=settings.DEBUG)
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=get_settings().DEBUG,
+    )

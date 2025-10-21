@@ -28,18 +28,10 @@ router = APIRouter(
     },
 )
 
-# Initialize settings and services with fallback for testing
-try:
-    settings = get_settings()
-    feedback_service = FeedbackService(settings=settings)
-    dashboard_service = DashboardService(settings=settings)
-except (ValueError, KeyError) as e:
-    # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
-    # services will be initialized when needed. This allows imports to succeed.
-    logger.warning(f"Failed to initialize admin analytics services: {e}")
-    settings = None
-    feedback_service = None
-    dashboard_service = None
+# Initialize settings and services
+settings = get_settings()
+feedback_service = FeedbackService(settings=settings)
+dashboard_service = DashboardService(settings=settings)
 
 # Create Prometheus metrics
 # Use Gauge for metrics that can go up and down (absolute values that change)
@@ -136,14 +128,6 @@ async def get_dashboard_overview():
 
     # Track dashboard requests
     DASHBOARD_REQUESTS.inc()
-
-    # Verify dashboard service is initialized
-    if dashboard_service is None:
-        raise BaseAppException(
-            detail="Dashboard service not available",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_code="DASHBOARD_SERVICE_UNAVAILABLE",
-        )
 
     try:
         overview_data = await dashboard_service.get_dashboard_overview()

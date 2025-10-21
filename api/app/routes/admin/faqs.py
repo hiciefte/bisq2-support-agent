@@ -27,16 +27,9 @@ router = APIRouter(
     },
 )
 
-# Initialize settings and services with fallback for testing
-try:
-    settings = get_settings()
-    faq_service = FAQService(settings=settings)
-except (ValueError, KeyError) as e:
-    # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
-    # services will be initialized when needed. This allows imports to succeed.
-    logger.warning(f"Failed to initialize admin FAQ services: {e}")
-    settings = None
-    faq_service = None
+# Initialize settings and services
+settings = get_settings()
+faq_service = FAQService(settings=settings)
 
 
 @router.get("/faqs", response_model=FAQListResponse)
@@ -48,14 +41,6 @@ async def get_all_faqs_for_admin_route(
     source: Optional[str] = None,
 ):
     """Get FAQs for the admin interface with pagination and filtering support."""
-    # Verify FAQ service is initialized
-    if faq_service is None:
-        raise BaseAppException(
-            detail="FAQ service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FAQ_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(
         f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}"
     )
@@ -86,14 +71,6 @@ async def get_all_faqs_for_admin_route(
 @router.post("/faqs", response_model=FAQIdentifiedItem, status_code=201)
 async def add_new_faq_route(faq_item: FAQItem):
     """Add a new FAQ."""
-    # Verify FAQ service is initialized
-    if faq_service is None:
-        raise BaseAppException(
-            detail="FAQ service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FAQ_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to add new FAQ: {faq_item.question[:30]}...")
     try:
         new_faq = faq_service.add_faq(faq_item)
@@ -110,14 +87,6 @@ async def add_new_faq_route(faq_item: FAQItem):
 @router.put("/faqs/{faq_id}", response_model=FAQIdentifiedItem)
 async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
     """Update an existing FAQ by its ID."""
-    # Verify FAQ service is initialized
-    if faq_service is None:
-        raise BaseAppException(
-            detail="FAQ service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FAQ_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to update FAQ with id: {faq_id}")
     updated_faq = faq_service.update_faq(faq_id, faq_item_update)
     if not updated_faq:
@@ -128,14 +97,6 @@ async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
 @router.delete("/faqs/{faq_id}", status_code=204)
 async def delete_existing_faq_route(faq_id: str):
     """Delete an existing FAQ by its ID."""
-    # Verify FAQ service is initialized
-    if faq_service is None:
-        raise BaseAppException(
-            detail="FAQ service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FAQ_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to delete FAQ with id: {faq_id}")
     success = faq_service.delete_faq(faq_id)
     if not success:

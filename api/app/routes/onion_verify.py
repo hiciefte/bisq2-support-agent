@@ -41,16 +41,8 @@ def _get_verification_data() -> tuple[Optional[str], Optional[str], Optional[str
     return onion_address, verification_data, data_hash
 
 
-# Initialize verification data at module load, with fallback for testing
-try:
-    ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
-except (ValueError, KeyError) as e:
-    # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
-    # initialize with None values. The endpoint handlers check for None.
-    logger.warning(f"Failed to initialize onion verification data: {e}")
-    ONION_ADDRESS = None
-    VERIFICATION_DATA = None
-    VERIFICATION_HASH = None
+# Initialize verification data at module load
+ONION_ADDRESS, VERIFICATION_DATA, VERIFICATION_HASH = _get_verification_data()
 
 
 @router.get("/bisq-support.txt")

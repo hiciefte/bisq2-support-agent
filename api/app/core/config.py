@@ -1,6 +1,5 @@
 import logging
 import os
-from functools import lru_cache
 from pathlib import Path
 
 from pydantic import field_validator
@@ -43,7 +42,7 @@ class Settings(BaseSettings):
 
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
-    ADMIN_API_KEY: str  # No default, must be set via environment
+    ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
 
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
@@ -232,12 +231,57 @@ class Settings(BaseSettings):
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
+    @field_validator("ADMIN_API_KEY")
+    @classmethod
+    def validate_admin_key_in_production(cls, v: str, info) -> str:
+        """Ensure ADMIN_API_KEY is set in production environments.
 
-@lru_cache()
+        Args:
+            v: The ADMIN_API_KEY value
+            info: Validation info containing other field values
+
+        Returns:
+            The validated ADMIN_API_KEY
+
+        Raises:
+            ValueError: If ADMIN_API_KEY is empty in production
+        """
+        # Get environment from data if available
+        environment = info.data.get("ENVIRONMENT", "development")
+
+        # Require ADMIN_API_KEY in production
+        if environment == "production" and not v:
+            raise ValueError(
+                "ADMIN_API_KEY is required in production environment. "
+                "Set the ADMIN_API_KEY environment variable."
+            )
+
+        return v
+
+
+# Lazy initialization pattern - settings only created when first accessed
+_settings: Settings | None = None
+
+
 def get_settings() -> Settings:
-    """Get cached application settings instance.
+    """Get cached application settings instance with lazy initialization.
+
+    Settings are only created once on first access, then cached for subsequent calls.
+    This prevents module-level side effects and allows testing without environment variables.
 
     Returns:
         Settings: Application settings object
     """
-    return Settings()
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+
+def reset_settings() -> None:
+    """Reset the cached settings instance.
+
+    Useful for testing when you need to reload settings with different values.
+    """
+    global _settings
+    _settings = None

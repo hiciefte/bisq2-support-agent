@@ -38,18 +38,10 @@ router = APIRouter(
     },
 )
 
-# Initialize settings and services with fallback for testing
-try:
-    settings = get_settings()
-    feedback_service = FeedbackService(settings=settings)
-    faq_service = FAQService(settings=settings)
-except (ValueError, KeyError) as e:
-    # If settings fail to load (e.g., missing ADMIN_API_KEY during testing),
-    # services will be initialized when needed. This allows imports to succeed.
-    logger.warning(f"Failed to initialize admin feedback services: {e}")
-    settings = None
-    feedback_service = None
-    faq_service = None
+# Initialize settings and services
+settings = get_settings()
+feedback_service = FeedbackService(settings=settings)
+faq_service = FAQService(settings=settings)
 
 # Controlled vocabulary for issue types to prevent high-cardinality
 KNOWN_ISSUE_TYPES = {
@@ -104,14 +96,6 @@ async def get_feedback_analytics() -> Dict[str, Any]:
     - Authorization header with Bearer token
     - api_key query parameter
     """
-    # Verify feedback service is initialized
-    if feedback_service is None or settings is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     feedback = feedback_service.load_feedback()
 
     # Basic analytics
@@ -242,14 +226,6 @@ async def get_feedback_list(
 
     Authentication required via API key.
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(
         f"Admin request to fetch feedback list with filters: rating={rating}, page={page}"
     )
@@ -299,14 +275,6 @@ async def get_feedback_stats_enhanced():
 
     Authentication required via API key.
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info("Admin request to fetch enhanced feedback statistics")
 
     try:
@@ -335,14 +303,6 @@ async def get_feedback_needing_faq() -> Dict[str, Any]:
 
     Authentication required via API key.
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info("Admin request to fetch feedback needing FAQ creation")
 
     try:
@@ -372,14 +332,6 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
 
     Authentication required via API key.
     """
-    # Verify both services are initialized
-    if feedback_service is None or faq_service is None:
-        raise BaseAppException(
-            detail="Required services not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="SERVICES_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to create FAQ from feedback: {request.message_id}")
 
     try:
@@ -509,14 +461,6 @@ async def get_feedback_details(message_id: str) -> Dict[str, Any]:
 
     Authentication required via API key.
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to fetch feedback details for message: {message_id}")
 
     try:
@@ -549,14 +493,6 @@ async def get_feedback_by_issues() -> Dict[str, Any]:
 
     Authentication required via API key.
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info("Admin request to fetch feedback grouped by issues")
 
     try:
@@ -604,14 +540,6 @@ async def delete_feedback(message_id: str):
         204 No Content on success
         404 Not Found if feedback doesn't exist
     """
-    # Verify feedback service is initialized
-    if feedback_service is None:
-        raise BaseAppException(
-            detail="Feedback service not available",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="FEEDBACK_SERVICE_UNAVAILABLE",
-        )
-
     logger.info(f"Admin request to delete feedback: {message_id}")
 
     try:
