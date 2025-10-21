@@ -99,7 +99,7 @@ google-auth==2.41.1
     # via kubernetes
 googleapis-common-protos==1.71.0
     # via opentelemetry-exporter-otlp-proto-grpc
-grpcio==1.75.1
+grpcio==1.76.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -167,7 +167,7 @@ langchain-core==1.0.0
     #   langchain-chroma
     #   langchain-openai
     #   langchain-text-splitters
-langchain-openai==1.0.0
+langchain-openai==1.0.1
     # via -r api/requirements.in
 langchain-text-splitters==1.0.0
     # via -r api/requirements.in
@@ -380,7 +380,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2025.10.22
+regex==2025.10.23
     # via tiktoken
 requests==2.32.5
     # via
