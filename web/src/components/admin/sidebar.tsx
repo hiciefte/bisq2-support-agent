@@ -30,29 +30,18 @@ const navigation = [
 
 export function AdminSidebar() {
   const [isMobileOpen, setIsMobileOpen] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
   const pathname = usePathname()
 
   useEffect(() => {
-    // Since we now use SecureAuth wrapper, we're only rendered when authenticated
-    setIsAuthenticated(true);
-
-    const handleAuthChange = () => {
-      // This will be called when authentication status changes
-      setIsAuthenticated(true);
-    };
-
     const handleEscapeKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && isMobileOpen) {
         setIsMobileOpen(false);
       }
     };
 
-    window.addEventListener('admin-auth-changed', handleAuthChange);
     document.addEventListener('keydown', handleEscapeKey);
 
     return () => {
-      window.removeEventListener('admin-auth-changed', handleAuthChange);
       document.removeEventListener('keydown', handleEscapeKey);
     };
   }, [isMobileOpen]);
@@ -129,11 +118,6 @@ export function AdminSidebar() {
       </div>
     </div>
   )
-
-  // Don't render anything if not authenticated
-  if (!isAuthenticated) {
-    return null;
-  }
 
   return (
     <>
