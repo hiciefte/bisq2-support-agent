@@ -50,8 +50,8 @@ test.describe('Endpoint Security', () => {
 
     test('/api/admin/faqs - Public FAQ listing should be accessible', async ({ request }) => {
       const response = await request.get(`${BASE_URL}/api/admin/faqs`);
-      // This might be public or require auth - check actual status
-      expect([200, 401, 403]).toContain(response.status());
+      // This endpoint is documented as public in nginx configuration (CLAUDE.md)
+      expect(response.status()).toBe(200);
     });
   });
 
