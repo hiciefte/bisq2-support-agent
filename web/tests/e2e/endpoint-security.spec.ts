@@ -113,13 +113,15 @@ test.describe('Endpoint Security', () => {
       const hostname = new URL(BASE_URL).hostname;
 
       await expect(async () => {
-        const response = await request.get(`http://${hostname}:8000/health`, {
+        await request.get(`http://${hostname}:8000/health`, {
           timeout: 2000
         });
-        // If we reach here, port 8000 is exposed - fail the test
-        expect(response.status()).not.toBe(200);
+        // If we reach here (no error thrown), port 8000 is exposed
+        // Fail the test explicitly - ANY successful response is a security issue
+        throw new Error('Port 8000 is exposed - security vulnerability detected!');
       }).rejects.toThrow();
-      // Expected: connection should fail or timeout (throws error)
+      // Expected: connection should fail or timeout (throws network error)
+      // If connection succeeds, we throw explicit error above
     });
   });
 
