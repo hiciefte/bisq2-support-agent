@@ -188,11 +188,23 @@
             "We're downloading more RAM. This might take a moment..."
         ];
 
-        let currentIndex = 0;
+        // Load last message index from localStorage to persist across reloads
+        let currentIndex = parseInt(localStorage.getItem('maintenanceMessageIndex') || '0', 10);
 
-        // Rotate messages every 8 seconds
+        // Validate and sanitize the index
+        if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= messages.length) {
+            currentIndex = 0;
+            localStorage.setItem('maintenanceMessageIndex', '0');
+        }
+
+        // Display initial message
+        document.getElementById('message').textContent = messages[currentIndex];
+
+        // Rotate messages every 15 seconds (better readability)
         function rotateMessage() {
             currentIndex = (currentIndex + 1) % messages.length;
+            localStorage.setItem('maintenanceMessageIndex', currentIndex.toString());
+
             const messageEl = document.getElementById('message');
             messageEl.style.opacity = '0';
 
@@ -202,12 +214,12 @@
             }, 300);
         }
 
-        setInterval(rotateMessage, 8000);
+        setInterval(rotateMessage, 15000);
 
-        // Auto-refresh every 10 seconds to check if server is back
+        // Auto-refresh every 30 seconds to check if server is back
         setTimeout(() => {
             window.location.reload();
-        }, 10000);
+        }, 30000);
 
         // Smooth fade for message transitions
         document.getElementById('message').style.transition = 'opacity 0.3s ease-in-out';
