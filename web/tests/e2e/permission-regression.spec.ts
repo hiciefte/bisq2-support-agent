@@ -1,6 +1,17 @@
 import { test, expect } from '@playwright/test';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import {
+  API_BASE_URL,
+  WEB_BASE_URL,
+  ADMIN_API_KEY,
+  RESTART_TEST_TIMEOUT_MS,
+  dismissPrivacyNotice,
+  waitForApiReady,
+  loginAsAdmin,
+  navigateToFaqManagement,
+  hasPermissionErrors,
+} from './utils';
 
 const execAsync = promisify(exec);
 
@@ -14,22 +25,13 @@ const execAsync = promisify(exec);
  * operations continue to work after container restarts.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const WEB_BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
-
 test.describe('Permission Regression Tests', () => {
   test.skip(process.env.CI === 'true', 'Container restart tests only run locally');
 
   test('FAQ deletion should work after container restart', async ({ page }) => {
     // Step 1: Create a test FAQ
-    await page.goto(`${WEB_BASE_URL}/admin`);
-    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-    await page.fill('input[type="password"]', ADMIN_API_KEY);
-    await page.click('button:has-text("Login")');
-    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
-    await page.click('a[href="/admin/manage-faqs"]');
-    await page.waitForSelector('text=FAQ', { timeout: 10000 });
+    await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+    await navigateToFaqManagement(page);
 
     await page.click('button:has-text("Add New FAQ")');
     const testQuestion = `Permission test ${Date.now()}`;
@@ -44,14 +46,7 @@ test.describe('Permission Regression Tests', () => {
     try {
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
       // Wait for API to be healthy (poll /health)
-      await expect.poll(async () => {
-        try {
-          const res = await fetch(`${API_BASE_URL}/health`);
-          return res.status;
-        } catch {
-          return 0;
-        }
-      }, { timeout: 60000, intervals: [1000, 2000, 3000] }).toBe(200);
+      await waitForApiReady(page);
     } catch (error) {
       console.error('Failed to restart container:', error);
       throw error;
@@ -83,27 +78,24 @@ test.describe('Permission Regression Tests', () => {
       'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml logs api --tail=50'
     );
 
-    const hasPermissionError = logs.includes('Permission denied') || logs.includes('EACCES');
-    if (hasPermissionError) {
+    const permissionError = hasPermissionErrors(logs);
+    if (permissionError) {
       console.error('Permission errors found in logs:', logs);
     }
-    expect(hasPermissionError).toBe(false);
+    expect(permissionError).toBe(false);
   });
 
   test('Feedback submission should work after container restart', async ({ page }) => {
     // Step 1: Restart API container
     console.log('Restarting API container...');
     await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
-    await page.waitForTimeout(20000);
+    await waitForApiReady(page);
 
     // Step 2: Submit feedback
     await page.goto(`${WEB_BASE_URL}`);
 
     // Handle privacy notice if it appears
-    const privacyButton = page.locator('button:has-text("I Understand")');
-    if (await privacyButton.isVisible()) {
-      await privacyButton.click();
-    }
+    await dismissPrivacyNotice(page);
 
     await page.getByRole('textbox').waitFor({ state: 'visible' });
 
@@ -158,9 +150,9 @@ test.describe('Permission Regression Tests', () => {
     }
   });
 
-  test('Multiple container restarts should not break permissions', async ({ browser }) => {
+  test('Multiple container restarts should not break permissions', async ({ browser, request }) => {
     // Set longer timeout for this test (3 restarts + operations)
-    test.setTimeout(parseInt(process.env.RESTART_TEST_TIMEOUT_MS ?? '180000', 10)); // default 3 minutes
+    test.setTimeout(RESTART_TEST_TIMEOUT_MS);
 
     // Restart container 3 times (without using page context which gets closed)
     for (let i = 1; i <= 3; i++) {
@@ -168,14 +160,7 @@ test.describe('Permission Regression Tests', () => {
       await execAsync('docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api');
 
       // Poll API until it's ready (more robust than static sleep)
-      await expect.poll(async () => {
-        try {
-          const res = await fetch(`${API_BASE_URL}/health`);
-          return res.status;
-        } catch {
-          return 0;
-        }
-      }, { timeout: 60000, intervals: [1000, 2000, 3000] }).toBe(200);
+      await waitForApiReady(request);
     }
 
     // Create a fresh page context after restarts
@@ -184,12 +169,8 @@ test.describe('Permission Regression Tests', () => {
       const page = await context.newPage();
 
     // Try to create and delete FAQ
-    await page.goto(`${WEB_BASE_URL}/admin/manage-faqs`);
-    await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-    await page.fill('input[type="password"]', ADMIN_API_KEY);
-    await page.click('button:has-text("Login")');
-    await page.waitForSelector('text=Admin Dashboard', { timeout: 15000 });
-    await page.waitForSelector('text=FAQ', { timeout: 30000 });
+    await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+    await navigateToFaqManagement(page);
 
     // Create FAQ
     await page.click('button:has-text("Add New FAQ")');
@@ -263,17 +244,8 @@ test.describe('Cross-session Permission Tests', () => {
 
     // Login both admins
     for (const page of [page1, page2]) {
-      await page.goto(`${WEB_BASE_URL}/admin`);
-      await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-      await page.fill('input[type="password"]', ADMIN_API_KEY);
-      await page.click('button:has-text("Login")');
-      await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
-
-      // Wait for navigation menu to be fully loaded and visible
-      const faqLink = page.locator('a[href="/admin/manage-faqs"]').first();
-      await faqLink.waitFor({ state: 'visible', timeout: 15000 });
-      await faqLink.click();
-      await page.waitForSelector('text=FAQ', { timeout: 10000 });
+      await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+      await navigateToFaqManagement(page);
     }
 
     // Admin 1: Create FAQ
