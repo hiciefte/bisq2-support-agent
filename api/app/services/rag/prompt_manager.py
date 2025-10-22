@@ -334,10 +334,11 @@ Answer:"""
                     context=context,
                 )
 
-                # Log formatted prompt at DEBUG level
-                logger.debug("=== DEBUG: Complete Formatted Prompt ===")
-                logger.debug(formatted_prompt)
-                logger.debug("=== End Debug Log ===")
+                # Log prompt metadata only (avoid logging full content for PII/compliance)
+                logger.debug(
+                    f"Formatted prompt ready - length: {len(formatted_prompt)} chars, "
+                    f"has context: {bool(context)}"
+                )
 
                 # Generate response
                 response_text = llm.invoke(formatted_prompt)
