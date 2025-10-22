@@ -47,7 +47,7 @@ class DocumentRetriever:
         For explicit Bisq 1 queries:
             Stage 1: Search for Bisq 1 content (k=4, primary)
             Stage 2: Add General/Both content (k=2, secondary)
-            Stage 3: Skip Bisq 2 content unless comparison requested
+            Stage 3: Skip Bisq 2 content (comparison queries use Bisq 2-first flow)
 
         Args:
             query: The search query
@@ -135,8 +135,13 @@ class DocumentRetriever:
             )
             fallback_docs = self.retriever.invoke(query)
 
-            # Define version priority (higher number = higher priority)
-            version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}
+            # Define version priority based on query type (higher number = higher priority)
+            if is_bisq1_query and not is_comparison_query:
+                # For Bisq 1 queries, prioritize Bisq 1 content
+                version_priority = {"Bisq 1": 2, "General": 1, "Bisq 2": 0}
+            else:
+                # Default: prioritize Bisq 2 content
+                version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}
 
             # Sort by version priority while preserving retrieval order within each version
             sorted_docs = sorted(

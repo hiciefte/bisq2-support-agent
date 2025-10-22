@@ -435,7 +435,7 @@ class TestDocumentRetrieverVersionPriority:
             Document(page_content="Bisq 1 content", metadata={"bisq_version": "Bisq 1"})
         ]
 
-        def mock_similarity_search(query, k, filter):
+        def mock_similarity_search(_query, k, filter):
             version = filter.get("bisq_version")
             if version == "Bisq 2":
                 return bisq2_docs[:k]

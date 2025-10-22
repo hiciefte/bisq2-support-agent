@@ -24,7 +24,6 @@ Environment variables:
 import argparse
 import asyncio
 import logging
-from asyncio import get_event_loop
 from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
@@ -88,9 +87,8 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
 
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
 
-            logger.info(
-                f"FAQ extraction completed. Generated {len(new_faqs)} new FAQ entries."
-            )
+            count = len(new_faqs) if new_faqs is not None else 0
+            logger.info(f"FAQ extraction completed. Generated {count} new FAQ entries.")
             return new_faqs
 
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
@@ -158,8 +156,4 @@ if __name__ == "__main__":
         logger.debug("Debug logging enabled")
 
     # Run the extraction process
-    loop = get_event_loop()
-    try:
-        loop.run_until_complete(main(force_reprocess=args.force_reprocess))
-    finally:
-        loop.close()
+    asyncio.run(main(force_reprocess=args.force_reprocess))
