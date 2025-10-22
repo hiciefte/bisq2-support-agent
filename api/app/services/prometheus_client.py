@@ -75,9 +75,11 @@ class PrometheusClient:
         """
         # Query for average response time using histogram metrics
         # rate() calculates per-second average rate over time range
+        # sum() aggregates across all label sets for accurate total
         promql = (
-            "rate(bisq_query_response_time_seconds_sum[1h]) / "
-            "rate(bisq_query_response_time_seconds_count[1h])"
+            "sum(rate(bisq_query_response_time_seconds_sum[1h]))"
+            " / "
+            "sum(rate(bisq_query_response_time_seconds_count[1h]))"
         )
 
         result = await self.query(promql)
@@ -108,7 +110,8 @@ class PrometheusClient:
         Returns:
             Total number of queries processed, or None if unavailable
         """
-        promql = "bisq_queries_total"
+        # sum() aggregates the counter across all label sets
+        promql = "sum(bisq_queries_total)"
 
         result = await self.query(promql)
         if not result or not result.get("data", {}).get("result"):
@@ -123,32 +126,33 @@ class PrometheusClient:
             logger.warning(f"Failed to parse query count from Prometheus: {e}")
             return None
 
-    async def get_response_time_trend(
-        self, lookback_hours: int = 24
-    ) -> Optional[float]:
+    async def get_response_time_trend(self, window_hours: int = 1) -> Optional[float]:
         """Calculate response time trend over time.
 
         Compares current average response time to previous period to
         calculate improvement or degradation.
 
         Args:
-            lookback_hours: Hours to look back for trend calculation
+            window_hours: Hours for the time window (default: 1 hour)
 
         Returns:
             Trend value (negative = improvement, positive = degradation),
             or None if unavailable
         """
-        # Get current period average (last hour)
+        # Get current period average (last window_hours)
+        # sum() aggregates across all label sets for accurate total
         current_promql = (
-            "rate(bisq_query_response_time_seconds_sum[1h]) / "
-            "rate(bisq_query_response_time_seconds_count[1h])"
+            f"sum(rate(bisq_query_response_time_seconds_sum[{window_hours}h]))"
+            " / "
+            f"sum(rate(bisq_query_response_time_seconds_count[{window_hours}h]))"
         )
 
-        # Get previous period average (hour before last hour)
+        # Get previous period average (window before current window)
         # offset pushes the time window back by the specified duration
         previous_promql = (
-            "rate(bisq_query_response_time_seconds_sum[1h] offset 1h) / "
-            "rate(bisq_query_response_time_seconds_count[1h] offset 1h)"
+            f"sum(rate(bisq_query_response_time_seconds_sum[{window_hours}h] offset {window_hours}h))"
+            " / "
+            f"sum(rate(bisq_query_response_time_seconds_count[{window_hours}h] offset {window_hours}h))"
         )
 
         current_result = await self.query(current_promql)
