@@ -209,6 +209,9 @@
         localStorage.setItem('maintenanceMessageIndex', '0');
     }
 
+    // Smooth fade for message transitions (apply before initial message)
+    document.getElementById('message').style.transition = 'opacity 0.3s ease-in-out';
+
     // Display initial message
     document.getElementById('message').textContent = messages[currentIndex];
 
@@ -232,9 +235,6 @@
     setTimeout(() => {
         window.location.reload();
     }, 30000);
-
-    // Smooth fade for message transitions
-    document.getElementById('message').style.transition = 'opacity 0.3s ease-in-out';
 </script>
 </body>
 </html>

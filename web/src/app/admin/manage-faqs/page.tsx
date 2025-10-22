@@ -226,12 +226,11 @@ export default function ManageFaqsPage() {
     }
   };
 
-  const handleToggleVerification = async (faq: FAQ) => {
+  const handleVerifyFaq = async (faq: FAQ) => {
     setIsSubmitting(true);
     try {
-      const newVerifiedStatus = !faq.verified;
       const response = await makeAuthenticatedRequest(
-        `/admin/faqs/${faq.id}/verify?verified=${newVerifiedStatus}`,
+        `/admin/faqs/${faq.id}/verify?verified=true`,
         {
           method: 'PATCH',
         }
@@ -241,12 +240,12 @@ export default function ManageFaqsPage() {
         fetchFaqs(currentPage);
         setError(null);
       } else {
-        const errorText = `Failed to update verification status. Status: ${response.status}`;
+        const errorText = `Failed to verify FAQ. Status: ${response.status}`;
         console.error(errorText);
         setError(errorText);
       }
     } catch (error) {
-      const errorText = 'An unexpected error occurred while updating verification status.';
+      const errorText = 'An unexpected error occurred while verifying FAQ.';
       console.error(errorText, error);
       setError(errorText);
     } finally {
@@ -545,7 +544,7 @@ export default function ManageFaqsPage() {
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
-                                onClick={() => handleToggleVerification(faq)}
+                                onClick={() => handleVerifyFaq(faq)}
                                 className="!bg-green-600 hover:!bg-green-700"
                               >
                                 Verify FAQ

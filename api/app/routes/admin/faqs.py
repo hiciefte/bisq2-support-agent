@@ -107,13 +107,16 @@ async def toggle_faq_verification_route(faq_id: str, verified: bool):
     """
     logger.info(f"Admin request to set FAQ {faq_id} verification to: {verified}")
 
+    def _validate_faq_exists(faq_id: str, faq_obj) -> None:
+        """Helper to validate FAQ exists and raise error if not."""
+        if not faq_obj:
+            raise FAQNotFoundError(faq_id)
+
     try:
         # Get the current FAQ
         all_faqs = faq_service.get_all_faqs()
         current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
-
-        if not current_faq:
-            raise FAQNotFoundError(faq_id)
+        _validate_faq_exists(faq_id, current_faq)
 
         # Update the verification status
         updated_faq_data = FAQItem(
@@ -125,12 +128,9 @@ async def toggle_faq_verification_route(faq_id: str, verified: bool):
         )
 
         updated_faq = faq_service.update_faq(faq_id, updated_faq_data)
-
-        if not updated_faq:
-            raise FAQNotFoundError(faq_id)
+        _validate_faq_exists(faq_id, updated_faq)
 
         logger.info(f"Successfully updated FAQ {faq_id} verification to: {verified}")
-        return updated_faq
     except FAQNotFoundError:
         raise
     except Exception as e:
@@ -140,6 +140,8 @@ async def toggle_faq_verification_route(faq_id: str, verified: bool):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="FAQ_VERIFY_UPDATE_FAILED",
         ) from e
+    else:
+        return updated_faq
 
 
 @router.delete("/faqs/{faq_id}", status_code=204)
