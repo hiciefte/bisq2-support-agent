@@ -331,10 +331,7 @@ class TestPromptManagerVersionHandling:
         assert "if" in prompt_template.lower() or "when" in prompt_template.lower()
 
         # Should NOT have rigid identity statement
-        assert (
-            "you are a bisq 2 support assistant" not in prompt_template.lower()
-            or "primarily focused on bisq 2" in prompt_template.lower()
-        )
+        assert "you are a bisq 2 support assistant" not in prompt_template.lower()
 
     def test_context_only_prompt_version_detection(self, test_settings):
         """Test that context-only prompts handle version mentions.
@@ -372,7 +369,10 @@ class TestDocumentRetrieverVersionPriority:
         mock_vectorstore = Mock()
         mock_vectorstore.similarity_search = Mock(return_value=[])
 
-        retriever = DocumentRetriever(mock_vectorstore, test_settings)
+        # Create mock retriever that implements minimal interface
+        mock_retriever = Mock()
+
+        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
 
         # Act
         query = "How do I use mediation in Bisq 1?"
@@ -447,7 +447,10 @@ class TestDocumentRetrieverVersionPriority:
 
         mock_vectorstore.similarity_search = Mock(side_effect=mock_similarity_search)
 
-        retriever = DocumentRetriever(mock_vectorstore, test_settings)
+        # Create mock retriever that implements minimal interface
+        mock_retriever = Mock()
+
+        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
 
         # Act
         query = "How do I use Bisq 1 mediation?"  # Bisq 1 only, no Bisq 2 mention
@@ -456,6 +459,16 @@ class TestDocumentRetrieverVersionPriority:
         # Assert
         # The retrieval should include Bisq 1 documents
         assert any(doc.metadata.get("bisq_version") == "Bisq 1" for doc in docs)
+
+        # Ensure no Bisq 2 retrieval occurred for pure Bisq 1 query
+        bisq2_calls = [
+            c
+            for c in mock_vectorstore.similarity_search.call_args_list
+            if c.kwargs.get("filter", {}).get("bisq_version") == "Bisq 2"
+        ]
+        assert (
+            len(bisq2_calls) == 0
+        ), "Bisq 2 stage should be skipped for pure Bisq 1 queries"
 
 
 class TestEdgeCases:

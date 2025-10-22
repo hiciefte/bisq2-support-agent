@@ -8,6 +8,7 @@ This module handles intelligent document retrieval with:
 """
 
 import logging
+import re
 from typing import Dict, List, Set
 
 from langchain_chroma import Chroma
@@ -26,15 +27,17 @@ class DocumentRetriever:
     - Source deduplication to prevent repetitive results
     """
 
-    def __init__(self, vectorstore: Chroma, retriever: VectorStoreRetriever):
+    def __init__(
+        self, vectorstore: Chroma, retriever: VectorStoreRetriever | None = None
+    ):
         """Initialize the document retriever.
 
         Args:
             vectorstore: ChromaDB vectorstore instance
-            retriever: LangChain VectorStoreRetriever instance
+            retriever: LangChain VectorStoreRetriever instance (optional, defaults to vectorstore.as_retriever())
         """
         self.vectorstore = vectorstore
-        self.retriever = retriever
+        self.retriever = retriever or vectorstore.as_retriever()
 
     def retrieve_with_version_priority(self, query: str) -> List[Document]:
         """Multi-stage retrieval that adapts to version-specific queries.
@@ -57,14 +60,15 @@ class DocumentRetriever:
         """
         all_docs = []
 
-        # Detect version from query
+        # Detect version from query using word boundaries to avoid false positives
         query_lower = query.lower()
-        is_bisq1_query = "bisq 1" in query_lower or "bisq1" in query_lower
-        is_comparison_query = (
-            is_bisq1_query and ("bisq 2" in query_lower or "bisq2" in query_lower)
-        ) or any(
-            word in query_lower
-            for word in ["compare", "difference", "vs", "versus", "both versions"]
+        is_bisq1_query = bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", query_lower))
+        mentions_bisq2 = bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", query_lower))
+        comparison_tokens = re.compile(
+            r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
+        )
+        is_comparison_query = (is_bisq1_query and mentions_bisq2) or bool(
+            comparison_tokens.search(query_lower)
         )
 
         try:
@@ -157,8 +161,22 @@ class DocumentRetriever:
             )
             return sorted_docs
         else:
-            logger.info(f"Total documents retrieved: {len(all_docs)}")
-            return all_docs
+            # De-duplicate while preserving order
+            seen: set[tuple[str, str]] = set()
+            unique_docs: list[Document] = []
+            for d in all_docs:
+                key = (
+                    d.metadata.get("title", "Unknown"),
+                    d.metadata.get("section", ""),
+                )
+                if key not in seen:
+                    seen.add(key)
+                    unique_docs.append(d)
+
+            logger.info(
+                f"Total documents retrieved: {len(unique_docs)} (deduped from {len(all_docs)})"
+            )
+            return unique_docs
 
     def format_documents(self, docs: List[Document]) -> str:
         """Format retrieved documents with version-aware processing.
@@ -174,7 +192,7 @@ class DocumentRetriever:
 
         # Sort documents by version weight and relevance
         # Use bisq_version metadata (matches retrieval filter key)
-        # Define version priority (lower number = higher priority)
+        # Define version priority (higher number = higher priority; matches reverse=True)
         version_priority = {"Bisq 2": 2, "General": 1, "Bisq 1": 0}
 
         sorted_docs = sorted(
@@ -230,7 +248,9 @@ class DocumentRetriever:
 
         for source in sources:
             # Create a key based on title and type (primary deduplication)
-            source_key = f"{source['title']}:{source['type']}"
+            source_key = (
+                f"{source.get('title', 'Unknown')}:{source.get('type', 'unknown')}"
+            )
 
             # Only include the source if we haven't seen this key before
             if source_key not in seen_sources:
