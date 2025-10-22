@@ -374,6 +374,6 @@ class DashboardService:
             "total_faqs_created": 0,
             "total_feedback": 0,
             "total_faqs": 0,
-            "last_updated": datetime.now().isoformat(),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
             "fallback": True,
         }
