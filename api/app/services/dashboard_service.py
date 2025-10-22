@@ -197,12 +197,14 @@ class DashboardService:
             return 0
 
     async def _calculate_helpful_rate_trend(self) -> float:
-        """Calculate helpful rate trend (positive/negative percentage change).
+        """Calculate helpful rate trend (delta in percentage points).
 
         Compares helpful rate from last 24 hours vs previous 24 hours.
+        Returns absolute change in percentage points (not relative change).
         Positive value = improvement, negative value = degradation.
         """
         try:
+            import asyncio
             from datetime import datetime, timedelta
 
             now = datetime.now()
@@ -215,16 +217,18 @@ class DashboardService:
             previous_start = (now - timedelta(hours=48)).isoformat()
             previous_end = (now - timedelta(hours=24)).isoformat()
 
-            # Get stats for both periods
-            current_stats = (
-                self.feedback_service.repository.get_feedback_stats_for_period(
-                    current_start, current_end
-                )
-            )
-            previous_stats = (
-                self.feedback_service.repository.get_feedback_stats_for_period(
-                    previous_start, previous_end
-                )
+            # Get stats for both periods (offload to thread to avoid blocking event loop)
+            current_stats, previous_stats = await asyncio.gather(
+                asyncio.to_thread(
+                    self.feedback_service.repository.get_feedback_stats_for_period,
+                    current_start,
+                    current_end,
+                ),
+                asyncio.to_thread(
+                    self.feedback_service.repository.get_feedback_stats_for_period,
+                    previous_start,
+                    previous_end,
+                ),
             )
 
             # Calculate helpful rates (as percentages)
@@ -269,13 +273,15 @@ class DashboardService:
             return 0.0
 
     async def _calculate_negative_feedback_trend(self) -> float:
-        """Calculate negative feedback trend.
+        """Calculate negative feedback trend (relative percentage change).
 
         Compares negative feedback count from last 24 hours vs previous 24 hours.
+        Returns relative percentage change: ((current - previous) / previous) * 100.
         Positive value = more negative feedback (degradation).
         Negative value = less negative feedback (improvement).
         """
         try:
+            import asyncio
             from datetime import datetime, timedelta
 
             now = datetime.now()
@@ -288,16 +294,18 @@ class DashboardService:
             previous_start = (now - timedelta(hours=48)).isoformat()
             previous_end = (now - timedelta(hours=24)).isoformat()
 
-            # Get stats for both periods
-            current_stats = (
-                self.feedback_service.repository.get_feedback_stats_for_period(
-                    current_start, current_end
-                )
-            )
-            previous_stats = (
-                self.feedback_service.repository.get_feedback_stats_for_period(
-                    previous_start, previous_end
-                )
+            # Get stats for both periods (offload to thread to avoid blocking event loop)
+            current_stats, previous_stats = await asyncio.gather(
+                asyncio.to_thread(
+                    self.feedback_service.repository.get_feedback_stats_for_period,
+                    current_start,
+                    current_end,
+                ),
+                asyncio.to_thread(
+                    self.feedback_service.repository.get_feedback_stats_for_period,
+                    previous_start,
+                    previous_end,
+                ),
             )
 
             current_negative = current_stats["negative"]

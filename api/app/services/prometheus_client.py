@@ -26,6 +26,23 @@ class PrometheusClient:
         """
         self.prometheus_url = settings.PROMETHEUS_URL
         self.timeout = 10.0  # 10 second timeout for Prometheus queries
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create shared HTTP client for connection pooling.
+
+        Returns:
+            Shared AsyncClient instance for efficient connection reuse
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    async def close(self) -> None:
+        """Close the shared HTTP client and release resources."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def query(self, promql: str) -> Optional[Dict[str, Any]]:
         """Execute a PromQL query against Prometheus.
@@ -41,27 +58,27 @@ class PrometheusClient:
             >>> print(result['data']['result'])
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(
-                    f"{self.prometheus_url}/api/v1/query",
-                    params={"query": promql},
-                )
-                response.raise_for_status()
-                data = response.json()
+            client = await self._get_client()
+            response = await client.get(
+                f"{self.prometheus_url}/api/v1/query",
+                params={"query": promql},
+            )
+            response.raise_for_status()
+            data = response.json()
 
-                if data.get("status") != "success":
-                    logger.error(f"Prometheus query failed: {data}")
-                    return None
+            if data.get("status") != "success":
+                logger.error(f"Prometheus query failed: {data}")
+                return None
 
-                return data
+            return data
         except httpx.TimeoutException:
             logger.warning(f"Prometheus query timed out: {promql}")
             return None
         except httpx.HTTPError as e:
-            logger.error(f"Prometheus HTTP error: {e}")
+            logger.exception(f"Prometheus HTTP error: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error querying Prometheus: {e}", exc_info=True)
+            logger.exception(f"Unexpected error querying Prometheus: {e}")
             return None
 
     async def get_average_response_time(self) -> Optional[float]:
@@ -196,9 +213,9 @@ class PrometheusClient:
             True if Prometheus is accessible, False otherwise
         """
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.prometheus_url}/-/healthy")
-                return response.status_code == 200
-        except Exception as e:
+            client = await self._get_client()
+            response = await client.get(f"{self.prometheus_url}/-/healthy")
+            return response.status_code == 200
+        except httpx.HTTPError as e:
             logger.warning(f"Prometheus health check failed: {e}")
             return False

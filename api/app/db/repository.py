@@ -604,11 +604,20 @@ class FeedbackRepository:
         Get feedback statistics for a specific time period.
 
         Args:
-            start_time: ISO timestamp for period start
-            end_time: ISO timestamp for period end
+            start_time: ISO timestamp for period start (expects UTC timezone)
+            end_time: ISO timestamp for period end (expects UTC timezone)
 
         Returns:
             Dictionary with statistics for the time period
+
+        Note:
+            - Timestamps should be normalized to UTC when storing and querying
+              to avoid cross-host timezone drift
+            - For optimal performance at scale, recommended database indexes:
+              * CREATE INDEX IF NOT EXISTS idx_feedback_timestamp
+                ON feedback(timestamp);
+              * CREATE INDEX IF NOT EXISTS idx_feedback_rating_timestamp
+                ON feedback(rating, timestamp);
         """
         with self.db.get_connection() as conn:
             cursor = conn.cursor()

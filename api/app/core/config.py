@@ -123,6 +123,31 @@ class Settings(BaseSettings):
         """
         return os.path.join(self.DATA_DIR, *path_parts)
 
+    @field_validator("PROMETHEUS_URL")
+    @classmethod
+    def validate_prometheus_url(cls, v: str) -> str:
+        """Normalize and validate Prometheus URL.
+
+        Ensures URL has a scheme and removes trailing slashes to prevent
+        double-slash requests and misconfigurations.
+
+        Args:
+            v: Prometheus URL
+
+        Returns:
+            Normalized Prometheus URL with scheme and no trailing slash
+
+        Raises:
+            ValueError: If PROMETHEUS_URL is empty
+        """
+        v = v.strip()
+        if not v:
+            raise ValueError("PROMETHEUS_URL must be non-empty")
+        # Ensure scheme present; don't force TLD to keep internal hosts valid
+        if "://" not in v:
+            v = "http://" + v
+        return v.rstrip("/")
+
     @field_validator("LLM_TEMPERATURE")
     @classmethod
     def validate_temperature(cls, v: float) -> float:
