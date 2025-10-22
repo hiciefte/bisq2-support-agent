@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 from app.core.config import Settings
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.prometheus_client import PrometheusClient
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class DashboardService:
         self.settings = settings
         self.feedback_service = FeedbackService(settings)
         self.faq_service = FAQService(settings)
+        self.prometheus_client = PrometheusClient(settings)
         self.system_start_time = time.time()
 
     async def get_dashboard_overview(self) -> Dict[str, Any]:
@@ -156,13 +158,19 @@ class DashboardService:
 
     async def _get_average_response_time(self) -> float:
         """
-        Get average response time.
-        In production, this would query Prometheus for historical data.
+        Get average response time from Prometheus metrics.
+        Falls back to simulated value if Prometheus is unavailable.
         """
         try:
-            # For now, return a simulated value
-            # In production: query Prometheus for actual metrics
-            # Example: rate(bisq_query_response_time_seconds_sum[1h]) / rate(bisq_query_response_time_seconds_count[1h])
+            # Try to get real data from Prometheus
+            prom_value = await self.prometheus_client.get_average_response_time()
+            if prom_value is not None:
+                return prom_value
+
+            # Fallback to simulated value if no data available
+            logger.warning(
+                "No Prometheus data available for average response time, using fallback"
+            )
             return 2.3  # seconds
         except Exception as e:
             logger.error(f"Failed to get average response time: {e}", exc_info=True)
@@ -170,41 +178,150 @@ class DashboardService:
 
     async def _get_total_query_count(self) -> int:
         """
-        Get total query count.
-        In production, this would query Prometheus metrics.
+        Get total query count from Prometheus metrics.
+        Falls back to zero if Prometheus is unavailable.
         """
         try:
-            # For now, return a simulated value
-            # In production: query bisq_queries_total from Prometheus
-            return 1247  # simulated
+            # Try to get real data from Prometheus
+            prom_value = await self.prometheus_client.get_total_query_count()
+            if prom_value is not None:
+                return prom_value
+
+            # Fallback to zero if no data available
+            logger.warning(
+                "No Prometheus data available for query count, using fallback"
+            )
+            return 0
         except Exception as e:
             logger.error(f"Failed to get total query count: {e}", exc_info=True)
             return 0
 
     async def _calculate_helpful_rate_trend(self) -> float:
-        """Calculate helpful rate trend (positive/negative percentage change)."""
+        """Calculate helpful rate trend (positive/negative percentage change).
+
+        Compares helpful rate from last 24 hours vs previous 24 hours.
+        Positive value = improvement, negative value = degradation.
+        """
         try:
-            # Simplified calculation - in production would compare current vs previous period
-            # using Prometheus time-series data
-            return 2.3  # +2.3% improvement
+            from datetime import datetime, timedelta
+
+            now = datetime.now()
+
+            # Current period: last 24 hours
+            current_start = (now - timedelta(hours=24)).isoformat()
+            current_end = now.isoformat()
+
+            # Previous period: 24-48 hours ago
+            previous_start = (now - timedelta(hours=48)).isoformat()
+            previous_end = (now - timedelta(hours=24)).isoformat()
+
+            # Get stats for both periods
+            current_stats = (
+                self.feedback_service.repository.get_feedback_stats_for_period(
+                    current_start, current_end
+                )
+            )
+            previous_stats = (
+                self.feedback_service.repository.get_feedback_stats_for_period(
+                    previous_start, previous_end
+                )
+            )
+
+            # Calculate helpful rates (as percentages)
+            current_rate = current_stats["helpful_rate"] * 100
+            previous_rate = previous_stats["helpful_rate"] * 100
+
+            # Calculate absolute change
+            if previous_stats["total"] == 0:
+                # No previous data, can't calculate trend
+                logger.debug("No previous period data for helpful rate trend")
+                return 0.0
+
+            trend = current_rate - previous_rate
+            logger.info(
+                f"Helpful rate trend: {trend:+.1f}% (current: {current_rate:.1f}%, previous: {previous_rate:.1f}%)"
+            )
+            return trend
+
         except Exception as e:
             logger.error(f"Failed to calculate helpful rate trend: {e}", exc_info=True)
             return 0.0
 
     async def _calculate_response_time_trend(self) -> float:
-        """Calculate response time trend (positive = slower, negative = faster)."""
+        """Calculate response time trend from Prometheus metrics.
+
+        Positive value = slower (degradation), negative value = faster (improvement).
+        Falls back to zero if insufficient data.
+        """
         try:
-            # Simplified calculation - in production would use Prometheus
-            return -0.8  # -0.8 seconds improvement
+            # Try to get real trend from Prometheus
+            prom_trend = await self.prometheus_client.get_response_time_trend()
+            if prom_trend is not None:
+                return prom_trend
+
+            # Fallback to zero if no data available (no change)
+            logger.debug(
+                "No Prometheus data available for response time trend, returning zero"
+            )
+            return 0.0
         except Exception as e:
             logger.error(f"Failed to calculate response time trend: {e}", exc_info=True)
             return 0.0
 
     async def _calculate_negative_feedback_trend(self) -> float:
-        """Calculate negative feedback trend (positive = more negative feedback)."""
+        """Calculate negative feedback trend.
+
+        Compares negative feedback count from last 24 hours vs previous 24 hours.
+        Positive value = more negative feedback (degradation).
+        Negative value = less negative feedback (improvement).
+        """
         try:
-            # Simplified calculation - in production would use Prometheus
-            return -5.2  # -5.2% reduction in negative feedback
+            from datetime import datetime, timedelta
+
+            now = datetime.now()
+
+            # Current period: last 24 hours
+            current_start = (now - timedelta(hours=24)).isoformat()
+            current_end = now.isoformat()
+
+            # Previous period: 24-48 hours ago
+            previous_start = (now - timedelta(hours=48)).isoformat()
+            previous_end = (now - timedelta(hours=24)).isoformat()
+
+            # Get stats for both periods
+            current_stats = (
+                self.feedback_service.repository.get_feedback_stats_for_period(
+                    current_start, current_end
+                )
+            )
+            previous_stats = (
+                self.feedback_service.repository.get_feedback_stats_for_period(
+                    previous_start, previous_end
+                )
+            )
+
+            current_negative = current_stats["negative"]
+            previous_negative = previous_stats["negative"]
+
+            # Calculate percentage change
+            if previous_negative == 0:
+                # No previous data
+                if current_negative == 0:
+                    # No change
+                    return 0.0
+                else:
+                    # We have negative feedback now but didn't before - that's bad
+                    # Return a large positive value to indicate degradation
+                    logger.debug("No previous negative feedback, but have some now")
+                    return 100.0
+
+            # Calculate percentage change: ((current - previous) / previous) * 100
+            trend = ((current_negative - previous_negative) / previous_negative) * 100
+            logger.info(
+                f"Negative feedback trend: {trend:+.1f}% (current: {current_negative}, previous: {previous_negative})"
+            )
+            return trend
+
         except Exception as e:
             logger.error(
                 f"Failed to calculate negative feedback trend: {e}", exc_info=True

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # External URLs
     BISQ_API_URL: str = "http://localhost:8090"
+    PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
 
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured

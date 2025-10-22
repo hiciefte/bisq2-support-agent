@@ -596,3 +596,47 @@ class FeedbackRepository:
                 "positive_rate": positive / total if total > 0 else 0,
                 "common_issues": common_issues,
             }
+
+    def get_feedback_stats_for_period(
+        self, start_time: str, end_time: str
+    ) -> Dict[str, Any]:
+        """
+        Get feedback statistics for a specific time period.
+
+        Args:
+            start_time: ISO timestamp for period start
+            end_time: ISO timestamp for period end
+
+        Returns:
+            Dictionary with statistics for the time period
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Total feedback in period
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM feedback WHERE timestamp >= ? AND timestamp < ?",
+                (start_time, end_time),
+            )
+            total = cursor.fetchone()["total"]
+
+            # Positive feedback in period
+            cursor.execute(
+                "SELECT COUNT(*) as positive FROM feedback WHERE rating = 1 AND timestamp >= ? AND timestamp < ?",
+                (start_time, end_time),
+            )
+            positive = cursor.fetchone()["positive"]
+
+            # Negative feedback in period
+            cursor.execute(
+                "SELECT COUNT(*) as negative FROM feedback WHERE rating = 0 AND timestamp >= ? AND timestamp < ?",
+                (start_time, end_time),
+            )
+            negative = cursor.fetchone()["negative"]
+
+            return {
+                "total": total,
+                "positive": positive,
+                "negative": negative,
+                "helpful_rate": positive / total if total > 0 else 0,
+            }
