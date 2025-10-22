@@ -5,6 +5,7 @@ This service provides a clean interface for querying Prometheus metrics
 used throughout the application, particularly for dashboard analytics.
 """
 
+import asyncio
 import logging
 import math
 from typing import Any, Dict, Optional
@@ -35,7 +36,9 @@ class PrometheusClient:
             Shared AsyncClient instance for efficient connection reuse
         """
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self.timeout)
+            self._client = httpx.AsyncClient(
+                base_url=self.prometheus_url, timeout=self.timeout
+            )
         return self._client
 
     async def close(self) -> None:
@@ -59,10 +62,7 @@ class PrometheusClient:
         """
         try:
             client = await self._get_client()
-            response = await client.get(
-                f"{self.prometheus_url}/api/v1/query",
-                params={"query": promql},
-            )
+            response = await client.get("/api/v1/query", params={"query": promql})
             response.raise_for_status()
             data = response.json()
 
@@ -74,11 +74,11 @@ class PrometheusClient:
         except httpx.TimeoutException:
             logger.warning(f"Prometheus query timed out: {promql}")
             return None
-        except httpx.HTTPError as e:
-            logger.exception(f"Prometheus HTTP error: {e}")
+        except httpx.HTTPError:
+            logger.exception("Prometheus HTTP error")
             return None
-        except Exception as e:
-            logger.exception(f"Unexpected error querying Prometheus: {e}")
+        except Exception:
+            logger.exception("Unexpected error querying Prometheus")
             return None
 
     async def get_average_response_time(self) -> Optional[float]:
@@ -172,8 +172,10 @@ class PrometheusClient:
             f"sum(rate(bisq_query_response_time_seconds_count[{window_hours}h] offset {window_hours}h))"
         )
 
-        current_result = await self.query(current_promql)
-        previous_result = await self.query(previous_promql)
+        # Query both periods in parallel for better performance
+        current_result, previous_result = await asyncio.gather(
+            self.query(current_promql), self.query(previous_promql)
+        )
 
         if not current_result or not previous_result:
             logger.debug("Insufficient data for response time trend calculation")
@@ -214,7 +216,7 @@ class PrometheusClient:
         """
         try:
             client = await self._get_client()
-            response = await client.get(f"{self.prometheus_url}/-/healthy")
+            response = await client.get("/-/healthy")
             return response.status_code == 200
         except httpx.HTTPError as e:
             logger.warning(f"Prometheus health check failed: {e}")

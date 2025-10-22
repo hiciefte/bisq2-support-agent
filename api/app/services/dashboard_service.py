@@ -7,7 +7,7 @@ from Prometheus to provide comprehensive dashboard statistics.
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from app.core.config import Settings
@@ -83,7 +83,7 @@ class DashboardService:
                 # Additional context
                 "total_feedback": feedback_stats["total_feedback"],
                 "total_faqs": faq_stats["total_faqs"],
-                "last_updated": datetime.now().isoformat(),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
             }
 
             logger.info("Successfully generated dashboard overview")
@@ -205,9 +205,9 @@ class DashboardService:
         """
         try:
             import asyncio
-            from datetime import datetime, timedelta
+            from datetime import timedelta
 
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # Current period: last 24 hours
             current_start = (now - timedelta(hours=24)).isoformat()
@@ -282,9 +282,9 @@ class DashboardService:
         """
         try:
             import asyncio
-            from datetime import datetime, timedelta
+            from datetime import timedelta
 
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # Current period: last 24 hours
             current_start = (now - timedelta(hours=24)).isoformat()
@@ -318,10 +318,11 @@ class DashboardService:
                     # No change
                     return 0.0
                 else:
-                    # We have negative feedback now but didn't before - that's bad
-                    # Return a large positive value to indicate degradation
-                    logger.debug("No previous negative feedback, but have some now")
-                    return 100.0
+                    # No baseline to compare against - treat as zero trend per policy
+                    logger.debug(
+                        "No previous negative feedback; treating as 0.0% trend per zero-data policy"
+                    )
+                    return 0.0
 
             # Calculate percentage change: ((current - previous) / previous) * 100
             trend = ((current_negative - previous_negative) / previous_negative) * 100
