@@ -184,8 +184,8 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
 
         for attempt in range(max_retries):
             try:
-                # Build full model ID with provider prefix
-                model_id = f"openai:{self.settings.OPENAI_MODEL}"
+                # Use model ID directly - expects full provider:model format (e.g., "openai:gpt-4o-mini")
+                model_id = self.settings.OPENAI_MODEL
 
                 response = self.aisuite_client.chat.completions.create(
                     model=model_id,
