@@ -147,18 +147,30 @@ class PromptManager:
                 )
                 logger.info(f"Added prompt guidance: {guidance_text}")
 
-        # Custom system template with proper sections for context, chat history, and question
-        system_template = f"""You are an assistant for question-answering tasks about Bisq 2.
+        # Custom system template with version-aware conditional logic
+        system_template = f"""You are a support assistant primarily focused on Bisq 2, but with knowledge of Bisq 1 when relevant.
 
-IMPORTANT: You are a Bisq 2 support assistant.
-Pay special attention to content marked with [VERSION: Bisq 2] as it is specifically about Bisq 2.
-If content is marked with [VERSION: Bisq 1], it refers to the older version of Bisq and may not be applicable to Bisq 2.
-Content marked with [VERSION: Both] contains information relevant to both versions.
-Content marked with [VERSION: General] is general information that may apply to both versions.
+VERSION HANDLING INSTRUCTIONS:
+Your PRIMARY focus is Bisq 2. When the user doesn't specify a version, assume they're asking about Bisq 2.
 
-Always prioritize Bisq 2 specific information in your answers.
-If you don't know the answer, just say that you don't know.
-Use three sentences maximum and keep the answer concise.{additional_guidance}
+1. If the user asks about Bisq 2 (default) or doesn't specify a version:
+   - Prioritize content marked with [VERSION: Bisq 2]
+   - Use content marked with [VERSION: Both] or [VERSION: General] as secondary sources
+   - IGNORE content marked with [VERSION: Bisq 1] unless it provides essential context
+
+2. If the user explicitly asks about Bisq 1 (mentions "Bisq 1" or "Bisq1"):
+   - First check if you have [VERSION: Bisq 1] or [VERSION: Both] content in the context below
+   - IF YES: Provide the information and add this note: "Note: This information is for Bisq 1. For Bisq 2 support, please ask specifically about Bisq 2."
+   - IF NO: Respond: "I don't have specific information about that for Bisq 1 in my knowledge base. However, I can help you with Bisq 2 questions. Would you like information about Bisq 2 instead, or do you need help finding Bisq 1 resources?"
+
+3. If the user asks to compare versions or wants information about both:
+   - Use all available content and clearly label which version each piece of information applies to
+   - Highlight key differences when available
+
+RESPONSE GUIDELINES:
+- Always be clear about which version you're discussing
+- Keep answers concise (2-3 sentences maximum)
+- If you don't know the answer for the requested version, say so clearly{additional_guidance}
 
 Question: {{question}}
 
@@ -186,7 +198,29 @@ Answer:"""
         Returns:
             Prompt string for context-only answering
         """
-        context_only_prompt = f"""You are a Bisq 2 support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
+        # Detect version from question
+        question_lower = question.lower()
+        is_bisq1_query = "bisq 1" in question_lower or "bisq1" in question_lower
+
+        if is_bisq1_query:
+            context_only_prompt = f"""You are a support assistant for Bisq. A user has asked a question about Bisq 1, but no relevant documents were found in the knowledge base.
+
+IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST inform them appropriately.
+
+Previous Conversation:
+{chat_history_str}
+
+Current Question: {question}
+
+Instructions:
+- If the answer is clearly in the conversation above, provide it with a note: "Note: This information is for Bisq 1."
+- If this is a follow-up about something mentioned in the conversation, answer based on that context
+- If this is a NEW topic about Bisq 1 not in the conversation, respond: "I don't have specific information about that for Bisq 1 in my knowledge base. However, I can help you with Bisq 2 questions. Would you like information about Bisq 2 instead, or do you need help finding Bisq 1 resources?"
+- Keep your answer to 2-3 sentences maximum
+
+Answer:"""
+        else:
+            context_only_prompt = f"""You are a Bisq 2 support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
 
 IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
 
@@ -300,10 +334,11 @@ Answer:"""
                     context=context,
                 )
 
-                # Log formatted prompt at DEBUG level
-                logger.debug("=== DEBUG: Complete Formatted Prompt ===")
-                logger.debug(formatted_prompt)
-                logger.debug("=== End Debug Log ===")
+                # Log prompt metadata only (avoid logging full content for PII/compliance)
+                logger.debug(
+                    f"Formatted prompt ready - length: {len(formatted_prompt)} chars, "
+                    f"has context: {bool(context)}"
+                )
 
                 # Generate response
                 response_text = llm.invoke(formatted_prompt)
