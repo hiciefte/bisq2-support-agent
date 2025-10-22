@@ -221,7 +221,7 @@ numpy==2.3.4
     #   scipy
 oauthlib==3.3.1
     # via requests-oauthlib
-onnxruntime==1.23.1
+onnxruntime==1.23.2
     # via chromadb
 openai==1.109.1
     # via
