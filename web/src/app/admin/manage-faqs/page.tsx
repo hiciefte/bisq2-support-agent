@@ -7,10 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw } from 'lucide-react';
+import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw, BadgeCheck } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 
 interface FAQ {
@@ -19,6 +18,7 @@ interface FAQ {
   answer: string;
   category: string;
   source: string;
+  verified?: boolean;
 }
 
 interface FAQListResponse {
@@ -52,7 +52,6 @@ export default function ManageFaqsPage() {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [availableSources, setAvailableSources] = useState<string[]>([]);
 
-  const router = useRouter();
   const currentPageRef = useRef(currentPage);
   const previousDataHashRef = useRef<string>('');
   const savedScrollPositionRef = useRef<number | null>(null);
@@ -220,6 +219,34 @@ export default function ManageFaqsPage() {
       }
     } catch (error) {
       const errorText = 'An unexpected error occurred while deleting the FAQ.';
+      console.error(errorText, error);
+      setError(errorText);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleVerification = async (faq: FAQ) => {
+    setIsSubmitting(true);
+    try {
+      const newVerifiedStatus = !faq.verified;
+      const response = await makeAuthenticatedRequest(
+        `/admin/faqs/${faq.id}/verify?verified=${newVerifiedStatus}`,
+        {
+          method: 'PATCH',
+        }
+      );
+
+      if (response.ok) {
+        fetchFaqs(currentPage);
+        setError(null);
+      } else {
+        const errorText = `Failed to update verification status. Status: ${response.status}`;
+        console.error(errorText);
+        setError(errorText);
+      }
+    } catch (error) {
+      const errorText = 'An unexpected error occurred while updating verification status.';
       console.error(errorText, error);
       setError(errorText);
     } finally {
@@ -489,10 +516,44 @@ export default function ManageFaqsPage() {
                           {faq.category}
                         </span>
                         <span>Source: {faq.source}</span>
+                        {faq.verified && (
+                          <BadgeCheck className="h-4 w-4 text-green-600" title="Verified" />
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 ml-4">
+                    <div className="flex items-center gap-2 ml-4">
+                      {!faq.verified && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={isSubmitting}
+                            >
+                              <BadgeCheck className="h-4 w-4 mr-2" />
+                              Verify FAQ
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Verify this FAQ?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will mark this FAQ as verified, indicating it has been reviewed and approved by a Bisq Support Admin. Once verified, this action cannot be undone through the UI.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleToggleVerification(faq)}
+                                className="!bg-green-600 hover:!bg-green-700"
+                              >
+                                Verify FAQ
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
                       <Button variant="ghost" size="icon" onClick={() => handleEdit(faq)}>
                         <Pencil className="h-4 w-4" />
                       </Button>

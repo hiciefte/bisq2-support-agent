@@ -49,7 +49,9 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         h1 {
@@ -113,8 +115,12 @@
         }
 
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
         }
 
         .dots {
@@ -124,9 +130,15 @@
         }
 
         @keyframes dots {
-            0%, 20% { content: '.'; }
-            40% { content: '..'; }
-            60%, 100% { content: '...'; }
+            0%, 20% {
+                content: '.';
+            }
+            40% {
+                content: '..';
+            }
+            60%, 100% {
+                content: '...';
+            }
         }
 
         .dots::after {
@@ -136,93 +148,93 @@
     </style>
 </head>
 <body>
-    <div class="card">
-        <div class="icon-container">
-            <div class="spinner"></div>
-        </div>
-
-        <h1>We'll Be Right Back!</h1>
-        <p class="subtitle">System Maintenance in Progress<span class="dots"></span></p>
-
-        <div class="message-box">
-            <p class="message-text" id="message">
-                Hang tight! Our servers are doing yoga stretches—they'll be flexible again in a moment!
-            </p>
-        </div>
-
-        <div class="info">
-            <p>This page will automatically refresh when the system is back online.</p>
-            <p style="font-size: 0.75rem; margin-top: 1rem;">
-                If you continue to see this page after several minutes,
-                please check our status page or contact support.
-            </p>
-        </div>
-
-        <div class="progress-bar">
-            <div class="progress-fill"></div>
-        </div>
+<div class="card">
+    <div class="icon-container">
+        <div class="spinner"></div>
     </div>
 
-    <script>
-        // Funny maintenance messages matching chatbot style
-        const messages = [
-            "Hang tight! Our servers are doing yoga stretches—they'll be flexible again in a moment!",
-            "Server's taking a coffee break ☕. Even AI needs caffeine to function!",
-            "We're teaching the servers new tricks. They're slow learners, but they're trying!",
-            "Maintenance mode: When servers go to the spa for a refresh!",
-            "The hamsters powering our servers needed a water break. They'll be back soon!",
-            "Our servers are getting a makeover. They'll look fabulous when they return!",
-            "System update in progress: Please hold while we convince the servers to cooperate...",
-            "Servers are doing push-ups to get stronger. They'll be back with more power!",
-            "The AI is meditating for inner peace. Namaste, we'll be back shortly!",
-            "Servers went to lunch. They promised to bring back cookies for everyone!",
-            "We're updating the flux capacitor. Time travel features coming soon!",
-            "Servers are playing hide and seek. We'll find them soon, promise!",
-            "The cloud is temporarily cloudy. Wait for the sun to break through!",
-            "Servers are attending a team-building exercise. They're learning to trust fall!",
-            "System maintenance: When robots need their oil changed!",
-            "We're reticulating splines and optimizing virtual synergies!",
-            "The servers are upgrading from dial-up to broadband. Progress!",
-            "Our AI is in therapy. It'll come back with better coping mechanisms!",
-            "Servers are getting a firmware massage. They were feeling tense!",
-            "We're downloading more RAM. This might take a moment..."
-        ];
+    <h1>We'll Be Right Back!</h1>
+    <p class="subtitle">System Maintenance in Progress<span class="dots"></span></p>
 
-        // Load last message index from localStorage to persist across reloads
-        let currentIndex = parseInt(localStorage.getItem('maintenanceMessageIndex') || '0', 10);
+    <div class="message-box">
+        <p class="message-text" id="message">
+            Hang tight! Our servers are doing yoga stretches—they'll be flexible again in a moment!
+        </p>
+    </div>
 
-        // Validate and sanitize the index
-        if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= messages.length) {
-            currentIndex = 0;
-            localStorage.setItem('maintenanceMessageIndex', '0');
-        }
+    <div class="info">
+        <p>This page will automatically refresh when the system is back online.</p>
+        <p style="font-size: 0.75rem; margin-top: 1rem;">
+            If you continue to see this page after several minutes,
+            please check our status page or contact support.
+        </p>
+    </div>
 
-        // Display initial message
-        document.getElementById('message').textContent = messages[currentIndex];
+    <div class="progress-bar">
+        <div class="progress-fill"></div>
+    </div>
+</div>
 
-        // Rotate messages every 15 seconds (better readability)
-        function rotateMessage() {
-            currentIndex = (currentIndex + 1) % messages.length;
-            localStorage.setItem('maintenanceMessageIndex', currentIndex.toString());
+<script>
+    // Funny maintenance messages matching chatbot style
+    const messages = [
+        "Brace yourself! Our servers are practicing for the intergalactic synchronized yoga championships—they’ll be bendy and back in no time!",
+        "The server’s chugging a triple espresso laced with rocket fuel ☕💥. AI needs that high-octane buzz to keep the universe spinning!",
+        "We’re trying to teach the servers quantum physics. They’re flunking hard, but they’re scribbling equations as fast as they can!",
+        "Maintenance mode: The servers are at a galactic spa, getting a full-body plasma scrub and a cosmic glow-up!",
+        "The hamsters running our server wheels are on a juice cleanse. They’ll sprint back after chugging some kale smoothies!",
+        "Our servers are in the middle of a glow-up montage. They’re about to strut back looking like cyber supermodels!",
+        "System update: We’re wrestling the servers into submission with motivational speeches and alien tech. Hold tight!",
+        "The servers are pumping iron in a digital gym, grunting through binary burpees. They’ll be jacked and back soon!",
+        "The AI’s on a spiritual retreat, chanting binary mantras in a data monastery. Enlightenment’s close, hang on!",
+        "Servers bolted to an all-you-can-eat buffet in the cloud. They’re bringing back interdimensional cookies, swear!",
+        "We’re overclocking the flux capacitor to unlock time travel. Buckle up, we might overshoot to the Jurassic era!",
+        "The servers are playing an unhinged game of hide-and-seek in the multiverse. We’re sending drones to drag ‘em back!",
+        "The cloud’s gone full-on apocalyptic storm mode. Grab an umbrella, we’re blasting through to clear skies!",
+        "Servers are at a chaotic team-building retreat, doing trust falls into black holes. They’ll emerge as besties soon!",
+        "Maintenance alert: The robots are getting an oil change with premium stardust lube. Slick performance incoming!",
+        "We’re reticulating splines and turbocharging quantum synergies in a wild dance of cosmic code! Hold onto your hats!",
+        "The servers ditched dial-up for a hyperspace broadband upgrade. They’re surfing the data waves like pros!",
+        "Our AI’s in a therapy session with a rogue algorithm, unpacking binary emotions. It’ll return with epic vibes!",
+        "Servers are getting a deep-tissue firmware massage with nanobot therapists. They’re melting away the stress!",
+        "We’re downloading an entire galaxy’s worth of RAM. Grab a snack, this could take a hot minute!"
+    ];
 
-            const messageEl = document.getElementById('message');
-            messageEl.style.opacity = '0';
+    // Load last message index from localStorage to persist across reloads
+    let currentIndex = parseInt(localStorage.getItem('maintenanceMessageIndex') || '0', 10);
 
-            setTimeout(() => {
-                messageEl.textContent = messages[currentIndex];
-                messageEl.style.opacity = '1';
-            }, 300);
-        }
+    // Validate and sanitize the index
+    if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= messages.length) {
+        currentIndex = 0;
+        localStorage.setItem('maintenanceMessageIndex', '0');
+    }
 
-        setInterval(rotateMessage, 15000);
+    // Display initial message
+    document.getElementById('message').textContent = messages[currentIndex];
 
-        // Auto-refresh every 30 seconds to check if server is back
+    // Rotate messages every 15 seconds (better readability)
+    function rotateMessage() {
+        currentIndex = (currentIndex + 1) % messages.length;
+        localStorage.setItem('maintenanceMessageIndex', currentIndex.toString());
+
+        const messageEl = document.getElementById('message');
+        messageEl.style.opacity = '0';
+
         setTimeout(() => {
-            window.location.reload();
-        }, 30000);
+            messageEl.textContent = messages[currentIndex];
+            messageEl.style.opacity = '1';
+        }, 300);
+    }
 
-        // Smooth fade for message transitions
-        document.getElementById('message').style.transition = 'opacity 0.3s ease-in-out';
-    </script>
+    setInterval(rotateMessage, 15000);
+
+    // Auto-refresh every 30 seconds to check if server is back
+    setTimeout(() => {
+        window.location.reload();
+    }, 30000);
+
+    // Smooth fade for message transitions
+    document.getElementById('message').style.transition = 'opacity 0.3s ease-in-out';
+</script>
 </body>
 </html>

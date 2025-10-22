@@ -94,6 +94,54 @@ async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
     return updated_faq
 
 
+@router.patch("/faqs/{faq_id}/verify", response_model=FAQIdentifiedItem)
+async def toggle_faq_verification_route(faq_id: str, verified: bool):
+    """Toggle the verification status of an FAQ.
+
+    Args:
+        faq_id: The ID of the FAQ to update
+        verified: The new verification status (True for verified, False for unverified)
+
+    Returns:
+        The updated FAQ with the new verification status
+    """
+    logger.info(f"Admin request to set FAQ {faq_id} verification to: {verified}")
+
+    try:
+        # Get the current FAQ
+        all_faqs = faq_service.get_all_faqs()
+        current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
+
+        if not current_faq:
+            raise FAQNotFoundError(faq_id)
+
+        # Update the verification status
+        updated_faq_data = FAQItem(
+            question=current_faq.question,
+            answer=current_faq.answer,
+            category=current_faq.category,
+            source=current_faq.source,
+            verified=verified,
+        )
+
+        updated_faq = faq_service.update_faq(faq_id, updated_faq_data)
+
+        if not updated_faq:
+            raise FAQNotFoundError(faq_id)
+
+        logger.info(f"Successfully updated FAQ {faq_id} verification to: {verified}")
+        return updated_faq
+    except FAQNotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update FAQ verification: {e}", exc_info=True)
+        raise BaseAppException(
+            detail="Failed to update FAQ verification status",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FAQ_VERIFY_UPDATE_FAILED",
+        ) from e
+
+
 @router.delete("/faqs/{faq_id}", status_code=204)
 async def delete_existing_faq_route(faq_id: str):
     """Delete an existing FAQ by its ID."""

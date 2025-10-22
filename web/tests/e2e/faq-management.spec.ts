@@ -225,4 +225,156 @@ test.describe('FAQ Management', () => {
     // Cleanup
     await page2.close();
   });
+
+  test('should verify FAQ with confirmation dialog', async ({ page }) => {
+    // Create a test FAQ to verify
+    await page.click('button:has-text("Add New FAQ")');
+    const testQuestion = `FAQ for verification test ${Date.now()}`;
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'This FAQ will be verified');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
+    await page.waitForTimeout(1000);
+
+    // Find the newly created FAQ card
+    const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+
+    // Verify initial state - no "Verified" badge should be visible
+    const verifiedBadge = faqCard.locator('text=Verified');
+    await expect(verifiedBadge).toHaveCount(0);
+
+    // Verify "Verify FAQ" button is visible
+    const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButton).toBeVisible();
+
+    // Click verify button
+    await verifyButton.click();
+
+    // Verify confirmation dialog appears
+    await page.waitForSelector('text=Verify this FAQ?');
+    const dialog = page.locator('text=Once verified, this action cannot be undone through the UI');
+    await expect(dialog).toBeVisible();
+
+    // Confirm verification
+    await page.click('button:has-text("Verify FAQ")');
+
+    // Wait for update
+    await page.waitForTimeout(1000);
+
+    // Verify badge now shows "Verified" with blue checkmark
+    const verifiedBadgeAfter = faqCard.locator('text=Verified');
+    await expect(verifiedBadgeAfter).toBeVisible();
+
+    // Verify "Verify FAQ" button is no longer visible (can't toggle back)
+    const verifyButtonAfter = faqCard.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButtonAfter).toHaveCount(0);
+  });
+
+  test('should persist verification status after page reload', async ({ page }) => {
+    // Create a test FAQ
+    await page.click('button:has-text("Add New FAQ")');
+    const testQuestion = `FAQ for persistence test ${Date.now()}`;
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'Testing verification persistence');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
+    await page.waitForTimeout(1000);
+
+    // Find and verify the FAQ
+    const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+    const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
+    await verifyButton.click();
+
+    // Confirm in dialog
+    await page.click('button:has-text("Verify FAQ")');
+    await page.waitForTimeout(1000);
+
+    // Verify badge shows "Verified"
+    const verifiedBadge = faqCard.locator('text=Verified');
+    await expect(verifiedBadge).toBeVisible();
+
+    // Reload page
+    await page.reload();
+    await page.waitForSelector('.bg-card.border.border-border.rounded-lg');
+
+    // Find FAQ card again after reload
+    const faqCardAfterReload = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+
+    // Verify badge still shows "Verified" (tests persistence to disk)
+    const verifiedBadgeAfterReload = faqCardAfterReload.locator('text=Verified');
+    await expect(verifiedBadgeAfterReload).toBeVisible();
+
+    // Verify button is still hidden (can't unverify)
+    const verifyButtonAfterReload = faqCardAfterReload.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButtonAfterReload).toHaveCount(0);
+  });
+
+  test('should display verification button for unverified FAQs only', async ({ page }) => {
+    // Create an unverified test FAQ
+    await page.click('button:has-text("Add New FAQ")');
+    const testQuestion = `Unverified FAQ test ${Date.now()}`;
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'This FAQ is unverified');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
+    await page.waitForTimeout(1000);
+
+    // Find the unverified FAQ card
+    const unverifiedFaqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+
+    // Check that "Verify FAQ" button exists for unverified FAQ
+    const verifyButton = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButton).toBeVisible();
+
+    // Verify the button has the correct styling (blue outline)
+    const buttonClass = await verifyButton.getAttribute('class');
+    expect(buttonClass).toContain('border-blue-200');
+    expect(buttonClass).toContain('text-blue-700');
+
+    // Now verify the FAQ
+    await verifyButton.click();
+    await page.click('button:has-text("Verify FAQ")'); // Confirm in dialog
+    await page.waitForTimeout(1000);
+
+    // After verification, the button should no longer be visible
+    const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButtonAfter).toHaveCount(0);
+
+    // Verified badge should be visible
+    const verifiedBadge = unverifiedFaqCard.locator('text=Verified');
+    await expect(verifiedBadge).toBeVisible();
+  });
+
+  test('should cancel verification when dialog is cancelled', async ({ page }) => {
+    // Create a test FAQ
+    await page.click('button:has-text("Add New FAQ")');
+    const testQuestion = `FAQ for cancel test ${Date.now()}`;
+    await page.fill('input#question', testQuestion);
+    await page.fill('textarea#answer', 'Testing cancellation');
+    await page.fill('input#category', 'General');
+    await page.click('button:has-text("Add FAQ")');
+    await page.waitForTimeout(1000);
+
+    // Find the FAQ card
+    const faqCard = page.locator(`.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`);
+
+    // Click verify button
+    const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
+    await verifyButton.click();
+
+    // Wait for dialog
+    await page.waitForSelector('text=Verify this FAQ?');
+
+    // Cancel the dialog
+    await page.click('button:has-text("Cancel")');
+    await page.waitForTimeout(500);
+
+    // Verify FAQ is still unverified (no badge)
+    const verifiedBadge = faqCard.locator('text=Verified');
+    await expect(verifiedBadge).toHaveCount(0);
+
+    // Verify button should still be visible
+    const verifyButtonAfter = faqCard.locator('button:has-text("Verify FAQ")');
+    await expect(verifyButtonAfter).toBeVisible();
+  });
 });
