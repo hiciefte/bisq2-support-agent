@@ -5,9 +5,10 @@ This service combines real-time data from the database with historical metrics
 from Prometheus to provide comprehensive dashboard statistics.
 """
 
+import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from app.core.config import Settings
@@ -27,6 +28,14 @@ class DashboardService:
         self.faq_service = FAQService(settings)
         self.prometheus_client = PrometheusClient(settings)
         self.system_start_time = time.time()
+
+    async def close(self) -> None:
+        """Close resources and cleanup.
+
+        Properly closes the PrometheusClient's HTTP connection pool to
+        prevent resource leaks when the service is disposed.
+        """
+        await self.prometheus_client.close()
 
     async def get_dashboard_overview(self) -> Dict[str, Any]:
         """
@@ -204,9 +213,6 @@ class DashboardService:
         Positive value = improvement, negative value = degradation.
         """
         try:
-            import asyncio
-            from datetime import timedelta
-
             now = datetime.now(timezone.utc)
 
             # Current period: last 24 hours
@@ -281,9 +287,6 @@ class DashboardService:
         Negative value = less negative feedback (improvement).
         """
         try:
-            import asyncio
-            from datetime import timedelta
-
             now = datetime.now(timezone.utc)
 
             # Current period: last 24 hours
