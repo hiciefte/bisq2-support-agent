@@ -37,11 +37,17 @@ class DocumentRetriever:
         self.retriever = retriever
 
     def retrieve_with_version_priority(self, query: str) -> List[Document]:
-        """Multi-stage retrieval that prioritizes Bisq 2 content over Bisq 1.
+        """Multi-stage retrieval that adapts to version-specific queries.
 
-        Stage 1: Search for Bisq 2 content (k=6, highest priority)
-        Stage 2: Add General content if needed (k=4)
-        Stage 3: Only add Bisq 1 content if insufficient results (k=2, lowest priority)
+        For Bisq 2 queries (default):
+            Stage 1: Search for Bisq 2 content (k=6, highest priority)
+            Stage 2: Add General content if needed (k=4)
+            Stage 3: Only add Bisq 1 content if insufficient results (k=2, lowest priority)
+
+        For explicit Bisq 1 queries:
+            Stage 1: Search for Bisq 1 content (k=4, primary)
+            Stage 2: Add General/Both content (k=2, secondary)
+            Stage 3: Skip Bisq 2 content unless comparison requested
 
         Args:
             query: The search query
@@ -51,34 +57,75 @@ class DocumentRetriever:
         """
         all_docs = []
 
+        # Detect version from query
+        query_lower = query.lower()
+        is_bisq1_query = "bisq 1" in query_lower or "bisq1" in query_lower
+        is_comparison_query = (
+            is_bisq1_query and ("bisq 2" in query_lower or "bisq2" in query_lower)
+        ) or any(
+            word in query_lower
+            for word in ["compare", "difference", "vs", "versus", "both versions"]
+        )
+
         try:
-            # Stage 1: Prioritize Bisq 2 content
-            logger.info("Stage 1: Searching for Bisq 2 content...")
-            bisq2_docs = self.vectorstore.similarity_search(
-                query, k=6, filter={"bisq_version": "Bisq 2"}
-            )
-            logger.info(f"Found {len(bisq2_docs)} Bisq 2 documents")
-            all_docs.extend(bisq2_docs)
-
-            # Stage 2: Add general content if we don't have enough Bisq 2 content
-            # Threshold of 4 ensures we have sufficient Bisq 2 context before adding general docs
-            if len(all_docs) < 4:
-                logger.info("Stage 2: Searching for General content...")
-                general_docs = self.vectorstore.similarity_search(
-                    query, k=4, filter={"bisq_version": "General"}
+            if is_bisq1_query and not is_comparison_query:
+                # User explicitly asked about Bisq 1
+                logger.info(
+                    "Detected explicit Bisq 1 query - prioritizing Bisq 1 content"
                 )
-                logger.info(f"Found {len(general_docs)} General documents")
-                all_docs.extend(general_docs)
 
-            # Stage 3: Only add Bisq 1 content if we still don't have enough
-            # Threshold of 3 ensures Bisq 1 content is truly a last resort
-            if len(all_docs) < 3:
-                logger.info("Stage 3: Searching for Bisq 1 content (fallback)...")
+                # Stage 1: Prioritize Bisq 1 content (k=4 for better coverage)
+                logger.info("Stage 1: Searching for Bisq 1 content...")
                 bisq1_docs = self.vectorstore.similarity_search(
-                    query, k=2, filter={"bisq_version": "Bisq 1"}
+                    query, k=4, filter={"bisq_version": "Bisq 1"}
                 )
                 logger.info(f"Found {len(bisq1_docs)} Bisq 1 documents")
                 all_docs.extend(bisq1_docs)
+
+                # Stage 2: Add General/Both content as supplementary
+                if len(all_docs) < 3:
+                    logger.info("Stage 2: Searching for General content...")
+                    general_docs = self.vectorstore.similarity_search(
+                        query, k=2, filter={"bisq_version": "General"}
+                    )
+                    logger.info(f"Found {len(general_docs)} General documents")
+                    all_docs.extend(general_docs)
+
+                # Stage 3: Skip Bisq 2 content for pure Bisq 1 queries
+                logger.info("Skipping Bisq 2 content for explicit Bisq 1 query")
+
+            else:
+                # Default Bisq 2 priority OR comparison query
+                if is_comparison_query:
+                    logger.info("Detected comparison query - retrieving both versions")
+
+                # Stage 1: Prioritize Bisq 2 content
+                logger.info("Stage 1: Searching for Bisq 2 content...")
+                bisq2_docs = self.vectorstore.similarity_search(
+                    query, k=6, filter={"bisq_version": "Bisq 2"}
+                )
+                logger.info(f"Found {len(bisq2_docs)} Bisq 2 documents")
+                all_docs.extend(bisq2_docs)
+
+                # Stage 2: Add general content if we don't have enough Bisq 2 content
+                # Threshold of 4 ensures we have sufficient Bisq 2 context before adding general docs
+                if len(all_docs) < 4:
+                    logger.info("Stage 2: Searching for General content...")
+                    general_docs = self.vectorstore.similarity_search(
+                        query, k=4, filter={"bisq_version": "General"}
+                    )
+                    logger.info(f"Found {len(general_docs)} General documents")
+                    all_docs.extend(general_docs)
+
+                # Stage 3: Only add Bisq 1 content if we still don't have enough
+                # Threshold of 3 ensures Bisq 1 content is truly a last resort
+                if len(all_docs) < 3:
+                    logger.info("Stage 3: Searching for Bisq 1 content (fallback)...")
+                    bisq1_docs = self.vectorstore.similarity_search(
+                        query, k=2, filter={"bisq_version": "Bisq 1"}
+                    )
+                    logger.info(f"Found {len(bisq1_docs)} Bisq 1 documents")
+                    all_docs.extend(bisq1_docs)
         except Exception as e:
             logger.error(f"Error in version-priority retrieval: {e!s}", exc_info=True)
             # Fallback: retrieve documents and post-sort by version priority

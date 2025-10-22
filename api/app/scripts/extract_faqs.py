@@ -17,7 +17,7 @@ Example usage:
 Environment variables:
     BISQ_API_URL: URL to the Bisq API (required)
     OPENAI_API_KEY: API key for OpenAI (required)
-    OPENAI_MODEL: Model to use for FAQ extraction (default: gpt-4o-mini)
+    OPENAI_MODEL: Model to use for FAQ extraction (default: openai:gpt-4o-mini)
     DATA_DIR: Directory for data files (default: api/data)
 """
 

@@ -63,7 +63,7 @@ def test_settings(test_data_dir: str) -> Settings:
         ENVIRONMENT="testing",
         COOKIE_SECURE=False,
         # Use minimal model configuration for faster tests
-        OPENAI_MODEL="gpt-4o-mini",
+        OPENAI_MODEL="openai:gpt-4o-mini",
         MAX_CHAT_HISTORY_LENGTH=5,
         MAX_CONTEXT_LENGTH=1000,
     )
