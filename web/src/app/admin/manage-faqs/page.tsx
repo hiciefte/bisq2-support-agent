@@ -18,7 +18,7 @@ interface FAQ {
   answer: string;
   category: string;
   source: string;
-  verified?: boolean;
+  verified: boolean;
 }
 
 interface FAQListResponse {
@@ -541,7 +541,7 @@ export default function ManageFaqsPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Verify this FAQ?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This will mark this FAQ as verified, indicating it has been reviewed and approved by a Bisq Support Admin. Once verified, this action cannot be undone through the UI.
+                                This will mark this FAQ as verified, indicating it has been reviewed and approved by a Bisq Support Admin. This action is irreversible.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
