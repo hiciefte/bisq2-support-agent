@@ -195,7 +195,7 @@ start_services() {
         api_healthy=1
     fi
 
-    wait_for_healthy "bisq2-api" 180 "$docker_dir" "$compose_file"
+    wait_for_healthy "bisq2-api" 300 "$docker_dir" "$compose_file"
 
     # Ensure dependent services are running
     ensure_dependent_services "$docker_dir" "$compose_file"
