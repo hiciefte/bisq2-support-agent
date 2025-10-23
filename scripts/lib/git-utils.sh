@@ -6,6 +6,38 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck disable=SC1091
 source "$LIB_DIR/common.sh"
 
+# SECURITY: Git remote validation function
+validate_git_remote() {
+    local remote="$1"
+
+    # Validate remote name format (alphanumeric, dash, underscore, dot)
+    if [[ ! "$remote" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        log_error "Invalid git remote name: $remote"
+        return 1
+    fi
+
+    # Verify remote exists in repository
+    if ! git remote | grep -q "^${remote}$"; then
+        log_error "Git remote does not exist: $remote"
+        return 1
+    fi
+
+    return 0
+}
+
+# SECURITY: Git branch validation function
+validate_git_branch() {
+    local branch="$1"
+
+    # Validate branch name format (alphanumeric, dash, underscore, slash, dot)
+    if [[ ! "$branch" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+        log_error "Invalid git branch name: $branch"
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to check for local changes
 check_local_changes() {
     local repo_dir="${1:-.}"
@@ -67,6 +99,11 @@ fetch_remote() {
 
     cd "$repo_dir" || return 1
 
+    # SECURITY: Validate remote name before using it
+    if ! validate_git_remote "$remote"; then
+        return 1
+    fi
+
     log_info "Fetching latest changes from $remote..."
     if ! git fetch "$remote"; then
         log_error "Failed to fetch latest changes from $remote"
@@ -86,6 +123,15 @@ reset_to_remote() {
 
     cd "$repo_dir" || return 1
 
+    # SECURITY: Validate remote and branch names before using them
+    if ! validate_git_remote "$remote"; then
+        return 1
+    fi
+
+    if ! validate_git_branch "$branch"; then
+        return 1
+    fi
+
     log_info "Resetting to $remote/$branch to ensure consistency..."
     if ! git reset --hard "$remote/$branch"; then
         log_error "Failed to reset to $remote/$branch"
@@ -99,12 +145,34 @@ reset_to_remote() {
 # Function to preserve production data files during deployment
 preserve_production_data() {
     local repo_dir="${1:-.}"
-    local backup_dir="$repo_dir/api/data/.backup_$(date +%Y%m%d_%H%M%S)"
+
+    # SECURITY: Canonicalize path to prevent traversal attacks
+    repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || {
+        log_error "Repository directory does not exist: ${1:-.}"
+        return 1
+    }
+
+    # SECURITY: Validate path structure (must contain bisq-support or be a test directory)
+    if [[ ! "$repo_dir" =~ (bisq-support|bisq.*test) ]]; then
+        log_error "Invalid repository directory: $repo_dir"
+        return 1
+    fi
 
     cd "$repo_dir" || {
         log_error "Failed to change to repository directory: $repo_dir"
         return 1
     }
+
+    # SECURITY: Add file locking to prevent race conditions
+    local lock_file="$repo_dir/api/data/.backup.lock"
+    exec 200>"$lock_file"
+    if ! flock -x -w 30 200; then
+        log_error "Could not acquire backup lock (another backup in progress)"
+        return 1
+    fi
+
+    # Add PID to backup directory name for uniqueness
+    local backup_dir="$repo_dir/api/data/.backup_$(date +%Y%m%d_%H%M%S)_$$"
 
     # Files that should never be overwritten by git (dynamic production data)
     local production_files=(
@@ -113,19 +181,45 @@ preserve_production_data() {
         "api/data/conversations.jsonl"
     )
 
-    # Create backup directory
+    # Create backup directory with restrictive permissions
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
 
     log_info "Backing up production data files..."
     local backed_up_count=0
+    local max_file_size=$((50 * 1024 * 1024))  # 50MB limit
+
     for file in "${production_files[@]}"; do
         local file_path="$repo_dir/$file"
-        if [ -f "$file_path" ]; then
-            cp "$file_path" "$backup_dir/"
-            backed_up_count=$((backed_up_count + 1))
-            log_debug "Backed up: $file"
+
+        # SECURITY: Validate file type and permissions
+        if [ ! -f "$file_path" ] || [ -L "$file_path" ]; then
+            log_debug "Skipping non-regular file: $file"
+            continue
         fi
+
+        # SECURITY: Check file size to prevent disk exhaustion
+        local file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
+        if [ "$file_size" -gt "$max_file_size" ]; then
+            log_warning "Skipping oversized file (>50MB): $file"
+            continue
+        fi
+
+        # SECURITY: Verify file is readable
+        if [ ! -r "$file_path" ]; then
+            log_error "Cannot read file: $file"
+            flock -u 200
+            return 1
+        fi
+
+        # Use -- to prevent filename interpretation
+        cp -- "$file_path" "$backup_dir/"
+        backed_up_count=$((backed_up_count + 1))
+        log_debug "Backed up: $file"
     done
+
+    # Release lock
+    flock -u 200
 
     if [ "$backed_up_count" -gt 0 ]; then
         log_success "Backed up $backed_up_count production data file(s) to: $backup_dir"
@@ -148,18 +242,50 @@ restore_production_data() {
         return 0
     fi
 
+    # SECURITY: Canonicalize paths to prevent traversal attacks
+    repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || {
+        log_error "Repository directory does not exist"
+        return 1
+    }
+
+    backup_dir=$(realpath -e "$backup_dir" 2>/dev/null) || {
+        log_error "Backup directory does not exist"
+        return 1
+    }
+
     cd "$repo_dir" || return 1
 
     log_info "Restoring production data files from backup..."
     local restored_count=0
-    for backup_file in "$backup_dir"/*; do
-        if [ -f "$backup_file" ]; then
-            local filename=$(basename "$backup_file")
-            local restore_path="$repo_dir/api/data/$filename"
-            cp "$backup_file" "$restore_path"
-            restored_count=$((restored_count + 1))
-            log_debug "Restored: $filename"
+
+    # SECURITY: Use whitelist of allowed files instead of dynamic iteration
+    local allowed_files=(
+        "extracted_faq.jsonl"
+        "processed_message_ids.jsonl"
+        "conversations.jsonl"
+    )
+
+    for allowed_file in "${allowed_files[@]}"; do
+        local backup_file="$backup_dir/$allowed_file"
+
+        # SECURITY: Verify file exists, is regular file, and not a symlink
+        if [ ! -f "$backup_file" ] || [ -L "$backup_file" ]; then
+            log_debug "Skipping non-existent or invalid file: $allowed_file"
+            continue
         fi
+
+        # SECURITY: Verify file is readable
+        if [ ! -r "$backup_file" ]; then
+            log_warning "Cannot read backup file: $allowed_file"
+            continue
+        fi
+
+        local restore_path="$repo_dir/api/data/$allowed_file"
+
+        # Use -- to prevent filename interpretation
+        cp -- "$backup_file" "$restore_path"
+        restored_count=$((restored_count + 1))
+        log_debug "Restored: $allowed_file"
     done
 
     if [ "$restored_count" -gt 0 ]; then
@@ -189,8 +315,11 @@ run_faq_migration() {
     # Make script executable
     chmod +x "$migration_script"
 
-    # Run migration
-    if python3 "$migration_script"; then
+    # SECURITY: Pass data directory explicitly
+    local data_dir="$repo_dir/api/data"
+
+    # Run migration with --data-dir argument
+    if python3 "$migration_script" --data-dir "$data_dir"; then
         log_success "FAQ schema migration completed"
         return 0
     else

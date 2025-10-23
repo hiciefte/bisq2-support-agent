@@ -6,7 +6,7 @@ Adds missing fields to FAQ data while preserving all existing content.
 Run this during deployments when FAQ schema changes.
 
 Usage:
-    python migrate_faq_schema.py [--dry-run]
+    python migrate_faq_schema.py [--dry-run] [--data-dir PATH]
 """
 
 import argparse
@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-FAQ_FILE = Path("/opt/bisq-support/api/data/extracted_faq.jsonl")
-FAQ_BACKUP = Path("/opt/bisq-support/api/data/extracted_faq.jsonl.backup")
+# Default data directory for production
+DEFAULT_DATA_DIR = Path("/opt/bisq-support/api/data")
 
 
 def migrate_faq_entry(faq: Dict[str, Any]) -> Dict[str, Any]:
@@ -33,18 +33,22 @@ def migrate_faq_entry(faq: Dict[str, Any]) -> Dict[str, Any]:
     return faq
 
 
-def migrate_faq_file(dry_run: bool = False) -> int:
+def migrate_faq_file(data_dir: Path, dry_run: bool = False) -> int:
     """
     Migrate FAQ file by adding missing fields.
 
     Args:
+        data_dir: Directory containing FAQ data
         dry_run: If True, only report changes without modifying file
 
     Returns:
         Number of FAQs migrated
     """
-    if not FAQ_FILE.exists():
-        print(f"❌ FAQ file not found: {FAQ_FILE}", file=sys.stderr)
+    faq_file = data_dir / "extracted_faq.jsonl"
+    faq_backup = data_dir / "extracted_faq.jsonl.backup"
+
+    if not faq_file.exists():
+        print(f"❌ FAQ file not found: {faq_file}", file=sys.stderr)
         return -1
 
     # Read all FAQs
@@ -52,7 +56,7 @@ def migrate_faq_file(dry_run: bool = False) -> int:
     migrated_count = 0
 
     try:
-        with open(FAQ_FILE, "r", encoding="utf-8") as f:
+        with open(faq_file, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -96,14 +100,14 @@ def migrate_faq_file(dry_run: bool = False) -> int:
     try:
         import shutil
 
-        shutil.copy2(FAQ_FILE, FAQ_BACKUP)
-        print(f"📦 Created backup: {FAQ_BACKUP}")
+        shutil.copy2(faq_file, faq_backup)
+        print(f"📦 Created backup: {faq_backup}")
     except Exception as e:
         print(f"⚠️  Warning: Could not create backup: {e}", file=sys.stderr)
 
     # Write migrated FAQs
     try:
-        with open(FAQ_FILE, "w", encoding="utf-8") as f:
+        with open(faq_file, "w", encoding="utf-8") as f:
             for faq in faqs:
                 f.write(json.dumps(faq, ensure_ascii=False) + "\n")
 
@@ -113,8 +117,8 @@ def migrate_faq_file(dry_run: bool = False) -> int:
 
     except Exception as e:
         print(f"❌ Error writing FAQ file: {e}", file=sys.stderr)
-        if FAQ_BACKUP.exists():
-            print(f"💡 Restore backup with: cp {FAQ_BACKUP} {FAQ_FILE}")
+        if faq_backup.exists():
+            print(f"💡 Restore backup with: cp {faq_backup} {faq_file}")
         return -1
 
 
@@ -125,10 +129,31 @@ def main():
         action="store_true",
         help="Show what would be migrated without making changes",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help=f"Data directory containing FAQ files (default: {DEFAULT_DATA_DIR})",
+    )
 
     args = parser.parse_args()
 
-    result = migrate_faq_file(dry_run=args.dry_run)
+    # SECURITY: Validate data directory exists and is absolute
+    try:
+        data_dir = args.data_dir.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        print(f"❌ Invalid data directory: {args.data_dir} ({e})", file=sys.stderr)
+        sys.exit(1)
+
+    # SECURITY: Validate path contains expected patterns
+    data_dir_str = str(data_dir)
+    allowed_patterns = ["bisq-support", "bisq-faq-test", "bisq2-support-agent"]
+    if not any(pattern in data_dir_str for pattern in allowed_patterns):
+        print(f"❌ Invalid data directory path: {data_dir}", file=sys.stderr)
+        print("   Data directory must be within bisq-support project", file=sys.stderr)
+        sys.exit(1)
+
+    result = migrate_faq_file(data_dir=data_dir, dry_run=args.dry_run)
     sys.exit(0 if result >= 0 else 1)
 
 
