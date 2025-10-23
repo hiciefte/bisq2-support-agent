@@ -230,7 +230,7 @@ export default function ManageFaqsPage() {
     setIsSubmitting(true);
     try {
       const response = await makeAuthenticatedRequest(
-        `/admin/faqs/${faq.id}/verify?verified=true`,
+        `/admin/faqs/${faq.id}/verify`,
         {
           method: 'PATCH',
         }

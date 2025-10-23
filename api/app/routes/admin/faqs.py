@@ -10,7 +10,7 @@ from app.core.exceptions import BaseAppException, FAQNotFoundError
 from app.core.security import verify_admin_access
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq_service import FAQService
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
 
 # Setup logging
@@ -95,20 +95,16 @@ async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
 
 
 @router.patch("/faqs/{faq_id}/verify", response_model=FAQIdentifiedItem)
-async def toggle_faq_verification_route(
-    faq_id: str,
-    verified: bool = Query(..., description="Set True to verify, False to unverify"),
-):
-    """Toggle the verification status of an FAQ.
+async def verify_faq_route(faq_id: str):
+    """Verify an FAQ (one-way operation - cannot be undone through API).
 
     Args:
-        faq_id: The ID of the FAQ to update
-        verified: The new verification status (True for verified, False for unverified)
+        faq_id: The ID of the FAQ to verify
 
     Returns:
-        The updated FAQ with the new verification status
+        The updated FAQ with verified status set to True
     """
-    logger.info(f"Admin request to set FAQ {faq_id} verification to: {verified}")
+    logger.info(f"Admin request to verify FAQ {faq_id}")
 
     def _validate_faq_exists(faq_id: str, faq_obj) -> None:
         """Helper to validate FAQ exists and raise error if not."""
@@ -121,22 +117,22 @@ async def toggle_faq_verification_route(
         current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
         _validate_faq_exists(faq_id, current_faq)
 
-        # Update only the verification status
+        # Update only the verification status to True
         faq_item = FAQItem(**current_faq.model_dump(exclude={"id"}, exclude_none=False))
         updated_faq = faq_service.update_faq(
-            faq_id, faq_item.model_copy(update={"verified": verified}, deep=False)
+            faq_id, faq_item.model_copy(update={"verified": True}, deep=False)
         )
         _validate_faq_exists(faq_id, updated_faq)
 
-        logger.info(f"Successfully updated FAQ {faq_id} verification to: {verified}")
+        logger.info(f"Successfully verified FAQ {faq_id}")
     except FAQNotFoundError:
         raise
     except Exception as e:
-        logger.error(f"Failed to update FAQ verification: {e}", exc_info=True)
+        logger.error(f"Failed to verify FAQ: {e}", exc_info=True)
         raise BaseAppException(
-            detail="Failed to update FAQ verification status",
+            detail="Failed to verify FAQ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_code="FAQ_VERIFY_UPDATE_FAILED",
+            error_code="FAQ_VERIFY_FAILED",
         ) from e
     else:
         return updated_faq
