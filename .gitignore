@@ -14,6 +14,7 @@ eggs/
 lib/
 lib64/
 !web/src/lib/
+!scripts/lib/
 parts/
 sdist/
 var/
@@ -77,6 +78,9 @@ api/data/vectorstore/
 *.db
 *.sqlite3
 *.log
+
+# Production FAQ data (dynamically managed via admin interface + extraction)
+api/data/extracted_faq.jsonl
 
 # Ignore sensitive chat and conversation data (privacy-first data management)
 # These files contain personal identifiers (conversation_id, message_id, timestamps)
