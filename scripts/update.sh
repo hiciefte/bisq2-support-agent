@@ -77,7 +77,7 @@ create_system_backup() {
     log_success "System backup created"
 }
 
-# Function to handle rollbacks with comprehensive logging
+# Function to handle rollbacks with comprehensive logging and production data preservation
 rollback_update() {
     local reason="${1:-Unknown reason}"
     log_error "Initiating rollback due to: $reason"
@@ -102,6 +102,10 @@ rollback_update() {
         exit 2
     }
 
+    # CRITICAL: Preserve production data before rollback
+    local rollback_data_backup
+    rollback_data_backup=$(preserve_production_data "$INSTALL_DIR")
+
     # Save current state and logs
     log_info "Saving current state for debugging..."
     {
@@ -110,6 +114,7 @@ rollback_update() {
         echo "Current Git Hash: $(git rev-parse HEAD)"
         echo "Rolling back to: $PREV_HEAD"
         echo "Working Directory: $(pwd)"
+        echo "Production Data Backup: $rollback_data_backup"
         echo -e "\nGit Status:"
         git status
         echo -e "\nLast Git Logs:"
@@ -140,6 +145,16 @@ rollback_update() {
         exit 2
     fi
 
+    # CRITICAL: Restore production data after rollback
+    if [ -n "$rollback_data_backup" ]; then
+        if ! restore_production_data "$INSTALL_DIR" "$rollback_data_backup"; then
+            log_error "CRITICAL: Failed to restore production data during rollback"
+            log_error "Production data backup: $rollback_data_backup"
+            log_error "Manual intervention required"
+            exit 2
+        fi
+    fi
+
     # Rebuild and restart with previous version
     log_info "Rebuilding and restarting with previous version..."
     cd "$DOCKER_DIR" || exit 2
@@ -163,6 +178,7 @@ rollback_update() {
     fi
 
     log_success "Rollback completed successfully"
+    log_success "Production data preserved during rollback"
     log_warning "Failed update details saved in: $failed_dir"
     exit 1
 }

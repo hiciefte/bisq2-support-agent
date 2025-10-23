@@ -78,6 +78,9 @@ api/data/vectorstore/
 *.sqlite3
 *.log
 
+# Production FAQ data (dynamically managed via admin interface + extraction)
+api/data/extracted_faq.jsonl
+
 # Ignore sensitive chat and conversation data (privacy-first data management)
 # These files contain personal identifiers (conversation_id, message_id, timestamps)
 api/data/support_chat_export.csv
