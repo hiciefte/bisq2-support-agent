@@ -10,7 +10,7 @@ from app.core.exceptions import BaseAppException, FAQNotFoundError
 from app.core.security import verify_admin_access
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq_service import FAQService
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import Response
 
 # Setup logging
@@ -95,7 +95,10 @@ async def update_existing_faq_route(faq_id: str, faq_item_update: FAQItem):
 
 
 @router.patch("/faqs/{faq_id}/verify", response_model=FAQIdentifiedItem)
-async def toggle_faq_verification_route(faq_id: str, verified: bool):
+async def toggle_faq_verification_route(
+    faq_id: str,
+    verified: bool = Query(..., description="Set True to verify, False to unverify"),
+):
     """Toggle the verification status of an FAQ.
 
     Args:
@@ -118,16 +121,11 @@ async def toggle_faq_verification_route(faq_id: str, verified: bool):
         current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
         _validate_faq_exists(faq_id, current_faq)
 
-        # Update the verification status
-        updated_faq_data = FAQItem(
-            question=current_faq.question,
-            answer=current_faq.answer,
-            category=current_faq.category,
-            source=current_faq.source,
-            verified=verified,
+        # Update only the verification status
+        faq_item = FAQItem(**current_faq.model_dump(exclude={"id"}, exclude_none=False))
+        updated_faq = faq_service.update_faq(
+            faq_id, faq_item.model_copy(update={"verified": verified}, deep=False)
         )
-
-        updated_faq = faq_service.update_faq(faq_id, updated_faq_data)
         _validate_faq_exists(faq_id, updated_faq)
 
         logger.info(f"Successfully updated FAQ {faq_id} verification to: {verified}")

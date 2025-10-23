@@ -237,7 +237,7 @@ export default function ManageFaqsPage() {
       );
 
       if (response.ok) {
-        fetchFaqs(currentPage);
+        fetchFaqs(currentPage, true);
         setError(null);
       } else {
         const errorText = `Failed to verify FAQ. Status: ${response.status}`;
@@ -516,7 +516,10 @@ export default function ManageFaqsPage() {
                         </span>
                         <span>Source: {faq.source}</span>
                         {faq.verified && (
-                          <BadgeCheck className="h-4 w-4 text-green-600" title="Verified" />
+                          <span className="inline-flex items-center" aria-label="Verified FAQ">
+                            <BadgeCheck className="h-4 w-4 text-green-600" aria-hidden="true" />
+                            <span className="sr-only">Verified</span>
+                          </span>
                         )}
                       </div>
                     </div>
@@ -546,7 +549,12 @@ export default function ManageFaqsPage() {
                               <AlertDialogAction
                                 onClick={() => handleVerifyFaq(faq)}
                                 className="!bg-green-600 hover:!bg-green-700"
+                                disabled={isSubmitting}
+                                aria-label={`Verify FAQ: ${faq.question}`}
                               >
+                                {isSubmitting ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : null}
                                 Verify FAQ
                               </AlertDialogAction>
                             </AlertDialogFooter>
