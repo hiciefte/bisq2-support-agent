@@ -640,20 +640,25 @@ class FAQService:
             )
             new_faqs = self.extract_faqs_with_openai(new_conversations_to_process)
 
-            # If new FAQs were found, save them
+            # If new FAQs were found, save them and mark messages as processed
             if new_faqs:
                 self.save_faqs(new_faqs)
                 logger.info(
                     f"Extraction complete. Saved {len(new_faqs)} new FAQ entries."
                 )
 
-            # Mark all messages from processed conversations as processed
-            for conv in new_conversations_to_process:
-                for msg in conv["messages"]:
-                    self.processed_msg_ids.add(msg["msg_id"])
+                # Mark all messages from successfully processed conversations as processed
+                for conv in new_conversations_to_process:
+                    for msg in conv["messages"]:
+                        self.processed_msg_ids.add(msg["msg_id"])
 
-            # Save the updated set of processed message IDs
-            self.save_processed_msg_ids(self.processed_msg_ids)
+                # Save the updated set of processed message IDs
+                self.save_processed_msg_ids(self.processed_msg_ids)
+            else:
+                logger.warning(
+                    f"No FAQs extracted from {len(new_conversations_to_process)} conversations. "
+                    "Messages will not be marked as processed and will be retried on next run."
+                )
 
             return new_faqs
 

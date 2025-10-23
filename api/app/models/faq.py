@@ -8,6 +8,7 @@ class FAQItem(BaseModel):
     answer: str
     category: Optional[str] = "General"
     source: Optional[str] = "Manual"  # Default for manually added/edited
+    verified: Optional[bool] = False  # Whether FAQ has been verified by admin
 
 
 class FAQIdentifiedItem(FAQItem):
@@ -19,6 +20,7 @@ class FAQUpdateRequest(BaseModel):
     answer: Optional[str] = None
     category: Optional[str] = None
     source: Optional[str] = None
+    verified: Optional[bool] = None
 
 
 class FAQListResponse(BaseModel):
