@@ -3,6 +3,7 @@ Admin analytics and metrics routes for the Bisq Support API.
 """
 
 import logging
+from typing import Literal
 
 from app.core.config import get_settings
 from app.core.exceptions import BaseAppException
@@ -10,12 +11,17 @@ from app.core.security import verify_admin_access
 from app.models.feedback import DashboardOverviewResponse
 from app.services.dashboard_service import DashboardService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
+from prometheus_client import (  # type: ignore[attr-defined]
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    generate_latest,
+)
 
 # Setup logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 # Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
@@ -113,7 +119,7 @@ async def get_metrics() -> Response:
 
 @router.get("/dashboard/overview", response_model=DashboardOverviewResponse)
 async def get_dashboard_overview(
-    period: str = "7d",
+    period: Literal["24h", "7d", "30d", "custom"] = "7d",
     start_date: str | None = None,
     end_date: str | None = None,
 ):
@@ -134,6 +140,14 @@ async def get_dashboard_overview(
     Authentication required via API key.
     """
     logger.info(f"Admin request to fetch dashboard overview (period={period})")
+
+    # Validate custom period requires dates
+    if period == "custom":
+        if not start_date or not end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date and end_date are required for custom period",
+            )
 
     # Track dashboard requests
     DASHBOARD_REQUESTS.inc()

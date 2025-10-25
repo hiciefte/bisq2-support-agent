@@ -15,9 +15,9 @@ import logging
 import time
 from typing import Callable
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram  # type: ignore[attr-defined]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 # =============================================================================
 # RAG Pipeline Metrics
@@ -244,7 +244,8 @@ def reset_metrics():
     _total_requests = 0
     _total_errors = 0
 
-    RAG_REQUEST_RATE._value.set(0)
+    # Note: Counter metrics cannot be reset (by design)
+    # Only reset Gauge metrics which support .set()
     RAG_ERROR_RATE.set(0)
     RAG_P95_LATENCY.set(0)
 

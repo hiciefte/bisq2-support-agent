@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import httpx
 from app.core.config import Settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 
 class PrometheusClient:
@@ -103,7 +103,7 @@ class PrometheusClient:
             >>> # Get P95 over last 24 hours
             >>> await client.get_average_response_time(window_hours=24, percentile=0.95)
         """
-        if percentile:
+        if percentile is not None:
             # P95/P99 query using histogram buckets
             # histogram_quantile calculates the specified percentile from bucket data
             promql = (
