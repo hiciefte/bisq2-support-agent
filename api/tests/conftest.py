@@ -8,6 +8,7 @@ This module provides:
 - Utility fixtures for common test scenarios
 """
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from app.core.config import Settings
+from app.db.run_migrations import run_migrations
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
@@ -200,6 +202,10 @@ async def feedback_service(
     Returns:
         FeedbackService: Initialized feedback service with sample data
     """
+    # Run database migrations before initializing service
+    db_path = os.path.join(test_settings.DATA_DIR, "feedback.db")
+    run_migrations(db_path)
+
     service = FeedbackService(settings=test_settings)
 
     # Create feedback directory
