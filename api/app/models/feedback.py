@@ -101,7 +101,11 @@ class FeedbackItem(BaseModel):
     def explanation(self) -> Optional[str]:
         """Get explanation from metadata if available."""
         if self.metadata and "explanation" in self.metadata:
-            return str(self.metadata["explanation"]) if self.metadata["explanation"] else None
+            return (
+                str(self.metadata["explanation"])
+                if self.metadata["explanation"]
+                else None
+            )
         return None
 
     @computed_field  # type: ignore[prop-decorator]
