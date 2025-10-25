@@ -100,9 +100,6 @@ class DashboardService:
             response_time_trend = await self._calculate_response_time_trend(
                 period, start_date, end_date
             )
-            negative_feedback_trend = await self._calculate_negative_feedback_trend(
-                period, start_date, end_date
-            )
 
             # Get response time metrics for the selected period
             avg_response_time = await self._get_average_response_time(
@@ -123,8 +120,6 @@ class DashboardService:
                 "average_response_time": avg_response_time or 2.3,  # Fallback if None
                 "p95_response_time": p95_response_time,  # May be None if no data
                 "response_time_trend": response_time_trend,
-                "negative_feedback_count": period_feedback_stats["negative"],
-                "negative_feedback_trend": negative_feedback_trend,
                 # Dashboard-specific data
                 "feedback_items_for_faq": feedback_for_faq,
                 "feedback_items_for_faq_count": len(feedback_for_faq),
@@ -362,73 +357,6 @@ class DashboardService:
             return 0.0
         except Exception as e:
             logger.error(f"Failed to calculate response time trend: {e}", exc_info=True)
-            return 0.0
-
-    async def _calculate_negative_feedback_trend(
-        self,
-        period: str = "7d",
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> float:
-        """Calculate negative feedback trend (relative percentage change).
-
-        Compares negative feedback count from current period vs previous equivalent period.
-        Returns relative percentage change: ((current - previous) / previous) * 100.
-        Positive value = more negative feedback (degradation).
-        Negative value = less negative feedback (improvement).
-
-        Args:
-            period: Time period ("24h", "7d", "30d", "custom")
-            start_date: Start date for custom period (ISO format)
-            end_date: End date for custom period (ISO format)
-        """
-        try:
-            # Get period timestamps
-            current_start, current_end, previous_start, previous_end = (
-                self._get_period_timestamps(period, start_date, end_date)
-            )
-
-            # Get stats for both periods (offload to thread to avoid blocking event loop)
-            current_stats, previous_stats = await asyncio.gather(
-                asyncio.to_thread(
-                    self.feedback_service.repository.get_feedback_stats_for_period,
-                    current_start.isoformat(),
-                    current_end.isoformat(),
-                ),
-                asyncio.to_thread(
-                    self.feedback_service.repository.get_feedback_stats_for_period,
-                    previous_start.isoformat(),
-                    previous_end.isoformat(),
-                ),
-            )
-
-            current_negative = current_stats["negative"]
-            previous_negative = previous_stats["negative"]
-
-            # Calculate percentage change
-            if previous_negative == 0:
-                # No previous data
-                if current_negative == 0:
-                    # No change
-                    return 0.0
-                else:
-                    # No baseline to compare against - treat as zero trend per policy
-                    logger.debug(
-                        "No previous negative feedback; treating as 0.0% trend per zero-data policy"
-                    )
-                    return 0.0
-
-            # Calculate percentage change: ((current - previous) / previous) * 100
-            trend = ((current_negative - previous_negative) / previous_negative) * 100
-            logger.info(
-                f"Negative feedback trend ({period}): {trend:+.1f}% (current: {current_negative}, previous: {previous_negative})"
-            )
-            return trend
-
-        except Exception as e:
-            logger.error(
-                f"Failed to calculate negative feedback trend: {e}", exc_info=True
-            )
             return 0.0
 
     def _get_period_timestamps(

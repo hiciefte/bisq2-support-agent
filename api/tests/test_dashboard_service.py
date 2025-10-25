@@ -166,26 +166,6 @@ class TestConfigurableTrendCalculations:
             assert mock_stats.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_calculate_negative_feedback_trend_30d(self, dashboard_service):
-        """Test negative feedback trend calculation with 30-day period."""
-        with patch.object(
-            dashboard_service.feedback_service.repository,
-            "get_feedback_stats_for_period",
-        ) as mock_stats:
-            # Current period: 30 negative
-            # Previous period: 20 negative
-            # Expected trend: +50.0% (30 is 50% more than 20)
-            mock_stats.side_effect = [
-                {"total": 100, "positive": 70, "negative": 30, "helpful_rate": 0.7},
-                {"total": 100, "positive": 80, "negative": 20, "helpful_rate": 0.8},
-            ]
-
-            trend = await dashboard_service._calculate_negative_feedback_trend("30d")
-
-            assert trend == pytest.approx(50.0, rel=0.01)
-            assert mock_stats.call_count == 2
-
-    @pytest.mark.asyncio
     async def test_calculate_response_time_trend_custom(self, dashboard_service):
         """Test response time trend with custom period."""
         start_date = "2025-10-15T00:00:00Z"
@@ -215,7 +195,6 @@ class TestDashboardOverviewWithPeriods:
         with patch.multiple(
             dashboard_service,
             _calculate_helpful_rate_trend=AsyncMock(return_value=5.0),
-            _calculate_negative_feedback_trend=AsyncMock(return_value=-10.0),
             _calculate_response_time_trend=AsyncMock(return_value=0.1),
             _get_feedback_items_for_faq=AsyncMock(return_value=[]),
             _get_average_response_time=AsyncMock(return_value=2.5),
@@ -243,9 +222,6 @@ class TestDashboardOverviewWithPeriods:
                 dashboard_service._calculate_helpful_rate_trend.assert_called_once_with(
                     "7d", None, None
                 )
-                dashboard_service._calculate_negative_feedback_trend.assert_called_once_with(
-                    "7d", None, None
-                )
                 dashboard_service._calculate_response_time_trend.assert_called_once_with(
                     "7d", None, None
                 )
@@ -260,7 +236,6 @@ class TestDashboardOverviewWithPeriods:
         with patch.multiple(
             dashboard_service,
             _calculate_helpful_rate_trend=AsyncMock(return_value=2.0),
-            _calculate_negative_feedback_trend=AsyncMock(return_value=5.0),
             _calculate_response_time_trend=AsyncMock(return_value=-0.2),
             _get_feedback_items_for_faq=AsyncMock(return_value=[]),
             _get_average_response_time=AsyncMock(return_value=2.0),
