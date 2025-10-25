@@ -78,3 +78,7 @@ These variables configure the application services running inside Docker contain
 *   **`NEXT_PUBLIC_PROJECT_NAME`**
     *   Description: A name for the project, potentially used in the UI.
     *   Default: `Bisq 2 Support Agent`
+*   **`HEALTHCHECK_URL`**
+    *   Description: (Optional) Healthchecks.io ping URL for external health monitoring. The scheduler container pings this URL every 5 minutes to confirm the system is operational. If not configured, external alerting will not be available (local monitoring via Prometheus/Grafana will still function).
+    *   Example: `https://hc-ping.com/YOUR-UUID-HERE`
+    *   Default: None (feature disabled if not set)
