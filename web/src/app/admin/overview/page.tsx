@@ -4,14 +4,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Clock, ThumbsDown, Users, PlusCircle, RefreshCw, Eye, Trash2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { Loader2, TrendingUp, TrendingDown, Clock, Users, PlusCircle, RefreshCw, Eye, Trash2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useRouter } from 'next/navigation';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
@@ -36,8 +35,6 @@ interface DashboardData {
   average_response_time: number;
   p95_response_time: number | null;
   response_time_trend: number;
-  negative_feedback_count: number;
-  negative_feedback_trend: number;
   feedback_items_for_faq: FeedbackForFAQ[];
   feedback_items_for_faq_count: number;
   system_uptime: number;
@@ -76,8 +73,6 @@ export default function AdminOverview() {
   // View feedback dialog state
   const [showViewFeedback, setShowViewFeedback] = useState(false);
   const [viewedFeedback, setViewedFeedback] = useState<FeedbackForFAQ | null>(null);
-
-  const router = useRouter();
 
   // Period selection with localStorage persistence
   const { period, dateRange, updatePeriod, isInitialized } = usePeriodStorage("7d");
@@ -253,17 +248,6 @@ export default function AdminOverview() {
     setShowViewFeedback(true);
   };
 
-
-  const formatUptime = (seconds: number) => {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-
-    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-  };
-
   const formatResponseTime = (seconds: number | null | undefined) => {
     if (seconds === null || seconds === undefined) return 'N/A';
     return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
@@ -380,25 +364,6 @@ export default function AdminOverview() {
                 {getTrendIcon(dashboardData.response_time_trend)}
                 <span className="ml-1">
                   {dashboardData.response_time_trend > 0 ? '+' : ''}{formatResponseTime(Math.abs(dashboardData.response_time_trend))} {dashboardData.period_label}
-                </span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Negative Feedback Card */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Negative Feedback ({dashboardData.period})</CardTitle>
-            <ThumbsDown className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.negative_feedback_count}</div>
-            {Math.abs(dashboardData.negative_feedback_trend) >= 0.1 && (
-              <div className={`flex items-center text-xs ${getTrendColor(dashboardData.negative_feedback_trend, 'negative')}`}>
-                {getTrendIcon(dashboardData.negative_feedback_trend)}
-                <span className="ml-1">
-                  {dashboardData.negative_feedback_trend > 0 ? '+' : ''}{dashboardData.negative_feedback_trend.toFixed(1)}% {dashboardData.period_label}
                 </span>
               </div>
             )}
