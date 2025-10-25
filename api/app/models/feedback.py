@@ -101,7 +101,11 @@ class FeedbackItem(BaseModel):
     def explanation(self) -> Optional[str]:
         """Get explanation from metadata if available."""
         if self.metadata and "explanation" in self.metadata:
-            return self.metadata["explanation"]
+            return (
+                str(self.metadata["explanation"])
+                if self.metadata["explanation"]
+                else None
+            )
         return None
 
     @computed_field  # type: ignore[prop-decorator]
@@ -109,7 +113,8 @@ class FeedbackItem(BaseModel):
     def issues(self) -> List[str]:
         """Get list of issues from metadata."""
         if self.metadata and "issues" in self.metadata:
-            return self.metadata["issues"]
+            issues = self.metadata["issues"]
+            return list(issues) if isinstance(issues, list) else []
         return []
 
     @computed_field  # type: ignore[prop-decorator]
@@ -246,6 +251,16 @@ class DashboardOverviewResponse(BaseModel):
     total_faqs: int = Field(description="Total FAQs in system")
     last_updated: str = Field(description="When the data was last updated")
     fallback: Optional[bool] = Field(None, description="Whether this is fallback data")
+
+    # Period metadata
+    period: str = Field(description="Selected time period for trends")
+    period_label: str = Field(description="Human-readable period description")
+    period_start: Optional[str] = Field(
+        None, description="Start date for custom period (ISO format)"
+    )
+    period_end: Optional[str] = Field(
+        None, description="End date for custom period (ISO format)"
+    )
 
 
 class AdminLoginRequest(BaseModel):

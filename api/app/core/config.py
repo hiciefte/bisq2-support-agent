@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     MAX_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
 
+    # Token pricing (for cost tracking in metrics)
+    # Default values are for GPT-4o-mini as of 2024
+    OPENAI_INPUT_COST_PER_TOKEN: float = 0.00000015  # $0.15 per 1M tokens
+    OPENAI_OUTPUT_COST_PER_TOKEN: float = 0.0000006  # $0.60 per 1M tokens
+
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
         10  # Maximum number of chat history entries to include

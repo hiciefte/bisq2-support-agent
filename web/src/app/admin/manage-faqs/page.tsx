@@ -176,7 +176,7 @@ export default function ManageFaqsPage() {
       });
 
       if (response.ok) {
-        fetchFaqs(currentPage);
+        await fetchFaqs(currentPage);
         setIsFormOpen(false);
         setEditingFaq(null);
         setFormData({ question: '', answer: '', category: '', source: 'Manual' });
@@ -210,7 +210,7 @@ export default function ManageFaqsPage() {
       });
 
       if (response.ok) {
-        fetchFaqs(currentPage);
+        await fetchFaqs(currentPage);
         setError(null);
       } else {
         const errorText = `Failed to delete FAQ. Status: ${response.status}`;
@@ -237,7 +237,7 @@ export default function ManageFaqsPage() {
       );
 
       if (response.ok) {
-        fetchFaqs(currentPage, true);
+        await fetchFaqs(currentPage, true);
         setError(null);
       } else {
         const errorText = `Failed to verify FAQ. Status: ${response.status}`;

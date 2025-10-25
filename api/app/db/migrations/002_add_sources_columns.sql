@@ -1,4 +1,4 @@
--- Migration 001: Add sources and sources_used columns to feedback table
+-- Migration 002: Add sources and sources_used columns to feedback table
 -- This migration adds source tracking capabilities to support analytics on source effectiveness
 
 -- Add sources column (JSON string array of source dictionaries)

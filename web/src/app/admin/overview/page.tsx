@@ -16,6 +16,8 @@ import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
+import { type Period } from '@/types/dashboard';
+import { usePeriodStorage } from '@/hooks/usePeriodStorage';
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -32,6 +34,7 @@ interface DashboardData {
   helpful_rate: number;
   helpful_rate_trend: number;
   average_response_time: number;
+  p95_response_time: number | null;
   response_time_trend: number;
   negative_feedback_count: number;
   negative_feedback_trend: number;
@@ -44,6 +47,10 @@ interface DashboardData {
   total_faqs: number;
   last_updated: string;
   fallback?: boolean;
+  period: string;
+  period_label: string;
+  period_start?: string;
+  period_end?: string;
 }
 
 export default function AdminOverview() {
@@ -72,6 +79,9 @@ export default function AdminOverview() {
 
   const router = useRouter();
 
+  // Period selection with localStorage persistence
+  const { period, dateRange, updatePeriod, isInitialized } = usePeriodStorage("7d");
+
   const fetchDashboardData = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setIsRefreshing(true);
@@ -80,7 +90,18 @@ export default function AdminOverview() {
     }
 
     try {
-      const response = await makeAuthenticatedRequest('/admin/dashboard/overview');
+      // Build query parameters
+      const params = new URLSearchParams();
+      params.set('period', period);
+
+      if (period === 'custom' && dateRange) {
+        params.set('start_date', dateRange.from.toISOString());
+        params.set('end_date', dateRange.to.toISOString());
+      }
+
+      const response = await makeAuthenticatedRequest(
+        `/admin/dashboard/overview?${params.toString()}`
+      );
 
       if (response.ok) {
         const data = await response.json();
@@ -96,7 +117,7 @@ export default function AdminOverview() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [period, dateRange]);
 
   // Delete feedback hook
   const {
@@ -110,6 +131,9 @@ export default function AdminOverview() {
   } = useFeedbackDeletion(fetchDashboardData);
 
   useEffect(() => {
+    // Wait for period initialization before fetching
+    if (!isInitialized) return;
+
     // Authentication is handled by SecureAuth wrapper in layout
     fetchDashboardData();
 
@@ -120,7 +144,7 @@ export default function AdminOverview() {
 
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
-  }, [fetchDashboardData]);
+  }, [fetchDashboardData, isInitialized]);
 
   const handleRefresh = () => {
     fetchDashboardData(true);
@@ -240,7 +264,8 @@ export default function AdminOverview() {
     return `${minutes}m`;
   };
 
-  const formatResponseTime = (seconds: number) => {
+  const formatResponseTime = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined) return 'N/A';
     return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
   };
 
@@ -295,11 +320,16 @@ export default function AdminOverview() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {dashboardData.fallback && (
-            <Badge variant="outline" className="text-yellow-600 border-yellow-600">
-              Fallback Data
-            </Badge>
-          )}
+          <Select value={period} onValueChange={(value: Period) => updatePeriod(value, undefined)}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Select period" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="24h">Last 24 Hours</SelectItem>
+              <SelectItem value="7d">Last 7 Days</SelectItem>
+              <SelectItem value="30d">Last 30 Days</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             onClick={handleRefresh}
             variant="outline"
@@ -321,7 +351,7 @@ export default function AdminOverview() {
         {/* Helpful Rate Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Helpful Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">Helpful Rate ({dashboardData.period})</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -330,7 +360,7 @@ export default function AdminOverview() {
               <div className={`flex items-center text-xs ${getTrendColor(dashboardData.helpful_rate_trend, 'positive')}`}>
                 {getTrendIcon(dashboardData.helpful_rate_trend)}
                 <span className="ml-1">
-                  {dashboardData.helpful_rate_trend > 0 ? '+' : ''}{dashboardData.helpful_rate_trend.toFixed(1)}% from last period
+                  {dashboardData.helpful_rate_trend > 0 ? '+' : ''}{dashboardData.helpful_rate_trend.toFixed(1)}% {dashboardData.period_label}
                 </span>
               </div>
             )}
@@ -340,7 +370,7 @@ export default function AdminOverview() {
         {/* Average Response Time Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Average Response Time</CardTitle>
+            <CardTitle className="text-sm font-medium">Response Time ({dashboardData.period})</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -349,7 +379,7 @@ export default function AdminOverview() {
               <div className={`flex items-center text-xs ${getTrendColor(dashboardData.response_time_trend, 'negative')}`}>
                 {getTrendIcon(dashboardData.response_time_trend)}
                 <span className="ml-1">
-                  {dashboardData.response_time_trend > 0 ? '+' : ''}{formatResponseTime(Math.abs(dashboardData.response_time_trend))} from last period
+                  {dashboardData.response_time_trend > 0 ? '+' : ''}{formatResponseTime(Math.abs(dashboardData.response_time_trend))} {dashboardData.period_label}
                 </span>
               </div>
             )}
@@ -359,7 +389,7 @@ export default function AdminOverview() {
         {/* Negative Feedback Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Negative Feedback</CardTitle>
+            <CardTitle className="text-sm font-medium">Negative Feedback ({dashboardData.period})</CardTitle>
             <ThumbsDown className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -368,7 +398,7 @@ export default function AdminOverview() {
               <div className={`flex items-center text-xs ${getTrendColor(dashboardData.negative_feedback_trend, 'negative')}`}>
                 {getTrendIcon(dashboardData.negative_feedback_trend)}
                 <span className="ml-1">
-                  {dashboardData.negative_feedback_trend > 0 ? '+' : ''}{dashboardData.negative_feedback_trend.toFixed(1)}% from last period
+                  {dashboardData.negative_feedback_trend > 0 ? '+' : ''}{dashboardData.negative_feedback_trend.toFixed(1)}% {dashboardData.period_label}
                 </span>
               </div>
             )}
@@ -377,7 +407,7 @@ export default function AdminOverview() {
       </div>
 
       {/* Feedback Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm font-medium text-muted-foreground mb-2">Total FAQs</div>
@@ -389,13 +419,6 @@ export default function AdminOverview() {
           <CardContent className="pt-6">
             <div className="text-sm font-medium text-muted-foreground mb-2">Total Feedback</div>
             <div className="text-xl font-bold">{dashboardData.total_feedback}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm font-medium text-muted-foreground mb-2">Negative Feedback</div>
-            <div className="text-xl font-bold">{dashboardData.negative_feedback_count}</div>
           </CardContent>
         </Card>
 

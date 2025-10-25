@@ -22,6 +22,7 @@ class LLMResponse:
     """Response from LLM invocation compatible with LangChain interface."""
 
     content: str
+    usage: dict | None = None  # Token usage statistics from the LLM
 
 
 class AISuiteLLMWrapper:
@@ -55,6 +56,7 @@ class AISuiteLLMWrapper:
 
         Returns:
             LLMResponse object with 'content' attribute containing the response text
+            and 'usage' attribute with token usage statistics
 
         Raises:
             RuntimeError: If LLM invocation fails
@@ -68,7 +70,19 @@ class AISuiteLLMWrapper:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            return LLMResponse(content=response.choices[0].message.content)
+
+            # Extract token usage if available
+            usage = None
+            if hasattr(response, "usage") and response.usage:
+                usage = {
+                    "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
+                    "completion_tokens": getattr(
+                        response.usage, "completion_tokens", 0
+                    ),
+                    "total_tokens": getattr(response.usage, "total_tokens", 0),
+                }
+
+            return LLMResponse(content=response.choices[0].message.content, usage=usage)
         except Exception as e:
             error_msg = (
                 f"Failed to invoke LLM (model={self.model_id}, "

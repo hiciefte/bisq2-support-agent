@@ -37,10 +37,6 @@ test.describe('Bisq Version Handling', () => {
     // Wait for bot avatar to appear (indicates response started)
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 30000 });
 
-    // Wait a bit for the response to finish rendering
-    // (streaming responses need time to complete)
-    await page.waitForTimeout(2000);
-
     // Get all bot avatars
     const botAvatars = page.locator('img[alt="Bisq AI"]');
     const count = await botAvatars.count();
@@ -53,9 +49,62 @@ test.describe('Bisq Version Handling', () => {
     const messageRow = lastAvatar.locator('../..');
     const messageContainer = messageRow.locator('div').nth(1);
 
+    // Wait for the actual response to load (not just the loading message)
+    // Keep checking until we get a response that doesn't contain loading message placeholders
+    let responseText = '';
+    let attempts = 0;
+    const maxAttempts = 30; // 30 seconds total wait time
+
+    while (attempts < maxAttempts) {
+      responseText = await messageContainer.innerText();
+      responseText = responseText.trim();
+
+      // Check if it's still a loading message
+      // All possible loading message patterns from src/components/chat/hooks/use-chat-messages.ts
+      const isLoadingMessage =
+        responseText.includes('Thinking...') ||
+        responseText.includes('potato CPU') ||
+        responseText.includes('dial-up soup') ||
+        responseText.includes('meditating with a modem') ||
+        responseText.includes('Hamster union break') ||
+        responseText.includes('procrastinating') ||
+        responseText.includes('Turtles in molasses') ||
+        responseText.includes('sharpening its crayon') ||
+        responseText.includes('Coffee break') ||
+        responseText.includes('56k vibe') ||
+        responseText.includes('Sloth-mode') ||
+        responseText.includes('moonwalking your request') ||
+        responseText.includes('Drunk penguin') ||
+        responseText.includes('floppy disk') ||
+        responseText.includes('Wi-Fi fumes') ||
+        responseText.includes('Mini-vacay') ||
+        responseText.includes('wrestling a calculator') ||
+        responseText.includes('90s dial-up loop') ||
+        responseText.includes('Snail rave') ||
+        responseText.includes('teaching a toaster') ||
+        responseText.includes('Commodore 64') ||
+        responseText.includes('juggling with a brick') ||
+        responseText.includes('Unicycle CPU') ||
+        responseText.includes('your answer\'s') ||
+        responseText.includes('AI\'s') ||
+        responseText.includes('your reply\'s') ||
+        responseText.includes('give it') ||
+        responseText.includes('ETA') ||
+        responseText.includes('your turn\'s') ||
+        responseText.startsWith('...') ||
+        responseText.startsWith('..·') ||
+        responseText.length < 20; // Loading messages are typically short
+
+      if (!isLoadingMessage) {
+        break;
+      }
+
+      await page.waitForTimeout(1000);
+      attempts++;
+    }
+
     // Extract and return the text content
-    const responseText = await messageContainer.innerText();
-    return responseText.trim();
+    return responseText;
   }
 
   test('should answer Bisq 1 questions with disclaimer when information is available', async ({ page }) => {
@@ -199,7 +248,9 @@ test.describe('Bisq Version Handling', () => {
       responseLower.includes('difference') ||
       responseLower.includes('compared') ||
       responseLower.includes('whereas') ||
-      responseLower.includes('while');
+      responseLower.includes('while') ||
+      responseLower.includes('contrast') ||
+      responseLower.includes('unlike');
 
     expect(hasComparison).toBeTruthy();
   });

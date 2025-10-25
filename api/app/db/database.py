@@ -110,6 +110,16 @@ class FeedbackDatabase:
             self._connection = None
         logger.info("Database connection closed")
 
+    def reset(self) -> None:
+        """
+        Reset database initialization state.
+
+        This is primarily used for testing scenarios where migrations
+        need to be applied after initial schema creation.
+        """
+        self.initialized = False
+        logger.info("Database initialization state reset")
+
 
 # Global database instance
 _db_instance: Optional[FeedbackDatabase] = None
