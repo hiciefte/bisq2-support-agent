@@ -202,11 +202,12 @@ async def feedback_service(
     Returns:
         FeedbackService: Initialized feedback service with sample data
     """
-    # Run database migrations before initializing service
+    # Initialize service first to create base schema
+    service = FeedbackService(settings=test_settings)
+
+    # Then run database migrations to add additional columns
     db_path = os.path.join(test_settings.DATA_DIR, "feedback.db")
     run_migrations(db_path)
-
-    service = FeedbackService(settings=test_settings)
 
     # Create feedback directory
     feedback_dir = Path(test_settings.FEEDBACK_DIR_PATH)
