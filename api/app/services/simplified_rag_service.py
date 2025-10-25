@@ -25,6 +25,11 @@ from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
+from app.utils.instrumentation import (
+    RAG_REQUEST_RATE,
+    instrument_stage,
+    update_error_rate,
+)
 from app.utils.logging import redact_pii
 from fastapi import Request
 
@@ -157,6 +162,7 @@ class SimplifiedRAGService:
         """Delegate to LLM provider for model initialization."""
         self.llm = self.llm_provider.initialize_llm()
 
+    @instrument_stage("retrieval")
     def _retrieve_with_version_priority(self, query: str) -> List[Document]:
         """Delegate to document retriever for version-aware retrieval.
 
@@ -447,6 +453,9 @@ class SimplifiedRAGService:
         """
         start_time = time.time()
 
+        # Track request rate
+        RAG_REQUEST_RATE.inc()
+
         try:
             if not self.rag_chain:
                 logger.error("RAG chain not initialized. Call setup() first.")
@@ -575,6 +584,9 @@ class SimplifiedRAGService:
             # Deduplicate sources
             sources = self._deduplicate_sources(sources)
 
+            # Update error rate (success)
+            update_error_rate(is_error=False)
+
             return {
                 "answer": response_text,
                 "sources": sources,
@@ -587,6 +599,10 @@ class SimplifiedRAGService:
         except Exception as e:
             error_time = time.time() - start_time
             logger.error(f"Error processing query: {e!s}", exc_info=True)
+
+            # Update error rate (failure)
+            update_error_rate(is_error=True)
+
             return {
                 "answer": "I apologize, but I encountered an error processing your query. Please try again.",
                 "sources": [],

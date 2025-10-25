@@ -81,27 +81,52 @@ class PrometheusClient:
             logger.exception("Unexpected error querying Prometheus")
             return None
 
-    async def get_average_response_time(self) -> Optional[float]:
-        """Get average response time from Prometheus metrics.
+    async def get_average_response_time(
+        self, window_hours: int = 1, percentile: Optional[float] = None
+    ) -> Optional[float]:
+        """Get response time from Prometheus metrics.
 
-        Calculates the average response time over the last hour using
-        the rate of sum/count from the response time histogram.
+        Calculates either the average (mean) or a percentile response time
+        over the specified time window using histogram metrics.
+
+        Args:
+            window_hours: Time window in hours for the query (default: 1)
+            percentile: If specified, return this percentile (e.g., 0.95 for P95)
+                       If None, return the mean (average)
 
         Returns:
-            Average response time in seconds, or None if unavailable
+            Response time in seconds, or None if unavailable
+
+        Examples:
+            >>> # Get average over last 7 days
+            >>> await client.get_average_response_time(window_hours=168)
+            >>> # Get P95 over last 24 hours
+            >>> await client.get_average_response_time(window_hours=24, percentile=0.95)
         """
-        # Query for average response time using histogram metrics
-        # rate() calculates per-second average rate over time range
-        # sum() aggregates across all label sets for accurate total
-        promql = (
-            "sum(rate(bisq_query_response_time_seconds_sum[1h]))"
-            " / "
-            "sum(rate(bisq_query_response_time_seconds_count[1h]))"
-        )
+        if percentile:
+            # P95/P99 query using histogram buckets
+            # histogram_quantile calculates the specified percentile from bucket data
+            promql = (
+                f"histogram_quantile({percentile}, "
+                f"sum(rate(bisq_query_response_time_seconds_bucket[{window_hours}h])) by (le))"
+            )
+            metric_type = f"P{int(percentile * 100)}"
+        else:
+            # Mean (average) query using histogram sum/count
+            # rate() calculates per-second average rate over time range
+            # sum() aggregates across all label sets for accurate total
+            promql = (
+                f"sum(rate(bisq_query_response_time_seconds_sum[{window_hours}h]))"
+                " / "
+                f"sum(rate(bisq_query_response_time_seconds_count[{window_hours}h]))"
+            )
+            metric_type = "average"
 
         result = await self.query(promql)
         if not result or not result.get("data", {}).get("result"):
-            logger.debug("No response time data available in Prometheus")
+            logger.debug(
+                f"No {metric_type} response time data available in Prometheus for {window_hours}h window"
+            )
             return None
 
         # Extract the value from the result
@@ -110,15 +135,17 @@ class PrometheusClient:
             # Check if value is finite (not NaN or infinity)
             if not math.isfinite(value):
                 logger.debug(
-                    f"Prometheus returned non-finite value for response time: {value}"
+                    f"Prometheus returned non-finite value for {metric_type} response time: {value}"
                 )
                 return None
             logger.info(
-                f"Retrieved average response time from Prometheus: {value:.2f}s"
+                f"Retrieved {metric_type} response time from Prometheus ({window_hours}h window): {value:.2f}s"
             )
             return value
         except (IndexError, KeyError, ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse response time from Prometheus: {e}")
+            logger.warning(
+                f"Failed to parse {metric_type} response time from Prometheus: {e}"
+            )
             return None
 
     async def get_total_query_count(self) -> Optional[int]:

@@ -12,6 +12,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
+from app.utils.instrumentation import track_tokens_and_cost
 from app.utils.logging import redact_pii
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -340,13 +341,31 @@ Answer:"""
                     f"has context: {bool(context)}"
                 )
 
-                # Generate response
+                # Generate response (instrumented for monitoring)
+                generation_start = time.time()
                 response_text = llm.invoke(formatted_prompt)
+                _ = time.time() - generation_start  # generation_time for future use
+
                 response_content = (
                     response_text.content
                     if hasattr(response_text, "content")
                     else str(response_text)
                 )
+
+                # Track token usage and cost if available
+                if hasattr(response_text, "usage") and response_text.usage:
+                    usage = response_text.usage
+                    track_tokens_and_cost(
+                        input_tokens=usage.get("prompt_tokens", 0),
+                        output_tokens=usage.get("completion_tokens", 0),
+                        input_cost_per_token=self.settings.OPENAI_INPUT_COST_PER_TOKEN,
+                        output_cost_per_token=self.settings.OPENAI_OUTPUT_COST_PER_TOKEN,
+                    )
+                    logger.debug(
+                        f"Token usage: {usage.get('prompt_tokens', 0)} input + "
+                        f"{usage.get('completion_tokens', 0)} output = "
+                        f"{usage.get('total_tokens', 0)} total"
+                    )
 
                 # Calculate response time
                 response_time = time.time() - response_start_time

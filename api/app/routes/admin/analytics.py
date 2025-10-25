@@ -112,7 +112,11 @@ async def get_metrics() -> Response:
 
 
 @router.get("/dashboard/overview", response_model=DashboardOverviewResponse)
-async def get_dashboard_overview():
+async def get_dashboard_overview(
+    period: str = "7d",
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
     """Get comprehensive dashboard overview with metrics and analytics.
 
     This endpoint provides a complete dashboard overview combining:
@@ -122,15 +126,24 @@ async def get_dashboard_overview():
     - System uptime and query statistics
     - Historical trend data for performance monitoring
 
+    Query Parameters:
+        period: Time period for trends ("24h", "7d", "30d", "custom"). Default: "7d"
+        start_date: Start date for custom period (ISO format, required if period="custom")
+        end_date: End date for custom period (ISO format, required if period="custom")
+
     Authentication required via API key.
     """
-    logger.info("Admin request to fetch dashboard overview")
+    logger.info(f"Admin request to fetch dashboard overview (period={period})")
 
     # Track dashboard requests
     DASHBOARD_REQUESTS.inc()
 
     try:
-        overview_data = await dashboard_service.get_dashboard_overview()
+        overview_data = await dashboard_service.get_dashboard_overview(
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return DashboardOverviewResponse(**overview_data)
     except Exception as e:
         logger.error(f"Failed to fetch dashboard overview: {e}", exc_info=True)
