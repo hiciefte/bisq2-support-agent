@@ -7,11 +7,12 @@ thread safety, and migration support.
 
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Optional
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 
 class FeedbackDatabase:
@@ -19,6 +20,7 @@ class FeedbackDatabase:
 
     _instance: Optional["FeedbackDatabase"] = None
     _connection: Optional[sqlite3.Connection] = None
+    _reset_lock = threading.Lock()
 
     def __new__(cls):
         """Singleton pattern to ensure one database instance."""
@@ -116,8 +118,11 @@ class FeedbackDatabase:
 
         This is primarily used for testing scenarios where migrations
         need to be applied after initial schema creation.
+
+        Thread-safe to prevent race conditions with initialize().
         """
-        self.initialized = False
+        with self._reset_lock:
+            self.initialized = False
         logger.info("Database initialization state reset")
 
 
