@@ -41,7 +41,7 @@ def test_data_dir() -> Generator[str, None, None]:
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def test_settings(test_data_dir: str) -> Settings:
     """Create test settings with isolated test environment.
 
@@ -51,13 +51,16 @@ def test_settings(test_data_dir: str) -> Settings:
     - Provides test API keys
     - Uses minimal model configuration
 
+    Note: Changed from scope="session" to default (function) scope to ensure
+    proper database isolation between test files.
+
     Args:
         test_data_dir: Temporary directory for test data
 
     Returns:
         Settings: Configured settings instance for testing
     """
-    return Settings(
+    settings = Settings(
         DEBUG=True,
         DATA_DIR=test_data_dir,
         OPENAI_API_KEY="test-api-key",
@@ -69,6 +72,26 @@ def test_settings(test_data_dir: str) -> Settings:
         MAX_CHAT_HISTORY_LENGTH=5,
         MAX_CONTEXT_LENGTH=1000,
     )
+
+    # Initialize database and run migrations for test environment
+    # This ensures all tests have access to migrated schema
+    from app.db.database import get_database
+
+    db_path = os.path.join(test_data_dir, "feedback.db")
+    db = get_database()
+
+    # Reset database state to handle singleton pattern across tests
+    db.reset()
+    db.initialize(db_path)
+
+    # Run migrations after initial schema creation
+    run_migrations(db_path)
+
+    # Reset and reinitialize to load migrated schema
+    db.reset()
+    db.initialize(db_path)
+
+    return settings
 
 
 @pytest.fixture
@@ -195,6 +218,9 @@ async def feedback_service(
     This fixture provides a fully initialized FeedbackService for testing with
     pre-loaded sample feedback data in an isolated environment.
 
+    Note: Database migrations are already applied by the test_settings fixture,
+    so we only need to initialize the service and load sample data.
+
     Args:
         test_settings: Test settings instance
         sample_feedback_data: Sample feedback entries
@@ -202,12 +228,8 @@ async def feedback_service(
     Returns:
         FeedbackService: Initialized feedback service with sample data
     """
-    # Initialize service first to create base schema
+    # Initialize service (database already migrated by test_settings fixture)
     service = FeedbackService(settings=test_settings)
-
-    # Then run database migrations to add additional columns
-    db_path = os.path.join(test_settings.DATA_DIR, "feedback.db")
-    run_migrations(db_path)
 
     # Create feedback directory
     feedback_dir = Path(test_settings.FEEDBACK_DIR_PATH)
