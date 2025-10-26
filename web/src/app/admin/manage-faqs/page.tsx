@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Pencil, Trash2, Loader2, PlusCircle, Filter, X, Search, RotateCcw, BadgeCheck } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { makeAuthenticatedRequest } from '@/lib/auth';
 
 interface FAQ {
@@ -52,6 +53,10 @@ export default function ManageFaqsPage() {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [availableSources, setAvailableSources] = useState<string[]>([]);
 
+  // "Do not show again" state for verify FAQ confirmation
+  const [skipVerifyConfirmation, setSkipVerifyConfirmation] = useState(false);
+  const [doNotShowAgain, setDoNotShowAgain] = useState(false);
+
   const currentPageRef = useRef(currentPage);
   const previousDataHashRef = useRef<string>('');
   const savedScrollPositionRef = useRef<number | null>(null);
@@ -72,6 +77,14 @@ export default function ManageFaqsPage() {
   useEffect(() => {
     // Since we're wrapped with SecureAuth, we know we're authenticated
     fetchFaqs();
+
+    // Load "do not show again" preference from localStorage
+    try {
+      const skipConfirmation = localStorage.getItem('skipVerifyFaqConfirmation');
+      if (skipConfirmation === 'true') setSkipVerifyConfirmation(true);
+    } catch {
+      // ignore storage errors; default is to show confirmation
+    }
   }, []);
 
   // Re-fetch data when filters change
@@ -526,40 +539,73 @@ export default function ManageFaqsPage() {
 
                     <div className="flex items-center gap-2 ml-4">
                       {!faq.verified && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={isSubmitting}
-                            >
-                              <BadgeCheck className="h-4 w-4 mr-2" />
-                              Verify FAQ
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Verify this FAQ?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This will mark this FAQ as verified, indicating it has been reviewed and approved by a Bisq Support Admin. This action is irreversible.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => handleVerifyFaq(faq)}
-                                className="!bg-green-600 hover:!bg-green-700"
+                        skipVerifyConfirmation ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={isSubmitting}
+                            onClick={() => handleVerifyFaq(faq)}
+                            aria-label={`Verify FAQ: ${faq.question}`}
+                          >
+                            <BadgeCheck className="h-4 w-4 mr-2" />
+                            Verify FAQ
+                          </Button>
+                        ) : (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 disabled={isSubmitting}
-                                aria-label={`Verify FAQ: ${faq.question}`}
                               >
-                                {isSubmitting ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : null}
+                                <BadgeCheck className="h-4 w-4 mr-2" />
                                 Verify FAQ
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Verify this FAQ?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will mark this FAQ as verified, indicating it has been reviewed and approved by a Bisq Support Admin. This action is irreversible.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <div className="flex items-center space-x-2 px-6 pb-4">
+                                <Checkbox
+                                  id={`do-not-show-again-${faq.id}`}
+                                  checked={doNotShowAgain}
+                                  onCheckedChange={(checked) => setDoNotShowAgain(checked === true)}
+                                />
+                                <Label
+                                  htmlFor={`do-not-show-again-${faq.id}`}
+                                  className="text-sm font-normal cursor-pointer"
+                                >
+                                  Do not show this confirmation again
+                                </Label>
+                              </div>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel onClick={() => setDoNotShowAgain(false)}>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => {
+                                    if (doNotShowAgain) {
+                                      localStorage.setItem('skipVerifyFaqConfirmation', 'true');
+                                      setSkipVerifyConfirmation(true);
+                                    }
+                                    setDoNotShowAgain(false);
+                                    handleVerifyFaq(faq);
+                                  }}
+                                  className="!bg-green-600 hover:!bg-green-700"
+                                  disabled={isSubmitting}
+                                  aria-label={`Verify FAQ: ${faq.question}`}
+                                >
+                                  {isSubmitting ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : null}
+                                  Verify FAQ
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )
                       )}
                       <Button variant="ghost" size="icon" onClick={() => handleEdit(faq)}>
                         <Pencil className="h-4 w-4" />

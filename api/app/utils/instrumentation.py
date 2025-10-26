@@ -12,10 +12,11 @@ Metrics follow the Unified Monitoring Plan (docs/requirements/unified-monitoring
 
 import functools
 import logging
+import threading
 import time
 from typing import Callable
 
-from prometheus_client import Counter, Gauge, Histogram  # type: ignore[attr-defined]
+from prometheus_client import Counter, Gauge, Histogram
 
 logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
@@ -77,7 +78,7 @@ RAG_P95_LATENCY = Gauge(
 # Simple counters for rate calculation
 _total_requests = 0
 _total_errors = 0
-_error_rate_lock = None
+_error_rate_lock = threading.Lock()
 
 
 def update_error_rate(is_error: bool = False):
@@ -89,15 +90,13 @@ def update_error_rate(is_error: bool = False):
     """
     global _total_requests, _total_errors
 
-    _total_requests += 1
-
-    if is_error:
-        _total_errors += 1
-
-    # Calculate and update error rate
-    if _total_requests > 0:
-        error_rate = _total_errors / _total_requests
-        RAG_ERROR_RATE.set(error_rate)
+    # Keep updates consistent with reset_metrics()
+    with _error_rate_lock:
+        _total_requests += 1
+        if is_error:
+            _total_errors += 1
+        if _total_requests > 0:
+            RAG_ERROR_RATE.set(_total_errors / _total_requests)
 
 
 # =============================================================================
@@ -146,7 +145,7 @@ def instrument_stage(stage_name: str):
                 error_type = type(e).__name__
                 RAG_ERRORS.labels(stage_name=stage_name, error_type=error_type).inc()
 
-                logger.error(f"Stage '{stage_name}' failed with {error_type}: {str(e)}")
+                logger.exception(f"Stage '{stage_name}' failed with {error_type}")
 
                 # Re-raise the exception
                 raise
@@ -172,7 +171,7 @@ def instrument_stage(stage_name: str):
                 error_type = type(e).__name__
                 RAG_ERRORS.labels(stage_name=stage_name, error_type=error_type).inc()
 
-                logger.error(f"Stage '{stage_name}' failed with {error_type}: {str(e)}")
+                logger.exception(f"Stage '{stage_name}' failed with {error_type}")
 
                 # Re-raise the exception
                 raise
@@ -241,12 +240,14 @@ def reset_metrics():
     """
     global _total_requests, _total_errors
 
-    _total_requests = 0
-    _total_errors = 0
+    # Acquire lock to prevent race conditions with update_error_rate
+    with _error_rate_lock:
+        _total_requests = 0
+        _total_errors = 0
 
-    # Note: Counter metrics cannot be reset (by design)
-    # Only reset Gauge metrics which support .set()
-    RAG_ERROR_RATE.set(0)
-    RAG_P95_LATENCY.set(0)
+        # Note: Counter metrics cannot be reset (by design)
+        # Only reset Gauge metrics which support .set()
+        RAG_ERROR_RATE.set(0)
+        RAG_P95_LATENCY.set(0)
 
     logger.warning("Metrics have been reset to zero")

@@ -230,10 +230,6 @@ class DashboardOverviewResponse(BaseModel):
     response_time_trend: float = Field(
         description="Response time trend (negative = improvement)"
     )
-    negative_feedback_count: int = Field(description="Recent negative feedback count")
-    negative_feedback_trend: float = Field(
-        description="Negative feedback trend percentage"
-    )
 
     # Dashboard-specific data
     feedback_items_for_faq: List[FeedbackForFAQItem] = Field(
