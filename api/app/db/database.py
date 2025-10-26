@@ -41,19 +41,21 @@ class FeedbackDatabase:
         Args:
             db_path: Path to SQLite database file
         """
-        if self.initialized:
-            logger.info("Database already initialized")
-            return
+        # Guard initialization against concurrent reset()/initialize() calls
+        with self._reset_lock:
+            if self.initialized:
+                logger.info("Database already initialized")
+                return
 
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Initializing database at: {self.db_path}")
+            logger.info(f"Initializing database at: {self.db_path}")
 
-        # Create database and apply schema
-        self._create_schema()
-        self.initialized = True
-        logger.info("Database initialized successfully")
+            # Create database and apply schema
+            self._create_schema()
+            self.initialized = True
+            logger.info("Database initialized successfully")
 
     def _create_schema(self) -> None:
         """Create database schema from schema.sql file."""

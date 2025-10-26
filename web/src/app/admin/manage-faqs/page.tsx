@@ -79,9 +79,11 @@ export default function ManageFaqsPage() {
     fetchFaqs();
 
     // Load "do not show again" preference from localStorage
-    const skipConfirmation = localStorage.getItem('skipVerifyFaqConfirmation');
-    if (skipConfirmation === 'true') {
-      setSkipVerifyConfirmation(true);
+    try {
+      const skipConfirmation = localStorage.getItem('skipVerifyFaqConfirmation');
+      if (skipConfirmation === 'true') setSkipVerifyConfirmation(true);
+    } catch {
+      // ignore storage errors; default is to show confirmation
     }
   }, []);
 
@@ -543,6 +545,7 @@ export default function ManageFaqsPage() {
                             size="sm"
                             disabled={isSubmitting}
                             onClick={() => handleVerifyFaq(faq)}
+                            aria-label={`Verify FAQ: ${faq.question}`}
                           >
                             <BadgeCheck className="h-4 w-4 mr-2" />
                             Verify FAQ
@@ -568,12 +571,12 @@ export default function ManageFaqsPage() {
                               </AlertDialogHeader>
                               <div className="flex items-center space-x-2 px-6 pb-4">
                                 <Checkbox
-                                  id="do-not-show-again"
+                                  id={`do-not-show-again-${faq.id}`}
                                   checked={doNotShowAgain}
                                   onCheckedChange={(checked) => setDoNotShowAgain(checked === true)}
                                 />
                                 <Label
-                                  htmlFor="do-not-show-again"
+                                  htmlFor={`do-not-show-again-${faq.id}`}
                                   className="text-sm font-normal cursor-pointer"
                                 >
                                   Do not show this confirmation again
