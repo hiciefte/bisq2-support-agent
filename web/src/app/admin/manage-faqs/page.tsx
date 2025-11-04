@@ -107,6 +107,10 @@ export default function ManageFaqsPage() {
     // Collapsible state - track which FAQs are manually expanded
     const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
+    // Bulk selection state
+    const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+    const [selectedFaqIds, setSelectedFaqIds] = useState<Set<string>>(new Set());
+
     const currentPageRef = useRef(currentPage);
     const previousDataHashRef = useRef<string>("");
     const savedScrollPositionRef = useRef<number | null>(null);
@@ -338,6 +342,72 @@ export default function ManageFaqsPage() {
             }
         } catch (error) {
             const errorText = "An unexpected error occurred while verifying FAQ.";
+            console.error(errorText, error);
+            setError(errorText);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // Bulk action handlers
+    const handleSelectAll = () => {
+        if (!faqData) return;
+        if (selectedFaqIds.size === faqData.faqs.length) {
+            setSelectedFaqIds(new Set());
+        } else {
+            setSelectedFaqIds(new Set(faqData.faqs.map(faq => faq.id)));
+        }
+    };
+
+    const handleSelectFaq = (id: string) => {
+        setSelectedFaqIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) {
+                newSet.delete(id);
+            } else {
+                newSet.add(id);
+            }
+            return newSet;
+        });
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedFaqIds.size === 0) return;
+
+        setIsSubmitting(true);
+        try {
+            const deletePromises = Array.from(selectedFaqIds).map(id =>
+                makeAuthenticatedRequest(`/admin/faqs/${id}`, { method: "DELETE" })
+            );
+
+            await Promise.all(deletePromises);
+            await fetchFaqs(currentPage, true);
+            setSelectedFaqIds(new Set());
+            setError(null);
+        } catch (error) {
+            const errorText = "An error occurred while deleting FAQs.";
+            console.error(errorText, error);
+            setError(errorText);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleBulkVerify = async () => {
+        if (selectedFaqIds.size === 0) return;
+
+        setIsSubmitting(true);
+        try {
+            const verifyPromises = Array.from(selectedFaqIds).map(id =>
+                makeAuthenticatedRequest(`/admin/faqs/${id}/verify`, { method: "PATCH" })
+            );
+
+            await Promise.all(verifyPromises);
+            await fetchFaqs(currentPage, true);
+            setSelectedFaqIds(new Set());
+            setError(null);
+        } catch (error) {
+            const errorText = "An error occurred while verifying FAQs.";
             console.error(errorText, error);
             setError(errorText);
         } finally {
@@ -731,11 +801,24 @@ export default function ManageFaqsPage() {
                         <CardTitle>FAQ List</CardTitle>
                         <CardDescription>View, edit, or delete existing FAQs.</CardDescription>
                     </div>
-                    {!isFormOpen && (
-                        <Button onClick={openNewFaqForm}>
-                            <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {!isFormOpen && (
+                            <>
+                                <Button
+                                    variant={bulkSelectionMode ? "default" : "outline"}
+                                    onClick={() => {
+                                        setBulkSelectionMode(!bulkSelectionMode);
+                                        setSelectedFaqIds(new Set());
+                                    }}
+                                >
+                                    {bulkSelectionMode ? "Exit Selection" : "Bulk Select"}
+                                </Button>
+                                <Button onClick={openNewFaqForm}>
+                                    <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
+                                </Button>
+                            </>
+                        )}
+                    </div>
                 </CardHeader>
                 <CardContent>
                     {isLoading ? (
@@ -756,6 +839,61 @@ export default function ManageFaqsPage() {
                         </div>
                     ) : (
                         <div className="space-y-4">
+                            {/* Bulk Action Toolbar */}
+                            {bulkSelectionMode && (
+                                <div className="flex items-center justify-between p-3 bg-muted rounded-lg border border-border">
+                                    <div className="flex items-center gap-3">
+                                        <Checkbox
+                                            id="select-all"
+                                            checked={
+                                                faqData?.faqs.length > 0 &&
+                                                selectedFaqIds.size === faqData.faqs.length
+                                            }
+                                            onCheckedChange={handleSelectAll}
+                                            aria-label="Select all FAQs"
+                                        />
+                                        <label
+                                            htmlFor="select-all"
+                                            className="text-sm font-medium cursor-pointer"
+                                        >
+                                            {selectedFaqIds.size === 0
+                                                ? "Select all"
+                                                : `${selectedFaqIds.size} selected`}
+                                        </label>
+                                    </div>
+                                    {selectedFaqIds.size > 0 && (
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={handleBulkVerify}
+                                                disabled={isSubmitting}
+                                            >
+                                                {isSubmitting ? (
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <BadgeCheck className="mr-2 h-4 w-4" />
+                                                )}
+                                                Verify Selected
+                                            </Button>
+                                            <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={handleBulkDelete}
+                                                disabled={isSubmitting}
+                                            >
+                                                {isSubmitting ? (
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Trash2 className="mr-2 h-4 w-4" />
+                                                )}
+                                                Delete Selected
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {faqData?.faqs.map((faq) => {
                                 // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
                                 const isExpanded = !faq.verified || expandedIds.has(faq.id);
@@ -784,6 +922,16 @@ export default function ManageFaqsPage() {
                                             {faq.verified ? (
                                                 <CollapsibleTrigger className="w-full">
                                                     <div className="flex items-start justify-between gap-3 text-left">
+                                                        {bulkSelectionMode && (
+                                                            <div className="flex items-start pt-1">
+                                                                <Checkbox
+                                                                    checked={selectedFaqIds.has(faq.id)}
+                                                                    onCheckedChange={() => handleSelectFaq(faq.id)}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    aria-label={`Select FAQ: ${faq.question}`}
+                                                                />
+                                                            </div>
+                                                        )}
                                                         <div className="flex-1 space-y-2">
                                                             <div className="flex items-start gap-2">
                                                                 <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
@@ -835,6 +983,15 @@ export default function ManageFaqsPage() {
                                             ) : (
                                                 <div className="w-full">
                                                     <div className="flex items-start justify-between gap-3">
+                                                        {bulkSelectionMode && (
+                                                            <div className="flex items-start pt-1">
+                                                                <Checkbox
+                                                                    checked={selectedFaqIds.has(faq.id)}
+                                                                    onCheckedChange={() => handleSelectFaq(faq.id)}
+                                                                    aria-label={`Select FAQ: ${faq.question}`}
+                                                                />
+                                                            </div>
+                                                        )}
                                                         <div className="flex-1 space-y-2">
                                                             <div className="flex items-start gap-2">
                                                                 <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
