@@ -37,6 +37,7 @@ import {
     ChevronDown,
     ChevronRight,
     AlertCircle,
+    CheckSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -52,6 +53,24 @@ import {
     CollapsibleContent,
     CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+    CommandDialog,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+    CommandSeparator,
+    CommandShortcut,
+} from "@/components/ui/command";
+import {
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetFooter,
+    SheetHeader,
+    SheetTitle,
+} from "@/components/ui/sheet";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import debounce from "lodash.debounce";
 
@@ -111,6 +130,9 @@ export default function ManageFaqsPage() {
     const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
     const [selectedFaqIds, setSelectedFaqIds] = useState<Set<string>>(new Set());
 
+    // Command Palette state
+    const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
     const currentPageRef = useRef(currentPage);
     const previousDataHashRef = useRef<string>("");
     const savedScrollPositionRef = useRef<number | null>(null);
@@ -156,28 +178,74 @@ export default function ManageFaqsPage() {
         return () => clearInterval(intervalId);
     }, [filters]);
 
-    // Keyboard shortcuts for search focus (⌘K / Ctrl+K and /)
+    // Keyboard shortcuts (⌘K for Command Palette, / for search, N for new, B for bulk, Escape to exit)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // ⌘K / Ctrl+K - Focus search
+            const activeElement = document.activeElement;
+            const isInputFocused =
+                activeElement?.tagName === "INPUT" ||
+                activeElement?.tagName === "TEXTAREA" ||
+                activeElement?.getAttribute("contenteditable") === "true";
+
+            // ⌘K / Ctrl+K - Open Command Palette (works everywhere)
             if ((e.metaKey || e.ctrlKey) && e.key === "k") {
                 e.preventDefault();
-                searchInputRef.current?.focus();
+                setCommandPaletteOpen(true);
+                return;
             }
-            // / - Focus search (only if not already in an input)
-            if (
-                e.key === "/" &&
-                document.activeElement?.tagName !== "INPUT" &&
-                document.activeElement?.tagName !== "TEXTAREA"
-            ) {
-                e.preventDefault();
-                searchInputRef.current?.focus();
+
+            // Skip other shortcuts if user is typing in an input field
+            if (isInputFocused) return;
+
+            switch (e.key.toLowerCase()) {
+                case "/":
+                    // / - Focus search
+                    e.preventDefault();
+                    searchInputRef.current?.focus();
+                    break;
+
+                case "n":
+                    // N - Add new FAQ
+                    e.preventDefault();
+                    openNewFaqForm();
+                    break;
+
+                case "b":
+                    // B - Toggle bulk selection mode
+                    e.preventDefault();
+                    setBulkSelectionMode(!bulkSelectionMode);
+                    if (bulkSelectionMode) {
+                        setSelectedFaqIds([]);
+                    }
+                    break;
+
+                case "escape":
+                    // Escape - Exit bulk selection mode or close forms
+                    if (bulkSelectionMode) {
+                        e.preventDefault();
+                        setBulkSelectionMode(false);
+                        setSelectedFaqIds([]);
+                    } else if (isFormOpen) {
+                        e.preventDefault();
+                        setIsFormOpen(false);
+                        setEditingFaq(null);
+                    }
+                    break;
+
+                case "delete":
+                case "backspace":
+                    // Delete/Backspace - Delete selected FAQs in bulk mode
+                    if (bulkSelectionMode && selectedFaqIds.length > 0) {
+                        e.preventDefault();
+                        handleBulkDelete();
+                    }
+                    break;
             }
         };
 
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
-    }, []);
+    }, [bulkSelectionMode, selectedFaqIds, isFormOpen, editingFaq]);
 
     const fetchFaqs = async (page = 1, isBackgroundRefresh = false) => {
         // Save scroll position for background refreshes
@@ -298,7 +366,6 @@ export default function ManageFaqsPage() {
             source: faq.source,
         });
         setIsFormOpen(true);
-        window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
     const handleDelete = async (id: string) => {
@@ -716,18 +783,19 @@ export default function ManageFaqsPage() {
             )}
 
             {/* FAQ Form */}
-            {isFormOpen && (
-                <Card className="bg-card border border-border shadow-sm">
-                    <CardHeader>
-                        <CardTitle>{editingFaq ? "Edit FAQ" : "Add New FAQ"}</CardTitle>
-                        <CardDescription>
-                            {editingFaq
-                                ? "Update the details for this FAQ."
-                                : "Fill out the form to add a new FAQ to the knowledge base."}
-                        </CardDescription>
-                    </CardHeader>
-                    <form onSubmit={handleFormSubmit}>
-                        <CardContent className="space-y-4">
+            {/* FAQ Form Sheet (Slide-over Panel) */}
+            <Sheet open={isFormOpen} onOpenChange={setIsFormOpen}>
+                <SheetContent className="sm:max-w-[540px] overflow-y-auto">
+                    <form onSubmit={handleFormSubmit} className="flex flex-col h-full">
+                        <SheetHeader>
+                            <SheetTitle>{editingFaq ? "Edit FAQ" : "Add New FAQ"}</SheetTitle>
+                            <SheetDescription>
+                                {editingFaq
+                                    ? "Update the details for this FAQ."
+                                    : "Fill out the form to add a new FAQ to the knowledge base."}
+                            </SheetDescription>
+                        </SheetHeader>
+                        <div className="flex-1 space-y-4 py-6">
                             <div className="space-y-2">
                                 <Label htmlFor="question">Question</Label>
                                 <Input
@@ -747,6 +815,7 @@ export default function ManageFaqsPage() {
                                     onChange={(e) =>
                                         setFormData({ ...formData, answer: e.target.value })
                                     }
+                                    rows={8}
                                     required
                                 />
                             </div>
@@ -774,8 +843,8 @@ export default function ManageFaqsPage() {
                                     />
                                 </div>
                             </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-end gap-2">
+                        </div>
+                        <SheetFooter className="mt-auto">
                             <Button
                                 type="button"
                                 variant="outline"
@@ -789,10 +858,10 @@ export default function ManageFaqsPage() {
                                 ) : null}
                                 {editingFaq ? "Save Changes" : "Add FAQ"}
                             </Button>
-                        </CardFooter>
+                        </SheetFooter>
                     </form>
-                </Card>
-            )}
+                </SheetContent>
+            </Sheet>
 
             {/* FAQ List */}
             <Card className="bg-card border border-border shadow-sm">
@@ -1242,6 +1311,104 @@ export default function ManageFaqsPage() {
                     )}
                 </CardContent>
             </Card>
+
+            {/* Command Palette */}
+            <CommandDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen}>
+                <CommandInput placeholder="Type a command or search..." />
+                <CommandList>
+                    <CommandEmpty>No results found.</CommandEmpty>
+                    <CommandGroup heading="Actions">
+                        <CommandItem
+                            onSelect={() => {
+                                openNewFaqForm();
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <PlusCircle className="mr-2 h-4 w-4" />
+                            <span>Add New FAQ</span>
+                            <CommandShortcut>N</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                setBulkSelectionMode(!bulkSelectionMode);
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <CheckSquare className="mr-2 h-4 w-4" />
+                            <span>
+                                {bulkSelectionMode ? "Exit" : "Enable"} Bulk Selection
+                            </span>
+                            <CommandShortcut>B</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                searchInputRef.current?.focus();
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <Search className="mr-2 h-4 w-4" />
+                            <span>Focus Search</span>
+                            <CommandShortcut>/</CommandShortcut>
+                        </CommandItem>
+                    </CommandGroup>
+                    <CommandSeparator />
+                    <CommandGroup heading="Filters">
+                        <CommandItem
+                            onSelect={() => {
+                                setFilterCategory("");
+                                setFilterSource("");
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <X className="mr-2 h-4 w-4" />
+                            <span>Reset All Filters</span>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                setFilterCategory("general");
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <span>Filter: General</span>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                setFilterCategory("technical");
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <span>Filter: Technical</span>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                setFilterCategory("trading");
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <span>Filter: Trading</span>
+                        </CommandItem>
+                    </CommandGroup>
+                    <CommandSeparator />
+                    <CommandGroup heading="Navigation">
+                        <CommandItem
+                            onSelect={() => {
+                                window.location.href = "/admin/dashboard";
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <span>Go to Dashboard</span>
+                        </CommandItem>
+                        <CommandItem
+                            onSelect={() => {
+                                window.location.href = "/admin/feedback";
+                                setCommandPaletteOpen(false);
+                            }}
+                        >
+                            <span>Go to Feedback</span>
+                        </CommandItem>
+                    </CommandGroup>
+                </CommandList>
+            </CommandDialog>
         </div>
     );
 }
