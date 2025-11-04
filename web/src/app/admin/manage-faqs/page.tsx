@@ -35,6 +35,8 @@ import {
     RotateCcw,
     BadgeCheck,
     ChevronDown,
+    ChevronRight,
+    AlertCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -45,6 +47,11 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import debounce from "lodash.debounce";
 
@@ -96,6 +103,9 @@ export default function ManageFaqsPage() {
     // "Do not show again" state for verify FAQ confirmation
     const [skipVerifyConfirmation, setSkipVerifyConfirmation] = useState(false);
     const [doNotShowAgain, setDoNotShowAgain] = useState(false);
+
+    // Collapsible state - track which FAQs are manually expanded
+    const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
     const currentPageRef = useRef(currentPage);
     const previousDataHashRef = useRef<string>("");
@@ -746,46 +756,126 @@ export default function ManageFaqsPage() {
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            {faqData?.faqs.map((faq) => (
-                                <div
-                                    key={faq.id}
-                                    className="bg-card border border-border rounded-lg p-4 hover:shadow-sm transition-shadow group"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex-1 space-y-3">
-                                            <div>
-                                                <h3 className="font-semibold text-card-foreground text-base leading-relaxed">
-                                                    {faq.question}
-                                                </h3>
-                                            </div>
+                            {faqData?.faqs.map((faq) => {
+                                // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
+                                const isExpanded = !faq.verified || expandedIds.has(faq.id);
 
-                                            <div>
-                                                <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-wrap">
-                                                    {faq.answer}
-                                                </p>
-                                            </div>
+                                return (
+                                    <Collapsible
+                                        key={faq.id}
+                                        open={isExpanded}
+                                        onOpenChange={(open) => {
+                                            // Only allow collapsing verified FAQs
+                                            if (faq.verified) {
+                                                setExpandedIds((prev) => {
+                                                    const newSet = new Set(prev);
+                                                    if (open) {
+                                                        newSet.add(faq.id);
+                                                    } else {
+                                                        newSet.delete(faq.id);
+                                                    }
+                                                    return newSet;
+                                                });
+                                            }
+                                        }}
+                                        className="bg-card border border-border rounded-lg hover:shadow-sm transition-shadow group"
+                                    >
+                                        <div className="p-4">
+                                            {faq.verified ? (
+                                                <CollapsibleTrigger className="w-full">
+                                                    <div className="flex items-start justify-between gap-3 text-left">
+                                                        <div className="flex-1 space-y-2">
+                                                            <div className="flex items-start gap-2">
+                                                                <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
+                                                                    {faq.question}
+                                                                </h3>
+                                                                <ChevronRight
+                                                                    className={`h-5 w-5 text-muted-foreground transition-transform duration-200 flex-shrink-0 mt-0.5 ${
+                                                                        isExpanded ? "rotate-90" : ""
+                                                                    }`}
+                                                                />
+                                                        </div>
 
-                                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
-                                                    {faq.category}
-                                                </span>
-                                                <span>Source: {faq.source}</span>
-                                                {faq.verified && (
-                                                    <span
-                                                        className="inline-flex items-center"
-                                                        aria-label="Verified FAQ"
-                                                    >
-                                                        <BadgeCheck
-                                                            className="h-4 w-4 text-green-600"
-                                                            aria-hidden="true"
-                                                        />
-                                                        <span className="sr-only">Verified</span>
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
+                                                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                                                                {faq.category}
+                                                            </span>
+                                                            <span>Source: {faq.source}</span>
+                                                            {faq.verified ? (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-green-600"
+                                                                    aria-label="Verified FAQ"
+                                                                >
+                                                                    <BadgeCheck
+                                                                        className="h-4 w-4"
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    <span className="text-xs font-medium">
+                                                                        Verified
+                                                                    </span>
+                                                                </span>
+                                                            ) : (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-amber-600"
+                                                                    aria-label="Unverified FAQ - Needs Review"
+                                                                >
+                                                                    <AlertCircle
+                                                                        className="h-4 w-4"
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    <span className="text-xs font-medium">
+                                                                        Needs Review
+                                                                    </span>
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </CollapsibleTrigger>
+                                            ) : (
+                                                <div className="w-full">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="flex-1 space-y-2">
+                                                            <div className="flex items-start gap-2">
+                                                                <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
+                                                                    {faq.question}
+                                                                </h3>
+                                                            </div>
 
-                                        <div className="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                                                                    {faq.category}
+                                                                </span>
+                                                                <span>Source: {faq.source}</span>
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-amber-600"
+                                                                    aria-label="Unverified FAQ - Needs Review"
+                                                                >
+                                                                    <AlertCircle
+                                                                        className="h-4 w-4"
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    <span className="text-xs font-medium">
+                                                                        Needs Review
+                                                                    </span>
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <CollapsibleContent className="pt-3">
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div className="flex-1 space-y-3">
+                                                        <div>
+                                                            <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-wrap">
+                                                                {faq.answer}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                             {!faq.verified &&
                                                 (skipVerifyConfirmation ? (
                                                     <Button
@@ -917,10 +1007,13 @@ export default function ManageFaqsPage() {
                                                     </AlertDialogFooter>
                                                 </AlertDialogContent>
                                             </AlertDialog>
+                                                    </div>
+                                                </div>
+                                            </CollapsibleContent>
                                         </div>
-                                    </div>
-                                </div>
-                            ))}
+                                    </Collapsible>
+                                );
+                            })}
                         </div>
                     )}
 

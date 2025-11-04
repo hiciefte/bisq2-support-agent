@@ -520,8 +520,8 @@ test.describe("FAQ Management", () => {
         // Wait for dialog
         await page.waitForSelector("text=Verify this FAQ?");
 
-        // Cancel the dialog
-        await page.click('button:has-text("Cancel")');
+        // Cancel the dialog - use specific selector for AlertDialog Cancel button
+        await page.locator('[role="alertdialog"] button:has-text("Cancel")').click();
         await page.waitForTimeout(500);
 
         // Verify FAQ is still unverified (no badge)
