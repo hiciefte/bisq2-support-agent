@@ -522,6 +522,19 @@ export default function ManageFaqsPage() {
     };
 
     const handleDelete = async (id: string) => {
+        // Store original data for rollback
+        const originalFaqData = faqData;
+
+        // Optimistic UI update - remove immediately
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.filter((f) => f.id !== id),
+                total: prev.total - 1,
+            };
+        });
+
         setIsSubmitting(true);
         try {
             const response = await makeAuthenticatedRequest(`/admin/faqs/${id}`, {
@@ -529,23 +542,50 @@ export default function ManageFaqsPage() {
             });
 
             if (response.ok) {
-                await fetchFaqs(currentPage);
+                // Success - optimistic update already applied
                 setError(null);
+                toast({
+                    title: "FAQ Deleted",
+                    description: "The FAQ has been successfully deleted.",
+                });
             } else {
+                // Rollback on error
+                setFaqData(originalFaqData);
                 const errorText = `Failed to delete FAQ. Status: ${response.status}`;
                 console.error(errorText);
                 setError(errorText);
+                toast({
+                    title: "Delete Failed",
+                    description: errorText,
+                    variant: "destructive",
+                });
             }
         } catch (error) {
+            // Rollback on error
+            setFaqData(originalFaqData);
             const errorText = "An unexpected error occurred while deleting the FAQ.";
             console.error(errorText, error);
             setError(errorText);
+            toast({
+                title: "Delete Failed",
+                description: errorText,
+                variant: "destructive",
+            });
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleVerifyFaq = async (faq: FAQ) => {
+        // Optimistic UI update - instant feedback
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.map((f) => (f.id === faq.id ? { ...f, verified: true } : f)),
+            };
+        });
+
         setIsSubmitting(true);
         try {
             const response = await makeAuthenticatedRequest(`/admin/faqs/${faq.id}/verify`, {
@@ -553,17 +593,49 @@ export default function ManageFaqsPage() {
             });
 
             if (response.ok) {
-                await fetchFaqs(currentPage, true);
+                // Success - optimistic update already applied
                 setError(null);
+                toast({
+                    title: "FAQ Verified",
+                    description: "The FAQ has been successfully verified.",
+                });
             } else {
+                // Rollback on error
+                setFaqData((prev) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        faqs: prev.faqs.map((f) =>
+                            f.id === faq.id ? { ...f, verified: false } : f
+                        ),
+                    };
+                });
                 const errorText = `Failed to verify FAQ. Status: ${response.status}`;
                 console.error(errorText);
                 setError(errorText);
+                toast({
+                    title: "Verification Failed",
+                    description: errorText,
+                    variant: "destructive",
+                });
             }
         } catch (error) {
+            // Rollback on error
+            setFaqData((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    faqs: prev.faqs.map((f) => (f.id === faq.id ? { ...f, verified: false } : f)),
+                };
+            });
             const errorText = "An unexpected error occurred while verifying FAQ.";
             console.error(errorText, error);
             setError(errorText);
+            toast({
+                title: "Verification Failed",
+                description: errorText,
+                variant: "destructive",
+            });
         } finally {
             setIsSubmitting(false);
         }
@@ -833,7 +905,7 @@ export default function ManageFaqsPage() {
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70 z-10 pointer-events-none" />
                         <Input
                             ref={searchInputRef}
-                            placeholder="Search FAQs... (⌘K or /)"
+                            placeholder="Search FAQs... (/)"
                             className="pl-9 pr-4 h-9 bg-background/60 backdrop-blur-sm border-border/40 focus:border-primary focus:bg-background transition-all"
                             defaultValue={filters.search_text}
                             onChange={(e) => handleSearchChange(e.target.value)}
@@ -1838,6 +1910,40 @@ export default function ManageFaqsPage() {
                             }}
                         >
                             <span>Filter: Trading</span>
+                        </CommandItem>
+                    </CommandGroup>
+                    <CommandSeparator />
+                    <CommandGroup heading="FAQ Navigation">
+                        <CommandItem disabled>
+                            <span>Navigate Down</span>
+                            <CommandShortcut>J</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem disabled>
+                            <span>Navigate Up</span>
+                            <CommandShortcut>K</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem disabled>
+                            <span>Expand/Collapse Selected</span>
+                            <CommandShortcut>Enter</CommandShortcut>
+                        </CommandItem>
+                    </CommandGroup>
+                    <CommandSeparator />
+                    <CommandGroup heading="FAQ Actions">
+                        <CommandItem disabled>
+                            <span>Edit Selected FAQ</span>
+                            <CommandShortcut>E</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem disabled>
+                            <span>Delete Selected FAQ</span>
+                            <CommandShortcut>D</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem disabled>
+                            <span>Verify Selected FAQ</span>
+                            <CommandShortcut>V</CommandShortcut>
+                        </CommandItem>
+                        <CommandItem disabled>
+                            <span>Clear Selection</span>
+                            <CommandShortcut>Esc</CommandShortcut>
                         </CommandItem>
                     </CommandGroup>
                     <CommandSeparator />
