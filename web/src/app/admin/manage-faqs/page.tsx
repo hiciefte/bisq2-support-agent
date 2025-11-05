@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     Command,
     CommandDialog,
@@ -811,13 +812,15 @@ export default function ManageFaqsPage() {
     const hasActiveFilters = filters.search_text || filters.categories.length > 0 || filters.source;
 
     return (
-        <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
+        <div className="p-8 space-y-8 pt-16 lg:pt-8">
             {/* Header with persistent search */}
             <div className="flex flex-col gap-4">
                 <div className="flex items-start justify-between">
                     <div>
-                        <h1 className="text-3xl font-bold">FAQ Management</h1>
-                        <p className="text-muted-foreground">
+                        <h1 className="text-2xl font-semibold tracking-tight leading-tight">
+                            FAQ Management
+                        </h1>
+                        <p className="text-muted-foreground text-sm mt-1">
                             Create and manage frequently asked questions for the support system
                         </p>
                     </div>
@@ -1220,8 +1223,21 @@ export default function ManageFaqsPage() {
                 </CardHeader>
                 <CardContent>
                     {isLoading ? (
-                        <div className="flex items-center justify-center py-12">
-                            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        <div className="space-y-4">
+                            {[1, 2, 3].map((i) => (
+                                <div key={i} className="bg-card border rounded-lg p-6 space-y-4">
+                                    <div className="flex items-start justify-between">
+                                        <div className="flex-1 space-y-3">
+                                            <Skeleton className="h-6 w-3/4" />
+                                            <div className="flex items-center gap-4">
+                                                <Skeleton className="h-5 w-24 rounded-full" />
+                                                <Skeleton className="h-4 w-32" />
+                                                <Skeleton className="h-4 w-28" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     ) : !displayFaqs?.faqs || displayFaqs.faqs.length === 0 ? (
                         isSubmitting ? (
@@ -1353,11 +1369,11 @@ export default function ManageFaqsPage() {
                                         }}
                                         className={`
                                             bg-card border rounded-lg group
-                                            transition-all duration-200 ease-out
+                                            transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]
                                             ${
                                                 isSelected
                                                     ? "border-green-500 shadow-lg shadow-green-500/20 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background"
-                                                    : "border-border hover:shadow-sm hover:border-border/60"
+                                                    : "border-border hover:shadow-md hover:border-border/60 hover:-translate-y-0.5"
                                             }
                                         `}
                                         tabIndex={-1}
@@ -1365,7 +1381,7 @@ export default function ManageFaqsPage() {
                                             outline: "none", // Remove default outline, we use custom ring
                                         }}
                                     >
-                                        <div className="p-4">
+                                        <div className="p-6">
                                             {faq.verified ? (
                                                 <CollapsibleTrigger
                                                     className="w-full group/trigger focus-visible:outline-none"
@@ -1394,7 +1410,7 @@ export default function ManageFaqsPage() {
                                                         )}
                                                         <div className="flex-1 space-y-2">
                                                             <div className="flex items-start gap-2">
-                                                                <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
+                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
                                                                     {faq.question}
                                                                 </h3>
                                                                 <div className="relative flex-shrink-0">
@@ -1410,11 +1426,13 @@ export default function ManageFaqsPage() {
                                                                 </div>
                                                             </div>
 
-                                                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
                                                                     {faq.category}
                                                                 </span>
-                                                                <span>Source: {faq.source}</span>
+                                                                <span className="font-medium tracking-[0.3px]">
+                                                                    Source: {faq.source}
+                                                                </span>
                                                                 {faq.verified ? (
                                                                     <span
                                                                         className="inline-flex items-center gap-1 text-green-600"
@@ -1424,7 +1442,7 @@ export default function ManageFaqsPage() {
                                                                             className="h-4 w-4"
                                                                             aria-hidden="true"
                                                                         />
-                                                                        <span className="text-xs font-medium">
+                                                                        <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
                                                                             Verified
                                                                         </span>
                                                                     </span>
@@ -1437,7 +1455,7 @@ export default function ManageFaqsPage() {
                                                                             className="h-4 w-4"
                                                                             aria-hidden="true"
                                                                         />
-                                                                        <span className="text-xs font-medium">
+                                                                        <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
                                                                             Needs Review
                                                                         </span>
                                                                     </span>
@@ -1472,16 +1490,18 @@ export default function ManageFaqsPage() {
                                                         )}
                                                         <div className="flex-1 space-y-2">
                                                             <div className="flex items-start gap-2">
-                                                                <h3 className="font-semibold text-card-foreground text-base leading-relaxed flex-1">
+                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
                                                                     {faq.question}
                                                                 </h3>
                                                             </div>
 
-                                                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
                                                                     {faq.category}
                                                                 </span>
-                                                                <span>Source: {faq.source}</span>
+                                                                <span className="font-medium tracking-[0.3px]">
+                                                                    Source: {faq.source}
+                                                                </span>
                                                                 <span
                                                                     className="inline-flex items-center gap-1 text-amber-600"
                                                                     aria-label="Unverified FAQ - Needs Review"
@@ -1500,11 +1520,11 @@ export default function ManageFaqsPage() {
                                                 </div>
                                             )}
 
-                                            <CollapsibleContent className="pt-3">
+                                            <CollapsibleContent className="pt-3 data-[state=open]:animate-slide-down data-[state=closed]:animate-slide-up overflow-hidden">
                                                 <div className="flex items-start justify-between gap-4">
                                                     <div className="flex-1 space-y-3">
                                                         <div>
-                                                            <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-wrap">
+                                                            <p className="text-muted-foreground text-[14px] leading-[1.6] whitespace-pre-wrap">
                                                                 {faq.answer}
                                                             </p>
                                                         </div>
