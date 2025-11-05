@@ -74,6 +74,7 @@ import {
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import debounce from "lodash.debounce";
 import { useToast } from "@/hooks/use-toast";
+import Fuse from "fuse.js";
 
 interface FAQ {
     id: string;
@@ -147,6 +148,43 @@ export default function ManageFaqsPage() {
     const searchInputRef = useRef<HTMLInputElement>(null);
     const faqRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
+    // Fuzzy search with Fuse.js - applies client-side ranking when search text is provided
+    const filteredAndRankedFaqs = useMemo(() => {
+        if (!faqData?.faqs) return null;
+
+        // If no search text, return original data
+        if (!filters.search_text || filters.search_text.trim() === "") {
+            return faqData;
+        }
+
+        // Configure Fuse.js for fuzzy search
+        const fuseOptions = {
+            keys: [
+                { name: "question", weight: 0.7 }, // Question has higher weight
+                { name: "answer", weight: 0.3 },
+            ],
+            threshold: 0.4, // 0 = perfect match, 1 = match anything
+            includeScore: true,
+            minMatchCharLength: 2,
+            ignoreLocation: true, // Search entire string, not just beginning
+        };
+
+        const fuse = new Fuse(faqData.faqs, fuseOptions);
+        const results = fuse.search(filters.search_text);
+
+        // Extract FAQs from search results (Fuse returns { item, score })
+        const rankedFaqs = results.map((result) => result.item);
+
+        return {
+            ...faqData,
+            faqs: rankedFaqs,
+            total: rankedFaqs.length,
+        };
+    }, [faqData, filters.search_text]);
+
+    // Use filtered/ranked FAQs for display
+    const displayFaqs = filteredAndRankedFaqs || faqData;
+
     // Keep the ref in sync with the latest page
     useEffect(() => {
         currentPageRef.current = currentPage;
@@ -206,7 +244,7 @@ export default function ManageFaqsPage() {
             // Skip other shortcuts if user is typing in an input field
             if (isInputFocused) return;
 
-            const faqCount = faqData?.faqs.length || 0;
+            const faqCount = displayFaqs?.faqs.length || 0;
 
             switch (e.key.toLowerCase()) {
                 case "/":
@@ -242,7 +280,7 @@ export default function ManageFaqsPage() {
                     // Enter - Expand/collapse selected FAQ
                     if (selectedIndex >= 0 && selectedIndex < faqCount) {
                         e.preventDefault();
-                        const selectedFaq = faqData?.faqs[selectedIndex];
+                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
                         if (selectedFaq && selectedFaq.verified) {
                             // Toggle expansion for verified FAQs
                             setExpandedIds((prev) => {
@@ -262,7 +300,7 @@ export default function ManageFaqsPage() {
                     // e - Edit selected FAQ
                     if (selectedIndex >= 0 && selectedIndex < faqCount) {
                         e.preventDefault();
-                        const selectedFaq = faqData?.faqs[selectedIndex];
+                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
                         if (selectedFaq) {
                             handleEdit(selectedFaq);
                         }
@@ -273,7 +311,7 @@ export default function ManageFaqsPage() {
                     // d - Delete selected FAQ (with confirmation)
                     if (selectedIndex >= 0 && selectedIndex < faqCount) {
                         e.preventDefault();
-                        const selectedFaq = faqData?.faqs[selectedIndex];
+                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
                         if (selectedFaq) {
                             handleDelete(selectedFaq);
                         }
@@ -284,7 +322,7 @@ export default function ManageFaqsPage() {
                     // v - Verify selected FAQ
                     if (selectedIndex >= 0 && selectedIndex < faqCount) {
                         e.preventDefault();
-                        const selectedFaq = faqData?.faqs[selectedIndex];
+                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
                         if (selectedFaq && !selectedFaq.verified) {
                             handleVerifyFaq(selectedFaq);
                         }
@@ -347,8 +385,8 @@ export default function ManageFaqsPage() {
 
     // Scroll selected FAQ into view when selection changes
     useEffect(() => {
-        if (selectedIndex >= 0 && faqData?.faqs[selectedIndex]) {
-            const selectedFaq = faqData.faqs[selectedIndex];
+        if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+            const selectedFaq = displayFaqs.faqs[selectedIndex];
             const element = faqRefs.current.get(selectedFaq.id);
             if (element) {
                 element.scrollIntoView({
@@ -357,7 +395,7 @@ export default function ManageFaqsPage() {
                 });
             }
         }
-    }, [selectedIndex, faqData]);
+    }, [selectedIndex, displayFaqs]);
 
     // Reset selected index when FAQ data changes (pagination, filtering, etc.)
     useEffect(() => {
@@ -377,14 +415,11 @@ export default function ManageFaqsPage() {
 
         try {
             // Build query parameters
+            // Note: search_text is handled client-side with fuzzy search
             const params = new URLSearchParams({
                 page: page.toString(),
                 page_size: pageSize.toString(),
             });
-
-            if (filters.search_text) {
-                params.append("search_text", filters.search_text);
-            }
 
             if (filters.categories.length > 0) {
                 params.append("categories", filters.categories.join(","));
@@ -535,11 +570,11 @@ export default function ManageFaqsPage() {
 
     // Bulk action handlers
     const handleSelectAll = () => {
-        if (!faqData) return;
-        if (selectedFaqIds.size === faqData.faqs.length) {
+        if (!displayFaqs) return;
+        if (selectedFaqIds.size === displayFaqs.faqs.length) {
             setSelectedFaqIds(new Set());
         } else {
-            setSelectedFaqIds(new Set(faqData.faqs.map((faq) => faq.id)));
+            setSelectedFaqIds(new Set(displayFaqs.faqs.map((faq) => faq.id)));
         }
     };
 
@@ -560,7 +595,7 @@ export default function ManageFaqsPage() {
 
         // Store FAQs being deleted for potential rollback
         const deletingIds = Array.from(selectedFaqIds);
-        const deletedFaqs = faqData?.faqs.filter((faq) => selectedFaqIds.has(faq.id)) || [];
+        const deletedFaqs = displayFaqs?.faqs.filter((faq) => selectedFaqIds.has(faq.id)) || [];
 
         // Show loading toast with vector store rebuild info
         toast({
@@ -1188,7 +1223,7 @@ export default function ManageFaqsPage() {
                         <div className="flex items-center justify-center py-12">
                             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                         </div>
-                    ) : !faqData?.faqs || faqData.faqs.length === 0 ? (
+                    ) : !displayFaqs?.faqs || displayFaqs.faqs.length === 0 ? (
                         isSubmitting ? (
                             <div className="flex flex-col items-center justify-center py-12 space-y-3">
                                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -1222,8 +1257,8 @@ export default function ManageFaqsPage() {
                                             <Checkbox
                                                 id="select-all"
                                                 checked={
-                                                    faqData?.faqs.length > 0 &&
-                                                    selectedFaqIds.size === faqData.faqs.length
+                                                    displayFaqs?.faqs.length > 0 &&
+                                                    selectedFaqIds.size === displayFaqs.faqs.length
                                                 }
                                                 onCheckedChange={handleSelectAll}
                                                 disabled={isSubmitting}
@@ -1285,7 +1320,7 @@ export default function ManageFaqsPage() {
                                 </div>
                             )}
 
-                            {faqData?.faqs.map((faq, index) => {
+                            {displayFaqs?.faqs.map((faq, index) => {
                                 // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
                                 const isExpanded = !faq.verified || expandedIds.has(faq.id);
                                 const isSelected = index === selectedIndex;
