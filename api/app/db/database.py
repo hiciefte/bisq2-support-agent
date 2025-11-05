@@ -7,11 +7,12 @@ thread safety, and migration support.
 
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Optional
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 
 class FeedbackDatabase:
@@ -19,6 +20,7 @@ class FeedbackDatabase:
 
     _instance: Optional["FeedbackDatabase"] = None
     _connection: Optional[sqlite3.Connection] = None
+    _reset_lock = threading.Lock()
 
     def __new__(cls):
         """Singleton pattern to ensure one database instance."""
@@ -39,19 +41,21 @@ class FeedbackDatabase:
         Args:
             db_path: Path to SQLite database file
         """
-        if self.initialized:
-            logger.info("Database already initialized")
-            return
+        # Guard initialization against concurrent reset()/initialize() calls
+        with self._reset_lock:
+            if self.initialized:
+                logger.info("Database already initialized")
+                return
 
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Initializing database at: {self.db_path}")
+            logger.info(f"Initializing database at: {self.db_path}")
 
-        # Create database and apply schema
-        self._create_schema()
-        self.initialized = True
-        logger.info("Database initialized successfully")
+            # Create database and apply schema
+            self._create_schema()
+            self.initialized = True
+            logger.info("Database initialized successfully")
 
     def _create_schema(self) -> None:
         """Create database schema from schema.sql file."""
@@ -109,6 +113,19 @@ class FeedbackDatabase:
             self._connection.close()
             self._connection = None
         logger.info("Database connection closed")
+
+    def reset(self) -> None:
+        """
+        Reset database initialization state.
+
+        This is primarily used for testing scenarios where migrations
+        need to be applied after initial schema creation.
+
+        Thread-safe to prevent race conditions with initialize().
+        """
+        with self._reset_lock:
+            self.initialized = False
+        logger.info("Database initialization state reset")
 
 
 # Global database instance

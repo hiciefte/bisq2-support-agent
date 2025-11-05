@@ -133,3 +133,5 @@ onion-keys/
 /web/playwright-report/
 /web/playwright/.cache/
 web/tsconfig.tsbuildinfo
+/docs/monitoring/
+/claudedocs/

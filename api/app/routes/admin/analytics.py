@@ -3,6 +3,7 @@ Admin analytics and metrics routes for the Bisq Support API.
 """
 
 import logging
+from typing import Literal
 
 from app.core.config import get_settings
 from app.core.exceptions import BaseAppException
@@ -10,12 +11,17 @@ from app.core.security import verify_admin_access
 from app.models.feedback import DashboardOverviewResponse
 from app.services.dashboard_service import DashboardService
 from app.services.feedback_service import FeedbackService
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
+from prometheus_client import (  # type: ignore[attr-defined]
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    generate_latest,
+)
 
 # Setup logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 # Create main admin router with authentication dependencies for protected routes
 router = APIRouter(
@@ -112,7 +118,11 @@ async def get_metrics() -> Response:
 
 
 @router.get("/dashboard/overview", response_model=DashboardOverviewResponse)
-async def get_dashboard_overview():
+async def get_dashboard_overview(
+    period: Literal["24h", "7d", "30d", "custom"] = "7d",
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
     """Get comprehensive dashboard overview with metrics and analytics.
 
     This endpoint provides a complete dashboard overview combining:
@@ -122,15 +132,32 @@ async def get_dashboard_overview():
     - System uptime and query statistics
     - Historical trend data for performance monitoring
 
+    Query Parameters:
+        period: Time period for trends ("24h", "7d", "30d", "custom"). Default: "7d"
+        start_date: Start date for custom period (ISO format, required if period="custom")
+        end_date: End date for custom period (ISO format, required if period="custom")
+
     Authentication required via API key.
     """
-    logger.info("Admin request to fetch dashboard overview")
+    logger.info(f"Admin request to fetch dashboard overview (period={period})")
+
+    # Validate custom period requires dates
+    if period == "custom":
+        if not start_date or not end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date and end_date are required for custom period",
+            )
 
     # Track dashboard requests
     DASHBOARD_REQUESTS.inc()
 
     try:
-        overview_data = await dashboard_service.get_dashboard_overview()
+        overview_data = await dashboard_service.get_dashboard_overview(
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return DashboardOverviewResponse(**overview_data)
     except Exception as e:
         logger.error(f"Failed to fetch dashboard overview: {e}", exc_info=True)

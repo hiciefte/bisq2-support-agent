@@ -312,13 +312,16 @@ services:
   scheduler:
     image: alpine:latest
     restart: always
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - HEALTHCHECK_URL=${HEALTHCHECK_URL:-https://hc-ping.com/27867359-f4f3-4e22-8f46-8d18a73cf219}
     volumes:
       - ./scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./logs/cron:/var/log/cron
     command: >
       sh -c "
-        apk add --no-cache docker-cli docker-compose bash coreutils &&
+        apk add --no-cache docker-cli docker-compose bash coreutils curl jq bc &&
         mkdir -p /var/log/cron &&
         # Add @reboot entries to run scripts once when crond starts
         echo '@reboot /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
@@ -327,11 +330,13 @@ services:
         echo '0 1 * * 0 /scripts/update-wiki.sh >> /var/log/cron/wiki.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * * /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
+        echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
         crond -f -l 8 -d 8
       "
     depends_on:
       - api
+      - prometheus
     networks:
       - bisq-support-network
     logging:
