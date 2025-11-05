@@ -162,12 +162,20 @@ class FAQService:
         return result
 
     def update_faq(
-        self, faq_id: str, updated_data: FAQItem
+        self, faq_id: str, updated_data: FAQItem, rebuild_vectorstore: bool = True
     ) -> Optional[FAQIdentifiedItem]:
-        """Updates an existing FAQ by finding it via its stable ID."""
+        """Updates an existing FAQ by finding it via its stable ID.
+
+        Args:
+            faq_id: The FAQ ID to update
+            updated_data: The new FAQ data
+            rebuild_vectorstore: Whether to rebuild the vector store (default: True).
+                               Set to False for metadata-only updates (verified, source, category)
+                               that don't affect embeddings.
+        """
         result = self.repository.update_faq(faq_id, updated_data)
-        if result is not None:
-            self._trigger_update()  # Trigger vector store rebuild
+        if result is not None and rebuild_vectorstore:
+            self._trigger_update()  # Trigger vector store rebuild only if content changed
         return result
 
     def delete_faq(self, faq_id: str) -> bool:
@@ -176,6 +184,87 @@ class FAQService:
         if result:
             self._trigger_update()  # Trigger vector store rebuild
         return result
+
+    def bulk_delete_faqs(self, faq_ids: List[str]) -> tuple[int, int, List[str]]:
+        """
+        Delete multiple FAQs in a single operation with one vector store rebuild.
+
+        Args:
+            faq_ids: List of FAQ IDs to delete
+
+        Returns:
+            Tuple of (success_count, failed_count, failed_ids)
+        """
+        success_count = 0
+        failed_ids = []
+
+        for faq_id in faq_ids:
+            try:
+                result = self.repository.delete_faq(faq_id)
+                if result:
+                    success_count += 1
+                else:
+                    failed_ids.append(faq_id)
+            except Exception as e:
+                logger.error(f"Failed to delete FAQ {faq_id}: {e}")
+                failed_ids.append(faq_id)
+
+        # Trigger update only once after all deletions
+        if success_count > 0:
+            self._trigger_update()
+
+        failed_count = len(failed_ids)
+        return success_count, failed_count, failed_ids
+
+    def bulk_verify_faqs(self, faq_ids: List[str]) -> tuple[int, int, List[str]]:
+        """
+        Verify multiple FAQs in a single operation without vector store rebuild.
+
+        Verification only updates metadata (verified flag) and doesn't change FAQ content,
+        so the vector store embeddings remain valid and don't need to be rebuilt.
+
+        Args:
+            faq_ids: List of FAQ IDs to verify
+
+        Returns:
+            Tuple of (success_count, failed_count, failed_ids)
+        """
+        success_count = 0
+        failed_ids = []
+
+        for faq_id in faq_ids:
+            try:
+                # Get the current FAQ
+                all_faqs = self.repository.get_all_faqs()
+                current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
+
+                if not current_faq:
+                    failed_ids.append(faq_id)
+                    continue
+
+                # Update only the verification status to True
+                faq_item = FAQItem(
+                    **current_faq.model_dump(exclude={"id"}, exclude_none=False)
+                )
+                # Skip vector store rebuild for metadata-only update
+                result = self.update_faq(
+                    faq_id,
+                    faq_item.model_copy(update={"verified": True}, deep=False),
+                    rebuild_vectorstore=False,
+                )
+
+                if result:
+                    success_count += 1
+                else:
+                    failed_ids.append(faq_id)
+            except Exception as e:
+                logger.error(f"Failed to verify FAQ {faq_id}: {e}")
+                failed_ids.append(faq_id)
+
+        # No vector store rebuild needed - verification is metadata-only
+
+        failed_count = len(failed_ids)
+        return success_count, failed_count, failed_ids
 
     def normalize_text(self, text: str) -> str:
         """Normalize text using the FAQ extractor.

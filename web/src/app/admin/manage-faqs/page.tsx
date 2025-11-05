@@ -69,6 +69,7 @@ import {
 } from "@/components/ui/sheet";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import debounce from "lodash.debounce";
+import { useToast } from "@/hooks/use-toast";
 
 interface FAQ {
     id: string;
@@ -88,6 +89,7 @@ interface FAQListResponse {
 }
 
 export default function ManageFaqsPage() {
+    const { toast } = useToast();
     const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -549,20 +551,81 @@ export default function ManageFaqsPage() {
     const handleBulkDelete = async () => {
         if (selectedFaqIds.size === 0) return;
 
-        setIsSubmitting(true);
-        try {
-            const deletePromises = Array.from(selectedFaqIds).map((id) =>
-                makeAuthenticatedRequest(`/admin/faqs/${id}`, { method: "DELETE" })
-            );
+        // Store FAQs being deleted for potential rollback
+        const deletingIds = Array.from(selectedFaqIds);
+        const deletedFaqs = faqData?.faqs.filter((faq) => selectedFaqIds.has(faq.id)) || [];
 
-            await Promise.all(deletePromises);
+        // Show loading toast with vector store rebuild info
+        toast({
+            title: "Deleting FAQs...",
+            description: `Removing ${deletingIds.length} FAQ${deletingIds.length > 1 ? "s" : ""}. The knowledge base will be rebuilt after deletion.`,
+        });
+
+        // Optimistic update: Remove FAQs from UI immediately
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.filter((faq) => !selectedFaqIds.has(faq.id)),
+                total_count: prev.total_count - selectedFaqIds.size,
+            };
+        });
+        setSelectedFaqIds(new Set());
+        setIsSubmitting(true);
+
+        try {
+            // Use bulk delete endpoint with single vector store rebuild
+            const response = await makeAuthenticatedRequest("/admin/faqs/bulk-delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ faq_ids: deletingIds }),
+            });
+
+            const result = await response.json();
+
+            // Refresh data to get accurate count and any other changes
             await fetchFaqs(currentPage, true);
-            setSelectedFaqIds(new Set());
             setError(null);
+
+            // Show success toast
+            toast({
+                title: "Success",
+                description:
+                    result.message ||
+                    `Successfully deleted ${deletingIds.length} FAQ${deletingIds.length > 1 ? "s" : ""}. Knowledge base has been updated.`,
+            });
+
+            // Show warning if some failed
+            if (result.failed_count > 0) {
+                toast({
+                    variant: "destructive",
+                    title: "Partial Success",
+                    description: `${result.failed_count} FAQ${result.failed_count > 1 ? "s" : ""} could not be deleted`,
+                });
+            }
         } catch (error) {
-            const errorText = "An error occurred while deleting FAQs.";
+            // Rollback on error: restore deleted FAQs
+            setFaqData((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    faqs: [...deletedFaqs, ...prev.faqs].sort((a, b) => {
+                        // Sort to maintain original order (newest first)
+                        return a.id.localeCompare(b.id);
+                    }),
+                    total_count: prev.total_count + deletedFaqs.length,
+                };
+            });
+            const errorText = "Failed to delete FAQs. Changes have been rolled back.";
             console.error(errorText, error);
             setError(errorText);
+
+            // Show error toast
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: errorText,
+            });
         } finally {
             setIsSubmitting(false);
         }
@@ -571,20 +634,79 @@ export default function ManageFaqsPage() {
     const handleBulkVerify = async () => {
         if (selectedFaqIds.size === 0) return;
 
-        setIsSubmitting(true);
-        try {
-            const verifyPromises = Array.from(selectedFaqIds).map((id) =>
-                makeAuthenticatedRequest(`/admin/faqs/${id}/verify`, { method: "PATCH" })
-            );
+        // Store IDs being verified for potential rollback
+        const verifyingIds = Array.from(selectedFaqIds);
 
-            await Promise.all(verifyPromises);
+        // Show loading toast
+        toast({
+            title: "Verifying FAQs...",
+            description: `Marking ${verifyingIds.length} FAQ${verifyingIds.length > 1 ? "s" : ""} as verified`,
+        });
+
+        // Optimistic update: Mark FAQs as verified immediately
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.map((faq) =>
+                    selectedFaqIds.has(faq.id) ? { ...faq, verified: true } : faq
+                ),
+            };
+        });
+        setSelectedFaqIds(new Set());
+        setIsSubmitting(true);
+
+        try {
+            // Use bulk verify endpoint with single vector store rebuild
+            const response = await makeAuthenticatedRequest("/admin/faqs/bulk-verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ faq_ids: verifyingIds }),
+            });
+
+            const result = await response.json();
+
+            // Success - refresh data to get any other changes
             await fetchFaqs(currentPage, true);
-            setSelectedFaqIds(new Set());
             setError(null);
+
+            // Show success toast
+            toast({
+                title: "Success",
+                description:
+                    result.message ||
+                    `Successfully verified ${verifyingIds.length} FAQ${verifyingIds.length > 1 ? "s" : ""}`,
+            });
+
+            // Show warning if some failed
+            if (result.failed_count > 0) {
+                toast({
+                    variant: "destructive",
+                    title: "Partial Success",
+                    description: `${result.failed_count} FAQ${result.failed_count > 1 ? "s" : ""} could not be verified`,
+                });
+            }
         } catch (error) {
-            const errorText = "An error occurred while verifying FAQs.";
+            // Rollback on error: restore verified status
+            setFaqData((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    faqs: prev.faqs.map((faq) =>
+                        verifyingIds.includes(faq.id) ? { ...faq, verified: false } : faq
+                    ),
+                };
+            });
+            const errorText = "Failed to verify FAQs. Changes have been rolled back.";
             console.error(errorText, error);
             setError(errorText);
+
+            // Show error toast
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: errorText,
+            });
         } finally {
             setIsSubmitting(false);
         }
@@ -979,16 +1101,16 @@ export default function ManageFaqsPage() {
                         <CardDescription>View, edit, or delete existing FAQs.</CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                        {!isFormOpen && (
+                        {!isFormOpen && !bulkSelectionMode && (
                             <>
                                 <Button
-                                    variant={bulkSelectionMode ? "default" : "outline"}
+                                    variant="outline"
                                     onClick={() => {
-                                        setBulkSelectionMode(!bulkSelectionMode);
+                                        setBulkSelectionMode(true);
                                         setSelectedFaqIds(new Set());
                                     }}
                                 >
-                                    {bulkSelectionMode ? "Exit Selection" : "Bulk Select"}
+                                    Bulk Select
                                 </Button>
                                 <Button onClick={openNewFaqForm}>
                                     <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
@@ -1003,71 +1125,99 @@ export default function ManageFaqsPage() {
                             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                         </div>
                     ) : !faqData?.faqs || faqData.faqs.length === 0 ? (
-                        <div className="text-center py-12">
-                            <h3 className="text-lg font-semibold">No FAQs Found</h3>
-                            <p className="text-muted-foreground mt-1">
-                                Get started by adding a new FAQ.
-                            </p>
-                            {!isFormOpen && (
-                                <Button onClick={openNewFaqForm} className="mt-4">
-                                    <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
-                                </Button>
-                            )}
-                        </div>
+                        isSubmitting ? (
+                            <div className="flex flex-col items-center justify-center py-12 space-y-3">
+                                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                                <div className="text-center">
+                                    <h3 className="text-lg font-semibold">Processing...</h3>
+                                    <p className="text-muted-foreground mt-1">
+                                        Updating knowledge base. This may take a few moments.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-12">
+                                <h3 className="text-lg font-semibold">No FAQs Found</h3>
+                                <p className="text-muted-foreground mt-1">
+                                    Get started by adding a new FAQ.
+                                </p>
+                                {!isFormOpen && (
+                                    <Button onClick={openNewFaqForm} className="mt-4">
+                                        <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
+                                    </Button>
+                                )}
+                            </div>
+                        )
                     ) : (
                         <div className="space-y-4">
                             {/* Bulk Action Toolbar */}
                             {bulkSelectionMode && (
-                                <div className="flex items-center justify-between p-3 bg-muted rounded-lg border border-border">
-                                    <div className="flex items-center gap-3">
-                                        <Checkbox
-                                            id="select-all"
-                                            checked={
-                                                faqData?.faqs.length > 0 &&
-                                                selectedFaqIds.size === faqData.faqs.length
-                                            }
-                                            onCheckedChange={handleSelectAll}
-                                            aria-label="Select all FAQs"
-                                        />
-                                        <label
-                                            htmlFor="select-all"
-                                            className="text-sm font-medium cursor-pointer"
-                                        >
-                                            {selectedFaqIds.size === 0
-                                                ? "Select all"
-                                                : `${selectedFaqIds.size} selected`}
-                                        </label>
-                                    </div>
-                                    {selectedFaqIds.size > 0 && (
+                                <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b px-4 py-3 -mx-6 -mt-4 mb-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <Checkbox
+                                                id="select-all"
+                                                checked={
+                                                    faqData?.faqs.length > 0 &&
+                                                    selectedFaqIds.size === faqData.faqs.length
+                                                }
+                                                onCheckedChange={handleSelectAll}
+                                                disabled={isSubmitting}
+                                                aria-label="Select all FAQs"
+                                            />
+                                            <label
+                                                htmlFor="select-all"
+                                                className="text-sm font-medium cursor-pointer"
+                                            >
+                                                {selectedFaqIds.size === 0
+                                                    ? "Select all"
+                                                    : `${selectedFaqIds.size} selected`}
+                                            </label>
+                                        </div>
                                         <div className="flex items-center gap-2">
+                                            {selectedFaqIds.size > 0 && (
+                                                <>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={handleBulkVerify}
+                                                        disabled={isSubmitting}
+                                                    >
+                                                        {isSubmitting ? (
+                                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <BadgeCheck className="mr-2 h-4 w-4" />
+                                                        )}
+                                                        Verify Selected
+                                                    </Button>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={handleBulkDelete}
+                                                        disabled={isSubmitting}
+                                                    >
+                                                        {isSubmitting ? (
+                                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <Trash2 className="mr-2 h-4 w-4" />
+                                                        )}
+                                                        Delete Selected
+                                                    </Button>
+                                                </>
+                                            )}
                                             <Button
-                                                variant="outline"
+                                                variant="ghost"
                                                 size="sm"
-                                                onClick={handleBulkVerify}
+                                                onClick={() => {
+                                                    setBulkSelectionMode(false);
+                                                    setSelectedFaqIds(new Set());
+                                                }}
                                                 disabled={isSubmitting}
                                             >
-                                                {isSubmitting ? (
-                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                ) : (
-                                                    <BadgeCheck className="mr-2 h-4 w-4" />
-                                                )}
-                                                Verify Selected
-                                            </Button>
-                                            <Button
-                                                variant="destructive"
-                                                size="sm"
-                                                onClick={handleBulkDelete}
-                                                disabled={isSubmitting}
-                                            >
-                                                {isSubmitting ? (
-                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                ) : (
-                                                    <Trash2 className="mr-2 h-4 w-4" />
-                                                )}
-                                                Delete Selected
+                                                Cancel
                                             </Button>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
                             )}
 
@@ -1138,6 +1288,7 @@ export default function ManageFaqsPage() {
                                                                     onClick={(e) =>
                                                                         e.stopPropagation()
                                                                     }
+                                                                    disabled={isSubmitting}
                                                                     aria-label={`Select FAQ: ${faq.question}`}
                                                                 />
                                                             </div>
@@ -1215,6 +1366,7 @@ export default function ManageFaqsPage() {
                                                                     onCheckedChange={() =>
                                                                         handleSelectFaq(faq.id)
                                                                     }
+                                                                    disabled={isSubmitting}
                                                                     aria-label={`Select FAQ: ${faq.question}`}
                                                                 />
                                                             </div>
