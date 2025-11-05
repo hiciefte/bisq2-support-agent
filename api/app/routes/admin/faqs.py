@@ -202,11 +202,11 @@ async def bulk_delete_faqs_route(request: BulkFAQRequest):
 @router.post("/faqs/bulk-verify", response_model=BulkFAQResponse)
 async def bulk_verify_faqs_route(request: BulkFAQRequest):
     """
-    Verify multiple FAQs in a single operation with optimized vector store rebuild.
+    Verify multiple FAQs in a single operation (metadata-only, no vector store rebuild).
 
-    This endpoint verifies multiple FAQs and triggers the vector store rebuild only once
-    after all verifications complete, providing significant performance improvement over
-    individual verify operations.
+    This endpoint performs bulk verification by updating FAQ metadata (verified status)
+    without triggering vector store rebuilds. Verification is metadata-only and does not
+    affect the indexed content, so no rebuild is necessary.
 
     Args:
         request: BulkFAQRequest containing list of FAQ IDs to verify

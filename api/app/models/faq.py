@@ -35,7 +35,7 @@ class BulkFAQRequest(BaseModel):
     """Request model for bulk FAQ operations."""
 
     faq_ids: List[str] = Field(
-        ..., min_length=1, description="List of FAQ IDs to process"
+        ..., min_items=1, description="List of FAQ IDs to process"
     )
 
 

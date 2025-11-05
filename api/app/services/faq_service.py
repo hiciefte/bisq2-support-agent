@@ -232,11 +232,13 @@ class FAQService:
         success_count = 0
         failed_ids = []
 
+        # Cache FAQs once to avoid O(n²) file I/O
+        faqs_by_id = {faq.id: faq for faq in self.repository.get_all_faqs()}
+
         for faq_id in faq_ids:
             try:
-                # Get the current FAQ
-                all_faqs = self.repository.get_all_faqs()
-                current_faq = next((faq for faq in all_faqs if faq.id == faq_id), None)
+                # Get the current FAQ from cache
+                current_faq = faqs_by_id.get(faq_id)
 
                 if not current_faq:
                     failed_ids.append(faq_id)
@@ -255,6 +257,8 @@ class FAQService:
 
                 if result:
                     success_count += 1
+                    # Update cache with verified FAQ
+                    faqs_by_id[result.id] = result
                 else:
                     failed_ids.append(faq_id)
             except Exception as e:
