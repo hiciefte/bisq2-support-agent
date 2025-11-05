@@ -349,20 +349,22 @@ test.describe("FAQ Management", () => {
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "This FAQ will be verified");
         await page.fill("input#category", "General");
-        await page.click('button:has-text("Add FAQ")');
 
-        // Wait for form to close and FAQ to appear
+        // Click submit button and wait for dialog to close
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Wait for form dialog to close (Add New FAQ button becomes visible again)
         await page.waitForSelector('button:has-text("Add New FAQ")', {
             state: "visible",
             timeout: 10000,
         });
-        await page.waitForTimeout(500);
 
-        // Find the newly created FAQ card
+        // Find the newly created FAQ card - wait for it to exist
         const faqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
-        await faqCard.waitFor({ state: "visible", timeout: 5000 });
+        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Verify initial state - Badge component with "Verified" text should NOT exist
         // Use more specific selector for the Badge component (not the answer text)
@@ -382,12 +384,10 @@ test.describe("FAQ Management", () => {
         await expect(dialog).toContainText("Verify this FAQ?");
         await expect(dialog).toContainText("This action is irreversible");
 
-        // Confirm verification - use dialog context for button
+        // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-
-        // Wait for update to complete
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1000);
 
         // Verify Badge component with "Verified" text is now visible
         const verifiedBadgeAfter = faqCard.locator(
@@ -407,14 +407,20 @@ test.describe("FAQ Management", () => {
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing verification persistence");
         await page.fill("input#category", "General");
-        await page.click('button:has-text("Add FAQ")');
 
-        // Wait for FAQ card to appear
+        // Click submit button and wait for dialog to close
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Wait for form dialog to close and FAQ card to appear
+        await page.waitForSelector('button:has-text("Add New FAQ")', {
+            state: "visible",
+            timeout: 10000,
+        });
         const faqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
-        await page.waitForTimeout(500);
 
         // Find and click verify button
         const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
@@ -423,9 +429,11 @@ test.describe("FAQ Management", () => {
         // Confirm in dialog - use dialog role selector
         const dialog = page.getByRole("alertdialog");
         await dialog.waitFor({ state: "visible", timeout: 5000 });
+
+        // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1000);
 
         // Verify badge shows "Verified"
         const verifiedBadge = faqCard.locator("text=Verified");
@@ -456,20 +464,22 @@ test.describe("FAQ Management", () => {
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "This FAQ is unverified");
         await page.fill("input#category", "General");
-        await page.click('button:has-text("Add FAQ")');
 
-        // Wait for form to close and FAQ to appear
+        // Click submit button and wait for dialog to close
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Wait for form dialog to close
         await page.waitForSelector('button:has-text("Add New FAQ")', {
             state: "visible",
             timeout: 10000,
         });
-        await page.waitForTimeout(500);
 
         // Find the unverified FAQ card
         const unverifiedFaqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
-        await unverifiedFaqCard.waitFor({ state: "visible", timeout: 5000 });
+        await unverifiedFaqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Check that "Verify FAQ" button exists for unverified FAQ
         const verifyButton = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
@@ -481,11 +491,11 @@ test.describe("FAQ Management", () => {
         // Wait for dialog and confirm
         const dialog = page.getByRole("alertdialog");
         await dialog.waitFor({ state: "visible", timeout: 5000 });
+
+        // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-
-        // Wait for verification to complete
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1000);
 
         // After verification, the button should no longer be visible
         const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
@@ -505,13 +515,22 @@ test.describe("FAQ Management", () => {
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing cancellation");
         await page.fill("input#category", "General");
-        await page.click('button:has-text("Add FAQ")');
-        await page.waitForTimeout(1000);
+
+        // Click submit button and wait for dialog to close
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Wait for form dialog to close
+        await page.waitForSelector('button:has-text("Add New FAQ")', {
+            state: "visible",
+            timeout: 10000,
+        });
 
         // Find the FAQ card
         const faqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
+        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Click verify button
         const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
@@ -519,10 +538,11 @@ test.describe("FAQ Management", () => {
 
         // Wait for dialog
         await page.waitForSelector("text=Verify this FAQ?");
+        await page.waitForTimeout(1000); // Wait for dialog animations
 
-        // Cancel the dialog - use specific selector for AlertDialog Cancel button
+        // Click Cancel button
         await page.locator('[role="alertdialog"] button:has-text("Cancel")').click();
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(1000); // Wait for dialog to close
 
         // Verify FAQ is still unverified (no badge)
         const verifiedBadge = faqCard.locator("text=Verified");
