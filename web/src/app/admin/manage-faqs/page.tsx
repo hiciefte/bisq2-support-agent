@@ -38,6 +38,8 @@ import {
     ChevronRight,
     AlertCircle,
     CheckSquare,
+    ChevronsUpDown,
+    Check,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -50,6 +52,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
+    Command,
     CommandDialog,
     CommandEmpty,
     CommandGroup,
@@ -59,6 +62,7 @@ import {
     CommandSeparator,
     CommandShortcut,
 } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
     Sheet,
     SheetContent,
@@ -133,6 +137,9 @@ export default function ManageFaqsPage() {
 
     // Keyboard navigation state
     const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+
+    // Category combobox state
+    const [categoryComboboxOpen, setCategoryComboboxOpen] = useState(false);
 
     const currentPageRef = useRef(currentPage);
     const previousDataHashRef = useRef<string>("");
@@ -1052,14 +1059,71 @@ export default function ManageFaqsPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label htmlFor="category">Category</Label>
-                                    <Input
-                                        id="category"
-                                        value={formData.category}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, category: e.target.value })
-                                        }
-                                        required
-                                    />
+                                    <Popover
+                                        open={categoryComboboxOpen}
+                                        onOpenChange={setCategoryComboboxOpen}
+                                    >
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                variant="outline"
+                                                role="combobox"
+                                                aria-expanded={categoryComboboxOpen}
+                                                className="w-full justify-between"
+                                            >
+                                                {formData.category || "Select category..."}
+                                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-full p-0">
+                                            <Command>
+                                                <CommandInput
+                                                    placeholder="Search or type new category..."
+                                                    value={formData.category}
+                                                    onValueChange={(value) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            category: value,
+                                                        })
+                                                    }
+                                                />
+                                                <CommandList>
+                                                    <CommandEmpty>
+                                                        Press Enter to create &quot;
+                                                        {formData.category}&quot;
+                                                    </CommandEmpty>
+                                                    {availableCategories.length > 0 && (
+                                                        <CommandGroup heading="Existing Categories">
+                                                            {availableCategories.map((category) => (
+                                                                <CommandItem
+                                                                    key={category}
+                                                                    value={category}
+                                                                    onSelect={(currentValue) => {
+                                                                        setFormData({
+                                                                            ...formData,
+                                                                            category: currentValue,
+                                                                        });
+                                                                        setCategoryComboboxOpen(
+                                                                            false
+                                                                        );
+                                                                    }}
+                                                                >
+                                                                    <Check
+                                                                        className={`mr-2 h-4 w-4 ${
+                                                                            formData.category ===
+                                                                            category
+                                                                                ? "opacity-100"
+                                                                                : "opacity-0"
+                                                                        }`}
+                                                                    />
+                                                                    {category}
+                                                                </CommandItem>
+                                                            ))}
+                                                        </CommandGroup>
+                                                    )}
+                                                </CommandList>
+                                            </Command>
+                                        </PopoverContent>
+                                    </Popover>
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="source">Source</Label>
