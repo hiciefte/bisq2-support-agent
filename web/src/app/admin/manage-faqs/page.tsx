@@ -40,6 +40,7 @@ import {
     ChevronsUpDown,
     Check,
     FileQuestion,
+    MoreVertical,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -64,6 +65,12 @@ import {
     CommandShortcut,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
     Sheet,
     SheetContent,
@@ -1291,20 +1298,53 @@ export default function ManageFaqsPage() {
                         </div>
                         <div className="flex items-center gap-2">
                             {!isFormOpen && !bulkSelectionMode && (
-                                <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                        setBulkSelectionMode(true);
-                                        setSelectedFaqIds(new Set());
-                                    }}
-                                >
-                                    Bulk Select
-                                </Button>
-                            )}
-                            {!isFormOpen && !bulkSelectionMode && (
-                                <Button onClick={openNewFaqForm}>
-                                    <PlusCircle className="mr-2 h-4 w-4" /> Add New FAQ
-                                </Button>
+                                <>
+                                    <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button onClick={openNewFaqForm} className="gap-2">
+                                                    <PlusCircle className="h-4 w-4" />
+                                                    <span>Add New FAQ</span>
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <p>Create a new FAQ entry (Press N)</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+
+                                    <DropdownMenu>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button variant="outline" size="icon">
+                                                            <MoreVertical className="h-4 w-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>More actions</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                        <DropdownMenuContent align="end" className="w-48">
+                                            <DropdownMenuItem
+                                                onClick={() => {
+                                                    setBulkSelectionMode(true);
+                                                    setSelectedFaqIds(new Set());
+                                                }}
+                                                className="cursor-pointer"
+                                            >
+                                                <CheckSquare className="mr-2 h-4 w-4" />
+                                                <span>Enable Bulk Selection</span>
+                                                <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+                                                    B
+                                                </kbd>
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </>
                             )}
                         </div>
                     </CardHeader>
