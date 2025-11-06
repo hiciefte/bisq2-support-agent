@@ -71,12 +71,9 @@ test.describe("FAQ Management", () => {
             timeout: 15000,
         });
 
-        // Wait a moment for the FAQ list to refresh
-        await page.waitForTimeout(1000);
-
-        // Verify FAQ appears in the list
+        // Wait for the FAQ list to refresh and FAQ to appear
         const faqCard = page.locator(`text="${testQuestion}"`);
-        await expect(faqCard).toBeVisible({ timeout: 5000 });
+        await expect(faqCard).toBeVisible({ timeout: 10000 });
     });
 
     test("should edit an existing FAQ", async ({ page }) => {
@@ -108,8 +105,8 @@ test.describe("FAQ Management", () => {
         // The API reindexes the vector store which can take several seconds
         await page.waitForSelector('form >> text="Edit FAQ"', { state: "hidden", timeout: 15000 });
 
-        // Wait a moment for the FAQ list to refresh
-        await page.waitForTimeout(1000);
+        // Wait for network to stabilize after reindexing
+        await page.waitForLoadState('networkidle');
 
         // Verify change persisted by reloading and checking
         await page.reload();
@@ -135,13 +132,12 @@ test.describe("FAQ Management", () => {
             state: "visible",
             timeout: 10000,
         });
-        await page.waitForTimeout(500);
 
-        // Find FAQ card and wait for it to be visible
+        // Wait for FAQ card to appear in the list
         const faqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
-        await faqCard.waitFor({ state: "visible", timeout: 5000 });
+        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Click delete button using test ID (reliable selector that won't break with UI changes)
         await faqCard.hover();
@@ -154,8 +150,8 @@ test.describe("FAQ Management", () => {
         const continueButton = dialog.getByRole("button", { name: "Continue" });
         await continueButton.click();
 
-        // Wait for deletion to complete (form closes and data reloads)
-        await page.waitForTimeout(2000);
+        // Wait for deletion to complete and network to stabilize
+        await page.waitForLoadState('networkidle');
 
         // Verify FAQ is removed from list
         const deletedFaq = page.locator(
@@ -193,8 +189,8 @@ test.describe("FAQ Management", () => {
             // Click second option (first real category)
             await categoryOptions.nth(1).click();
 
-            // Wait for filter to apply
-            await page.waitForTimeout(1000);
+            // Wait for network to stabilize after filter
+            await page.waitForLoadState('networkidle');
 
             // Verify FAQs are filtered
             const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
@@ -219,14 +215,16 @@ test.describe("FAQ Management", () => {
             state: "hidden",
             timeout: 15000,
         });
-        await page.waitForTimeout(1000);
+
+        // Wait for network to stabilize after FAQ creation
+        await page.waitForLoadState('networkidle');
 
         // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill(searchTerm);
 
-        // Wait for debounced search (300ms debounce)
-        await page.waitForTimeout(500);
+        // Wait for search results to update (debounced search completes)
+        await page.waitForLoadState('networkidle');
 
         // Verify the FAQ we created appears in search results
         const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
@@ -253,13 +251,12 @@ test.describe("FAQ Management", () => {
             state: "visible",
             timeout: 10000,
         });
-        await page.waitForTimeout(500);
 
-        // Find FAQ card and wait for it to be visible
+        // Wait for FAQ card to appear in the list
         const faqCard = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
-        await faqCard.waitFor({ state: "visible", timeout: 5000 });
+        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Click delete button using test ID (reliable selector that won't break with UI changes)
         await faqCard.hover();
@@ -273,8 +270,8 @@ test.describe("FAQ Management", () => {
         await continueButton.waitFor({ state: "visible", timeout: 5000 });
         await continueButton.click();
 
-        // Wait for deletion to complete
-        await page.waitForTimeout(2000);
+        // Wait for deletion to complete and network to stabilize
+        await page.waitForLoadState('networkidle');
 
         // Reload page
         await page.reload();
@@ -315,7 +312,9 @@ test.describe("FAQ Management", () => {
         await page.fill("textarea#answer", "Testing concurrent access");
         await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
-        await page.waitForTimeout(1000);
+
+        // Wait for creation to complete
+        await page.waitForLoadState('networkidle');
 
         // Refresh second page and verify FAQ appears
         await page2.reload();
@@ -377,7 +376,9 @@ test.describe("FAQ Management", () => {
         // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-        await page.waitForTimeout(1000);
+
+        // Wait for verification to complete
+        await page.waitForLoadState('networkidle');
 
         // Verify Badge component with "Verified" text is now visible
         const verifiedBadgeAfter = faqCard.locator(
@@ -426,7 +427,9 @@ test.describe("FAQ Management", () => {
         // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-        await page.waitForTimeout(1000);
+
+        // Wait for verification to complete
+        await page.waitForLoadState('networkidle');
 
         // Verify badge shows "Verified"
         const verifiedBadge = faqCard.locator("text=Verified");
@@ -491,7 +494,9 @@ test.describe("FAQ Management", () => {
         // Click confirm button and wait for dialog to close
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
-        await page.waitForTimeout(1000);
+
+        // Wait for verification to complete
+        await page.waitForLoadState('networkidle');
 
         // After verification, the button should no longer be visible
         const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
@@ -536,12 +541,16 @@ test.describe("FAQ Management", () => {
         await verifyButton.click();
 
         // Wait for dialog
-        await page.waitForSelector("text=Verify this FAQ?");
-        await page.waitForTimeout(1000); // Wait for dialog animations
+        const dialog = page.getByRole("alertdialog");
+        await dialog.waitFor({ state: "visible", timeout: 5000 });
+        await expect(dialog).toContainText("Verify this FAQ?");
 
-        // Click Cancel button
-        await page.locator('[role="alertdialog"] button:has-text("Cancel")').click();
-        await page.waitForTimeout(1000); // Wait for dialog to close
+        // Click Cancel button (use first() to handle multiple Cancel buttons)
+        const cancelButton = dialog.getByRole("button", { name: "Cancel" }).first();
+        await cancelButton.click();
+
+        // Wait for dialog to close
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
 
         // Verify FAQ is still unverified (no badge)
         const verifiedBadge = faqCard.locator("text=Verified");
