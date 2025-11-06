@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * FAQ UI Improvements Tests (Phase 1)
@@ -11,6 +11,39 @@ import { test, expect } from "@playwright/test";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
+
+/**
+ * Helper function to select a category from the combobox dropdown.
+ * The category field is now a Combobox (Popover + Command component) instead of a simple input.
+ */
+async function selectCategory(page: Page, category: string) {
+    // Click the combobox button to open it
+    await page.click('button[role="combobox"]:has-text("Select category")');
+
+    // Wait for the popover to open
+    await page.waitForTimeout(300);
+
+    // Type the category name in the search input
+    const commandInput = page.locator('[cmdk-input]');
+    await commandInput.fill(category);
+
+    // Wait a bit for the list to filter
+    await page.waitForTimeout(200);
+
+    // Try to click an existing category item, or just press Enter to create new
+    const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
+    const itemExists = await existingItem.count() > 0;
+
+    if (itemExists) {
+        await existingItem.click();
+    } else {
+        // If category doesn't exist, press Enter to create it
+        await commandInput.press('Enter');
+    }
+
+    // Wait for combobox to close
+    await page.waitForTimeout(200);
+}
 
 test.describe("FAQ UI Improvements - Phase 1", () => {
     test.beforeEach(async ({ page }) => {
@@ -36,7 +69,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
 
     test("should have persistent inline search visible at all times", async ({ page }) => {
         // Verify search input is visible without clicking any button
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await expect(searchInput).toBeVisible();
 
         // Verify search icon is present
@@ -46,7 +79,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
 
     test("should perform real-time search with debouncing", async ({ page }) => {
         // Type in search field
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill("Bisq");
 
         // Wait for debounced search to trigger (300ms debounce)
@@ -64,7 +97,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
     });
 
     test("should show clear button when search has text", async ({ page }) => {
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
 
         // Initially no clear button visible
         const clearButton = page.locator(".lucide-x").first();
@@ -152,7 +185,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         const resetButton = page.locator('button:has-text("Reset")');
 
         // Type in search to activate filters
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill("test");
         await page.waitForTimeout(500);
 
@@ -215,7 +248,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         const testQuestion = `UI Improvement Test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing Phase 1 improvements");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
         await page.waitForTimeout(1000);
 
@@ -264,7 +297,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
 
         // Type in search
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill("Bisq");
         await page.waitForTimeout(500);
 
@@ -293,7 +326,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
 
     test("should preserve filter state during pagination", async ({ page }) => {
         // Apply a search filter
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill("test");
         await page.waitForTimeout(500);
 

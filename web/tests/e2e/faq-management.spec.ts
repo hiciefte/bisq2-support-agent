@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, Page } from "@playwright/test";
 
 /**
  * FAQ Management Tests
@@ -10,6 +10,39 @@ import { test, expect } from "@playwright/test";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
+
+/**
+ * Helper function to select a category from the combobox.
+ * The category field is now a Popover + Command component (combobox).
+ */
+async function selectCategory(page: Page, category: string) {
+    // Click the combobox button to open it
+    await page.click('button[role="combobox"]:has-text("Select category")');
+
+    // Wait for the popover to open
+    await page.waitForTimeout(300);
+
+    // Type the category name in the search input
+    const commandInput = page.locator('[cmdk-input]');
+    await commandInput.fill(category);
+
+    // Wait a bit for the list to filter
+    await page.waitForTimeout(200);
+
+    // Try to click an existing category item, or just press Enter to create new
+    const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
+    const itemExists = await existingItem.count() > 0;
+
+    if (itemExists) {
+        await existingItem.click();
+    } else {
+        // If category doesn't exist, press Enter to create it
+        await commandInput.press('Enter');
+    }
+
+    // Wait for combobox to close
+    await page.waitForTimeout(200);
+}
 
 test.describe("FAQ Management", () => {
     test.beforeEach(async ({ page }) => {
@@ -58,7 +91,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `Test FAQ Question ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Test FAQ Answer for E2E testing");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
 
         // Submit form
         await page.click('button:has-text("Add FAQ")');
@@ -127,7 +160,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `FAQ to be deleted ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "This FAQ will be deleted");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
 
         // Wait for form to close and FAQ to appear (same pattern as persistence test)
@@ -221,7 +254,7 @@ test.describe("FAQ Management", () => {
         await page.waitForSelector(".bg-card.border.border-border.rounded-lg");
 
         // Use the persistent inline search (always visible)
-        const searchInput = page.locator('input[placeholder="Search FAQs... (⌘K or /)"]');
+        const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill("Bisq");
 
         // Wait for debounced search (300ms debounce)
@@ -245,7 +278,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `Persistence test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing persistence");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
 
         // Wait for form to close and FAQ to appear
@@ -326,7 +359,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `Concurrent test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing concurrent access");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
         await page.waitForTimeout(1000);
 
@@ -348,7 +381,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `FAQ for verification test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "This FAQ will be verified");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
         await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
@@ -406,7 +439,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `FAQ for persistence test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing verification persistence");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
         await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
@@ -463,7 +496,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `Unverified FAQ test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "This FAQ is unverified");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
         await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
@@ -514,7 +547,7 @@ test.describe("FAQ Management", () => {
         const testQuestion = `FAQ for cancel test ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing cancellation");
-        await page.fill("input#category", "General");
+        await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
         await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });

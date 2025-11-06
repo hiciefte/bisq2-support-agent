@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -14,6 +14,39 @@ import {
 } from './utils';
 
 const execAsync = promisify(exec);
+
+/**
+ * Helper function to select a category from the combobox dropdown.
+ * The category field is now a Combobox (Popover + Command component) instead of a simple input.
+ */
+async function selectCategory(page: Page, category: string) {
+    // Click the combobox button to open it
+    await page.click('button[role="combobox"]:has-text("Select category")');
+
+    // Wait for the popover to open
+    await page.waitForTimeout(300);
+
+    // Type the category name in the search input
+    const commandInput = page.locator('[cmdk-input]');
+    await commandInput.fill(category);
+
+    // Wait a bit for the list to filter
+    await page.waitForTimeout(200);
+
+    // Try to click an existing category item, or just press Enter to create new
+    const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
+    const itemExists = await existingItem.count() > 0;
+
+    if (itemExists) {
+        await existingItem.click();
+    } else {
+        // If category doesn't exist, press Enter to create it
+        await commandInput.press('Enter');
+    }
+
+    // Wait for combobox to close
+    await page.waitForTimeout(200);
+}
 
 /**
  * Permission Regression Tests
@@ -37,7 +70,7 @@ test.describe('Permission Regression Tests', () => {
     const testQuestion = `Permission test ${Date.now()}`;
     await page.fill('input#question', testQuestion);
     await page.fill('textarea#answer', 'Testing permissions after restart');
-    await page.fill('input#category', 'General');
+    await selectCategory(page, 'General');
     await page.click('button:has-text("Add FAQ")');
     await page.waitForTimeout(1000);
 
@@ -209,7 +242,7 @@ test.describe('Permission Regression Tests', () => {
     const testQuestion = `Multi-restart test ${Date.now()}`;
     await page.fill('input#question', testQuestion);
     await page.fill('textarea#answer', 'Testing after multiple restarts');
-    await page.fill('input#category', 'General');
+    await selectCategory(page, 'General');
     await page.click('button:has-text("Add FAQ")');
 
     // Wait for form to close and FAQ to appear (same pattern as FAQ management)
@@ -312,7 +345,7 @@ test.describe('Cross-session Permission Tests', () => {
     const testQuestion = `Cross-session test ${Date.now()}`;
     await page1.fill('input#question', testQuestion);
     await page1.fill('textarea#answer', 'Cross-session test');
-    await page1.fill('input#category', 'General');
+    await selectCategory(page1, 'General');
     await page1.click('button:has-text("Add FAQ")');
 
     // Wait for form to close and FAQ to appear on page1
