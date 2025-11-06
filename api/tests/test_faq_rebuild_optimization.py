@@ -8,30 +8,59 @@ store) are updated or deleted.
 """
 
 import json
+import uuid
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from app.core.config import Settings
 from app.models.faq import FAQItem
 from app.services.faq_service import FAQService
 
 
 @pytest.fixture(scope="function")
-def faq_service_with_mock_callback(test_settings):
-    """Create FAQ service with mocked update callback to track rebuild triggers.
+def faq_service_with_mock_callback(test_data_dir):
+    """Create FAQ service with isolated test directory and mocked update callback.
 
-    Function scope ensures each test gets fresh FAQ data.
+    This fixture creates a unique subdirectory for each test instance, ensuring
+    perfect test isolation and preventing race conditions. Each test gets its own
+    Settings instance pointing to its own directory.
+
+    IMPORTANT: FAQService uses a Singleton pattern, so we must reset it between
+    tests to prevent state leakage.
+
+    Args:
+        test_data_dir: Session-scoped temporary directory (shared parent)
+
+    Returns:
+        tuple: (FAQService instance, Mock callback for tracking rebuilds)
     """
+    # Reset the FAQService singleton to ensure test isolation
+    # Without this, all tests share the same FAQService instance
+    FAQService._instance = None
+
+    # Create unique subdirectory for THIS test instance
+    test_dir = Path(test_data_dir) / str(uuid.uuid4())
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create isolated Settings instance for this test
+    settings = Settings(
+        DEBUG=True,
+        DATA_DIR=str(test_dir),
+        OPENAI_API_KEY="test-api-key",
+        ADMIN_API_KEY="test-admin-key",
+        ENVIRONMENT="testing",
+        COOKIE_SECURE=False,
+        OPENAI_MODEL="openai:gpt-4o-mini",
+        MAX_CHAT_HISTORY_LENGTH=5,
+        MAX_CONTEXT_LENGTH=1000,
+    )
+
     # Use the FAQ file path from settings to ensure consistency
-    faq_file = Path(test_settings.FAQ_FILE_PATH)
+    faq_file = Path(settings.FAQ_FILE_PATH)
 
     # Ensure parent directory exists
     faq_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Remove existing FAQ file to ensure clean slate
-    # This prevents interference from previous tests in the session
-    if faq_file.exists():
-        faq_file.unlink()
 
     # Write test FAQs to the file BEFORE creating FAQService
     # This ensures the file exists and is populated when FAQRepository initializes
@@ -71,7 +100,7 @@ def faq_service_with_mock_callback(test_settings):
             f.write(json.dumps(faq) + "\n")
 
     # Now create FAQ service (repository will find the populated file)
-    faq_service = FAQService(settings=test_settings)
+    faq_service = FAQService(settings=settings)
 
     # Create a mock callback to track when rebuilds are triggered
     mock_callback = Mock()
