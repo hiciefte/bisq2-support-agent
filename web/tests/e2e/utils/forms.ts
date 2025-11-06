@@ -49,7 +49,8 @@ export async function selectCategory(page: Page, category: string) {
         await commandInput.press("Enter");
     }
 
-    // 7. Wait for combobox button to be visible again (indicates selection complete)
-    // This replaces the arbitrary 200ms timeout with a condition-based wait
-    await page.locator('button[role="combobox"]').waitFor({ state: "visible" });
+    // 7. Wait for popover to close (indicates selection complete)
+    // We wait for the command input to be hidden instead of checking for button visibility
+    // because there are multiple comboboxes on the page (filter chips)
+    await commandInput.waitFor({ state: "hidden" });
 }

@@ -52,64 +52,68 @@ test.describe("FAQ Management", () => {
         // Click "Add New FAQ" button
         await page.click('button:has-text("Add New FAQ")');
 
+        // Wait for Sheet (slide-over panel) to open - it's rendered in a portal
+        await page.waitForSelector('form >> text="Add New FAQ"', { timeout: 5000 });
+
         // Fill in the form with unique question
         const testQuestion = `Test FAQ Question ${Date.now()}`;
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Test FAQ Answer for E2E testing");
         await selectCategory(page, "General");
 
-        // Submit form
-        await page.click('button:has-text("Add FAQ")');
+        // Submit form by clicking the submit button (type="submit")
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
 
-        // Wait for FAQ list to update
+        // Wait for Sheet to close (form is hidden after successful submission)
+        // The API reindexes the vector store which can take several seconds
+        await page.waitForSelector('form >> text="Add New FAQ"', {
+            state: "hidden",
+            timeout: 15000,
+        });
+
+        // Wait a moment for the FAQ list to refresh
         await page.waitForTimeout(1000);
 
         // Verify FAQ appears in the list
-        const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
-        );
-        await expect(faqCard).toBeVisible();
+        const faqCard = page.locator(`text="${testQuestion}"`);
+        await expect(faqCard).toBeVisible({ timeout: 5000 });
     });
 
     test("should edit an existing FAQ", async ({ page }) => {
         // Wait for FAQs to load
         await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
 
-        // Find first FAQ card
+        // Find first FAQ card and hover to show action buttons
+        // The card has class "group" and buttons have "opacity-0 group-hover:opacity-100"
         const firstFaqCard = page.locator(".bg-card.border.border-border.rounded-lg").first();
+        await firstFaqCard.hover();
 
-        // Click edit button - it's in the actions container on the right
-        // Find all buttons, filter out "Verify FAQ" text button, get first remaining (Pencil)
-        const allButtons = firstFaqCard.locator("button");
-        const buttonCount = await allButtons.count();
+        // Click edit button - both Edit and Delete buttons have className="h-8 w-8"
+        // Edit button is rendered first (line 1771), then Delete button (line 1781)
+        // So we take the first button with these classes
+        const editButton = firstFaqCard.locator("button.h-8.w-8").first();
+        await editButton.click({ timeout: 5000 });
 
-        // Iterate to find the Pencil button (has no text, just icon)
-        for (let i = 0; i < buttonCount; i++) {
-            const btn = allButtons.nth(i);
-            const text = await btn.textContent();
-            // Pencil button has no text (or only whitespace)
-            if (!text || text.trim().length === 0) {
-                await btn.click();
-                break;
-            }
-        }
+        // Wait for Sheet (slide-over panel) to open with "Edit FAQ" title
+        await page.waitForSelector('form >> text="Edit FAQ"', { timeout: 5000 });
 
-        // Wait for edit form to open and form fields to be visible
-        await page.waitForTimeout(500);
+        // Wait for form fields to be visible and modify the answer
         const answerField = page.locator("textarea#answer");
         await answerField.waitFor({ state: "visible", timeout: 5000 });
-
-        // Modify the answer
         await answerField.clear();
         await answerField.fill("Updated answer via E2E test");
 
-        // Save changes
-        await page.click('button:has-text("Save Changes")');
+        // Save changes by clicking the submit button
+        await page.click('button[type="submit"]:has-text("Save Changes")');
 
-        // Wait for save to complete (form closes and data reloads)
-        await page.waitForTimeout(2000);
+        // Wait for Sheet to close (form is hidden after successful save)
+        // The API reindexes the vector store which can take several seconds
+        await page.waitForSelector('form >> text="Edit FAQ"', { state: "hidden", timeout: 15000 });
 
-        // Verify change persisted
+        // Wait a moment for the FAQ list to refresh
+        await page.waitForTimeout(1000);
+
+        // Verify change persisted by reloading and checking
         await page.reload();
         await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
         const updatedCard = await page

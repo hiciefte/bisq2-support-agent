@@ -317,7 +317,7 @@ export default function ManageFaqsPage() {
                         e.preventDefault();
                         const selectedFaq = displayFaqs?.faqs[selectedIndex];
                         if (selectedFaq) {
-                            handleDelete(selectedFaq);
+                            handleDelete(selectedFaq.id);
                         }
                     }
                     break;
@@ -344,7 +344,7 @@ export default function ManageFaqsPage() {
                     e.preventDefault();
                     setBulkSelectionMode(!bulkSelectionMode);
                     if (bulkSelectionMode) {
-                        setSelectedFaqIds([]);
+                        setSelectedFaqIds(new Set());
                     }
                     break;
 
@@ -353,7 +353,7 @@ export default function ManageFaqsPage() {
                     if (bulkSelectionMode) {
                         e.preventDefault();
                         setBulkSelectionMode(false);
-                        setSelectedFaqIds([]);
+                        setSelectedFaqIds(new Set());
                     } else if (isFormOpen) {
                         e.preventDefault();
                         setIsFormOpen(false);
@@ -367,7 +367,7 @@ export default function ManageFaqsPage() {
                 case "delete":
                 case "backspace":
                     // Delete/Backspace - Delete selected FAQs in bulk mode
-                    if (bulkSelectionMode && selectedFaqIds.length > 0) {
+                    if (bulkSelectionMode && selectedFaqIds.size > 0) {
                         e.preventDefault();
                         handleBulkDelete();
                     }
@@ -534,7 +534,7 @@ export default function ManageFaqsPage() {
             return {
                 ...prev,
                 faqs: prev.faqs.filter((f) => f.id !== id),
-                total: prev.total - 1,
+                total_count: prev.total_count - 1,
             };
         });
 
@@ -1348,9 +1348,9 @@ export default function ManageFaqsPage() {
                                                 <Checkbox
                                                     id="select-all"
                                                     checked={
-                                                        displayFaqs?.faqs.length > 0 &&
+                                                        (displayFaqs?.faqs.length ?? 0) > 0 &&
                                                         selectedFaqIds.size ===
-                                                            displayFaqs.faqs.length
+                                                            (displayFaqs?.faqs.length ?? 0)
                                                     }
                                                     onCheckedChange={handleSelectAll}
                                                     disabled={isSubmitting}
@@ -1864,7 +1864,8 @@ export default function ManageFaqsPage() {
                                             {filters.search_text ? (
                                                 <>
                                                     Showing {displayFaqs.faqs.length} of{" "}
-                                                    {displayFaqs.total || displayFaqs.faqs.length}{" "}
+                                                    {displayFaqs.total_count ||
+                                                        displayFaqs.faqs.length}{" "}
                                                     {displayFaqs.faqs.length === 1
                                                         ? "result"
                                                         : "results"}
@@ -1984,8 +1985,7 @@ export default function ManageFaqsPage() {
                         <CommandGroup heading="Filters">
                             <CommandItem
                                 onSelect={() => {
-                                    setFilterCategory("");
-                                    setFilterSource("");
+                                    setFilters((prev) => ({ ...prev, categories: [], source: "" }));
                                     setCommandPaletteOpen(false);
                                 }}
                             >
@@ -1994,7 +1994,7 @@ export default function ManageFaqsPage() {
                             </CommandItem>
                             <CommandItem
                                 onSelect={() => {
-                                    setFilterCategory("general");
+                                    setFilters((prev) => ({ ...prev, categories: ["general"] }));
                                     setCommandPaletteOpen(false);
                                 }}
                             >
@@ -2002,7 +2002,7 @@ export default function ManageFaqsPage() {
                             </CommandItem>
                             <CommandItem
                                 onSelect={() => {
-                                    setFilterCategory("technical");
+                                    setFilters((prev) => ({ ...prev, categories: ["technical"] }));
                                     setCommandPaletteOpen(false);
                                 }}
                             >
@@ -2010,7 +2010,7 @@ export default function ManageFaqsPage() {
                             </CommandItem>
                             <CommandItem
                                 onSelect={() => {
-                                    setFilterCategory("trading");
+                                    setFilters((prev) => ({ ...prev, categories: ["trading"] }));
                                     setCommandPaletteOpen(false);
                                 }}
                             >
