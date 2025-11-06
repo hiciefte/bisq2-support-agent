@@ -703,8 +703,8 @@ class FeedbackService:
         """
         try:
             return self.repository.get_feedback_count()
-        except Exception as e:
-            logger.error(f"Error getting feedback count: {e}")
+        except Exception:
+            logger.exception("Error getting feedback count")
             return 0
 
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:

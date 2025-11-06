@@ -25,20 +25,22 @@ import { type Page } from "@playwright/test";
 export async function selectCategory(page: Page, category: string) {
     // 1. Open the combobox popover
     await page.click('button[role="combobox"]:has-text("Select category")');
-    await page.waitForTimeout(300);
 
-    // 2. Get reference to the command input (uses cmdk library)
+    // 2. Wait for command input to be visible (replaces arbitrary 300ms timeout)
     const commandInput = page.locator("[cmdk-input]");
+    await commandInput.waitFor({ state: "visible" });
 
     // 3. Type the category name
     await commandInput.fill(category);
-    await page.waitForTimeout(200);
 
-    // 4. Check if the category exists in the list
+    // 4. Wait for network idle to ensure filtered list is ready (replaces arbitrary 200ms timeout)
+    await page.waitForLoadState("networkidle");
+
+    // 5. Check if the category exists in the list
     const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
     const itemExists = (await existingItem.count()) > 0;
 
-    // 5. Either select existing item or create new one
+    // 6. Either select existing item or create new one
     if (itemExists) {
         // Category exists - click it
         await existingItem.click();
@@ -47,6 +49,7 @@ export async function selectCategory(page: Page, category: string) {
         await commandInput.press("Enter");
     }
 
-    // 6. Wait for selection to complete
-    await page.waitForTimeout(200);
+    // 7. Wait for combobox button to be visible again (indicates selection complete)
+    // This replaces the arbitrary 200ms timeout with a condition-based wait
+    await page.locator('button[role="combobox"]').waitFor({ state: "visible" });
 }

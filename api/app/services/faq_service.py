@@ -205,8 +205,8 @@ class FAQService:
                     success_count += 1
                 else:
                     failed_ids.append(faq_id)
-            except Exception as e:
-                logger.error(f"Failed to delete FAQ {faq_id}: {e}")
+            except Exception:
+                logger.exception("Failed to delete FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
         # Trigger update only once after all deletions
@@ -261,8 +261,8 @@ class FAQService:
                     faqs_by_id[result.id] = result
                 else:
                     failed_ids.append(faq_id)
-            except Exception as e:
-                logger.error(f"Failed to verify FAQ {faq_id}: {e}")
+            except Exception:
+                logger.exception("Failed to verify FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
         # No vector store rebuild needed - verification is metadata-only

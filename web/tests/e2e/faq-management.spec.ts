@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { selectCategory } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
 
 /**
  * FAQ Management Tests
@@ -9,13 +9,10 @@ import { selectCategory } from "./utils";
  * FAQ deletion to fail after container restarts.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
-
 test.describe("FAQ Management", () => {
     test.beforeEach(async ({ page }) => {
         // Navigate to admin page (redirects to /admin/overview)
-        await page.goto("http://localhost:3000/admin");
+        await page.goto(`${WEB_BASE_URL}/admin`);
 
         // Wait for login form to appear
         await page.waitForSelector('input[type="password"]', { timeout: 10000 });

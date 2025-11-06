@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { selectCategory } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
 
 /**
  * FAQ UI Improvements Tests (Phase 1)
@@ -10,13 +10,10 @@ import { selectCategory } from "./utils";
  * 3. Hover action buttons (buttons only visible on hover)
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
-
 test.describe("FAQ UI Improvements - Phase 1", () => {
     test.beforeEach(async ({ page }) => {
         // Navigate and login
-        await page.goto("http://localhost:3000/admin");
+        await page.goto(`${WEB_BASE_URL}/admin`);
         await page.waitForSelector('input[type="password"]', { timeout: 10000 });
         await page.fill('input[type="password"]', ADMIN_API_KEY);
         await page.click('button:has-text("Login")');
