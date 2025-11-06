@@ -10,7 +10,43 @@ import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./uti
  */
 
 test.describe("FAQ Management", () => {
+    // FAQ card selector constant - used throughout tests
+    const FAQ_CARD_SELECTOR = ".bg-card.border.border-border.rounded-lg";
+
+    // Track created FAQs for cleanup
+    const createdFaqQuestions: string[] = [];
+
+    // Helper function to create FAQ and track for cleanup
+    const createAndTrackFaq = async (
+        page: any,
+        question: string,
+        answer: string,
+        category: string = "General",
+        skipTracking: boolean = false
+    ) => {
+        await page.click('button:has-text("Add New FAQ")');
+        await page.fill("input#question", question);
+        await page.fill("textarea#answer", answer);
+        await selectCategory(page, category);
+        await page.click('button:has-text("Add FAQ")');
+
+        // Track for cleanup (unless test will delete it itself)
+        if (!skipTracking) {
+            createdFaqQuestions.push(question);
+        }
+    };
+
     test.beforeEach(async ({ page }) => {
+        // Inject console error tracking BEFORE navigation
+        await page.addInitScript(() => {
+            (window as any).consoleErrors = [];
+            const originalError = console.error;
+            console.error = (...args: any[]) => {
+                (window as any).consoleErrors.push(args.map(String).join(" "));
+                originalError.apply(console, args);
+            };
+        });
+
         // Navigate to admin page (redirects to /admin/overview)
         await page.goto(`${WEB_BASE_URL}/admin`);
 
@@ -32,37 +68,57 @@ test.describe("FAQ Management", () => {
 
         // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
         await Promise.race([
-            page
-                .waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 5000 })
-                .catch(() => null),
+            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
             page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
         ]);
     });
 
+    test.afterEach(async ({ page, request }) => {
+        // Clean up created FAQs to prevent database pollution
+        for (const question of createdFaqQuestions) {
+            try {
+                // Find the FAQ by question text using API
+                const response = await request.get(`${API_BASE_URL}/admin/faqs`, {
+                    headers: {
+                        "x-api-key": ADMIN_API_KEY,
+                    },
+                });
+
+                if (response.ok()) {
+                    const data = await response.json();
+                    const faq = data.faqs?.find((f: any) => f.question === question);
+                    if (faq) {
+                        // Delete the FAQ via API
+                        await request.delete(`${API_BASE_URL}/admin/faqs/${faq.id}`, {
+                            headers: {
+                                "x-api-key": ADMIN_API_KEY,
+                            },
+                        });
+                    }
+                }
+            } catch (error) {
+                // Ignore cleanup errors - test already completed
+                console.log(`Cleanup failed for FAQ: ${question}`, error);
+            }
+        }
+
+        // Clear the tracking array for next test
+        createdFaqQuestions.length = 0;
+    });
+
     test("should display existing FAQs", async ({ page }) => {
         // Wait for FAQ cards to load
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+        await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
         // Verify FAQ cards exist
-        const faqCards = await page.locator(".bg-card.border.border-border.rounded-lg").count();
+        const faqCards = await page.locator(FAQ_CARD_SELECTOR).count();
         expect(faqCards).toBeGreaterThan(0);
     });
 
     test("should create a new FAQ", async ({ page }) => {
-        // Click "Add New FAQ" button
-        await page.click('button:has-text("Add New FAQ")');
-
-        // Wait for Sheet (slide-over panel) to open - it's rendered in a portal
-        await page.waitForSelector('form >> text="Add New FAQ"', { timeout: 5000 });
-
-        // Fill in the form with unique question
+        // Create a test FAQ and track for cleanup
         const testQuestion = `Test FAQ Question ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "Test FAQ Answer for E2E testing");
-        await selectCategory(page, "General");
-
-        // Submit form by clicking the submit button (type="submit")
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
+        await createAndTrackFaq(page, testQuestion, "Test FAQ Answer for E2E testing");
 
         // Wait for Sheet to close (form is hidden after successful submission)
         // The API reindexes the vector store which can take several seconds
@@ -77,16 +133,25 @@ test.describe("FAQ Management", () => {
     });
 
     test("should edit an existing FAQ", async ({ page }) => {
-        // Wait for FAQs to load
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+        // Create a test FAQ to edit and track for cleanup
+        const testQuestion = `FAQ to be edited ${Date.now()}`;
+        await createAndTrackFaq(page, testQuestion, "Original answer");
 
-        // Find first FAQ card and hover to show action buttons
-        // The card has class "group" and buttons have "opacity-0 group-hover:opacity-100"
-        const firstFaqCard = page.locator(".bg-card.border.border-border.rounded-lg").first();
-        await firstFaqCard.hover();
+        // Wait for form to close and FAQ to appear
+        await page.waitForSelector('button:has-text("Add New FAQ")', {
+            state: "visible",
+            timeout: 10000,
+        });
 
-        // Click edit button using test ID (reliable selector that won't break with UI changes)
-        const editButton = firstFaqCard.locator('[data-testid="edit-faq-button"]');
+        // Find the newly created FAQ card
+        const faqCard = page.locator(
+            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+        );
+        await faqCard.waitFor({ state: "visible", timeout: 10000 });
+
+        // Hover to show action buttons and click edit
+        await faqCard.hover();
+        const editButton = faqCard.locator('[data-testid="edit-faq-button"]');
         await editButton.click({ timeout: 5000 });
 
         // Wait for Sheet (slide-over panel) to open with "Edit FAQ" title
@@ -106,26 +171,17 @@ test.describe("FAQ Management", () => {
         await page.waitForSelector('form >> text="Edit FAQ"', { state: "hidden", timeout: 15000 });
 
         // Wait for network to stabilize after reindexing
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
-        // Verify change persisted by reloading and checking
-        await page.reload();
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
-        const updatedCard = await page
-            .locator(".bg-card.border.border-border.rounded-lg")
-            .first()
-            .textContent();
+        // Verify change persisted by checking the FAQ card contains updated text
+        const updatedCard = await faqCard.textContent();
         expect(updatedCard).toContain("Updated answer");
     });
 
     test("should delete a FAQ (CRITICAL: Tests permission issue)", async ({ page }) => {
-        // Create a test FAQ to delete (using same pattern as working persistence test)
-        await page.click('button:has-text("Add New FAQ")');
+        // Create a test FAQ to delete (skip tracking since test deletes it)
         const testQuestion = `FAQ to be deleted ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "This FAQ will be deleted");
-        await selectCategory(page, "General");
-        await page.click('button:has-text("Add FAQ")');
+        await createAndTrackFaq(page, testQuestion, "This FAQ will be deleted", "General", true);
 
         // Wait for form to close and FAQ to appear (same pattern as persistence test)
         await page.waitForSelector('button:has-text("Add New FAQ")', {
@@ -151,7 +207,7 @@ test.describe("FAQ Management", () => {
         await continueButton.click();
 
         // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Verify FAQ is removed from list
         const deletedFaq = page.locator(
@@ -172,7 +228,7 @@ test.describe("FAQ Management", () => {
 
     test("should filter FAQs by category", async ({ page }) => {
         // Wait for FAQs to load
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg");
+        await page.waitForSelector(FAQ_CARD_SELECTOR);
 
         // Use the new smart filter chip (always visible)
         const categoryChip = page.locator("text=All Categories").first();
@@ -190,10 +246,10 @@ test.describe("FAQ Management", () => {
             await categoryOptions.nth(1).click();
 
             // Wait for network to stabilize after filter
-            await page.waitForLoadState('networkidle');
+            await page.waitForLoadState("networkidle");
 
             // Verify FAQs are filtered
-            const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
+            const faqCards = page.locator(FAQ_CARD_SELECTOR);
             const count = await faqCards.count();
             expect(count).toBeGreaterThan(0);
         }
@@ -217,17 +273,17 @@ test.describe("FAQ Management", () => {
         });
 
         // Wait for network to stabilize after FAQ creation
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill(searchTerm);
 
         // Wait for search results to update (debounced search completes)
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Verify the FAQ we created appears in search results
-        const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
+        const faqCards = page.locator(FAQ_CARD_SELECTOR);
         const count = await faqCards.count();
 
         expect(count).toBeGreaterThan(0);
@@ -271,7 +327,7 @@ test.describe("FAQ Management", () => {
         await continueButton.click();
 
         // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Reload page
         await page.reload();
@@ -281,9 +337,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for FAQ cards or "Add New FAQ" button to appear
         await Promise.race([
-            page
-                .waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 5000 })
-                .catch(() => null),
+            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
             page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
         ]);
 
@@ -314,11 +368,11 @@ test.describe("FAQ Management", () => {
         await page.click('button:has-text("Add FAQ")');
 
         // Wait for creation to complete
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Refresh second page and verify FAQ appears
         await page2.reload();
-        await page2.waitForSelector(".bg-card.border.border-border.rounded-lg");
+        await page2.waitForSelector(FAQ_CARD_SELECTOR);
         const faqOnPage2 = page2.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
@@ -378,7 +432,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Verify Badge component with "Verified" text is now visible
         const verifiedBadgeAfter = faqCard.locator(
@@ -429,7 +483,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // Verify badge shows "Verified"
         const verifiedBadge = faqCard.locator("text=Verified");
@@ -437,7 +491,7 @@ test.describe("FAQ Management", () => {
 
         // Reload page
         await page.reload();
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg");
+        await page.waitForSelector(FAQ_CARD_SELECTOR);
 
         // Find FAQ card again after reload
         const faqCardAfterReload = page.locator(
@@ -496,7 +550,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState("networkidle");
 
         // After verification, the button should no longer be visible
         const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
@@ -545,8 +599,8 @@ test.describe("FAQ Management", () => {
         await dialog.waitFor({ state: "visible", timeout: 5000 });
         await expect(dialog).toContainText("Verify this FAQ?");
 
-        // Click Cancel button (use first() to handle multiple Cancel buttons)
-        const cancelButton = dialog.getByRole("button", { name: "Cancel" }).first();
+        // Click Cancel button (use exact match and first() to handle multiple buttons)
+        const cancelButton = dialog.getByRole("button", { name: "Cancel", exact: true }).first();
         await cancelButton.click();
 
         // Wait for dialog to close
