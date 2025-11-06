@@ -173,21 +173,65 @@ class FAQService:
                                Set to False for metadata-only updates (verified, source, category)
                                that don't affect embeddings.
         """
+        # Get current FAQ to check verification status before update
+        current_faq = next(
+            (faq for faq in self.repository.get_all_faqs() if faq.id == faq_id), None
+        )
+
         result = self.repository.update_faq(faq_id, updated_data)
+
+        # Only trigger rebuild if:
+        # 1. Update succeeded AND rebuild_vectorstore=True
+        # 2. AND either FAQ was verified OR is becoming verified
         if result is not None and rebuild_vectorstore:
-            self._trigger_update()  # Trigger vector store rebuild only if content changed
+            was_verified = current_faq.verified if current_faq else False
+            is_verified = result.verified
+
+            # Trigger rebuild if FAQ was verified (needs update) or is becoming verified (needs addition)
+            if was_verified or is_verified:
+                logger.info(
+                    f"Triggering vector store rebuild for FAQ {faq_id}: "
+                    f"was_verified={was_verified}, is_verified={is_verified}"
+                )
+                self._trigger_update()
+            else:
+                logger.debug(
+                    f"Skipping vector store rebuild for unverified FAQ {faq_id}"
+                )
+
         return result
 
     def delete_faq(self, faq_id: str) -> bool:
-        """Deletes an FAQ by finding it via its stable ID."""
+        """Deletes an FAQ by finding it via its stable ID.
+
+        Only triggers vector store rebuild if the deleted FAQ was verified,
+        as unverified FAQs are not included in the vector store.
+        """
+        # Get FAQ before deletion to check verification status
+        faq = next(
+            (faq for faq in self.repository.get_all_faqs() if faq.id == faq_id), None
+        )
+
         result = self.repository.delete_faq(faq_id)
-        if result:
-            self._trigger_update()  # Trigger vector store rebuild
+
+        # Only trigger rebuild if deletion succeeded AND FAQ was verified
+        if result and faq and faq.verified:
+            logger.info(
+                f"Triggering vector store rebuild after deleting verified FAQ {faq_id}"
+            )
+            self._trigger_update()
+        elif result and faq and not faq.verified:
+            logger.debug(
+                f"Skipping vector store rebuild for unverified FAQ {faq_id} deletion"
+            )
+
         return result
 
     def bulk_delete_faqs(self, faq_ids: List[str]) -> tuple[int, int, List[str]]:
         """
         Delete multiple FAQs in a single operation with one vector store rebuild.
+
+        Only triggers rebuild if at least one deleted FAQ was verified.
 
         Args:
             faq_ids: List of FAQ IDs to delete
@@ -195,23 +239,40 @@ class FAQService:
         Returns:
             Tuple of (success_count, failed_count, failed_ids)
         """
+        # Get all FAQs once to check verification status
+        all_faqs = {faq.id: faq for faq in self.repository.get_all_faqs()}
+
         success_count = 0
         failed_ids = []
+        deleted_verified_count = 0
 
         for faq_id in faq_ids:
             try:
+                # Check if FAQ was verified before deletion
+                faq = all_faqs.get(faq_id)
+                was_verified = faq.verified if faq else False
+
                 result = self.repository.delete_faq(faq_id)
                 if result:
                     success_count += 1
+                    if was_verified:
+                        deleted_verified_count += 1
                 else:
                     failed_ids.append(faq_id)
             except Exception:
                 logger.exception("Failed to delete FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
-        # Trigger update only once after all deletions
-        if success_count > 0:
+        # Trigger update only if at least one verified FAQ was deleted
+        if deleted_verified_count > 0:
+            logger.info(
+                f"Triggering vector store rebuild after deleting {deleted_verified_count} verified FAQ(s)"
+            )
             self._trigger_update()
+        elif success_count > 0:
+            logger.debug(
+                f"Skipping vector store rebuild: deleted {success_count} unverified FAQ(s)"
+            )
 
         failed_count = len(failed_ids)
         return success_count, failed_count, failed_ids

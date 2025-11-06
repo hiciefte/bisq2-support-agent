@@ -44,22 +44,28 @@ class FAQRAGLoader:
             self.source_weights["faq"] = new_weights["faq"]
             logger.info(f"Updated FAQ source weight to {self.source_weights['faq']}")
 
-    def load_faq_data(self, faq_file_path: Path) -> List[Document]:
+    def load_faq_data(
+        self, faq_file_path: Path, only_verified: bool = True
+    ) -> List[Document]:
         """Load FAQ data from JSONL file and prepare as RAG documents.
 
         Args:
             faq_file_path: Path to the FAQ JSONL file
+            only_verified: If True, only load FAQs with verified=True (default: True)
 
         Returns:
             List of LangChain Document objects ready for RAG ingestion
         """
-        logger.info(f"Using FAQ file path: {faq_file_path}")
+        logger.info(
+            f"Using FAQ file path: {faq_file_path} (only_verified={only_verified})"
+        )
 
         if not faq_file_path.exists():
             logger.warning(f"FAQ file not found: {faq_file_path}")
             return []
 
         documents = []
+        skipped_count = 0
         try:
             with open(faq_file_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -68,12 +74,19 @@ class FAQRAGLoader:
                         question = data.get("question", "")
                         answer = data.get("answer", "")
                         category = data.get("category", "General")
+                        verified = data.get("verified", False)
 
                         # Validate required fields
                         if not question.strip() or not answer.strip():
                             logger.warning(
                                 f"Skipping FAQ entry with missing question or answer: {data}"
                             )
+                            continue
+
+                        # Filter by verified status if requested
+                        if only_verified and not verified:
+                            skipped_count += 1
+                            logger.debug(f"Skipping unverified FAQ: {question[:50]}...")
                             continue
 
                         # Create Document with formatted content and metadata
@@ -90,6 +103,7 @@ class FAQRAGLoader:
                                 "source_weight": self.source_weights.get("faq", 1.2),
                                 "category": category,
                                 "bisq_version": "General",  # FAQs apply to all versions
+                                "verified": verified,
                             },
                         )
                         documents.append(doc)
@@ -99,5 +113,11 @@ class FAQRAGLoader:
             logger.error(f"Error loading FAQ data: {e!s}", exc_info=True)
             return []
         else:
-            logger.info(f"Loaded {len(documents)} FAQ documents")
+            if only_verified:
+                logger.info(
+                    f"Loaded {len(documents)} verified FAQ documents "
+                    f"(skipped {skipped_count} unverified)"
+                )
+            else:
+                logger.info(f"Loaded {len(documents)} FAQ documents")
             return documents
