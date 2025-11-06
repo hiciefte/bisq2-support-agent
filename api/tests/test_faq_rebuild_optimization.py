@@ -233,7 +233,7 @@ def test_bulk_delete_only_verified_triggers_rebuild(faq_service_with_mock_callba
     verified_faq_ids = [faq.id for faq in all_faqs if faq.verified]
 
     # Delete them all
-    success, failed, failed_ids = faq_service.bulk_delete_faqs(verified_faq_ids)
+    success, failed = faq_service.bulk_delete_faqs(verified_faq_ids)[:2]
 
     # Verify deletions succeeded and rebuild was triggered once
     assert success == len(verified_faq_ids)
@@ -251,7 +251,7 @@ def test_bulk_delete_only_unverified_skips_rebuild(faq_service_with_mock_callbac
     unverified_faq_ids = [faq.id for faq in all_faqs if not faq.verified]
 
     # Delete them all
-    success, failed, failed_ids = faq_service.bulk_delete_faqs(unverified_faq_ids)
+    success, failed = faq_service.bulk_delete_faqs(unverified_faq_ids)[:2]
 
     # Verify deletions succeeded but rebuild was NOT triggered
     assert success == len(unverified_faq_ids)
@@ -269,7 +269,7 @@ def test_bulk_delete_mixed_triggers_rebuild_once(faq_service_with_mock_callback)
     all_faq_ids = [faq.id for faq in all_faqs]
 
     # Delete them all
-    success, failed, failed_ids = faq_service.bulk_delete_faqs(all_faq_ids)
+    success, failed = faq_service.bulk_delete_faqs(all_faq_ids)[:2]
 
     # Verify deletions succeeded and rebuild was triggered exactly once
     assert success == len(all_faq_ids)
@@ -310,3 +310,44 @@ def test_add_faq_always_triggers_rebuild(faq_service_with_mock_callback):
     # Verify addition succeeded and rebuild was triggered
     assert result is not None
     mock_callback.assert_called_once()
+
+
+@pytest.mark.unit
+def test_bulk_verify_triggers_rebuild_for_promotions(faq_service_with_mock_callback):
+    """Test that bulk verifying unverified FAQs triggers vector store rebuild."""
+    faq_service, mock_callback = faq_service_with_mock_callback
+
+    # Get all unverified FAQs
+    all_faqs = faq_service.get_all_faqs()
+    unverified_faq_ids = [faq.id for faq in all_faqs if not faq.verified]
+    assert len(unverified_faq_ids) > 0, "No unverified FAQs found in test data"
+
+    # Verify them all
+    success, failed = faq_service.bulk_verify_faqs(unverified_faq_ids)[:2]
+
+    # Verify operation succeeded and rebuild was triggered once
+    assert success == len(unverified_faq_ids)
+    assert failed == 0
+    mock_callback.assert_called_once()
+
+
+@pytest.mark.unit
+def test_bulk_verify_skips_rebuild_when_already_verified(
+    faq_service_with_mock_callback,
+):
+    """Test that bulk verifying already-verified FAQs does NOT trigger rebuild."""
+    faq_service, mock_callback = faq_service_with_mock_callback
+
+    # Get all verified FAQs
+    all_faqs = faq_service.get_all_faqs()
+    verified_faq_ids = [faq.id for faq in all_faqs if faq.verified]
+    assert len(verified_faq_ids) > 0, "No verified FAQs found in test data"
+
+    # Try to verify them again (they're already verified)
+    success, failed = faq_service.bulk_verify_faqs(verified_faq_ids)[:2]
+
+    # Verify operation succeeded but rebuild was NOT triggered
+    # (no promotions occurred since they were already verified)
+    assert success == len(verified_faq_ids)
+    assert failed == 0
+    mock_callback.assert_not_called()

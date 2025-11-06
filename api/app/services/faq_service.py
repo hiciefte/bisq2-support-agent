@@ -292,6 +292,7 @@ class FAQService:
         """
         success_count = 0
         failed_ids = []
+        promotion_count = 0  # Track FAQs that changed from unverified to verified
 
         # Cache FAQs once to avoid O(n²) file I/O
         faqs_by_id = {faq.id: faq for faq in self.repository.get_all_faqs()}
@@ -304,6 +305,9 @@ class FAQService:
                 if not current_faq:
                     failed_ids.append(faq_id)
                     continue
+
+                # Track if this FAQ is being promoted from unverified to verified
+                was_unverified = not current_faq.verified
 
                 # Update only the verification status to True
                 faq_item = FAQItem(
@@ -320,13 +324,21 @@ class FAQService:
                     success_count += 1
                     # Update cache with verified FAQ
                     faqs_by_id[result.id] = result
+                    # Increment promotion count if FAQ was unverified and is now verified
+                    if was_unverified and result.verified:
+                        promotion_count += 1
                 else:
                     failed_ids.append(faq_id)
             except Exception:
                 logger.exception("Failed to verify FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
-        # No vector store rebuild needed - verification is metadata-only
+        # Trigger vector store rebuild if any FAQs were promoted from unverified to verified
+        if promotion_count > 0:
+            logger.info(
+                f"Triggering vector store rebuild after verifying {promotion_count} FAQ(s)"
+            )
+            self._trigger_update()
 
         failed_count = len(failed_ids)
         return success_count, failed_count, failed_ids
