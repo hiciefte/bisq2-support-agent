@@ -19,6 +19,8 @@ services:
     image: bisq2-api
 
   api:
+    # Ensure entrypoint runs to drop privileges to bisq-support user (UID 1001)
+    entrypoint: ["/entrypoint.sh"]
     volumes:
       # Mount the application code for hot-reloading
       - ../api/app:/app/app

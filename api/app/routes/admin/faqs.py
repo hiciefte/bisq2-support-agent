@@ -8,7 +8,13 @@ from typing import Optional
 from app.core.config import get_settings
 from app.core.exceptions import BaseAppException, FAQNotFoundError
 from app.core.security import verify_admin_access
-from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
+from app.models.faq import (
+    BulkFAQRequest,
+    BulkFAQResponse,
+    FAQIdentifiedItem,
+    FAQItem,
+    FAQListResponse,
+)
 from app.services.faq_service import FAQService
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import Response
@@ -146,3 +152,93 @@ async def delete_existing_faq_route(faq_id: str):
     if not success:
         raise FAQNotFoundError(faq_id)
     return Response(status_code=204)
+
+
+@router.post("/faqs/bulk-delete", response_model=BulkFAQResponse)
+async def bulk_delete_faqs_route(request: BulkFAQRequest):
+    """
+    Delete multiple FAQs in a single operation with optimized vector store rebuild.
+
+    This endpoint deletes multiple FAQs and triggers the vector store rebuild only once
+    after all deletions complete, providing significant performance improvement over
+    individual delete operations.
+
+    Args:
+        request: BulkFAQRequest containing list of FAQ IDs to delete
+
+    Returns:
+        BulkFAQResponse with success/failure counts and details
+    """
+    logger.info(f"Bulk delete request for {len(request.faq_ids)} FAQs")
+
+    try:
+        success_count, failed_count, failed_ids = faq_service.bulk_delete_faqs(
+            request.faq_ids
+        )
+
+        message = f"Successfully deleted {success_count} FAQ(s)"
+        if failed_count > 0:
+            message += f", {failed_count} failed"
+
+        logger.info(
+            f"Bulk delete completed: {success_count} succeeded, {failed_count} failed"
+        )
+
+        return BulkFAQResponse(
+            success_count=success_count,
+            failed_count=failed_count,
+            failed_ids=failed_ids,
+            message=message,
+        )
+    except Exception as e:
+        logger.error(f"Bulk delete operation failed: {e}", exc_info=True)
+        raise BaseAppException(
+            detail="Bulk delete operation failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="BULK_DELETE_FAILED",
+        ) from e
+
+
+@router.post("/faqs/bulk-verify", response_model=BulkFAQResponse)
+async def bulk_verify_faqs_route(request: BulkFAQRequest):
+    """
+    Verify multiple FAQs in a single operation (metadata-only, no vector store rebuild).
+
+    This endpoint performs bulk verification by updating FAQ metadata (verified status)
+    without triggering vector store rebuilds. Verification is metadata-only and does not
+    affect the indexed content, so no rebuild is necessary.
+
+    Args:
+        request: BulkFAQRequest containing list of FAQ IDs to verify
+
+    Returns:
+        BulkFAQResponse with success/failure counts and details
+    """
+    logger.info(f"Bulk verify request for {len(request.faq_ids)} FAQs")
+
+    try:
+        success_count, failed_count, failed_ids = faq_service.bulk_verify_faqs(
+            request.faq_ids
+        )
+
+        message = f"Successfully verified {success_count} FAQ(s)"
+        if failed_count > 0:
+            message += f", {failed_count} failed"
+
+        logger.info(
+            f"Bulk verify completed: {success_count} succeeded, {failed_count} failed"
+        )
+
+        return BulkFAQResponse(
+            success_count=success_count,
+            failed_count=failed_count,
+            failed_ids=failed_ids,
+            message=message,
+        )
+    except Exception as e:
+        logger.error(f"Bulk verify operation failed: {e}", exc_info=True)
+        raise BaseAppException(
+            detail="Bulk verify operation failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="BULK_VERIFY_FAILED",
+        ) from e

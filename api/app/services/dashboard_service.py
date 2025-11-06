@@ -112,6 +112,11 @@ class DashboardService:
             # Get period metadata
             period_label = self._get_period_label(period, start_date, end_date)
 
+            # Get all-time feedback count using constant-time query (O(1) operation)
+            total_feedback_count = await asyncio.to_thread(
+                self.feedback_service.get_total_feedback_count
+            )
+
             dashboard_data = {
                 # Core metrics (all period-filtered now)
                 "helpful_rate": period_feedback_stats["helpful_rate"]
@@ -126,8 +131,8 @@ class DashboardService:
                 "system_uptime": uptime_seconds,
                 "total_queries": await self._get_total_query_count(),
                 "total_faqs_created": faq_stats["total_created_from_feedback"],
-                # Additional context
-                "total_feedback": period_feedback_stats["total"],
+                # Additional context (time-frame independent)
+                "total_feedback": total_feedback_count,
                 "total_faqs": faq_stats["total_faqs"],
                 "last_updated": datetime.now(timezone.utc).isoformat(),
                 # Period metadata

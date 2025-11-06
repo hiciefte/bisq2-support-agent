@@ -692,6 +692,21 @@ class FeedbackService:
 
         return success
 
+    def get_total_feedback_count(self) -> int:
+        """Get total feedback count using constant-time database query.
+
+        This is an O(1) operation that only queries the count, unlike
+        get_feedback_stats_enhanced() which is O(n) and loads all feedback.
+
+        Returns:
+            Total number of feedback entries
+        """
+        try:
+            return self.repository.get_feedback_count()
+        except Exception:
+            logger.exception("Error getting feedback count")
+            return 0
+
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard.
 
