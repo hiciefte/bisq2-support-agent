@@ -1,5 +1,13 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
+
+// Global type declaration for console error tracking
+declare global {
+    interface Window {
+        consoleErrors: string[];
+    }
+}
 
 /**
  * FAQ Management Tests
@@ -18,7 +26,7 @@ test.describe("FAQ Management", () => {
 
     // Helper function to create FAQ and track for cleanup
     const createAndTrackFaq = async (
-        page: any,
+        page: Page,
         question: string,
         answer: string,
         category: string = "General",
@@ -39,10 +47,10 @@ test.describe("FAQ Management", () => {
     test.beforeEach(async ({ page }) => {
         // Inject console error tracking BEFORE navigation
         await page.addInitScript(() => {
-            (window as any).consoleErrors = [];
+            window.consoleErrors = [];
             const originalError = console.error;
             console.error = (...args: any[]) => {
-                (window as any).consoleErrors.push(args.map(String).join(" "));
+                window.consoleErrors.push(args.map(String).join(" "));
                 originalError.apply(console, args);
             };
         });
@@ -103,7 +111,7 @@ test.describe("FAQ Management", () => {
         }
 
         // Clear the tracking array for next test
-        createdFaqQuestions.length = 0;
+        createdFaqQuestions.splice(0);
     });
 
     test("should display existing FAQs", async ({ page }) => {
@@ -217,7 +225,6 @@ test.describe("FAQ Management", () => {
 
         // CRITICAL: Verify no permission errors in console
         const logs = await page.evaluate(() => {
-            // @ts-ignore
             return window.consoleErrors || [];
         });
         const hasPermissionError = logs.some(
@@ -271,6 +278,9 @@ test.describe("FAQ Management", () => {
             state: "hidden",
             timeout: 15000,
         });
+
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
 
         // Wait for network to stabilize after FAQ creation
         await page.waitForLoadState("networkidle");
@@ -367,6 +377,9 @@ test.describe("FAQ Management", () => {
         await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
 
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
+
         // Wait for creation to complete
         await page.waitForLoadState("networkidle");
 
@@ -396,6 +409,9 @@ test.describe("FAQ Management", () => {
             timeout: 5000,
         });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
 
         // Wait for form dialog to close (Add New FAQ button becomes visible again)
         await page.waitForSelector('button:has-text("Add New FAQ")', {
@@ -460,6 +476,9 @@ test.describe("FAQ Management", () => {
         });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
+
         // Wait for form dialog to close and FAQ card to appear
         await page.waitForSelector('button:has-text("Add New FAQ")', {
             state: "visible",
@@ -522,6 +541,9 @@ test.describe("FAQ Management", () => {
         });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
+
         // Wait for form dialog to close
         await page.waitForSelector('button:has-text("Add New FAQ")', {
             state: "visible",
@@ -577,6 +599,9 @@ test.describe("FAQ Management", () => {
             timeout: 5000,
         });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
+
+        // Track for cleanup
+        createdFaqQuestions.push(testQuestion);
 
         // Wait for form dialog to close
         await page.waitForSelector('button:has-text("Add New FAQ")', {

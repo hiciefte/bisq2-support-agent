@@ -10,7 +10,6 @@ import {
     CardContent,
     CardHeader,
     CardTitle,
-    CardFooter,
     CardDescription,
 } from "@/components/ui/card";
 import {
@@ -41,7 +40,6 @@ import {
     ChevronsUpDown,
     Check,
     FileQuestion,
-    HelpCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -202,6 +200,7 @@ export default function ManageFaqsPage() {
         }
     }, [faqData, availableCategories, availableSources]);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         // Since we're wrapped with SecureAuth, we know we're authenticated
         fetchFaqs();
@@ -216,6 +215,7 @@ export default function ManageFaqsPage() {
     }, []);
 
     // Re-fetch data when filters change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         setCurrentPage(1); // Reset to first page when filters change
         fetchFaqs(1);
@@ -377,6 +377,7 @@ export default function ManageFaqsPage() {
 
         document.addEventListener("keydown", handleKeyDown);
         return () => document.removeEventListener("keydown", handleKeyDown);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         bulkSelectionMode,
         selectedFaqIds,
