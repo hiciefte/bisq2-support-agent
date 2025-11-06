@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { selectCategory } from "./utils";
 
 /**
  * FAQ UI Improvements Tests (Phase 1)
@@ -11,39 +12,6 @@ import { test, expect, type Page } from "@playwright/test";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
-
-/**
- * Helper function to select a category from the combobox dropdown.
- * The category field is now a Combobox (Popover + Command component) instead of a simple input.
- */
-async function selectCategory(page: Page, category: string) {
-    // Click the combobox button to open it
-    await page.click('button[role="combobox"]:has-text("Select category")');
-
-    // Wait for the popover to open
-    await page.waitForTimeout(300);
-
-    // Type the category name in the search input
-    const commandInput = page.locator('[cmdk-input]');
-    await commandInput.fill(category);
-
-    // Wait a bit for the list to filter
-    await page.waitForTimeout(200);
-
-    // Try to click an existing category item, or just press Enter to create new
-    const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
-    const itemExists = await existingItem.count() > 0;
-
-    if (itemExists) {
-        await existingItem.click();
-    } else {
-        // If category doesn't exist, press Enter to create it
-        await commandInput.press('Enter');
-    }
-
-    // Wait for combobox to close
-    await page.waitForTimeout(200);
-}
 
 test.describe("FAQ UI Improvements - Phase 1", () => {
     test.beforeEach(async ({ page }) => {

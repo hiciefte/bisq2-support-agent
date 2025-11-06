@@ -1,4 +1,5 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { selectCategory } from "./utils";
 
 /**
  * FAQ Management Tests
@@ -10,39 +11,6 @@ import { test, expect, Page } from "@playwright/test";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "dev_admin_key";
-
-/**
- * Helper function to select a category from the combobox.
- * The category field is now a Popover + Command component (combobox).
- */
-async function selectCategory(page: Page, category: string) {
-    // Click the combobox button to open it
-    await page.click('button[role="combobox"]:has-text("Select category")');
-
-    // Wait for the popover to open
-    await page.waitForTimeout(300);
-
-    // Type the category name in the search input
-    const commandInput = page.locator('[cmdk-input]');
-    await commandInput.fill(category);
-
-    // Wait a bit for the list to filter
-    await page.waitForTimeout(200);
-
-    // Try to click an existing category item, or just press Enter to create new
-    const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
-    const itemExists = await existingItem.count() > 0;
-
-    if (itemExists) {
-        await existingItem.click();
-    } else {
-        // If category doesn't exist, press Enter to create it
-        await commandInput.press('Enter');
-    }
-
-    // Wait for combobox to close
-    await page.waitForTimeout(200);
-}
 
 test.describe("FAQ Management", () => {
     test.beforeEach(async ({ page }) => {
@@ -384,7 +352,10 @@ test.describe("FAQ Management", () => {
         await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
+            state: "visible",
+            timeout: 5000,
+        });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
         // Wait for form dialog to close (Add New FAQ button becomes visible again)
@@ -442,7 +413,10 @@ test.describe("FAQ Management", () => {
         await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
+            state: "visible",
+            timeout: 5000,
+        });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
         // Wait for form dialog to close and FAQ card to appear
@@ -499,7 +473,10 @@ test.describe("FAQ Management", () => {
         await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
+            state: "visible",
+            timeout: 5000,
+        });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
         // Wait for form dialog to close
@@ -550,7 +527,10 @@ test.describe("FAQ Management", () => {
         await selectCategory(page, "General");
 
         // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
+            state: "visible",
+            timeout: 5000,
+        });
         await page.click('button[type="submit"]:has-text("Add FAQ")');
 
         // Wait for form dialog to close
