@@ -88,10 +88,8 @@ test.describe("FAQ Management", () => {
         const firstFaqCard = page.locator(".bg-card.border.border-border.rounded-lg").first();
         await firstFaqCard.hover();
 
-        // Click edit button - both Edit and Delete buttons have className="h-8 w-8"
-        // Edit button is rendered first (line 1771), then Delete button (line 1781)
-        // So we take the first button with these classes
-        const editButton = firstFaqCard.locator("button.h-8.w-8").first();
+        // Click edit button using test ID (reliable selector that won't break with UI changes)
+        const editButton = firstFaqCard.locator('[data-testid="edit-faq-button"]');
         await editButton.click({ timeout: 5000 });
 
         // Wait for Sheet (slide-over panel) to open with "Edit FAQ" title
@@ -145,23 +143,10 @@ test.describe("FAQ Management", () => {
         );
         await faqCard.waitFor({ state: "visible", timeout: 5000 });
 
-        // Click delete button (Trash2 icon) - it's the second button with no text (first is Pencil)
-        const allButtons = faqCard.locator("button");
-        const buttonCount = await allButtons.count();
-        let iconButtonIndex = 0;
-
-        for (let i = 0; i < buttonCount; i++) {
-            const btn = allButtons.nth(i);
-            const text = await btn.textContent();
-            if (!text || text.trim().length === 0) {
-                if (iconButtonIndex === 1) {
-                    // Second icon button is delete
-                    await btn.click();
-                    break;
-                }
-                iconButtonIndex++;
-            }
-        }
+        // Click delete button using test ID (reliable selector that won't break with UI changes)
+        await faqCard.hover();
+        const deleteButton = faqCard.locator('[data-testid="delete-faq-button"]');
+        await deleteButton.click();
 
         // Wait for AlertDialog to appear and click Continue
         const dialog = page.getByRole("alertdialog");
@@ -276,23 +261,10 @@ test.describe("FAQ Management", () => {
         );
         await faqCard.waitFor({ state: "visible", timeout: 5000 });
 
-        // Click delete button (Trash2 icon) - it's the second button with no text
-        const allButtons = faqCard.locator("button");
-        const buttonCount = await allButtons.count();
-        let iconButtonIndex = 0;
-
-        for (let i = 0; i < buttonCount; i++) {
-            const btn = allButtons.nth(i);
-            const text = await btn.textContent();
-            if (!text || text.trim().length === 0) {
-                if (iconButtonIndex === 1) {
-                    // Second icon button is delete
-                    await btn.click();
-                    break;
-                }
-                iconButtonIndex++;
-            }
-        }
+        // Click delete button using test ID (reliable selector that won't break with UI changes)
+        await faqCard.hover();
+        const deleteButton = faqCard.locator('[data-testid="delete-faq-button"]');
+        await deleteButton.click();
 
         // Wait for dialog and confirm
         const dialog = page.getByRole("alertdialog");
@@ -328,7 +300,7 @@ test.describe("FAQ Management", () => {
     test("should handle concurrent FAQ operations", async ({ page, context }) => {
         // Open second admin page in same context (shares cookies)
         const page2 = await context.newPage();
-        await page2.goto("http://localhost:3000/admin");
+        await page2.goto(`${WEB_BASE_URL}/admin`);
 
         // Since we share the browser context, we should already be authenticated
         // Wait for the authenticated UI to appear (will redirect to /admin/overview)

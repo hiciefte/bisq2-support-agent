@@ -1773,6 +1773,7 @@ export default function ManageFaqsPage() {
                                                                 size="icon"
                                                                 onClick={() => handleEdit(faq)}
                                                                 className="h-8 w-8"
+                                                                data-testid="edit-faq-button"
                                                             >
                                                                 <Pencil className="h-4 w-4" />
                                                             </Button>
@@ -1783,6 +1784,7 @@ export default function ManageFaqsPage() {
                                                                         size="icon"
                                                                         disabled={isSubmitting}
                                                                         className="h-8 w-8"
+                                                                        data-testid="delete-faq-button"
                                                                     >
                                                                         <Trash2 className="h-4 w-4 text-red-500" />
                                                                     </Button>
