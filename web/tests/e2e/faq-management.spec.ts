@@ -219,26 +219,39 @@ test.describe("FAQ Management", () => {
     });
 
     test("should search FAQs by text", async ({ page }) => {
-        // Wait for FAQs to load
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg");
+        // First, create a FAQ with a unique searchable term
+        await page.click('button:has-text("Add New FAQ")');
+        await page.waitForSelector('form >> text="Add New FAQ"', { timeout: 5000 });
 
-        // Use the persistent inline search (always visible)
+        const searchTerm = "BisqSearchTest";
+        const testQuestion = `${searchTerm} Question ${Date.now()}`;
+        await page.fill("input#question", testQuestion);
+        await page.fill("textarea#answer", "This FAQ is for testing the search functionality");
+        await selectCategory(page, "General");
+
+        await page.click('button[type="submit"]:has-text("Add FAQ")');
+        await page.waitForSelector('form >> text="Add New FAQ"', {
+            state: "hidden",
+            timeout: 15000,
+        });
+        await page.waitForTimeout(1000);
+
+        // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-        await searchInput.fill("Bisq");
+        await searchInput.fill(searchTerm);
 
         // Wait for debounced search (300ms debounce)
         await page.waitForTimeout(500);
 
-        // Verify all visible FAQs contain search term
+        // Verify the FAQ we created appears in search results
         const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
         const count = await faqCards.count();
 
         expect(count).toBeGreaterThan(0);
 
-        for (let i = 0; i < Math.min(count, 5); i++) {
-            const text = await faqCards.nth(i).textContent();
-            expect(text?.toLowerCase()).toMatch(/bisq/i);
-        }
+        // Verify the search result contains our test FAQ
+        const firstCard = await faqCards.first().textContent();
+        expect(firstCard?.toLowerCase()).toContain(searchTerm.toLowerCase());
     });
 
     test("should verify FAQ deletion persists after page reload", async ({ page }) => {
