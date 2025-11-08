@@ -33,7 +33,6 @@ import {
     Search,
     RotateCcw,
     BadgeCheck,
-    ChevronDown,
     ChevronRight,
     AlertCircle,
     CheckSquare,
@@ -83,7 +82,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import debounce from "lodash.debounce";
 import { useToast } from "@/hooks/use-toast";
-import Fuse from "fuse.js";
+import { toast as sonnerToast } from "sonner";
+import { useHotkeys } from "react-hotkeys-hook";
+import { cn } from "@/lib/utils";
 
 interface FAQ {
     id: string;
@@ -155,6 +156,11 @@ export default function ManageFaqsPage() {
     // Category combobox state
     const [categoryComboboxOpen, setCategoryComboboxOpen] = useState(false);
 
+    // Inline editing state
+    const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
+    const [draftEdits, setDraftEdits] = useState<Map<string, Partial<FAQ>>>(new Map());
+    const [failedFaqIds, setFailedFaqIds] = useState<Set<string>>(new Set());
+
     const currentPageRef = useRef(currentPage);
     const previousDataHashRef = useRef<string>("");
     const savedScrollPositionRef = useRef<number | null>(null);
@@ -206,164 +212,167 @@ export default function ManageFaqsPage() {
         return () => clearInterval(intervalId);
     }, [filters]);
 
-    // Keyboard shortcuts (⌘K for Command Palette, /, N, B, j/k navigation, Enter, e/d/v, Escape)
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const activeElement = document.activeElement;
-            const isInputFocused =
-                activeElement?.tagName === "INPUT" ||
-                activeElement?.tagName === "TEXTAREA" ||
-                activeElement?.getAttribute("contenteditable") === "true";
+    // Keyboard shortcuts using react-hotkeys-hook
+    // Command palette (works everywhere)
+    useHotkeys(
+        "mod+k",
+        (e) => {
+            e.preventDefault();
+            setCommandPaletteOpen(true);
+        },
+        { enableOnFormTags: true }
+    );
 
-            // ⌘K / Ctrl+K - Open Command Palette (works everywhere)
-            if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+    // Focus search
+    useHotkeys(
+        "/",
+        (e) => {
+            e.preventDefault();
+            searchInputRef.current?.focus();
+        },
+        { enableOnFormTags: false }
+    );
+
+    // Navigate down (j key)
+    useHotkeys(
+        "j",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && displayFaqs?.faqs.length) {
+                setSelectedIndex((prev) =>
+                    prev < (displayFaqs?.faqs.length || 0) - 1 ? prev + 1 : prev
+                );
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, displayFaqs]
+    );
+
+    // Navigate up (k key)
+    useHotkeys(
+        "k",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && displayFaqs?.faqs.length) {
+                setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev === -1 ? 0 : prev));
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, displayFaqs]
+    );
+
+    // Enter edit mode (e key)
+    useHotkeys(
+        "e",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                enterEditMode(displayFaqs.faqs[selectedIndex]);
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, selectedIndex, displayFaqs]
+    );
+
+    // Exit edit mode or other escape actions
+    useHotkeys(
+        "escape",
+        () => {
+            if (editingFaqId) {
+                const faq = displayFaqs?.faqs.find((f) => f.id === editingFaqId);
+                if (faq) {
+                    handleCancelEdit(faq.id);
+                }
+            } else if (bulkSelectionMode) {
+                setBulkSelectionMode(false);
+                setSelectedFaqIds(new Set());
+            } else if (isFormOpen) {
+                setIsFormOpen(false);
+                setEditingFaq(null);
+            } else if (selectedIndex >= 0) {
+                setSelectedIndex(-1);
+            }
+        },
+        { enableOnFormTags: true },
+        [editingFaqId, bulkSelectionMode, isFormOpen, selectedIndex, displayFaqs]
+    );
+
+    // Toggle expand/collapse with Enter
+    useHotkeys(
+        "enter",
+        (e) => {
+            if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
                 e.preventDefault();
-                setCommandPaletteOpen(true);
-                return;
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                if (selectedFaq.verified) {
+                    setExpandedIds((prev) => {
+                        const newSet = new Set(prev);
+                        if (newSet.has(selectedFaq.id)) {
+                            newSet.delete(selectedFaq.id);
+                        } else {
+                            newSet.add(selectedFaq.id);
+                        }
+                        return newSet;
+                    });
+                }
             }
+        },
+        { enableOnFormTags: false },
+        [selectedIndex, displayFaqs]
+    );
 
-            // Skip other shortcuts if user is typing in an input field
-            if (isInputFocused) return;
-
-            const faqCount = displayFaqs?.faqs.length || 0;
-
-            switch (e.key.toLowerCase()) {
-                case "/":
-                    // / - Focus search
-                    e.preventDefault();
-                    searchInputRef.current?.focus();
-                    break;
-
-                case "j":
-                    // j - Navigate down FAQ list (vim-style)
-                    e.preventDefault();
-                    if (faqCount > 0) {
-                        setSelectedIndex((prev) => {
-                            const next = prev < faqCount - 1 ? prev + 1 : prev;
-                            return next;
-                        });
-                    }
-                    break;
-
-                case "k":
-                    // k - Navigate up FAQ list (vim-style)
-                    e.preventDefault();
-                    if (faqCount > 0) {
-                        setSelectedIndex((prev) => {
-                            const next =
-                                prev > 0 ? prev - 1 : prev === -1 && faqCount > 0 ? 0 : prev;
-                            return next;
-                        });
-                    }
-                    break;
-
-                case "enter":
-                    // Enter - Expand/collapse selected FAQ
-                    if (selectedIndex >= 0 && selectedIndex < faqCount) {
-                        e.preventDefault();
-                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
-                        if (selectedFaq && selectedFaq.verified) {
-                            // Toggle expansion for verified FAQs
-                            setExpandedIds((prev) => {
-                                const newSet = new Set(prev);
-                                if (newSet.has(selectedFaq.id)) {
-                                    newSet.delete(selectedFaq.id);
-                                } else {
-                                    newSet.add(selectedFaq.id);
-                                }
-                                return newSet;
-                            });
-                        }
-                    }
-                    break;
-
-                case "e":
-                    // e - Edit selected FAQ
-                    if (selectedIndex >= 0 && selectedIndex < faqCount) {
-                        e.preventDefault();
-                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
-                        if (selectedFaq) {
-                            handleEdit(selectedFaq);
-                        }
-                    }
-                    break;
-
-                case "d":
-                    // d - Delete selected FAQ (with confirmation)
-                    if (selectedIndex >= 0 && selectedIndex < faqCount) {
-                        e.preventDefault();
-                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
-                        if (selectedFaq) {
-                            handleDelete(selectedFaq.id);
-                        }
-                    }
-                    break;
-
-                case "v":
-                    // v - Verify selected FAQ
-                    if (selectedIndex >= 0 && selectedIndex < faqCount) {
-                        e.preventDefault();
-                        const selectedFaq = displayFaqs?.faqs[selectedIndex];
-                        if (selectedFaq && !selectedFaq.verified) {
-                            handleVerifyFaq(selectedFaq);
-                        }
-                    }
-                    break;
-
-                case "n":
-                    // N - Add new FAQ
-                    e.preventDefault();
-                    openNewFaqForm();
-                    break;
-
-                case "b":
-                    // B - Toggle bulk selection mode
-                    e.preventDefault();
-                    setBulkSelectionMode(!bulkSelectionMode);
-                    if (bulkSelectionMode) {
-                        setSelectedFaqIds(new Set());
-                    }
-                    break;
-
-                case "escape":
-                    // Escape - Exit bulk selection mode or close forms or clear selection
-                    if (bulkSelectionMode) {
-                        e.preventDefault();
-                        setBulkSelectionMode(false);
-                        setSelectedFaqIds(new Set());
-                    } else if (isFormOpen) {
-                        e.preventDefault();
-                        setIsFormOpen(false);
-                        setEditingFaq(null);
-                    } else if (selectedIndex >= 0) {
-                        e.preventDefault();
-                        setSelectedIndex(-1);
-                    }
-                    break;
-
-                case "delete":
-                case "backspace":
-                    // Delete/Backspace - Delete selected FAQs in bulk mode
-                    if (bulkSelectionMode && selectedFaqIds.size > 0) {
-                        e.preventDefault();
-                        handleBulkDelete();
-                    }
-                    break;
+    // Delete FAQ (d key)
+    useHotkeys(
+        "d",
+        (e) => {
+            if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                e.preventDefault();
+                handleDelete(displayFaqs.faqs[selectedIndex].id);
             }
-        };
+        },
+        { enableOnFormTags: false },
+        [selectedIndex, displayFaqs]
+    );
 
-        document.addEventListener("keydown", handleKeyDown);
-        return () => document.removeEventListener("keydown", handleKeyDown);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        bulkSelectionMode,
-        selectedFaqIds,
-        isFormOpen,
-        editingFaq,
-        selectedIndex,
-        faqData,
-        expandedIds,
-    ]);
+    // Verify FAQ (v key)
+    useHotkeys(
+        "v",
+        (e) => {
+            if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                e.preventDefault();
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                if (!selectedFaq.verified) {
+                    handleVerifyFaq(selectedFaq);
+                }
+            }
+        },
+        { enableOnFormTags: false },
+        [selectedIndex, displayFaqs]
+    );
+
+    // New FAQ (n key)
+    useHotkeys(
+        "n",
+        (e) => {
+            e.preventDefault();
+            openNewFaqForm();
+        },
+        { enableOnFormTags: false }
+    );
+
+    // Bulk selection mode (b key)
+    useHotkeys(
+        "b",
+        (e) => {
+            e.preventDefault();
+            setBulkSelectionMode(!bulkSelectionMode);
+            if (bulkSelectionMode) {
+                setSelectedFaqIds(new Set());
+            }
+        },
+        { enableOnFormTags: false },
+        [bulkSelectionMode]
+    );
 
     // Scroll selected FAQ into view when selection changes
     useEffect(() => {
@@ -835,6 +844,145 @@ export default function ManageFaqsPage() {
         }
     };
 
+    // Inline editing functions
+    const enterEditMode = (faq: FAQ) => {
+        // If already editing, prevent starting a new edit
+        if (editingFaqId && editingFaqId !== faq.id) {
+            sonnerToast.warning("Save or cancel current edit first");
+            return;
+        }
+
+        // Check if this FAQ has a failed submission with preserved draft
+        const hasFailed = failedFaqIds.has(faq.id);
+        const preservedDraft = draftEdits.get(faq.id);
+
+        if (hasFailed && preservedDraft) {
+            // Re-entering edit mode for retry
+            setEditingFaqId(faq.id);
+            sonnerToast.info("Retry editing", {
+                description: "Your previous changes are preserved",
+            });
+        } else {
+            // Normal edit mode entry
+            setEditingFaqId(faq.id);
+            setDraftEdits(new Map().set(faq.id, {}));
+
+            // Auto-expand verified FAQs when entering edit mode
+            if (faq.verified && !expandedIds.has(faq.id)) {
+                setExpandedIds((prev) => new Set(prev).add(faq.id));
+            }
+        }
+    };
+
+    const handleCancelEdit = (faqId: string) => {
+        const hasFailed = failedFaqIds.has(faqId);
+
+        // Exit edit mode
+        setEditingFaqId(null);
+
+        if (hasFailed) {
+            // Clear failure state and discard draft
+            setFailedFaqIds((prev) => {
+                const next = new Set(prev);
+                next.delete(faqId);
+                return next;
+            });
+
+            setDraftEdits((prev) => {
+                const next = new Map(prev);
+                next.delete(faqId);
+                return next;
+            });
+
+            sonnerToast.info("Draft discarded", {
+                description: "Failed changes have been removed",
+            });
+        } else {
+            // Normal cancel - just remove draft
+            setDraftEdits((prev) => {
+                const next = new Map(prev);
+                next.delete(faqId);
+                return next;
+            });
+        }
+    };
+
+    const handleSaveInlineEdit = async (faqId: string, updatedFaq: FAQ) => {
+        const originalFaqData = faqData;
+
+        // Optimistic UI update
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.map((f) => (f.id === faqId ? updatedFaq : f)),
+            };
+        });
+
+        try {
+            const response = await makeAuthenticatedRequest(`/admin/faqs/${faqId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    question: updatedFaq.question,
+                    answer: updatedFaq.answer,
+                    category: updatedFaq.category,
+                    source: updatedFaq.source,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Update failed with status ${response.status}`);
+            }
+
+            // Success - clear edit mode and failure state
+            setEditingFaqId(null);
+            setFailedFaqIds((prev) => {
+                const next = new Set(prev);
+                next.delete(faqId);
+                return next;
+            });
+            setDraftEdits((prev) => {
+                const next = new Map(prev);
+                next.delete(faqId);
+                return next;
+            });
+
+            // Move to next FAQ
+            const currentIdx = displayFaqs?.faqs.findIndex((f) => f.id === faqId) ?? -1;
+            if (currentIdx >= 0 && displayFaqs) {
+                const nextIndex = Math.min(currentIdx + 1, displayFaqs.faqs.length - 1);
+                setSelectedIndex(nextIndex);
+            }
+
+            sonnerToast.success("FAQ updated successfully");
+        } catch {
+            // Rollback optimistic update
+            setFaqData(originalFaqData);
+
+            // IMPORTANT: Exit edit mode but mark as failed
+            setEditingFaqId(null);
+
+            // Mark FAQ as failed and preserve draft
+            setFailedFaqIds((prev) => new Set(prev).add(faqId));
+            setDraftEdits((prev) => new Map(prev).set(faqId, updatedFaq));
+
+            sonnerToast.error("Failed to save FAQ", {
+                description: "Changes preserved. Navigate back to retry.",
+                action: {
+                    label: "Retry Now",
+                    onClick: () => {
+                        const index = displayFaqs?.faqs.findIndex((f) => f.id === faqId) ?? -1;
+                        if (index >= 0) {
+                            setSelectedIndex(index);
+                            setEditingFaqId(faqId);
+                        }
+                    },
+                },
+            });
+        }
+    };
+
     // Filter helper functions with debouncing
     const debouncedSearchChange = useMemo(
         () =>
@@ -881,6 +1029,147 @@ export default function ManageFaqsPage() {
         filters.categories.length > 0 ||
         filters.source ||
         filters.verified !== "all";
+
+    // Inline FAQ Edit Component
+    const InlineEditFAQ = ({ faq }: { faq: FAQ; index: number }) => {
+        const draft = draftEdits.get(faq.id);
+        const currentValues = draft ? { ...faq, ...draft } : faq;
+        const [isSubmitting, setIsSubmitting] = useState(false);
+        const questionInputRef = useRef<HTMLInputElement>(null);
+
+        // Auto-focus question input when entering edit mode
+        useEffect(() => {
+            questionInputRef.current?.focus();
+        }, []);
+
+        const handleSubmit = async () => {
+            setIsSubmitting(true);
+            await handleSaveInlineEdit(faq.id, currentValues as FAQ);
+            setIsSubmitting(false);
+        };
+
+        const updateDraft = (updates: Partial<FAQ>) => {
+            setDraftEdits((prev) => new Map(prev).set(faq.id, { ...draft, ...updates }));
+        };
+
+        const hasFailed = failedFaqIds.has(faq.id);
+
+        return (
+            <Card
+                className={cn(
+                    "transition-all duration-200",
+                    hasFailed && "border-destructive ring-1 ring-destructive"
+                )}
+            >
+                <CardHeader>
+                    {hasFailed && (
+                        <div className="mb-2">
+                            <Badge variant="destructive" className="mb-2">
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Failed to Save
+                            </Badge>
+                        </div>
+                    )}
+                    <Input
+                        ref={questionInputRef}
+                        value={currentValues.question}
+                        onChange={(e) => updateDraft({ question: e.target.value })}
+                        placeholder="Question"
+                        className="text-lg font-semibold"
+                    />
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <Textarea
+                        value={currentValues.answer}
+                        onChange={(e) => updateDraft({ answer: e.target.value })}
+                        placeholder="Answer"
+                        rows={6}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Category</Label>
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        className="w-full justify-between"
+                                    >
+                                        {currentValues.category || "Select category..."}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-full p-0">
+                                    <Command>
+                                        <CommandInput
+                                            placeholder="Search or type new category..."
+                                            value={currentValues.category}
+                                            onValueChange={(value) => updateDraft({ category: value })}
+                                        />
+                                        <CommandList>
+                                            <CommandEmpty>
+                                                Press Enter to create &quot;{currentValues.category}
+                                                &quot;
+                                            </CommandEmpty>
+                                            {availableCategories.length > 0 && (
+                                                <CommandGroup heading="Existing Categories">
+                                                    {availableCategories.map((category) => (
+                                                        <CommandItem
+                                                            key={category}
+                                                            value={category}
+                                                            onSelect={(currentValue) =>
+                                                                updateDraft({ category: currentValue })
+                                                            }
+                                                        >
+                                                            <Check
+                                                                className={cn(
+                                                                    "mr-2 h-4 w-4",
+                                                                    currentValues.category === category
+                                                                        ? "opacity-100"
+                                                                        : "opacity-0"
+                                                                )}
+                                                            />
+                                                            {category}
+                                                        </CommandItem>
+                                                    ))}
+                                                </CommandGroup>
+                                            )}
+                                        </CommandList>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Source</Label>
+                            <Input value={currentValues.source} disabled />
+                        </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <Button onClick={handleSubmit} disabled={isSubmitting} className="min-w-[80px]">
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Saving
+                                </>
+                            ) : (
+                                "Save"
+                            )}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => handleCancelEdit(faq.id)}
+                            disabled={isSubmitting}
+                        >
+                            Cancel
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    };
 
     return (
         <TooltipProvider>
@@ -1514,9 +1803,30 @@ export default function ManageFaqsPage() {
                                 )}
 
                                 {displayFaqs?.faqs.map((faq, index) => {
+                                    // Check if this FAQ is in edit mode
+                                    const isEditing = editingFaqId === faq.id;
+
+                                    // If editing, render inline edit component
+                                    if (isEditing) {
+                                        return (
+                                            <div
+                                                key={faq.id}
+                                                ref={(el) => {
+                                                    if (el) {
+                                                        faqRefs.current.set(faq.id, el);
+                                                    }
+                                                }}
+                                                className="transition-all duration-200"
+                                            >
+                                                <InlineEditFAQ faq={faq} index={index} />
+                                            </div>
+                                        );
+                                    }
+
                                     // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
                                     const isExpanded = !faq.verified || expandedIds.has(faq.id);
                                     const isSelected = index === selectedIndex;
+                                    const hasFailed = failedFaqIds.has(faq.id);
 
                                     return (
                                         <Collapsible
@@ -1590,6 +1900,12 @@ export default function ManageFaqsPage() {
                                                                     <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
                                                                         {faq.question}
                                                                     </h3>
+                                                                    {hasFailed && (
+                                                                        <Badge variant="destructive" className="text-[10px]">
+                                                                            <AlertCircle className="h-3 w-3 mr-1" />
+                                                                            Failed
+                                                                        </Badge>
+                                                                    )}
                                                                     <div className="relative flex-shrink-0">
                                                                         <ChevronRight
                                                                             className={`h-5 w-5 text-muted-foreground transition-transform duration-200 mt-0.5 ${
@@ -1716,6 +2032,12 @@ export default function ManageFaqsPage() {
                                                                     <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
                                                                         {faq.question}
                                                                     </h3>
+                                                                    {hasFailed && (
+                                                                        <Badge variant="destructive" className="text-[10px]">
+                                                                            <AlertCircle className="h-3 w-3 mr-1" />
+                                                                            Failed
+                                                                        </Badge>
+                                                                    )}
                                                                 </div>
 
                                                                 <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
