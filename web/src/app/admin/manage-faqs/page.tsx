@@ -92,6 +92,7 @@ interface FAQ {
     category: string;
     source: string;
     verified: boolean;
+    bisq_version?: "Bisq 1" | "Bisq 2" | "Both" | "General";
 }
 
 interface FAQListResponse {
@@ -114,6 +115,7 @@ export default function ManageFaqsPage() {
         answer: "",
         category: "",
         source: "Manual",
+        bisq_version: "Bisq 2" as "Bisq 1" | "Bisq 2" | "Both" | "General",
     });
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -126,6 +128,7 @@ export default function ManageFaqsPage() {
         categories: [] as string[],
         source: "",
         verified: "all" as "all" | "verified" | "unverified",
+        bisq_version: "",
     });
 
     // Available categories and sources from the data
@@ -415,6 +418,10 @@ export default function ManageFaqsPage() {
                 params.append("verified", filters.verified === "verified" ? "true" : "false");
             }
 
+            if (filters.bisq_version && filters.bisq_version.trim()) {
+                params.append("bisq_version", filters.bisq_version.trim());
+            }
+
             const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
             if (response.ok) {
                 const data = await response.json();
@@ -479,7 +486,7 @@ export default function ManageFaqsPage() {
                 await fetchFaqs(currentPage);
                 setIsFormOpen(false);
                 setEditingFaq(null);
-                setFormData({ question: "", answer: "", category: "", source: "Manual" });
+                setFormData({ question: "", answer: "", category: "", source: "Manual", bisq_version: "Bisq 2" });
                 setError(null);
             } else {
                 const errorText = `Failed to save FAQ. Status: ${response.status}`;
@@ -502,6 +509,7 @@ export default function ManageFaqsPage() {
             answer: faq.answer,
             category: faq.category,
             source: faq.source,
+            bisq_version: faq.bisq_version || "Bisq 2",
         });
         setIsFormOpen(true);
     };
@@ -860,6 +868,7 @@ export default function ManageFaqsPage() {
             categories: [],
             source: "",
             verified: "all",
+            bisq_version: "",
         });
         // Also clear the input field value
         if (searchInputRef.current) {
@@ -1118,6 +1127,32 @@ export default function ManageFaqsPage() {
                                 </Select>
                             </div>
 
+                            {/* Bisq Version */}
+                            <div className="space-y-2">
+                                <Label htmlFor="bisq-version-filter">Bisq Version</Label>
+                                <Select
+                                    value={filters.bisq_version || "all"}
+                                    onValueChange={(value) => {
+                                        setFilters({
+                                            ...filters,
+                                            bisq_version: value === "all" ? "" : value,
+                                        });
+                                        setCurrentPage(1);
+                                    }}
+                                >
+                                    <SelectTrigger id="bisq-version-filter">
+                                        <SelectValue placeholder="All Versions" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Versions</SelectItem>
+                                        <SelectItem value="Bisq 1">Bisq 1</SelectItem>
+                                        <SelectItem value="Bisq 2">Bisq 2</SelectItem>
+                                        <SelectItem value="Both">Both</SelectItem>
+                                        <SelectItem value="General">General</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
                             {/* Filter Actions */}
                             <div className="flex justify-between pt-4 border-t">
                                 <Button
@@ -1271,6 +1306,28 @@ export default function ManageFaqsPage() {
                                             disabled
                                         />
                                     </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bisq-version">Bisq Version</Label>
+                                    <Select
+                                        value={formData.bisq_version}
+                                        onValueChange={(value) =>
+                                            setFormData({
+                                                ...formData,
+                                                bisq_version: value as "Bisq 1" | "Bisq 2" | "Both" | "General",
+                                            })
+                                        }
+                                    >
+                                        <SelectTrigger id="bisq-version">
+                                            <SelectValue placeholder="Select version" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Bisq 2">Bisq 2 (Default)</SelectItem>
+                                            <SelectItem value="Bisq 1">Bisq 1</SelectItem>
+                                            <SelectItem value="Both">Both Versions</SelectItem>
+                                            <SelectItem value="General">General</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
                             <SheetFooter className="mt-auto">
@@ -1553,6 +1610,22 @@ export default function ManageFaqsPage() {
                                                                     <span className="font-medium tracking-[0.3px]">
                                                                         Source: {faq.source}
                                                                     </span>
+                                                                    {faq.bisq_version && (
+                                                                        <Badge
+                                                                            variant="outline"
+                                                                            className={`text-[11px] ${
+                                                                                faq.bisq_version === "Bisq 1"
+                                                                                    ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                    : faq.bisq_version === "Bisq 2"
+                                                                                      ? "bg-green-50 text-green-700 border-green-300"
+                                                                                      : faq.bisq_version === "Both"
+                                                                                        ? "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                        : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                            }`}
+                                                                        >
+                                                                            {faq.bisq_version}
+                                                                        </Badge>
+                                                                    )}
                                                                     {faq.verified ? (
                                                                         <Tooltip>
                                                                             <TooltipTrigger asChild>
@@ -1652,6 +1725,22 @@ export default function ManageFaqsPage() {
                                                                     <span className="font-medium tracking-[0.3px]">
                                                                         Source: {faq.source}
                                                                     </span>
+                                                                    {faq.bisq_version && (
+                                                                        <Badge
+                                                                            variant="outline"
+                                                                            className={`text-[11px] ${
+                                                                                faq.bisq_version === "Bisq 1"
+                                                                                    ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                    : faq.bisq_version === "Bisq 2"
+                                                                                      ? "bg-green-50 text-green-700 border-green-300"
+                                                                                      : faq.bisq_version === "Both"
+                                                                                        ? "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                        : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                            }`}
+                                                                        >
+                                                                            {faq.bisq_version}
+                                                                        </Badge>
+                                                                    )}
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>
                                                                             <span
