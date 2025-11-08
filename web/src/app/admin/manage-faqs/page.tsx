@@ -125,6 +125,7 @@ export default function ManageFaqsPage() {
         search_text: "",
         categories: [] as string[],
         source: "",
+        verified: "all" as "all" | "verified" | "unverified",
     });
 
     // Available categories and sources from the data
@@ -157,42 +158,8 @@ export default function ManageFaqsPage() {
     const searchInputRef = useRef<HTMLInputElement>(null);
     const faqRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-    // Fuzzy search with Fuse.js - applies client-side ranking when search text is provided
-    const filteredAndRankedFaqs = useMemo(() => {
-        if (!faqData?.faqs) return null;
-
-        // If no search text, return original data
-        if (!filters.search_text || filters.search_text.trim() === "") {
-            return faqData;
-        }
-
-        // Configure Fuse.js for fuzzy search
-        const fuseOptions = {
-            keys: [
-                { name: "question", weight: 0.7 }, // Question has higher weight
-                { name: "answer", weight: 0.3 },
-            ],
-            threshold: 0.4, // 0 = perfect match, 1 = match anything
-            includeScore: true,
-            minMatchCharLength: 2,
-            ignoreLocation: true, // Search entire string, not just beginning
-        };
-
-        const fuse = new Fuse(faqData.faqs, fuseOptions);
-        const results = fuse.search(filters.search_text);
-
-        // Extract FAQs from search results (Fuse returns { item, score })
-        const rankedFaqs = results.map((result) => result.item);
-
-        return {
-            ...faqData,
-            faqs: rankedFaqs,
-            total: rankedFaqs.length,
-        };
-    }, [faqData, filters.search_text]);
-
-    // Use filtered/ranked FAQs for display
-    const displayFaqs = filteredAndRankedFaqs || faqData;
+    // Server-side search handles all filtering - no client-side filtering needed
+    const displayFaqs = faqData;
 
     // Keep the ref in sync with the latest page
     useEffect(() => {
@@ -427,11 +394,14 @@ export default function ManageFaqsPage() {
 
         try {
             // Build query parameters
-            // Note: search_text is handled client-side with fuzzy search
             const params = new URLSearchParams({
                 page: page.toString(),
                 page_size: pageSize.toString(),
             });
+
+            if (filters.search_text && filters.search_text.trim()) {
+                params.append("search_text", filters.search_text.trim());
+            }
 
             if (filters.categories.length > 0) {
                 params.append("categories", filters.categories.join(","));
@@ -439,6 +409,10 @@ export default function ManageFaqsPage() {
 
             if (filters.source) {
                 params.append("source", filters.source);
+            }
+
+            if (filters.verified && filters.verified !== "all") {
+                params.append("verified", filters.verified === "verified" ? "true" : "false");
             }
 
             const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
@@ -885,6 +859,7 @@ export default function ManageFaqsPage() {
             search_text: "",
             categories: [],
             source: "",
+            verified: "all",
         });
         // Also clear the input field value
         if (searchInputRef.current) {
@@ -892,7 +867,11 @@ export default function ManageFaqsPage() {
         }
     };
 
-    const hasActiveFilters = filters.search_text || filters.categories.length > 0 || filters.source;
+    const hasActiveFilters =
+        filters.search_text ||
+        filters.categories.length > 0 ||
+        filters.source ||
+        filters.verified !== "all";
 
     return (
         <TooltipProvider>
@@ -960,7 +939,6 @@ export default function ManageFaqsPage() {
                                             ? filters.categories[0]
                                             : "All Categories"}
                                     </Badge>
-                                    <ChevronDown className="h-3 w-3 opacity-50" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Categories</SelectItem>
@@ -981,7 +959,6 @@ export default function ManageFaqsPage() {
                                     <Badge variant="outline" className="px-0 border-0">
                                         {filters.source || "All Sources"}
                                     </Badge>
-                                    <ChevronDown className="h-3 w-3 opacity-50" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Sources</SelectItem>
@@ -990,6 +967,32 @@ export default function ManageFaqsPage() {
                                             {source}
                                         </SelectItem>
                                     ))}
+                                </SelectContent>
+                            </Select>
+
+                            {/* Verified Status Filter Chip */}
+                            <Select
+                                value={filters.verified || "all"}
+                                onValueChange={(value) => {
+                                    setFilters((prev) => ({
+                                        ...prev,
+                                        verified: value as "all" | "verified" | "unverified",
+                                    }));
+                                }}
+                            >
+                                <SelectTrigger className="h-8 w-auto gap-2 px-3 border-dashed">
+                                    <Badge variant="outline" className="px-0 border-0">
+                                        {filters.verified === "verified"
+                                            ? "Verified"
+                                            : filters.verified === "unverified"
+                                              ? "Unverified"
+                                              : "All Status"}
+                                    </Badge>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Status</SelectItem>
+                                    <SelectItem value="verified">Verified Only</SelectItem>
+                                    <SelectItem value="unverified">Unverified Only</SelectItem>
                                 </SelectContent>
                             </Select>
 
@@ -1903,33 +1906,18 @@ export default function ManageFaqsPage() {
                                 <div className="flex items-center space-x-6 lg:space-x-8">
                                     <div className="flex items-center space-x-2">
                                         <p className="text-sm font-medium">
-                                            {/* Show client-side filtered count when search is active */}
-                                            {filters.search_text ? (
-                                                <>
-                                                    Showing {displayFaqs.faqs.length} of{" "}
-                                                    {displayFaqs.total_count ||
-                                                        displayFaqs.faqs.length}{" "}
-                                                    {displayFaqs.faqs.length === 1
-                                                        ? "result"
-                                                        : "results"}
-                                                </>
-                                            ) : (
-                                                <>
-                                                    Showing{" "}
-                                                    {(faqData!.page - 1) * faqData!.page_size + 1}{" "}
-                                                    to{" "}
-                                                    {Math.min(
-                                                        faqData!.page * faqData!.page_size,
-                                                        faqData!.total_count
-                                                    )}{" "}
-                                                    of {faqData!.total_count} entries
-                                                </>
-                                            )}
+                                            Showing{" "}
+                                            {(faqData!.page - 1) * faqData!.page_size + 1} to{" "}
+                                            {Math.min(
+                                                faqData!.page * faqData!.page_size,
+                                                faqData!.total_count
+                                            )}{" "}
+                                            of {faqData!.total_count} entries
                                         </p>
                                     </div>
                                 </div>
-                                {/* Only show pagination controls when there are multiple pages and no client-side search */}
-                                {faqData && faqData.total_pages > 1 && !filters.search_text && (
+                                {/* Show pagination controls when there are multiple pages */}
+                                {faqData && faqData.total_pages > 1 && (
                                     <div className="flex items-center space-x-2">
                                         <Button
                                             variant="outline"

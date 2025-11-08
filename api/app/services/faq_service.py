@@ -149,10 +149,11 @@ class FAQService:
         search_text: Optional[str] = None,
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
+        verified: Optional[bool] = None,
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support."""
         return self.repository.get_faqs_paginated(
-            page, page_size, search_text, categories, source
+            page, page_size, search_text, categories, source, verified
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:

@@ -45,10 +45,11 @@ async def get_all_faqs_for_admin_route(
     search_text: Optional[str] = None,
     categories: Optional[str] = None,  # Comma-separated list
     source: Optional[str] = None,
+    verified: Optional[bool] = None,  # Filter by verification status
 ):
     """Get FAQs for the admin interface with pagination and filtering support."""
     logger.info(
-        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}"
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}"
     )
 
     try:
@@ -63,6 +64,7 @@ async def get_all_faqs_for_admin_route(
             search_text=search_text,
             categories=categories_list,
             source=source,
+            verified=verified,
         )
         return result
     except Exception as e:

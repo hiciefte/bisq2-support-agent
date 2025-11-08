@@ -112,6 +112,7 @@ class FAQRepository:
         search_text: Optional[str] = None,
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
+        verified: Optional[bool] = None,
     ) -> List[FAQIdentifiedItem]:
         """Apply filters to FAQ list.
 
@@ -120,6 +121,7 @@ class FAQRepository:
             search_text: Text to search in questions and answers
             categories: List of categories to filter by
             source: Source type to filter by
+            verified: Verification status to filter by
 
         Returns:
             Filtered list of FAQs
@@ -154,6 +156,10 @@ class FAQRepository:
                 if faq.source and faq.source.lower() == source_lower
             ]
 
+        # Verified status filter
+        if verified is not None:
+            filtered_faqs = [faq for faq in filtered_faqs if faq.verified == verified]
+
         return filtered_faqs
 
     def get_all_faqs(self) -> List[FAQIdentifiedItem]:
@@ -171,6 +177,7 @@ class FAQRepository:
         search_text: Optional[str] = None,
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
+        verified: Optional[bool] = None,
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support.
 
@@ -180,6 +187,7 @@ class FAQRepository:
             search_text: Optional text search filter
             categories: Optional category filter
             source: Optional source filter
+            verified: Optional verification status filter
 
         Returns:
             Paginated FAQ response with metadata
@@ -193,7 +201,9 @@ class FAQRepository:
         all_faqs = list(reversed(all_faqs))
 
         # Apply filters
-        filtered_faqs = self._apply_filters(all_faqs, search_text, categories, source)
+        filtered_faqs = self._apply_filters(
+            all_faqs, search_text, categories, source, verified
+        )
         total_count = len(filtered_faqs)
 
         # Calculate pagination
