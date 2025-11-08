@@ -3,6 +3,8 @@ import { makeAuthenticatedRequest } from '@/lib/auth';
 
 export interface FeedbackItem {
   message_id: string;
+  // Additional dynamic properties from feedback data
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 

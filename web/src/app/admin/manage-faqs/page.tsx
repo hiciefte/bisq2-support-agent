@@ -184,7 +184,6 @@ export default function ManageFaqsPage() {
         }
     }, [faqData, availableCategories, availableSources]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         // Since we're wrapped with SecureAuth, we know we're authenticated
         fetchFaqs();
@@ -196,10 +195,10 @@ export default function ManageFaqsPage() {
         } catch {
             // ignore storage errors; default is to show confirmation
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Re-fetch data when filters change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         setCurrentPage(1); // Reset to first page when filters change
         fetchFaqs(1);
@@ -211,6 +210,7 @@ export default function ManageFaqsPage() {
 
         // Cleanup interval on unmount
         return () => clearInterval(intervalId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filters]);
 
     // Keyboard shortcuts using react-hotkeys-hook

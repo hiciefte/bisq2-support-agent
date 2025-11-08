@@ -44,6 +44,7 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
       unsubscribe();
       window.removeEventListener('admin-auth-changed', handleAuthChange);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onAuthChange]);
 
   const checkAuthentication = async () => {
