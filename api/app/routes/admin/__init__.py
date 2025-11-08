@@ -6,9 +6,10 @@ This package organizes admin routes by domain:
 - feedback: Feedback management (8 endpoints)
 - faqs: FAQ CRUD operations (4 endpoints)
 - analytics: Dashboard and metrics (2 endpoints)
+- vectorstore: Vector store management (2 endpoints)
 """
 
-from app.routes.admin import analytics, auth, faqs, feedback
+from app.routes.admin import analytics, auth, faqs, feedback, vectorstore
 from fastapi import FastAPI
 
 
@@ -25,6 +26,14 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(feedback.router)
     app.include_router(faqs.router)
     app.include_router(analytics.router)
+    app.include_router(vectorstore.router)
 
 
-__all__ = ["include_admin_routers", "auth", "feedback", "faqs", "analytics"]
+__all__ = [
+    "include_admin_routers",
+    "auth",
+    "feedback",
+    "faqs",
+    "analytics",
+    "vectorstore",
+]

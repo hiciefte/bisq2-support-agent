@@ -25,6 +25,7 @@ from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
+from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -72,6 +73,9 @@ class SimplifiedRAGService:
         self.vectorstore_manager = VectorStoreManager(
             vectorstore_path=self.db_path, data_dir=self.settings.DATA_DIR
         )
+
+        # Initialize state manager for manual rebuild coordination
+        self.state_manager = VectorStoreStateManager()
 
         # Initialize document processor for text splitting
         self.document_processor = DocumentProcessor(
@@ -121,14 +125,37 @@ class SimplifiedRAGService:
             lambda src: asyncio.create_task(self._handle_source_update(src))
         )
 
-        # Register with FAQ service for FAQ updates
+        # Register with FAQ service for FAQ updates (manual rebuild mode)
         if self.faq_service:
-            self.faq_service.register_update_callback(
-                lambda: self.vectorstore_manager.trigger_update("faq")
-            )
-            logger.info("Registered FAQ service update callback")
+            self.faq_service.register_update_callback(self._handle_faq_update)
+            logger.info("Registered FAQ service update callback (manual rebuild mode)")
 
         logger.info("Simplified RAG service initialized")
+
+    def _handle_faq_update(
+        self, rebuild: bool, operation: str, faq_id: str, metadata: Dict = None
+    ) -> None:
+        """Handle FAQ updates with optional manual rebuild.
+
+        Args:
+            rebuild: If True, rebuild immediately (legacy behavior)
+                    If False, mark for manual rebuild (new behavior)
+            operation: Type of change (add, update, delete, bulk_delete)
+            faq_id: ID of changed FAQ
+            metadata: Additional context about the change
+        """
+        if rebuild:
+            # Legacy behavior - trigger immediate automatic rebuild
+            logger.info("Legacy automatic rebuild requested")
+            self.vectorstore_manager.trigger_update("faq")
+        else:
+            # New behavior - mark for manual rebuild
+            logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
+            self.state_manager.mark_change(
+                operation=operation or "unknown",
+                faq_id=faq_id or "unknown",
+                metadata=metadata,
+            )
 
     async def _handle_source_update(self, source_name: str) -> None:
         """Handle runtime updates to source files (FAQ or wiki).
@@ -374,6 +401,36 @@ class SimplifiedRAGService:
         if self.vectorstore and hasattr(self.vectorstore, "persist"):
             self.vectorstore.persist()
         logger.info("Simplified RAG service cleanup complete")
+
+    async def manual_rebuild(self) -> Dict[str, Any]:
+        """
+        Manually triggered vector store rebuild.
+
+        Returns:
+            Dictionary with rebuild results (success, duration, changes applied)
+        """
+        logger.info("Manual rebuild requested")
+
+        # Use state manager to coordinate rebuild
+        return await self.state_manager.execute_rebuild(
+            rebuild_callback=self._perform_rebuild
+        )
+
+    async def _perform_rebuild(self) -> None:
+        """
+        Internal method to perform actual vector store rebuild.
+
+        Called by state_manager.execute_rebuild() with proper state tracking.
+        """
+        await self.setup(force_rebuild=True)
+
+    def get_rebuild_status(self) -> Dict[str, Any]:
+        """Get current rebuild status for API consumption."""
+        return self.state_manager.get_status()
+
+    def get_rebuild_summary(self) -> Dict[str, Any]:
+        """Get lightweight rebuild status for polling."""
+        return self.state_manager.get_summary_status()
 
     async def _answer_from_context(
         self, question: str, chat_history: List[Union[Dict[str, str], Any]]

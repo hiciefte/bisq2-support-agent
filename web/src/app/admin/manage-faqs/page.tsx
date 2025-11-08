@@ -12,6 +12,7 @@ import {
     CardTitle,
     CardDescription,
 } from "@/components/ui/card";
+import { VectorStoreStatusBanner } from "@/components/admin/VectorStoreStatusBanner";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -875,9 +876,13 @@ export default function ManageFaqsPage() {
 
     return (
         <TooltipProvider>
-            <div className="p-8 space-y-8 pt-16 lg:pt-8">
-                {/* Header with persistent search */}
-                <div className="flex flex-col gap-4">
+            <div className="min-h-screen bg-background">
+                {/* Persistent banner at top */}
+                <VectorStoreStatusBanner />
+
+                <div className="p-8 space-y-8 pt-16 lg:pt-8">
+                    {/* Header with persistent search */}
+                    <div className="flex flex-col gap-4">
                     <div className="flex items-start justify-between">
                         <div>
                             <h1 className="text-2xl font-semibold tracking-tight leading-tight">
@@ -2103,6 +2108,7 @@ export default function ManageFaqsPage() {
                         </CommandGroup>
                     </CommandList>
                 </CommandDialog>
+                </div>
             </div>
         </TooltipProvider>
     );
