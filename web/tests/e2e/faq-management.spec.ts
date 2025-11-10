@@ -157,26 +157,28 @@ test.describe("FAQ Management", () => {
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
-        // Hover to show action buttons and click edit
+        // Hover to show action buttons and click edit (enters inline edit mode)
         await faqCard.hover();
         const editButton = faqCard.locator('[data-testid="edit-faq-button"]');
         await editButton.click({ timeout: 5000 });
 
-        // Wait for Sheet (slide-over panel) to open with "Edit FAQ" title
-        await page.waitForSelector('form >> text="Edit FAQ"', { timeout: 5000 });
+        // Wait for inline edit mode to activate
+        await page.waitForTimeout(500);
 
-        // Wait for form fields to be visible and modify the answer
-        const answerField = page.locator("textarea#answer");
-        await answerField.waitFor({ state: "visible", timeout: 5000 });
-        await answerField.clear();
-        await answerField.fill("Updated answer via E2E test");
+        // In inline edit mode, the FAQ card is replaced with a Card component containing editable fields
+        // Find the textarea in the edit form (it's the only textarea visible on the page)
+        const inlineAnswerField = page.locator("textarea").first();
+        await inlineAnswerField.waitFor({ state: "visible", timeout: 5000 });
+        await inlineAnswerField.clear();
+        await inlineAnswerField.fill("Updated answer via E2E test");
 
-        // Save changes by clicking the submit button
-        await page.click('button[type="submit"]:has-text("Save Changes")');
+        // Save changes by clicking the "Save" button (text button, not icon)
+        const saveButton = page.locator('button:has-text("Save")');
+        await saveButton.click({ timeout: 5000 });
 
-        // Wait for Sheet to close (form is hidden after successful save)
+        // Wait for save operation to complete
         // The API reindexes the vector store which can take several seconds
-        await page.waitForSelector('form >> text="Edit FAQ"', { state: "hidden", timeout: 15000 });
+        await page.waitForTimeout(3000);
 
         // Wait for network to stabilize after reindexing
         await page.waitForLoadState("networkidle");

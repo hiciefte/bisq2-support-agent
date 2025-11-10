@@ -26,6 +26,7 @@ router = APIRouter(
 @router.get("/status")
 async def get_vectorstore_status(
     detailed: bool = False,
+    request: Any = None,
 ) -> Dict[str, Any]:
     """
     Get vector store rebuild status.
@@ -39,8 +40,10 @@ async def get_vectorstore_status(
     logger.info(f"Vector store status requested (detailed={detailed})")
 
     try:
-        # Import here to avoid circular dependency
-        from app.main import rag_service
+        # Access rag_service from app state
+        from app.main import app
+
+        rag_service = app.state.rag_service
 
         if detailed:
             return rag_service.get_rebuild_status()
@@ -71,7 +74,10 @@ async def trigger_vectorstore_rebuild() -> Dict[str, Any]:
     logger.info("Manual vector store rebuild triggered")
 
     try:
-        from app.main import rag_service
+        # Access rag_service from app state
+        from app.main import app
+
+        rag_service = app.state.rag_service
 
         result = await rag_service.manual_rebuild()
 

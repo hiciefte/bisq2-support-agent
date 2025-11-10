@@ -186,27 +186,45 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         // Wait for FAQs to load
         await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
 
-        const firstFaqCard = page.locator(".bg-card.border.border-border.rounded-lg").first();
+        // Find an unverified FAQ (action buttons are always visible for unverified FAQs when expanded)
+        // Verified FAQs collapse by default, so we need an unverified one to test hover behavior
+        const unverifiedFaq = page
+            .locator(".bg-card.border.border-border.rounded-lg")
+            .filter({ hasText: "Needs Review" })
+            .first();
 
-        // Action buttons should not be visible initially (opacity-0)
-        // Note: We can't directly test opacity in Playwright, but we can test hover behavior
+        // Ensure we found an unverified FAQ
+        await expect(unverifiedFaq).toBeVisible();
 
-        // Hover over FAQ card
-        await firstFaqCard.hover();
+        // Get the action buttons container - it has flex items-center gap-1 classes and contains Edit button
+        const actionButtons = unverifiedFaq.locator('div.flex.items-center.gap-1').filter({
+            has: page.locator('[data-testid="edit-faq-button"]')
+        });
 
-        // Wait for transition
-        await page.waitForTimeout(300);
+        // Wait for the action buttons container to be attached to the DOM
+        await actionButtons.waitFor({ state: "attached", timeout: 5000 });
 
-        // Action buttons should now be visible
-        const editButton = firstFaqCard.locator('button:has([class*="lucide-pencil"])');
-        const deleteButton = firstFaqCard.locator('button:has([class*="lucide-trash"])');
+        // Check initial opacity (should be 0 - hidden)
+        const initialOpacity = await actionButtons.evaluate((el) =>
+            window.getComputedStyle(el).opacity
+        );
+        expect(parseFloat(initialOpacity)).toBe(0);
 
-        await expect(editButton).toBeVisible();
-        await expect(deleteButton).toBeVisible();
+        // Hover over the unverified FAQ card
+        await unverifiedFaq.hover();
+
+        // Wait for CSS transition (200ms as defined in className)
+        await page.waitForTimeout(250);
+
+        // Check opacity after hover (should be 1 - visible)
+        const hoverOpacity = await actionButtons.evaluate((el) =>
+            window.getComputedStyle(el).opacity
+        );
+        expect(parseFloat(hoverOpacity)).toBe(1);
     });
 
     test("should maintain all existing CRUD operations", async ({ page }) => {
-        // This test ensures backward compatibility
+        // This test ensures backward compatibility with inline editing
 
         // Test: Create FAQ
         await page.click('button:has-text("Add New FAQ")');
@@ -223,28 +241,44 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         );
         await expect(faqCard).toBeVisible();
 
-        // Test: Edit FAQ (with hover)
+        // Test: Inline Edit FAQ (with hover)
         await faqCard.hover();
         await page.waitForTimeout(300);
 
-        const editButton = faqCard.locator('button:has([class*="lucide-pencil"])');
+        // Click edit button to enter inline edit mode
+        const editButton = faqCard.locator('[data-testid="edit-faq-button"]');
         await editButton.click();
+        await page.waitForTimeout(500);
 
-        // Modify answer
-        const answerField = page.locator("textarea#answer");
-        await answerField.clear();
-        await answerField.fill("Updated via hover action button");
-        await page.click('button:has-text("Save Changes")');
-        await page.waitForTimeout(2000);
+        // In inline edit mode, the FAQ card is replaced with a Card component containing editable fields
+        // Find the textarea in the edit form (it's the only textarea in CardContent)
+        const inlineAnswerField = page.locator("textarea").first();
+        await inlineAnswerField.waitFor({ state: "visible", timeout: 5000 });
+        await inlineAnswerField.clear();
+        await inlineAnswerField.fill("Updated via inline edit");
+
+        // Click save button (button with text "Save")
+        const saveButton = page.locator('button:has-text("Save")');
+        await saveButton.click();
+        await page.waitForTimeout(3000);
 
         // Verify update
-        await expect(faqCard).toContainText("Updated via hover");
+        await expect(faqCard).toContainText("Updated via inline edit");
+
+        // Reload page to ensure we have fresh data from backend
+        await page.reload();
+        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+
+        // Re-locate the FAQ card after reload
+        const updatedFaqCard = page.locator(
+            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+        );
 
         // Test: Delete FAQ (with hover)
-        await faqCard.hover();
+        await updatedFaqCard.hover();
         await page.waitForTimeout(300);
 
-        const deleteButton = faqCard.locator('button:has([class*="lucide-trash"])');
+        const deleteButton = updatedFaqCard.locator('[data-testid="delete-faq-button"]');
         await deleteButton.click();
 
         // Confirm deletion
@@ -254,7 +288,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         await page.waitForTimeout(2000);
 
         // Verify FAQ is deleted
-        await expect(faqCard).toHaveCount(0);
+        await expect(updatedFaqCard).toHaveCount(0);
     });
 
     test("should maintain search functionality while using smart filters", async ({ page }) => {

@@ -31,7 +31,7 @@ export function VectorStoreStatusBanner() {
 
   async function fetchStatus() {
     try {
-      const response = await makeAuthenticatedRequest("/api/admin/vectorstore/status");
+      const response = await makeAuthenticatedRequest("/admin/vectorstore/status");
       if (response.ok) {
         const data = await response.json();
         setStatus(data);
@@ -46,7 +46,7 @@ export function VectorStoreStatusBanner() {
     setIsRebuilding(true);
 
     try {
-      const response = await makeAuthenticatedRequest("/api/admin/vectorstore/rebuild", {
+      const response = await makeAuthenticatedRequest("/admin/vectorstore/rebuild", {
         method: "POST",
       });
 

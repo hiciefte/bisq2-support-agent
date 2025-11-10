@@ -19,6 +19,7 @@ import shutil
 import time
 from typing import Any, Dict, List, Union
 
+import chromadb
 from app.core.config import get_settings
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
@@ -98,6 +99,7 @@ class SimplifiedRAGService:
 
         # Initialize components
         self.embeddings = None
+        self.chroma_client = None  # Store client reference for proper cleanup
         self.vectorstore = None
         self.retriever = None
         self.document_retriever = None  # Will be initialized after vectorstore
@@ -311,21 +313,31 @@ class SimplifiedRAGService:
                     rebuild_reason = self.vectorstore_manager.get_rebuild_reason()
                     logger.info(f"Rebuilding vector store: {rebuild_reason}")
 
-                    # Release file handles before cleaning
-                    if self.vectorstore and hasattr(self.vectorstore, "persist"):
+                    # Properly close ChromaDB client to release database locks
+                    if self.chroma_client:
                         try:
-                            self.vectorstore.persist()
+                            logger.info(
+                                "Closing ChromaDB client to release database locks..."
+                            )
+                            # Clear heartbeat to allow clean shutdown
+                            self.chroma_client.clear_system_cache()
+                            self.chroma_client = None
+                            logger.info("ChromaDB client closed successfully")
                         except Exception as e:
-                            logger.warning(f"Persist before cleanup failed: {e!s}")
+                            logger.warning(f"Error closing ChromaDB client: {e!s}")
+                            self.chroma_client = None
+
+                    # Clear vectorstore reference
                     self.vectorstore = None
 
                     # Clean existing vector store before rebuilding
                     self._clean_vector_store()
 
-                    # Create new vector store
-                    logger.info("Creating new vector store...")
+                    # Create new vector store with PersistentClient for disk persistence
+                    logger.info("Creating new vector store with persistent storage...")
+                    self.chroma_client = chromadb.PersistentClient(path=self.db_path)
                     self.vectorstore = Chroma(
-                        persist_directory=self.db_path,
+                        client=self.chroma_client,
                         embedding_function=self.embeddings,
                     )
 
@@ -334,12 +346,9 @@ class SimplifiedRAGService:
                         f"Adding {len(splits)} documents to new vector store..."
                     )
                     self.vectorstore.add_documents(splits)
-                    logger.info(f"Added {len(splits)} documents to new vector store")
-
-                    # Persist for durability
-                    if hasattr(self.vectorstore, "persist"):
-                        self.vectorstore.persist()
-                        logger.info("Vector store persisted to disk")
+                    logger.info(
+                        f"Added {len(splits)} documents to new vector store at {self.db_path}"
+                    )
 
                     # Save metadata after successful build
                     metadata = self.vectorstore_manager.collect_source_metadata()
@@ -348,12 +357,13 @@ class SimplifiedRAGService:
                 else:
                     # Load existing vector store from cache
                     logger.info("Loading existing vector store from cache...")
+                    self.chroma_client = chromadb.PersistentClient(path=self.db_path)
                     self.vectorstore = Chroma(
-                        persist_directory=self.db_path,
+                        client=self.chroma_client,
                         embedding_function=self.embeddings,
                     )
                     logger.info(
-                        f"Vector store loaded successfully from cache (skipping re-embedding of {len(splits)} documents)"
+                        f"Vector store loaded successfully from {self.db_path} (skipping re-embedding of {len(splits)} documents)"
                     )
 
                 # Create retriever
@@ -397,9 +407,19 @@ class SimplifiedRAGService:
     async def cleanup(self):
         """Clean up resources."""
         logger.info("Cleaning up simplified RAG service resources...")
-        # Check if vectorstore has persist method before calling it
-        if self.vectorstore and hasattr(self.vectorstore, "persist"):
-            self.vectorstore.persist()
+
+        # Properly close ChromaDB client to release database locks
+        if self.chroma_client:
+            try:
+                logger.info("Closing ChromaDB client during cleanup...")
+                self.chroma_client.clear_system_cache()
+                self.chroma_client = None
+                logger.info("ChromaDB client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing ChromaDB client during cleanup: {e!s}")
+                self.chroma_client = None
+
+        self.vectorstore = None
         logger.info("Simplified RAG service cleanup complete")
 
     async def manual_rebuild(self) -> Dict[str, Any]:
