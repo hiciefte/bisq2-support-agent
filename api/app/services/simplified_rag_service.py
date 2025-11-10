@@ -17,14 +17,16 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
+import chromadb
 from app.core.config import get_settings
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
+from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -73,6 +75,9 @@ class SimplifiedRAGService:
             vectorstore_path=self.db_path, data_dir=self.settings.DATA_DIR
         )
 
+        # Initialize state manager for manual rebuild coordination
+        self.state_manager = VectorStoreStateManager()
+
         # Initialize document processor for text splitting
         self.document_processor = DocumentProcessor(
             chunk_size=2000,  # Increased from 1500 to preserve more context per chunk
@@ -94,6 +99,7 @@ class SimplifiedRAGService:
 
         # Initialize components
         self.embeddings = None
+        self.chroma_client = None  # Store client reference for proper cleanup
         self.vectorstore = None
         self.retriever = None
         self.document_retriever = None  # Will be initialized after vectorstore
@@ -121,14 +127,41 @@ class SimplifiedRAGService:
             lambda src: asyncio.create_task(self._handle_source_update(src))
         )
 
-        # Register with FAQ service for FAQ updates
+        # Register with FAQ service for FAQ updates (manual rebuild mode)
         if self.faq_service:
-            self.faq_service.register_update_callback(
-                lambda: self.vectorstore_manager.trigger_update("faq")
-            )
-            logger.info("Registered FAQ service update callback")
+            self.faq_service.register_update_callback(self._handle_faq_update)
+            logger.info("Registered FAQ service update callback (manual rebuild mode)")
 
         logger.info("Simplified RAG service initialized")
+
+    def _handle_faq_update(
+        self,
+        rebuild: bool,
+        operation: str,
+        faq_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Handle FAQ updates with optional manual rebuild.
+
+        Args:
+            rebuild: If True, rebuild immediately (legacy behavior)
+                    If False, mark for manual rebuild (new behavior)
+            operation: Type of change (add, update, delete, bulk_delete)
+            faq_id: ID of changed FAQ
+            metadata: Additional context about the change
+        """
+        if rebuild:
+            # Legacy behavior - trigger immediate automatic rebuild
+            logger.info("Legacy automatic rebuild requested")
+            self.vectorstore_manager.trigger_update("faq")
+        else:
+            # New behavior - mark for manual rebuild
+            logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
+            self.state_manager.mark_change(
+                operation=operation or "unknown",
+                faq_id=faq_id or "unknown",
+                metadata=metadata,
+            )
 
     async def _handle_source_update(self, source_name: str) -> None:
         """Handle runtime updates to source files (FAQ or wiki).
@@ -284,21 +317,31 @@ class SimplifiedRAGService:
                     rebuild_reason = self.vectorstore_manager.get_rebuild_reason()
                     logger.info(f"Rebuilding vector store: {rebuild_reason}")
 
-                    # Release file handles before cleaning
-                    if self.vectorstore and hasattr(self.vectorstore, "persist"):
+                    # Properly close ChromaDB client to release database locks
+                    if self.chroma_client:
                         try:
-                            self.vectorstore.persist()
+                            logger.info(
+                                "Closing ChromaDB client to release database locks..."
+                            )
+                            # Clear heartbeat to allow clean shutdown
+                            self.chroma_client.clear_system_cache()
+                            self.chroma_client = None
+                            logger.info("ChromaDB client closed successfully")
                         except Exception as e:
-                            logger.warning(f"Persist before cleanup failed: {e!s}")
+                            logger.warning(f"Error closing ChromaDB client: {e!s}")
+                            self.chroma_client = None
+
+                    # Clear vectorstore reference
                     self.vectorstore = None
 
                     # Clean existing vector store before rebuilding
                     self._clean_vector_store()
 
-                    # Create new vector store
-                    logger.info("Creating new vector store...")
+                    # Create new vector store with PersistentClient for disk persistence
+                    logger.info("Creating new vector store with persistent storage...")
+                    self.chroma_client = chromadb.PersistentClient(path=self.db_path)
                     self.vectorstore = Chroma(
-                        persist_directory=self.db_path,
+                        client=self.chroma_client,
                         embedding_function=self.embeddings,
                     )
 
@@ -307,12 +350,9 @@ class SimplifiedRAGService:
                         f"Adding {len(splits)} documents to new vector store..."
                     )
                     self.vectorstore.add_documents(splits)
-                    logger.info(f"Added {len(splits)} documents to new vector store")
-
-                    # Persist for durability
-                    if hasattr(self.vectorstore, "persist"):
-                        self.vectorstore.persist()
-                        logger.info("Vector store persisted to disk")
+                    logger.info(
+                        f"Added {len(splits)} documents to new vector store at {self.db_path}"
+                    )
 
                     # Save metadata after successful build
                     metadata = self.vectorstore_manager.collect_source_metadata()
@@ -321,12 +361,13 @@ class SimplifiedRAGService:
                 else:
                     # Load existing vector store from cache
                     logger.info("Loading existing vector store from cache...")
+                    self.chroma_client = chromadb.PersistentClient(path=self.db_path)
                     self.vectorstore = Chroma(
-                        persist_directory=self.db_path,
+                        client=self.chroma_client,
                         embedding_function=self.embeddings,
                     )
                     logger.info(
-                        f"Vector store loaded successfully from cache (skipping re-embedding of {len(splits)} documents)"
+                        f"Vector store loaded successfully from {self.db_path} (skipping re-embedding of {len(splits)} documents)"
                     )
 
                 # Create retriever
@@ -370,10 +411,50 @@ class SimplifiedRAGService:
     async def cleanup(self):
         """Clean up resources."""
         logger.info("Cleaning up simplified RAG service resources...")
-        # Check if vectorstore has persist method before calling it
-        if self.vectorstore and hasattr(self.vectorstore, "persist"):
-            self.vectorstore.persist()
+
+        # Properly close ChromaDB client to release database locks
+        if self.chroma_client:
+            try:
+                logger.info("Closing ChromaDB client during cleanup...")
+                self.chroma_client.clear_system_cache()
+                self.chroma_client = None
+                logger.info("ChromaDB client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing ChromaDB client during cleanup: {e!s}")
+                self.chroma_client = None
+
+        self.vectorstore = None
         logger.info("Simplified RAG service cleanup complete")
+
+    async def manual_rebuild(self) -> Dict[str, Any]:
+        """
+        Manually triggered vector store rebuild.
+
+        Returns:
+            Dictionary with rebuild results (success, duration, changes applied)
+        """
+        logger.info("Manual rebuild requested")
+
+        # Use state manager to coordinate rebuild
+        return await self.state_manager.execute_rebuild(
+            rebuild_callback=self._perform_rebuild
+        )
+
+    async def _perform_rebuild(self) -> None:
+        """
+        Internal method to perform actual vector store rebuild.
+
+        Called by state_manager.execute_rebuild() with proper state tracking.
+        """
+        await self.setup(force_rebuild=True)
+
+    def get_rebuild_status(self) -> Dict[str, Any]:
+        """Get current rebuild status for API consumption."""
+        return self.state_manager.get_status()
+
+    def get_rebuild_summary(self) -> Dict[str, Any]:
+        """Get lightweight rebuild status for polling."""
+        return self.state_manager.get_summary_status()
 
     async def _answer_from_context(
         self, question: str, chat_history: List[Union[Dict[str, str], Any]]

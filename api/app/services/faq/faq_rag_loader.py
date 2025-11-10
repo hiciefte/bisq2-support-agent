@@ -89,6 +89,18 @@ class FAQRAGLoader:
                             logger.debug(f"Skipping unverified FAQ: {question[:50]}...")
                             continue
 
+                        # Extract and validate version from FAQ data
+                        bisq_version = data.get(
+                            "bisq_version", "Bisq 2"
+                        )  # Default to Bisq 2 if not specified
+                        valid_versions = {"Bisq 1", "Bisq 2", "Both", "General"}
+                        if bisq_version not in valid_versions:
+                            logger.warning(
+                                f"Invalid bisq_version '{bisq_version}' for FAQ "
+                                f"(question: {question[:50]}...), defaulting to 'Bisq 2'"
+                            )
+                            bisq_version = "Bisq 2"
+
                         # Create Document with formatted content and metadata
                         doc = Document(
                             page_content=f"Question: {question}\nAnswer: {answer}",
@@ -102,7 +114,7 @@ class FAQRAGLoader:
                                 "type": "faq",
                                 "source_weight": self.source_weights.get("faq", 1.2),
                                 "category": category,
-                                "bisq_version": "General",  # FAQs apply to all versions
+                                "bisq_version": bisq_version,  # Use FAQ's version metadata
                                 "verified": verified,
                             },
                         )

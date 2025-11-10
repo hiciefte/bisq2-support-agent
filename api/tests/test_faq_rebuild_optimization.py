@@ -279,7 +279,7 @@ def test_bulk_delete_mixed_triggers_rebuild_once(faq_service_with_mock_callback)
 
 @pytest.mark.unit
 def test_add_faq_always_triggers_rebuild(faq_service_with_mock_callback):
-    """Test that adding a new FAQ always triggers rebuild (verified or not)."""
+    """Test that adding a verified FAQ triggers rebuild, but unverified does not."""
     faq_service, mock_callback = faq_service_with_mock_callback
 
     # Add a new unverified FAQ
@@ -292,9 +292,9 @@ def test_add_faq_always_triggers_rebuild(faq_service_with_mock_callback):
     )
     result = faq_service.add_faq(new_faq)
 
-    # Verify addition succeeded and rebuild was triggered
+    # Verify addition succeeded but rebuild was NOT triggered (unverified FAQs don't trigger rebuild)
     assert result is not None
-    mock_callback.assert_called_once()
+    mock_callback.assert_not_called()
 
     # Reset mock and add a verified FAQ
     mock_callback.reset_mock()
@@ -307,9 +307,13 @@ def test_add_faq_always_triggers_rebuild(faq_service_with_mock_callback):
     )
     result = faq_service.add_faq(new_verified_faq)
 
-    # Verify addition succeeded and rebuild was triggered
+    # Verify addition succeeded and rebuild WAS triggered (verified FAQs trigger rebuild)
     assert result is not None
     mock_callback.assert_called_once()
+    # Verify callback was called with rebuild=False (manual rebuild mode)
+    call_args = mock_callback.call_args
+    assert call_args[0][0] is False  # rebuild=False
+    assert call_args[0][1] == "add"  # operation="add"
 
 
 @pytest.mark.unit

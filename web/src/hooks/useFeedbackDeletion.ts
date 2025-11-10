@@ -3,7 +3,8 @@ import { makeAuthenticatedRequest } from '@/lib/auth';
 
 export interface FeedbackItem {
   message_id: string;
-  [key: string]: any;
+  // Additional dynamic properties from feedback data (requires type checking before use)
+  [key: string]: unknown;
 }
 
 export function useFeedbackDeletion(onSuccess: () => void) {

@@ -66,6 +66,7 @@ export function AdminSidebar() {
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/bisq-fav.png"
               alt="Bisq Logo"

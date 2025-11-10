@@ -5,35 +5,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog";
+// Removed unused Table imports
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+// Removed unused Checkbox import
 import {
   Loader2,
   MessageCircle,
   ThumbsDown,
   ThumbsUp,
-  Search,
   Filter,
-  Calendar,
-  FileText,
   PlusCircle,
   Eye,
   RotateCcw,
   Download,
-  AlertTriangle,
-  TrendingUp,
   X,
   Trash2
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
-import { loginWithApiKey, logout, makeAuthenticatedRequest } from '@/lib/auth';
+import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
@@ -77,7 +71,7 @@ interface FeedbackListResponse {
   page: number;
   page_size: number;
   total_pages: number;
-  filters_applied: Record<string, any>;
+  filters_applied: Record<string, string | number | boolean | string[]>;
 }
 
 interface FeedbackStats {
@@ -88,15 +82,12 @@ interface FeedbackStats {
   common_issues: Record<string, number>;
   recent_negative_count: number;
   needs_faq_count: number;
-  source_effectiveness: Record<string, any>;
+  source_effectiveness: Record<string, { count: number; helpful_rate: number }>;
   feedback_by_month: Record<string, number>;
 }
 
 export default function ManageFeedbackPage() {
-  // Authentication state
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
-  const [loginError, setLoginError] = useState('');
+  // Authentication state - handled by SecureAuth wrapper at layout level
 
   // Data state
   const [feedbackData, setFeedbackData] = useState<FeedbackListResponse | null>(null);
@@ -166,8 +157,6 @@ export default function ManageFeedbackPage() {
     'Account'
   ];
 
-  const router = useRouter();
-
   // Check if there are any active filters
   const hasActiveFilters = filters.search_text ||
     filters.rating !== 'all' ||
@@ -177,13 +166,7 @@ export default function ManageFeedbackPage() {
     filters.source_types.length > 0 ||
     filters.needs_faq;
 
-  // Common issue types for filtering
-  const ISSUE_TYPES = [
-    'too_verbose', 'too_technical', 'not_specific', 'inaccurate',
-    'outdated', 'not_helpful', 'missing_context', 'confusing'
-  ];
-
-  const SOURCE_TYPES = ['faq', 'wiki', 'unknown'];
+  // Note: Issue types and source types are available from the backend API
 
   // Refs to track previous data hashes for smart updates
   const previousFeedbackHashRef = useRef<string>('');
@@ -308,39 +291,9 @@ export default function ManageFeedbackPage() {
     return () => clearInterval(intervalId);
   }, [fetchData]);
 
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    const key = (e.target as HTMLFormElement).apiKey.value;
-    if (key) {
-      try {
-        // Use the secure cookie-based authentication
-        await loginWithApiKey(key);
-        setLoginError('');
-        // Fetch data after successful login
-        await fetchData();
-        // Notify layout of auth change
-        window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-      } catch (error) {
-        setLoginError('Login failed. Please check your API key.');
-        console.error('Login error:', error);
-      }
-    }
-  };
+  // Note: Login/logout handlers are managed by SecureAuth wrapper at layout level
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      // Notify layout of auth change
-      window.dispatchEvent(new CustomEvent('admin-auth-changed'));
-      setFeedbackData(null);
-      setStats(null);
-      router.push('/admin/manage-feedback');
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
-
-  const handleFilterChange = (key: string, value: any) => {
+  const handleFilterChange = (key: string, value: string | number | boolean | Date | undefined | string[]) => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
@@ -435,7 +388,7 @@ export default function ManageFeedbackPage() {
         const errorText = `Failed to create FAQ. Status: ${response.status}`;
         setError(errorText);
       }
-    } catch (error) {
+    } catch {
       const errorText = 'An unexpected error occurred while creating the FAQ.';
       setError(errorText);
     } finally {
@@ -448,7 +401,7 @@ export default function ManageFeedbackPage() {
     if (!feedbackData || feedbackData.feedback_items.length === 0) return;
 
     // Helper function to escape CSV values properly
-    const escapeCSV = (value: any): string => {
+    const escapeCSV = (value: string | number | boolean | null | undefined): string => {
       if (value === null || value === undefined) return '';
       const str = String(value);
       // Escape double quotes by doubling them, and wrap in quotes if contains comma, quote, or newline

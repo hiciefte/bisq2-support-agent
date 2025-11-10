@@ -13,15 +13,10 @@ from app.services.dashboard_service import DashboardService
 from app.services.feedback_service import FeedbackService
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
-from prometheus_client import (  # type: ignore[attr-defined]
-    CONTENT_TYPE_LATEST,
-    Counter,
-    Gauge,
-    generate_latest,
-)
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
 # Setup logging
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logger = logging.getLogger(__name__)
 
 # Create main admin router with authentication dependencies for protected routes
 router = APIRouter(

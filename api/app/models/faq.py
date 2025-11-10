@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,9 @@ class FAQItem(BaseModel):
     category: Optional[str] = "General"
     source: Optional[str] = "Manual"  # Default for manually added/edited
     verified: Optional[bool] = False  # Whether FAQ has been verified by admin
+    bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = (
+        "Bisq 2"  # Bisq version applicability
+    )
 
 
 class FAQIdentifiedItem(FAQItem):
@@ -21,6 +24,7 @@ class FAQUpdateRequest(BaseModel):
     category: Optional[str] = None
     source: Optional[str] = None
     verified: Optional[bool] = None
+    bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = None
 
 
 class FAQListResponse(BaseModel):

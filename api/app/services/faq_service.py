@@ -96,23 +96,32 @@ class FAQService:
             self.faq_extractor = FAQExtractor(aisuite_client, self.settings)
 
             # Callback mechanism for vector store updates
-            self._update_callbacks: List[Callable[[], None]] = []
+            self._update_callbacks: List[
+                Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None]
+            ] = []
 
             self.initialized = True
             logger.info("FAQService initialized with JSONL backend.")
 
-    def register_update_callback(self, callback: Callable[[], None]) -> None:
+    def register_update_callback(
+        self,
+        callback: Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None],
+    ) -> None:
         """Register a callback to be called when FAQs are updated.
 
         Args:
-            callback: Function to call when FAQs are updated (no parameters)
+            callback: Function to call when FAQs are updated with signature:
+                     callback(rebuild: bool, operation: str, faq_id: str, metadata: Dict)
         """
         if callback not in self._update_callbacks:
             self._update_callbacks.append(callback)
             callback_name = getattr(callback, "__name__", repr(callback))
             logger.debug(f"Registered FAQ update callback: {callback_name}")
 
-    def unregister_update_callback(self, callback: Callable[[], None]) -> None:
+    def unregister_update_callback(
+        self,
+        callback: Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None],
+    ) -> None:
         """Unregister a previously registered FAQ update callback.
 
         Args:
@@ -123,13 +132,28 @@ class FAQService:
             callback_name = getattr(callback, "__name__", repr(callback))
             logger.debug(f"Unregistered FAQ update callback: {callback_name}")
 
-    def _trigger_update(self) -> None:
-        """Trigger all registered update callbacks when FAQs are modified."""
-        logger.info("FAQ data updated, triggering update callbacks...")
+    def _trigger_update(
+        self,
+        rebuild: bool = False,
+        operation: Optional[str] = None,
+        faq_id: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ) -> None:
+        """Trigger all registered update callbacks when FAQs are modified.
+
+        Args:
+            rebuild: Whether to trigger immediate rebuild (False = mark for manual rebuild)
+            operation: Type of operation (add, update, delete)
+            faq_id: ID of the FAQ that changed
+            metadata: Additional context about the change
+        """
+        logger.info(
+            f"FAQ data updated, triggering update callbacks (rebuild={rebuild}, operation={operation})..."
+        )
         # Snapshot callbacks to avoid mutation during iteration
         for callback in tuple(self._update_callbacks):
             try:
-                callback()
+                callback(rebuild, operation, faq_id, metadata)
             except Exception as e:
                 callback_name = getattr(callback, "__name__", repr(callback))
                 logger.error(
@@ -149,16 +173,27 @@ class FAQService:
         search_text: Optional[str] = None,
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
+        verified: Optional[bool] = None,
+        bisq_version: Optional[str] = None,
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support."""
         return self.repository.get_faqs_paginated(
-            page, page_size, search_text, categories, source
+            page, page_size, search_text, categories, source, verified, bisq_version
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
         """Adds a new FAQ to the FAQ file after checking for duplicates."""
         result = self.repository.add_faq(faq_item)
-        self._trigger_update()  # Trigger vector store rebuild
+
+        # Only mark for rebuild if FAQ is verified
+        if result and result.verified:
+            self._trigger_update(
+                rebuild=False,
+                operation="add",
+                faq_id=result.id,
+                metadata={"question": result.question[:50]},
+            )
+
         return result
 
     def update_faq(
@@ -180,20 +215,25 @@ class FAQService:
 
         result = self.repository.update_faq(faq_id, updated_data)
 
-        # Only trigger rebuild if:
+        # Only mark for rebuild if:
         # 1. Update succeeded AND rebuild_vectorstore=True
         # 2. AND either FAQ was verified OR is becoming verified
         if result is not None and rebuild_vectorstore:
             was_verified = current_faq.verified if current_faq else False
             is_verified = result.verified
 
-            # Trigger rebuild if FAQ was verified (needs update) or is becoming verified (needs addition)
+            # Mark for rebuild if FAQ was verified (needs update) or is becoming verified (needs addition)
             if was_verified or is_verified:
                 logger.info(
-                    f"Triggering vector store rebuild for FAQ {faq_id}: "
+                    f"Marking FAQ {faq_id} for rebuild: "
                     f"was_verified={was_verified}, is_verified={is_verified}"
                 )
-                self._trigger_update()
+                self._trigger_update(
+                    rebuild=False,
+                    operation="update",
+                    faq_id=faq_id,
+                    metadata={"question": result.question[:50]},
+                )
             else:
                 logger.debug(
                     f"Skipping vector store rebuild for unverified FAQ {faq_id}"
@@ -204,7 +244,7 @@ class FAQService:
     def delete_faq(self, faq_id: str) -> bool:
         """Deletes an FAQ by finding it via its stable ID.
 
-        Only triggers vector store rebuild if the deleted FAQ was verified,
+        Only marks for rebuild if the deleted FAQ was verified,
         as unverified FAQs are not included in the vector store.
         """
         # Get FAQ before deletion to check verification status
@@ -214,12 +254,15 @@ class FAQService:
 
         result = self.repository.delete_faq(faq_id)
 
-        # Only trigger rebuild if deletion succeeded AND FAQ was verified
+        # Only mark for rebuild if deletion succeeded AND FAQ was verified
         if result and faq and faq.verified:
-            logger.info(
-                f"Triggering vector store rebuild after deleting verified FAQ {faq_id}"
+            logger.info(f"Marking FAQ {faq_id} for rebuild after deletion")
+            self._trigger_update(
+                rebuild=False,
+                operation="delete",
+                faq_id=faq_id,
+                metadata={"question": faq.question[:50]},
             )
-            self._trigger_update()
         elif result and faq and not faq.verified:
             logger.debug(
                 f"Skipping vector store rebuild for unverified FAQ {faq_id} deletion"
@@ -231,7 +274,7 @@ class FAQService:
         """
         Delete multiple FAQs in a single operation with one vector store rebuild.
 
-        Only triggers rebuild if at least one deleted FAQ was verified.
+        Only marks for rebuild if at least one deleted FAQ was verified.
 
         Args:
             faq_ids: List of FAQ IDs to delete
@@ -263,12 +306,17 @@ class FAQService:
                 logger.exception("Failed to delete FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
-        # Trigger update only if at least one verified FAQ was deleted
+        # Mark for rebuild if at least one verified FAQ was deleted
         if deleted_verified_count > 0:
             logger.info(
-                f"Triggering vector store rebuild after deleting {deleted_verified_count} verified FAQ(s)"
+                f"Marking {deleted_verified_count} verified FAQ(s) for rebuild after bulk deletion"
             )
-            self._trigger_update()
+            self._trigger_update(
+                rebuild=False,
+                operation="bulk_delete",
+                faq_id=f"{deleted_verified_count}_faqs",
+                metadata={"count": deleted_verified_count, "total": len(faq_ids)},
+            )
         elif success_count > 0:
             logger.debug(
                 f"Skipping vector store rebuild: deleted {success_count} unverified FAQ(s)"
@@ -338,7 +386,12 @@ class FAQService:
             logger.info(
                 f"Triggering vector store rebuild after verifying {promotion_count} FAQ(s)"
             )
-            self._trigger_update()
+            self._trigger_update(
+                rebuild=False,
+                operation="bulk_verify",
+                faq_id=f"{promotion_count}_faqs",
+                metadata={"count": promotion_count, "total": len(faq_ids)},
+            )
 
         failed_count = len(failed_ids)
         return success_count, failed_count, failed_ids
