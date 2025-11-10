@@ -386,7 +386,12 @@ class FAQService:
             logger.info(
                 f"Triggering vector store rebuild after verifying {promotion_count} FAQ(s)"
             )
-            self._trigger_update()
+            self._trigger_update(
+                rebuild=False,
+                operation="bulk_verify",
+                faq_id=f"{promotion_count}_faqs",
+                metadata={"count": promotion_count, "total": len(faq_ids)},
+            )
 
         failed_count = len(failed_ids)
         return success_count, failed_count, failed_ids

@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
@@ -135,7 +135,11 @@ class SimplifiedRAGService:
         logger.info("Simplified RAG service initialized")
 
     def _handle_faq_update(
-        self, rebuild: bool, operation: str, faq_id: str, metadata: Dict = None
+        self,
+        rebuild: bool,
+        operation: str,
+        faq_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Handle FAQ updates with optional manual rebuild.
 

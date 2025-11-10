@@ -30,10 +30,10 @@ def include_admin_routers(app: FastAPI) -> None:
 
 
 __all__ = [
-    "include_admin_routers",
-    "auth",
-    "feedback",
-    "faqs",
     "analytics",
+    "auth",
+    "faqs",
+    "feedback",
+    "include_admin_routers",
     "vectorstore",
 ]
