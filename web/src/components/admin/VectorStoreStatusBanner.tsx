@@ -19,28 +19,37 @@ export function VectorStoreStatusBanner() {
   const { toast } = useToast();
 
   // Memoized fetchStatus to prevent stale closures and ESLint warnings
-  const fetchStatus = useCallback(async () => {
+  const fetchStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await makeAuthenticatedRequest("/admin/vectorstore/status");
+      const response = await makeAuthenticatedRequest("/admin/vectorstore/status", { signal });
       if (response.ok) {
         const data = await response.json();
         setStatus(data);
         setIsRebuilding(data.rebuild_in_progress);
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      // Ignore cancelled requests
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') {
+        return;
+      }
       console.error("Failed to fetch vector store status:", error);
     }
   }, []); // No dependencies - uses only stable APIs
 
   // Poll status every 5 seconds when component is mounted
   useEffect(() => {
+    const abortController = new AbortController();
+
     // Initial fetch
-    fetchStatus();
+    fetchStatus(abortController.signal);
 
     // Set up polling interval
-    const interval = setInterval(fetchStatus, 5000);
+    const interval = setInterval(() => fetchStatus(abortController.signal), 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      abortController.abort();
+    };
   }, [fetchStatus]);
 
   async function handleRebuild() {
