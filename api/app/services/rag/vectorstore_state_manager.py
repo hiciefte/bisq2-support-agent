@@ -59,7 +59,12 @@ class VectorStoreStateManager:
         )
 
     def needs_rebuild(self) -> bool:
-        """Check if vector store needs rebuilding."""
+        """
+        Check if vector store needs rebuilding.
+
+        Returns False during an active rebuild to prevent concurrent operations.
+        Use is_rebuilding() to check if a rebuild is currently in progress.
+        """
         return self._needs_rebuild and not self._rebuild_in_progress
 
     def is_rebuilding(self) -> bool:
@@ -161,7 +166,9 @@ class VectorStoreStateManager:
             }
             if self._needs_rebuild:
                 result["pending_changes_count"] = len(self._pending_changes)
-            return result
+                return result
+            else:
+                return result
 
         except Exception as e:
             logger.error(f"Vector store rebuild failed: {e}", exc_info=True)

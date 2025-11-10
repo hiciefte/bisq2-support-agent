@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -18,18 +18,8 @@ export function VectorStoreStatusBanner() {
   const [isRebuilding, setIsRebuilding] = useState(false);
   const { toast } = useToast();
 
-  // Poll status every 5 seconds when component is mounted
-  useEffect(() => {
-    // Initial fetch
-    fetchStatus();
-
-    // Set up polling interval
-    const interval = setInterval(fetchStatus, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  async function fetchStatus() {
+  // Memoized fetchStatus to prevent stale closures and ESLint warnings
+  const fetchStatus = useCallback(async () => {
     try {
       const response = await makeAuthenticatedRequest("/admin/vectorstore/status");
       if (response.ok) {
@@ -40,7 +30,18 @@ export function VectorStoreStatusBanner() {
     } catch (error) {
       console.error("Failed to fetch vector store status:", error);
     }
-  }
+  }, []); // No dependencies - uses only stable APIs
+
+  // Poll status every 5 seconds when component is mounted
+  useEffect(() => {
+    // Initial fetch
+    fetchStatus();
+
+    // Set up polling interval
+    const interval = setInterval(fetchStatus, 5000);
+
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
 
   async function handleRebuild() {
     setIsRebuilding(true);
@@ -94,7 +95,11 @@ export function VectorStoreStatusBanner() {
   }
 
   return (
-    <div className="sticky top-0 z-50 border-b border-amber-500/20 bg-amber-50 dark:bg-amber-900/10">
+    <div
+      className="sticky top-0 z-50 border-b border-amber-500/20 bg-amber-50 dark:bg-amber-900/10"
+      role="status"
+      aria-live="polite"
+    >
       <div className="container mx-auto flex items-center justify-between px-4 py-3">
         {/* Left: Status message */}
         <div className="flex items-center gap-3">
@@ -114,6 +119,7 @@ export function VectorStoreStatusBanner() {
         <Button
           onClick={handleRebuild}
           disabled={isRebuilding}
+          aria-label={isRebuilding ? "Updating support agent" : "Update support agent now"}
           size="sm"
           className="ml-4 flex-shrink-0 bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600"
         >
