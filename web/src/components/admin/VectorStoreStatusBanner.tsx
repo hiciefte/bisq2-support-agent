@@ -57,7 +57,7 @@ export function VectorStoreStatusBanner() {
           // Success toast
           toast({
             title: "Support agent updated",
-            description: `Applied ${result.changes_applied} changes in ${result.rebuild_time.toFixed(1)}s`,
+            description: `Applied ${result.changes_applied || 0} changes${result.rebuild_time ? ` in ${result.rebuild_time.toFixed(1)}s` : ''}`,
             duration: 4000,
           });
 

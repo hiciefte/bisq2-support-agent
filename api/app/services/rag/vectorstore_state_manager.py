@@ -125,11 +125,11 @@ class VectorStoreStateManager:
 
         self._rebuild_in_progress = True
         start_time = time.time()
-        changes_count = len(self._pending_changes)
+        initial_changes_count = len(self._pending_changes)
 
         try:
             logger.info(
-                f"Starting manual vector store rebuild ({changes_count} changes)"
+                f"Starting manual vector store rebuild ({initial_changes_count} changes)"
             )
 
             # Execute the actual rebuild
@@ -137,29 +137,38 @@ class VectorStoreStateManager:
 
             rebuild_duration = time.time() - start_time
 
-            # Reset state on success
-            self._needs_rebuild = False
+            # Reset state on success, but preserve changes added mid-rebuild
             self._last_rebuild_time = time.time()
-            self._pending_changes = []
+            if len(self._pending_changes) > initial_changes_count:
+                # New changes arrived during rebuild - keep them
+                self._pending_changes = self._pending_changes[initial_changes_count:]
+                self._needs_rebuild = True
+            else:
+                # No new changes - clear everything
+                self._pending_changes = []
+                self._needs_rebuild = False
 
             logger.info(
                 f"Vector store rebuild completed successfully in {rebuild_duration:.2f}s "
-                f"({changes_count} changes applied)"
+                f"({initial_changes_count} changes applied)"
             )
 
-            return {
+            result = {
                 "success": True,
                 "rebuild_time": rebuild_duration,
-                "changes_applied": changes_count,
+                "changes_applied": initial_changes_count,
                 "timestamp": self._last_rebuild_time,
             }
+            if self._needs_rebuild:
+                result["pending_changes_count"] = len(self._pending_changes)
+            return result
 
         except Exception as e:
             logger.error(f"Vector store rebuild failed: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
-                "changes_pending": changes_count,
+                "changes_pending": len(self._pending_changes),
             }
 
         finally:
