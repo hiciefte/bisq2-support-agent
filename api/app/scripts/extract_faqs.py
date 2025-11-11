@@ -32,10 +32,10 @@ from app.services.faq_service import FAQService
 from app.utils.task_metrics import instrument_faq_extraction
 
 # Configure logging
-logging.basicConfig(  # type: ignore[attr-defined]
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # type: ignore[attr-defined]
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logger = logging.getLogger(__name__)
 
 # Constants for retry mechanism
 MAX_RETRIES = 3
@@ -141,6 +141,7 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
             f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}",
             exc_info=True,
         )
+        raise last_error
 
     return None
 
@@ -161,7 +162,7 @@ if __name__ == "__main__":
 
     # Configure logging based on debug flag
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)  # type: ignore[attr-defined]
+        logging.getLogger().setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
 
     # Run the extraction process
