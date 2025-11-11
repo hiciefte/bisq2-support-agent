@@ -7,7 +7,11 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 source "$LIB_DIR/common.sh"
 
 # Configuration
-HEALTH_CHECK_RETRIES=${HEALTH_CHECK_RETRIES:-30}
+# Health check configuration for service startup verification
+# bisq2-api needs longer timeout due to Java startup + Bisq network initialization (typically 60-180s)
+# Formula: Initial wait (15s in update.sh) + (RETRIES × INTERVAL) should exceed Docker's start_period (120s for bisq2-api)
+# Recommended minimum: 180 seconds total = 15s + (90 × 2s) = 195 seconds
+HEALTH_CHECK_RETRIES=${HEALTH_CHECK_RETRIES:-90}
 HEALTH_CHECK_INTERVAL=${HEALTH_CHECK_INTERVAL:-2}
 
 # Function to check service health using docker compose ps
