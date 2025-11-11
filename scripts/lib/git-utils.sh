@@ -238,7 +238,7 @@ restore_production_data() {
     local backup_dir="${2}"
 
     if [ -z "$backup_dir" ] || [ ! -d "$backup_dir" ]; then
-        log_warning "No backup directory specified or directory not found"
+        log_debug "No production data to restore (expected on initial deployment or when no data files exist)"
         return 0
     fi
 
