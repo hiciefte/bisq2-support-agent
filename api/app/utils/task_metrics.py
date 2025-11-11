@@ -165,7 +165,7 @@ def instrument_faq_extraction(func: Callable) -> Callable:
 
             return result
 
-        except Exception as e:
+        except Exception:
             # Calculate duration even on failure
             duration = time.time() - start_time
             FAQ_EXTRACTION_DURATION.observe(duration)
@@ -175,7 +175,7 @@ def instrument_faq_extraction(func: Callable) -> Callable:
             FAQ_EXTRACTION_LAST_RUN_STATUS.set(0)
 
             # Re-raise the exception
-            raise e
+            raise
 
     return wrapper
 
@@ -223,7 +223,7 @@ def instrument_wiki_update(func: Callable) -> Callable:
 
             return result
 
-        except Exception as e:
+        except Exception:
             # Calculate duration even on failure
             duration = time.time() - start_time
             WIKI_UPDATE_DURATION.observe(duration)
@@ -233,7 +233,7 @@ def instrument_wiki_update(func: Callable) -> Callable:
             WIKI_UPDATE_LAST_RUN_STATUS.set(0)
 
             # Re-raise the exception
-            raise e
+            raise
 
     return wrapper
 
@@ -281,7 +281,7 @@ def instrument_feedback_processing(func: Callable) -> Callable:
 
             return result
 
-        except Exception as e:
+        except Exception:
             # Calculate duration even on failure
             duration = time.time() - start_time
             FEEDBACK_PROCESSING_DURATION.observe(duration)
@@ -291,7 +291,7 @@ def instrument_feedback_processing(func: Callable) -> Callable:
             FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(0)
 
             # Re-raise the exception
-            raise e
+            raise
 
     return wrapper
 

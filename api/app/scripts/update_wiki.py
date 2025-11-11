@@ -45,7 +45,7 @@ async def main() -> Optional[Dict[str, int]]:
 
         # Step 1: Download latest wiki dump
         logger.info("Step 1: Downloading latest Bisq MediaWiki dump...")
-        download_main(output_dir=wiki_data_dir)
+        await asyncio.to_thread(download_main, output_dir=wiki_data_dir)
         logger.info("Wiki dump downloaded successfully")
 
         # Step 2: Process the dump
@@ -58,7 +58,7 @@ async def main() -> Optional[Dict[str, int]]:
         processor = WikiDumpProcessor(str(input_file), str(output_file))
 
         # Run processing
-        processor.process_dump()
+        await asyncio.to_thread(processor.process_dump)
 
         # Calculate total pages processed from all categories
         pages_processed = sum(len(entries) for entries in processor.context.values())
