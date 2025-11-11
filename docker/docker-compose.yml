@@ -308,6 +308,55 @@ services:
           cpus: '0.2'
           memory: 256M
 
+  # Alertmanager for alert routing and notification
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: always
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    expose:
+      - "9093"
+    networks:
+      - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+
+  # Matrix webhook for alert notifications
+  matrix-alertmanager-webhook:
+    image: jaywink/matrix-alertmanager:latest
+    restart: always
+    environment:
+      - MATRIX_HOMESERVER=${MATRIX_HOMESERVER}
+      - MATRIX_USER=${MATRIX_USER}
+      - MATRIX_PASSWORD=${MATRIX_PASSWORD}
+      - MATRIX_ROOM=${MATRIX_ROOM}
+    expose:
+      - "3000"
+    networks:
+      - bisq-support-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
   # Scheduler for periodic tasks
   scheduler:
     image: alpine:latest
@@ -348,6 +397,7 @@ services:
 volumes:
   prometheus-data:
   grafana-data:
+  alertmanager-data:
   web_node_modules:
     name: bisq2-web-node-modules
   bisq2-data:

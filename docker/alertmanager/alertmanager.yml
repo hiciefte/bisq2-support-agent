@@ -1,0 +1,71 @@
+global:
+  resolve_timeout: 5m
+
+# Route configuration
+route:
+  # Default receiver for all alerts
+  receiver: 'matrix-notifications'
+
+  # Group alerts by severity and component
+  group_by: ['alertname', 'severity', 'component']
+
+  # Wait 30s before sending first notification (batch similar alerts)
+  group_wait: 30s
+
+  # After first notification, wait 5m before sending follow-ups
+  group_interval: 5m
+
+  # Repeat notifications every 4 hours for unresolved alerts
+  repeat_interval: 4h
+
+  # Routes for different severity levels
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'matrix-critical'
+      group_wait: 10s
+      repeat_interval: 30m
+
+    # Warning alerts - less urgent
+    - match:
+        severity: warning
+      receiver: 'matrix-warnings'
+      group_wait: 1m
+      repeat_interval: 12h
+
+# Inhibition rules - prevent notification spam
+inhibit_rules:
+  # Don't alert on container unhealthy if container is already down
+  - source_match:
+      alertname: 'ContainerDown'
+    target_match:
+      alertname: 'ContainerUnhealthy'
+    equal: ['container']
+
+  # Don't alert on high latency if error rate is critical
+  - source_match:
+      severity: 'critical'
+      alertname: 'RAGHighErrorRate'
+    target_match:
+      alertname: 'RAGHighLatency'
+
+# Receivers configuration
+receivers:
+  # Default Matrix receiver (all alerts)
+  - name: 'matrix-notifications'
+    webhook_configs:
+      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+        send_resolved: true
+
+  # Critical alerts receiver
+  - name: 'matrix-critical'
+    webhook_configs:
+      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+        send_resolved: true
+
+  # Warning alerts receiver
+  - name: 'matrix-warnings'
+    webhook_configs:
+      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+        send_resolved: true

@@ -30,6 +30,7 @@ from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
+    track_tokens_and_cost,
     update_error_rate,
 )
 from app.utils.logging import redact_pii
@@ -456,6 +457,7 @@ class SimplifiedRAGService:
         """Get lightweight rebuild status for polling."""
         return self.state_manager.get_summary_status()
 
+    @instrument_stage("generation")
     async def _answer_from_context(
         self, question: str, chat_history: List[Union[Dict[str, str], Any]]
     ) -> dict:
@@ -493,6 +495,15 @@ class SimplifiedRAGService:
                 if hasattr(response_text, "content")
                 else str(response_text)
             )
+
+            # Track token usage and cost
+            if hasattr(response_text, "usage") and response_text.usage:
+                track_tokens_and_cost(
+                    input_tokens=response_text.usage.get("prompt_tokens", 0),
+                    output_tokens=response_text.usage.get("completion_tokens", 0),
+                    input_cost_per_token=self.settings.OPENAI_INPUT_COST_PER_TOKEN,
+                    output_cost_per_token=self.settings.OPENAI_OUTPUT_COST_PER_TOKEN,
+                )
 
             logger.info(f"Generated context-based answer: {response_content[:100]}...")
 

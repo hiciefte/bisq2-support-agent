@@ -1,0 +1,116 @@
+groups:
+  - name: rag_alerts
+    interval: 30s
+    rules:
+      # ========================================
+      # Critical Alerts (Immediate Action)
+      # ========================================
+
+      - alert: RAGHighErrorRate
+        expr: rag_error_rate > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: rag
+        annotations:
+          summary: "RAG error rate above 5%"
+          description: "Error rate is {{ $value | humanizePercentage }}. Immediate investigation required."
+          runbook_url: "https://github.com/hiciefte/bisq2-support-agent/blob/main/docs/runbooks/rag-high-error-rate.md"
+
+      - alert: RAGHighLatency
+        expr: histogram_quantile(0.95, rate(rag_stage_latency_seconds_bucket[10m])) > 5
+        for: 10m
+        labels:
+          severity: critical
+          component: rag
+        annotations:
+          summary: "RAG P95 latency above 5 seconds"
+          description: "Latency is {{ $value }}s. Users experiencing slow responses."
+          runbook_url: "https://github.com/hiciefte/bisq2-support-agent/blob/main/docs/runbooks/rag-high-latency.md"
+
+      - alert: ContainerDown
+        expr: up{job="cadvisor", container=~"api|web|bisq2-api|nginx"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Critical container {{ $labels.container }} is down"
+          description: "Container {{ $labels.container }} has been down for 2 minutes. Service may be unavailable."
+
+      - alert: ContainerUnhealthy
+        expr: container_health_status{container=~"api|web|bisq2-api|nginx"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.container }} is unhealthy"
+          description: "Health checks failing for {{ $labels.container }}. Investigate container logs."
+
+  - name: data_quality_alerts
+    interval: 1m
+    rules:
+      # ========================================
+      # Warning Alerts (Review Within Hours)
+      # ========================================
+
+      - alert: FAQExtractionFailure
+        expr: faq_extraction_last_run_status == 0
+        for: 1h
+        labels:
+          severity: warning
+          component: faq
+        annotations:
+          summary: "FAQ extraction failed"
+          description: "FAQ extraction process has failed. New support conversations not being indexed."
+
+      - alert: FAQExtractionStale
+        expr: (time() - faq_extraction_last_success_timestamp) > 172800  # 48 hours
+        for: 2h
+        labels:
+          severity: warning
+          component: faq
+        annotations:
+          summary: "FAQ extraction hasn't succeeded in 48 hours"
+          description: "Last successful extraction was {{ $value | humanizeDuration }} ago."
+
+      - alert: WikiUpdateFailure
+        expr: wiki_update_last_run_status == 0
+        for: 1h
+        labels:
+          severity: warning
+          component: wiki
+        annotations:
+          summary: "Wiki update failed"
+          description: "Wiki synchronization process has failed. Documentation may be outdated."
+
+      - alert: WikiUpdateStale
+        expr: (time() - wiki_update_last_success_timestamp) > 691200  # 8 days
+        for: 1d
+        labels:
+          severity: warning
+          component: wiki
+        annotations:
+          summary: "Wiki update hasn't succeeded in 8 days"
+          description: "Last successful update was {{ $value | humanizeDuration }} ago."
+
+      - alert: LowUserSatisfaction
+        expr: feedback_satisfaction_rate < 0.60
+        for: 24h
+        labels:
+          severity: warning
+          component: quality
+        annotations:
+          summary: "User satisfaction below 60%"
+          description: "Current satisfaction rate: {{ $value | humanizePercentage }}. Review recent feedback."
+
+      - alert: HighRAGCost
+        expr: avg(rag_cost_per_request_usd) > 0.02
+        for: 1h
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "RAG cost per request above $0.02"
+          description: "Current average cost: ${{ $value }}. Consider optimizing token usage."
