@@ -87,15 +87,21 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
                 faq_service.processed_conv_ids = set()
                 faq_service.save_processed_conv_ids()
 
+            # Track initial processed message count before extraction
+            initial_processed_count = len(faq_service.load_processed_msg_ids())
+
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
 
             count = len(new_faqs) if new_faqs is not None else 0
             logger.info(f"FAQ extraction completed. Generated {count} new FAQ entries.")
 
-            # Calculate total messages processed (loaded into memory)
-            messages_processed = (
-                len(faq_service.messages) if hasattr(faq_service, "messages") else 0
-            )
+            # Calculate newly processed messages from this run
+            if not hasattr(faq_service, "processed_msg_ids"):
+                raise AttributeError(
+                    "FAQService missing 'processed_msg_ids' attribute after extraction"
+                )
+            final_processed_count = len(faq_service.processed_msg_ids)
+            messages_processed = final_processed_count - initial_processed_count
 
             # Return metrics for Prometheus instrumentation
             return {"messages_processed": messages_processed, "faqs_generated": count}
