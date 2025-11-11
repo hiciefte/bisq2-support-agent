@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
-from app.utils.instrumentation import track_tokens_and_cost
+from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
 from app.utils.logging import redact_pii
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -257,6 +257,7 @@ Answer:"""
             Callable RAG chain function
         """
 
+        @instrument_stage("generation")
         def generate_response(
             question: str,
             chat_history: Union[List[Union[Dict[str, str], Any]], None] = None,

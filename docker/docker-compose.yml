@@ -308,6 +308,101 @@ services:
           cpus: '0.2'
           memory: 256M
 
+  # cAdvisor for container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    restart: always
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    expose:
+      - "8080"
+    networks:
+      - bisq-support-network
+    privileged: true
+    devices:
+      - /dev/kmsg
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 512M
+
+  # Alertmanager for alert routing and notification
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    restart: always
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    expose:
+      - "9093"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+
+  # Matrix webhook for alert notifications
+  matrix-alertmanager-webhook:
+    image: jaywink/matrix-alertmanager:v3.5.0
+    restart: always
+    environment:
+      - MATRIX_HOMESERVER=${MATRIX_HOMESERVER}
+      - MATRIX_USER=${MATRIX_USER}
+      - MATRIX_PASSWORD=${MATRIX_PASSWORD}
+      - MATRIX_ROOM=${MATRIX_ROOM}
+    expose:
+      - "3000"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
   # Scheduler for periodic tasks
   scheduler:
     image: alpine:latest
@@ -335,8 +430,12 @@ services:
         crond -f -l 8 -d 8
       "
     depends_on:
-      - api
-      - prometheus
+      api:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
     networks:
       - bisq-support-network
     logging:
@@ -348,6 +447,7 @@ services:
 volumes:
   prometheus-data:
   grafana-data:
+  alertmanager-data:
   web_node_modules:
     name: bisq2-web-node-modules
   bisq2-data:

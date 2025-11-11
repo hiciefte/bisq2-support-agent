@@ -24,11 +24,12 @@ Environment variables:
 import argparse
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API
 from app.services.faq_service import FAQService
+from app.utils.task_metrics import instrument_faq_extraction
 
 # Configure logging
 logging.basicConfig(
@@ -42,7 +43,8 @@ RETRY_DELAY = 5  # seconds
 RETRY_BACKOFF_FACTOR = 2  # exponential backoff
 
 
-async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
+@instrument_faq_extraction
+async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
     """Run the FAQ extraction process using FAQService.
 
     This function orchestrates the full extraction process:
@@ -56,7 +58,7 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             This is useful for regenerating FAQs after prompt improvements.
 
     Returns:
-        List of new FAQ entries if successful, None otherwise
+        Dict with metrics if successful (messages_processed, faqs_generated), None otherwise
     """
     retry_count = 0
     new_faqs = None
@@ -85,11 +87,24 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
                 faq_service.processed_conv_ids = set()
                 faq_service.save_processed_conv_ids()
 
+            # Track initial processed message count before extraction
+            initial_processed_count = len(faq_service.load_processed_msg_ids())
+
             new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
 
             count = len(new_faqs) if new_faqs is not None else 0
             logger.info(f"FAQ extraction completed. Generated {count} new FAQ entries.")
-            return new_faqs
+
+            # Calculate newly processed messages from this run
+            if not hasattr(faq_service, "processed_msg_ids"):
+                raise AttributeError(
+                    "FAQService missing 'processed_msg_ids' attribute after extraction"
+                )
+            final_processed_count = len(faq_service.processed_msg_ids)
+            messages_processed = final_processed_count - initial_processed_count
+
+            # Return metrics for Prometheus instrumentation
+            return {"messages_processed": messages_processed, "faqs_generated": count}
 
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
             # Transient network errors - good candidates for retry
@@ -132,6 +147,7 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             f"FAQ extraction failed after {retry_count} attempts. Last error: {str(last_error)}",
             exc_info=True,
         )
+        raise last_error
 
     return None
 
