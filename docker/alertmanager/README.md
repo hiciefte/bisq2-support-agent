@@ -45,11 +45,14 @@ Alerts are grouped by severity:
 ### Alert Configuration
 
 #### Alert Rules (`docker/prometheus/alert_rules.yml`)
+
 - Contains 10 alert rules (4 critical, 6 warning)
 - Configured thresholds and evaluation periods
 - Add custom alerts as needed
 
 #### Alertmanager Config (`docker/alertmanager/alertmanager.yml`)
+
+
 - Routing rules by severity
 - Notification grouping and timing
 - Inhibition rules to prevent notification spam
@@ -59,16 +62,19 @@ Alerts are grouped by severity:
 To test the Matrix integration:
 
 1. **Start services**:
+
    ```bash
    docker compose up -d alertmanager matrix-alertmanager-webhook
    ```
 
 2. **Check Matrix webhook logs**:
+
    ```bash
    docker compose logs -f matrix-alertmanager-webhook
    ```
 
 3. **Trigger a test alert via Prometheus**:
+
    ```bash
    # Access Alertmanager UI
    # Visit http://localhost:9093 (if exposed)
@@ -95,16 +101,19 @@ To test the Matrix integration:
 #### Alerts not appearing in Matrix
 
 1. **Check Matrix webhook logs**:
+
    ```bash
    docker compose logs matrix-alertmanager-webhook
    ```
 
 2. **Verify environment variables**:
+
    ```bash
    docker compose exec matrix-alertmanager-webhook env | grep MATRIX
    ```
 
 3. **Test Matrix login manually**:
+
    ```bash
    curl -X POST https://matrix.org/_matrix/client/r0/login \
      -H "Content-Type: application/json" \
@@ -116,6 +125,7 @@ To test the Matrix integration:
    ```
 
 4. **Check Alertmanager connectivity**:
+
    ```bash
    # From Alertmanager container
    docker compose exec alertmanager wget -O- http://matrix-alertmanager-webhook:3000/health
@@ -124,19 +134,23 @@ To test the Matrix integration:
 #### Alert rule not firing
 
 1. **Check Prometheus targets**:
-   - Visit http://localhost:9090/targets (if exposed)
+
+   - Visit [http://localhost:9090/targets](http://localhost:9090/targets) (if exposed)
    - Verify all targets are "UP"
 
 2. **Test alert expression in Prometheus UI**:
-   - Visit http://localhost:9090/graph
+
+   - Visit [http://localhost:9090/graph](http://localhost:9090/graph)
    - Run your alert expression manually
    - Check if condition evaluates to true
 
 3. **Check alert rules status**:
-   - Visit http://localhost:9090/alerts
+
+   - Visit [http://localhost:9090/alerts](http://localhost:9090/alerts)
    - Verify rule is loaded and evaluating
 
 4. **Review Prometheus logs**:
+
    ```bash
    docker compose logs prometheus | grep -i "alert"
    ```
@@ -144,7 +158,8 @@ To test the Matrix integration:
 ### Alert Notification Examples
 
 #### Critical Alert (RAG High Error Rate)
-```
+
+```markdown
 🚨 **CRITICAL ALERT**
 **RAG error rate above 5%**
 Error rate is 7.2%
@@ -159,7 +174,8 @@ Labels:
 ```
 
 #### Warning Alert (High RAG Cost)
-```
+
+```markdown
 ⚠️ **WARNING**
 **RAG cost per request above $0.02**
 Current average cost: $0.025
