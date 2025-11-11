@@ -24,17 +24,18 @@ Environment variables:
 import argparse
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API
 from app.services.faq_service import FAQService
+from app.utils.task_metrics import instrument_faq_extraction
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+logging.basicConfig(  # type: ignore[attr-defined]
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # type: ignore[attr-defined]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
 
 # Constants for retry mechanism
 MAX_RETRIES = 3
@@ -42,7 +43,8 @@ RETRY_DELAY = 5  # seconds
 RETRY_BACKOFF_FACTOR = 2  # exponential backoff
 
 
-async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
+@instrument_faq_extraction
+async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
     """Run the FAQ extraction process using FAQService.
 
     This function orchestrates the full extraction process:
@@ -56,7 +58,7 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
             This is useful for regenerating FAQs after prompt improvements.
 
     Returns:
-        List of new FAQ entries if successful, None otherwise
+        Dict with metrics if successful (messages_processed, faqs_generated), None otherwise
     """
     retry_count = 0
     new_faqs = None
@@ -89,7 +91,14 @@ async def main(force_reprocess=False) -> Optional[List[Dict[str, Any]]]:
 
             count = len(new_faqs) if new_faqs is not None else 0
             logger.info(f"FAQ extraction completed. Generated {count} new FAQ entries.")
-            return new_faqs
+
+            # Calculate total messages processed (loaded into memory)
+            messages_processed = (
+                len(faq_service.messages) if hasattr(faq_service, "messages") else 0
+            )
+
+            # Return metrics for Prometheus instrumentation
+            return {"messages_processed": messages_processed, "faqs_generated": count}
 
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
             # Transient network errors - good candidates for retry
@@ -152,7 +161,7 @@ if __name__ == "__main__":
 
     # Configure logging based on debug flag
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)  # type: ignore[attr-defined]
         logger.debug("Debug logging enabled")
 
     # Run the extraction process
