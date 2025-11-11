@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, FormEvent, useMemo } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useState, useEffect, useRef, FormEvent, useMemo, memo, useCallback } from "react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,6 +100,195 @@ interface FAQListResponse {
     total_pages: number;
 }
 
+interface InlineEditFAQProps {
+    faq: FAQ;
+    index: number;
+    draftEdits: Map<string, Partial<FAQ>>;
+    setDraftEdits: React.Dispatch<React.SetStateAction<Map<string, Partial<FAQ>>>>;
+    failedFaqIds: Set<string>;
+    handleSaveInlineEdit: (faqId: string, updatedFaq: FAQ) => Promise<void>;
+    handleCancelEdit: (faqId: string) => void;
+    editCategoryComboboxOpen: boolean;
+    setEditCategoryComboboxOpen: (open: boolean) => void;
+    availableCategories: string[];
+}
+
+// Extracted InlineEditFAQ component to prevent re-creation on parent state updates
+// This fixes the focus jumping issue by maintaining stable component identity
+const InlineEditFAQ = memo(
+    ({
+        faq,
+        draftEdits,
+        setDraftEdits,
+        failedFaqIds,
+        handleSaveInlineEdit,
+        handleCancelEdit,
+        editCategoryComboboxOpen,
+        setEditCategoryComboboxOpen,
+        availableCategories,
+    }: InlineEditFAQProps) => {
+        const draft = draftEdits.get(faq.id);
+        const currentValues = draft ? { ...faq, ...draft } : faq;
+        const [isSubmitting, setIsSubmitting] = useState(false);
+        const questionInputRef = useRef<HTMLInputElement>(null);
+
+        // Auto-focus question input when entering edit mode
+        useEffect(() => {
+            questionInputRef.current?.focus();
+        }, []);
+
+        const handleSubmit = async () => {
+            setIsSubmitting(true);
+            await handleSaveInlineEdit(faq.id, currentValues as FAQ);
+            setIsSubmitting(false);
+        };
+
+        const updateDraft = (updates: Partial<FAQ>) => {
+            setDraftEdits((prev) => new Map(prev).set(faq.id, { ...draft, ...updates }));
+        };
+
+        const hasFailed = failedFaqIds.has(faq.id);
+
+        return (
+            <Card
+                className={cn(
+                    "transition-all duration-200",
+                    hasFailed && "border-destructive ring-1 ring-destructive"
+                )}
+            >
+                <CardHeader>
+                    {hasFailed && (
+                        <div className="mb-2">
+                            <Badge variant="destructive" className="mb-2">
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Failed to Save
+                            </Badge>
+                        </div>
+                    )}
+                    <Input
+                        ref={questionInputRef}
+                        value={currentValues.question}
+                        onChange={(e) => updateDraft({ question: e.target.value })}
+                        placeholder="Question"
+                        className="text-lg font-semibold"
+                    />
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <Textarea
+                        value={currentValues.answer}
+                        onChange={(e) => updateDraft({ answer: e.target.value })}
+                        placeholder="Answer"
+                        rows={6}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Category</Label>
+                            <Popover
+                                open={editCategoryComboboxOpen}
+                                onOpenChange={setEditCategoryComboboxOpen}
+                            >
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={editCategoryComboboxOpen}
+                                        className="w-full justify-between"
+                                    >
+                                        {currentValues.category || "Select category..."}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-full p-0">
+                                    <Command>
+                                        <CommandInput
+                                            placeholder="Search or type new category..."
+                                            value={currentValues.category}
+                                            onValueChange={(value) =>
+                                                updateDraft({ category: value })
+                                            }
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    // Close popover when Enter is pressed to create new category
+                                                    setEditCategoryComboboxOpen(false);
+                                                }
+                                            }}
+                                        />
+                                        <CommandList>
+                                            <CommandEmpty>
+                                                Press Enter to create &quot;{currentValues.category}
+                                                &quot;
+                                            </CommandEmpty>
+                                            {availableCategories.length > 0 && (
+                                                <CommandGroup heading="Existing Categories">
+                                                    {availableCategories.map((category) => (
+                                                        <CommandItem
+                                                            key={category}
+                                                            value={category}
+                                                            onSelect={(currentValue) => {
+                                                                updateDraft({
+                                                                    category: currentValue,
+                                                                });
+                                                                setEditCategoryComboboxOpen(false);
+                                                            }}
+                                                        >
+                                                            <Check
+                                                                className={cn(
+                                                                    "mr-2 h-4 w-4",
+                                                                    currentValues.category ===
+                                                                        category
+                                                                        ? "opacity-100"
+                                                                        : "opacity-0"
+                                                                )}
+                                                            />
+                                                            {category}
+                                                        </CommandItem>
+                                                    ))}
+                                                </CommandGroup>
+                                            )}
+                                        </CommandList>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Source</Label>
+                            <Input value={currentValues.source} disabled />
+                        </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <Button
+                            onClick={handleSubmit}
+                            disabled={isSubmitting}
+                            className="min-w-[80px]"
+                        >
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Saving
+                                </>
+                            ) : (
+                                "Save"
+                            )}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => handleCancelEdit(faq.id)}
+                            disabled={isSubmitting}
+                        >
+                            Cancel
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+);
+
+InlineEditFAQ.displayName = "InlineEditFAQ";
+
 export default function ManageFaqsPage() {
     const { toast } = useToast();
     const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
@@ -166,6 +355,17 @@ export default function ManageFaqsPage() {
     const savedScrollPositionRef = useRef<number | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const faqRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+    // React 19 compatible ref callback - memoized to avoid re-creation
+    const setFaqRef = useCallback((faqId: string) => {
+        return (el: HTMLDivElement | null) => {
+            if (el) {
+                faqRefs.current.set(faqId, el);
+            } else {
+                faqRefs.current.delete(faqId);
+            }
+        };
+    }, []);
 
     // Server-side search handles all filtering - no client-side filtering needed
     const displayFaqs = faqData;
@@ -672,7 +872,7 @@ export default function ManageFaqsPage() {
                     setError(null);
 
                     // Wait for delete animation to complete (400ms) before fetching
-                    await new Promise(resolve => setTimeout(resolve, 400));
+                    await new Promise((resolve) => setTimeout(resolve, 400));
 
                     // Smart fetch: Get current page data and merge only NEW FAQs to avoid re-animations
                     try {
@@ -695,7 +895,9 @@ export default function ManageFaqsPage() {
                             params.append("verified", filters.verified);
                         }
 
-                        const fetchResponse = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
+                        const fetchResponse = await makeAuthenticatedRequest(
+                            `/admin/faqs?${params.toString()}`
+                        );
                         if (fetchResponse.ok) {
                             const freshData = await fetchResponse.json();
 
@@ -703,8 +905,10 @@ export default function ManageFaqsPage() {
                             setFaqData((prev) => {
                                 if (!prev) return freshData;
 
-                                const existingIds = new Set(prev.faqs.map(f => f.id));
-                                const newFaqs = freshData.faqs.filter((f: FAQ) => !existingIds.has(f.id));
+                                const existingIds = new Set(prev.faqs.map((f) => f.id));
+                                const newFaqs = freshData.faqs.filter(
+                                    (f: FAQ) => !existingIds.has(f.id)
+                                );
 
                                 // Only update if there are actually new FAQs to add
                                 if (newFaqs.length === 0) {
@@ -884,7 +1088,7 @@ export default function ManageFaqsPage() {
             setError(null);
 
             // Wait for delete animation to complete (400ms) before fetching
-            await new Promise(resolve => setTimeout(resolve, 400));
+            await new Promise((resolve) => setTimeout(resolve, 400));
 
             // Smart fetch: Get current page data and merge only NEW FAQs to avoid re-animations
             try {
@@ -907,7 +1111,9 @@ export default function ManageFaqsPage() {
                     params.append("verified", filters.verified);
                 }
 
-                const fetchResponse = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
+                const fetchResponse = await makeAuthenticatedRequest(
+                    `/admin/faqs?${params.toString()}`
+                );
                 if (fetchResponse.ok) {
                     const freshData = await fetchResponse.json();
 
@@ -915,7 +1121,7 @@ export default function ManageFaqsPage() {
                     setFaqData((prev) => {
                         if (!prev) return freshData;
 
-                        const existingIds = new Set(prev.faqs.map(f => f.id));
+                        const existingIds = new Set(prev.faqs.map((f) => f.id));
                         const newFaqs = freshData.faqs.filter((f: FAQ) => !existingIds.has(f.id));
 
                         // Only update if there are actually new FAQs to add
@@ -1165,6 +1371,18 @@ export default function ManageFaqsPage() {
                 throw new Error(`Update failed with status ${response.status}`);
             }
 
+            // Get the updated FAQ with new ID from the API response
+            const updatedFaqFromApi: FAQ = await response.json();
+
+            // Update FAQ data with the new FAQ ID from the server
+            setFaqData((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    faqs: prev.faqs.map((f) => (f.id === faqId ? updatedFaqFromApi : f)),
+                };
+            });
+
             // Success - clear edit mode and failure state
             setEditingFaqId(null);
             setFailedFaqIds((prev) => {
@@ -1179,7 +1397,8 @@ export default function ManageFaqsPage() {
             });
 
             // Move to next FAQ
-            const currentIdx = displayFaqs?.faqs.findIndex((f) => f.id === faqId) ?? -1;
+            const currentIdx =
+                displayFaqs?.faqs.findIndex((f) => f.id === updatedFaqFromApi.id) ?? -1;
             if (currentIdx >= 0 && displayFaqs) {
                 const nextIndex = Math.min(currentIdx + 1, displayFaqs.faqs.length - 1);
                 setSelectedIndex(nextIndex);
@@ -1259,167 +1478,6 @@ export default function ManageFaqsPage() {
         filters.categories.length > 0 ||
         filters.source ||
         filters.verified !== "all";
-
-    // Inline FAQ Edit Component
-    const InlineEditFAQ = ({ faq }: { faq: FAQ; index: number }) => {
-        const draft = draftEdits.get(faq.id);
-        const currentValues = draft ? { ...faq, ...draft } : faq;
-        const [isSubmitting, setIsSubmitting] = useState(false);
-        const questionInputRef = useRef<HTMLInputElement>(null);
-
-        // Auto-focus question input when entering edit mode
-        useEffect(() => {
-            questionInputRef.current?.focus();
-        }, []);
-
-        const handleSubmit = async () => {
-            setIsSubmitting(true);
-            await handleSaveInlineEdit(faq.id, currentValues as FAQ);
-            setIsSubmitting(false);
-        };
-
-        const updateDraft = (updates: Partial<FAQ>) => {
-            setDraftEdits((prev) => new Map(prev).set(faq.id, { ...draft, ...updates }));
-        };
-
-        const hasFailed = failedFaqIds.has(faq.id);
-
-        return (
-            <Card
-                className={cn(
-                    "transition-all duration-200",
-                    hasFailed && "border-destructive ring-1 ring-destructive"
-                )}
-            >
-                <CardHeader>
-                    {hasFailed && (
-                        <div className="mb-2">
-                            <Badge variant="destructive" className="mb-2">
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                Failed to Save
-                            </Badge>
-                        </div>
-                    )}
-                    <Input
-                        ref={questionInputRef}
-                        value={currentValues.question}
-                        onChange={(e) => updateDraft({ question: e.target.value })}
-                        placeholder="Question"
-                        className="text-lg font-semibold"
-                    />
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <Textarea
-                        value={currentValues.answer}
-                        onChange={(e) => updateDraft({ answer: e.target.value })}
-                        placeholder="Answer"
-                        rows={6}
-                    />
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label>Category</Label>
-                            <Popover
-                                open={editCategoryComboboxOpen}
-                                onOpenChange={setEditCategoryComboboxOpen}
-                            >
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant="outline"
-                                        role="combobox"
-                                        aria-expanded={editCategoryComboboxOpen}
-                                        className="w-full justify-between"
-                                    >
-                                        {currentValues.category || "Select category..."}
-                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-full p-0">
-                                    <Command>
-                                        <CommandInput
-                                            placeholder="Search or type new category..."
-                                            value={currentValues.category}
-                                            onValueChange={(value) =>
-                                                updateDraft({ category: value })
-                                            }
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter") {
-                                                    // Close popover when Enter is pressed to create new category
-                                                    setEditCategoryComboboxOpen(false);
-                                                }
-                                            }}
-                                        />
-                                        <CommandList>
-                                            <CommandEmpty>
-                                                Press Enter to create &quot;{currentValues.category}
-                                                &quot;
-                                            </CommandEmpty>
-                                            {availableCategories.length > 0 && (
-                                                <CommandGroup heading="Existing Categories">
-                                                    {availableCategories.map((category) => (
-                                                        <CommandItem
-                                                            key={category}
-                                                            value={category}
-                                                            onSelect={(currentValue) => {
-                                                                updateDraft({
-                                                                    category: currentValue,
-                                                                });
-                                                                setEditCategoryComboboxOpen(false);
-                                                            }}
-                                                        >
-                                                            <Check
-                                                                className={cn(
-                                                                    "mr-2 h-4 w-4",
-                                                                    currentValues.category ===
-                                                                        category
-                                                                        ? "opacity-100"
-                                                                        : "opacity-0"
-                                                                )}
-                                                            />
-                                                            {category}
-                                                        </CommandItem>
-                                                    ))}
-                                                </CommandGroup>
-                                            )}
-                                        </CommandList>
-                                    </Command>
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Source</Label>
-                            <Input value={currentValues.source} disabled />
-                        </div>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <Button
-                            onClick={handleSubmit}
-                            disabled={isSubmitting}
-                            className="min-w-[80px]"
-                        >
-                            {isSubmitting ? (
-                                <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Saving
-                                </>
-                            ) : (
-                                "Save"
-                            )}
-                        </Button>
-                        <Button
-                            variant="outline"
-                            onClick={() => handleCancelEdit(faq.id)}
-                            disabled={isSubmitting}
-                        >
-                            Cancel
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-        );
-    };
 
     return (
         <TooltipProvider>
@@ -1887,7 +1945,9 @@ export default function ManageFaqsPage() {
                                                     Bisq 2 (Default)
                                                 </SelectItem>
                                                 <SelectItem value="Bisq 1">Bisq 1</SelectItem>
-                                                <SelectItem value="General">General (All Versions)</SelectItem>
+                                                <SelectItem value="General">
+                                                    General (All Versions)
+                                                </SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -2070,86 +2130,84 @@ export default function ManageFaqsPage() {
                                         </div>
                                     )}
 
-                                    <AnimatePresence mode="popLayout">
-                                        {displayFaqs?.faqs.map((faq, index) => {
-                                            // Check if this FAQ is in edit mode
-                                            const isEditing = editingFaqId === faq.id;
+                                    {displayFaqs?.faqs.map((faq, index) => {
+                                        // Check if this FAQ is in edit mode
+                                        const isEditing = editingFaqId === faq.id;
 
-                                            // If editing, render inline edit component
-                                            if (isEditing) {
-                                                return (
-                                                    <motion.div
-                                                        key={faq.id}
-                                                        initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                                                        animate={{ opacity: 1, height: "auto", marginBottom: "1rem" }}
-                                                        exit={{
-                                                            opacity: 0,
-                                                            height: 0,
-                                                            marginBottom: 0,
-                                                            transition: { duration: 0.4 },
-                                                        }}
-                                                        transition={{ duration: 0.2 }}
-                                                        ref={(el) => {
-                                                            if (el) {
-                                                                faqRefs.current.set(
-                                                                    faq.id,
-                                                                    el as unknown as HTMLDivElement
-                                                                );
-                                                            }
-                                                        }}
-                                                        className="transition-all duration-200"
-                                                    >
-                                                        <InlineEditFAQ faq={faq} index={index} />
-                                                    </motion.div>
-                                                );
-                                            }
-
-                                            // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
-                                            const isExpanded =
-                                                !faq.verified || expandedIds.has(faq.id);
-                                            const isSelected = index === selectedIndex;
-                                            const hasFailed = failedFaqIds.has(faq.id);
-
+                                        // If editing, render inline edit component (no animation to avoid React 19 warnings)
+                                        if (isEditing) {
                                             return (
-                                                <motion.div
+                                                <div
                                                     key={faq.id}
-                                                    initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                                                    animate={{ opacity: 1, height: "auto", marginBottom: "1rem" }}
-                                                    exit={{
-                                                        opacity: 0,
-                                                        height: 0,
-                                                        marginBottom: 0,
-                                                        transition: { duration: 0.4 },
-                                                    }}
-                                                    transition={{ duration: 0.2 }}
-                                                    layout
+                                                    ref={setFaqRef(faq.id)}
+                                                    className="mb-4"
                                                 >
-                                                    <Collapsible
-                                                        key={faq.id}
-                                                        open={isExpanded}
-                                                        onOpenChange={(open) => {
-                                                            // Only allow collapsing verified FAQs
-                                                            if (faq.verified) {
-                                                                setExpandedIds((prev) => {
-                                                                    const newSet = new Set(prev);
-                                                                    if (open) {
-                                                                        newSet.add(faq.id);
-                                                                    } else {
-                                                                        newSet.delete(faq.id);
-                                                                    }
-                                                                    return newSet;
-                                                                });
-                                                            }
-                                                        }}
-                                                        ref={(el) => {
-                                                            if (el) {
-                                                                faqRefs.current.set(
-                                                                    faq.id,
-                                                                    el as unknown as HTMLDivElement
-                                                                );
-                                                            }
-                                                        }}
-                                                        className={`
+                                                    <InlineEditFAQ
+                                                        faq={faq}
+                                                        index={index}
+                                                        draftEdits={draftEdits}
+                                                        setDraftEdits={setDraftEdits}
+                                                        failedFaqIds={failedFaqIds}
+                                                        handleSaveInlineEdit={handleSaveInlineEdit}
+                                                        handleCancelEdit={handleCancelEdit}
+                                                        editCategoryComboboxOpen={
+                                                            editCategoryComboboxOpen
+                                                        }
+                                                        setEditCategoryComboboxOpen={
+                                                            setEditCategoryComboboxOpen
+                                                        }
+                                                        availableCategories={availableCategories}
+                                                    />
+                                                </div>
+                                            );
+                                        }
+
+                                        // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
+                                        const isExpanded = !faq.verified || expandedIds.has(faq.id);
+                                        const isSelected = index === selectedIndex;
+                                        const hasFailed = failedFaqIds.has(faq.id);
+
+                                        return (
+                                            <motion.div
+                                                key={faq.id}
+                                                initial={{
+                                                    opacity: 0,
+                                                    height: 0,
+                                                    marginBottom: 0,
+                                                }}
+                                                animate={{
+                                                    opacity: 1,
+                                                    height: "auto",
+                                                    marginBottom: "1rem",
+                                                }}
+                                                exit={{
+                                                    opacity: 0,
+                                                    height: 0,
+                                                    marginBottom: 0,
+                                                    transition: { duration: 0.4 },
+                                                }}
+                                                transition={{ duration: 0.2 }}
+                                                layout
+                                            >
+                                                <Collapsible
+                                                    key={faq.id}
+                                                    open={isExpanded}
+                                                    onOpenChange={(open) => {
+                                                        // Only allow collapsing verified FAQs
+                                                        if (faq.verified) {
+                                                            setExpandedIds((prev) => {
+                                                                const newSet = new Set(prev);
+                                                                if (open) {
+                                                                    newSet.add(faq.id);
+                                                                } else {
+                                                                    newSet.delete(faq.id);
+                                                                }
+                                                                return newSet;
+                                                            });
+                                                        }
+                                                    }}
+                                                    ref={setFaqRef(faq.id)}
+                                                    className={`
                                             bg-card border rounded-lg group
                                             transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]
                                             ${
@@ -2158,24 +2216,49 @@ export default function ManageFaqsPage() {
                                                     : "border-border hover:shadow-md hover:border-border/60 hover:-translate-y-0.5"
                                             }
                                         `}
-                                                        tabIndex={-1}
-                                                        style={{
-                                                            outline: "none", // Remove default outline, we use custom ring
-                                                        }}
-                                                    >
-                                                        <div className="p-6">
-                                                            {faq.verified ? (
+                                                    tabIndex={-1}
+                                                    style={{
+                                                        outline: "none", // Remove default outline, we use custom ring
+                                                    }}
+                                                >
+                                                    <div className="p-6">
+                                                        {faq.verified ? (
+                                                            <div className="flex items-start gap-3">
+                                                                {bulkSelectionMode && (
+                                                                    <div className="flex items-start pt-1">
+                                                                        <Checkbox
+                                                                            checked={selectedFaqIds.has(
+                                                                                faq.id
+                                                                            )}
+                                                                            onCheckedChange={() =>
+                                                                                handleSelectFaq(
+                                                                                    faq.id
+                                                                                )
+                                                                            }
+                                                                            disabled={
+                                                                                isSubmitting
+                                                                            }
+                                                                            aria-label={`Select FAQ: ${faq.question}`}
+                                                                        />
+                                                                    </div>
+                                                                )}
                                                                 <CollapsibleTrigger
-                                                                    className="w-full group/trigger focus-visible:outline-none"
+                                                                    className="flex-1 group/trigger focus-visible:outline-none"
                                                                     onFocus={() => {
                                                                         // Sync Tab navigation with keyboard selection
                                                                         setSelectedIndex(index);
                                                                     }}
                                                                     onClick={(e) => {
-                                                                        const target = e.target as HTMLElement;
-                                                                        const isArrowClick = target.closest('svg') ||
-                                                                                           target.classList.contains('relative') &&
-                                                                                           target.querySelector('svg');
+                                                                        const target =
+                                                                            e.target as HTMLElement;
+                                                                        const isArrowClick =
+                                                                            target.closest("svg") ||
+                                                                            (target.classList.contains(
+                                                                                "relative"
+                                                                            ) &&
+                                                                                target.querySelector(
+                                                                                    "svg"
+                                                                                ));
 
                                                                         if (isExpanded) {
                                                                             if (isArrowClick) {
@@ -2194,242 +2277,99 @@ export default function ManageFaqsPage() {
                                                                     }}
                                                                 >
                                                                     <div className="flex items-start justify-between gap-3 text-left">
-                                                                        {bulkSelectionMode && (
-                                                                            <div className="flex items-start pt-1">
-                                                                                <Checkbox
-                                                                                    checked={selectedFaqIds.has(
-                                                                                        faq.id
-                                                                                    )}
-                                                                                    onCheckedChange={() =>
-                                                                                        handleSelectFaq(
-                                                                                            faq.id
-                                                                                        )
-                                                                                    }
-                                                                                    onClick={(e) =>
-                                                                                        e.stopPropagation()
-                                                                                    }
-                                                                                    disabled={
-                                                                                        isSubmitting
-                                                                                    }
-                                                                                    aria-label={`Select FAQ: ${faq.question}`}
-                                                                                />
-                                                                            </div>
-                                                                        )}
                                                                         <div className="flex-1 space-y-2">
                                                                             <div className="flex items-start gap-2">
-                                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
-                                                                                    {faq.question}
-                                                                                </h3>
-                                                                                {hasFailed && (
-                                                                                    <Badge
-                                                                                        variant="destructive"
-                                                                                        className="text-[10px]"
-                                                                                    >
-                                                                                        <AlertCircle className="h-3 w-3 mr-1" />
-                                                                                        Failed
-                                                                                    </Badge>
-                                                                                )}
-                                                                                <div className="relative flex-shrink-0">
-                                                                                    <ChevronRight
-                                                                                        className={`h-5 w-5 text-muted-foreground transition-transform duration-200 mt-0.5 ${
-                                                                                            isExpanded
-                                                                                                ? "rotate-90"
-                                                                                                : ""
-                                                                                        }`}
-                                                                                    />
-                                                                                    {/* Focus ring for the icon */}
-                                                                                    <div className="absolute inset-0 -m-2 rounded-md opacity-0 group-focus-visible/trigger:opacity-100 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background transition-opacity pointer-events-none" />
-                                                                                </div>
-                                                                            </div>
-
-                                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
-                                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
-                                                                                    {faq.category}
-                                                                                </span>
-                                                                                <span className="font-medium tracking-[0.3px]">
-                                                                                    Source:{" "}
-                                                                                    {faq.source}
-                                                                                </span>
-                                                                                {faq.bisq_version && (
-                                                                                    <Badge
-                                                                                        variant="outline"
-                                                                                        className={`text-[11px] ${
-                                                                                            faq.bisq_version ===
-                                                                                            "Bisq 1"
-                                                                                                ? "bg-blue-50 text-blue-700 border-blue-300"
-                                                                                                : faq.bisq_version ===
-                                                                                                    "Bisq 2"
-                                                                                                  ? "bg-green-50 text-green-700 border-green-300"
-                                                                                                  : faq.bisq_version ===
-                                                                                                      "Both"
-                                                                                                    ? "bg-purple-50 text-purple-700 border-purple-300"
-                                                                                                    : "bg-gray-50 text-gray-700 border-gray-300"
-                                                                                        }`}
-                                                                                    >
-                                                                                        {
-                                                                                            faq.bisq_version
-                                                                                        }
-                                                                                    </Badge>
-                                                                                )}
-                                                                                {faq.verified ? (
-                                                                                    <Tooltip>
-                                                                                        <TooltipTrigger
-                                                                                            asChild
-                                                                                        >
-                                                                                            <span
-                                                                                                className="inline-flex items-center gap-1 text-green-600 cursor-help"
-                                                                                                aria-label="Verified FAQ"
-                                                                                            >
-                                                                                                <BadgeCheck
-                                                                                                    className="h-4 w-4"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
-                                                                                                    Verified
-                                                                                                </span>
-                                                                                            </span>
-                                                                                        </TooltipTrigger>
-                                                                                        <TooltipContent className="max-w-xs">
-                                                                                            <p className="text-sm">
-                                                                                                Verified
-                                                                                                FAQs
-                                                                                                are
-                                                                                                marked
-                                                                                                as
-                                                                                                reviewed
-                                                                                                and
-                                                                                                approved.
-                                                                                                They
-                                                                                                receive
-                                                                                                higher
-                                                                                                priority
-                                                                                                in
-                                                                                                search
-                                                                                                results.
-                                                                                            </p>
-                                                                                        </TooltipContent>
-                                                                                    </Tooltip>
-                                                                                ) : (
-                                                                                    <Tooltip>
-                                                                                        <TooltipTrigger
-                                                                                            asChild
-                                                                                        >
-                                                                                            <span
-                                                                                                className="inline-flex items-center gap-1 text-amber-600 cursor-help"
-                                                                                                aria-label="Unverified FAQ - Needs Review"
-                                                                                            >
-                                                                                                <AlertCircle
-                                                                                                    className="h-4 w-4"
-                                                                                                    aria-hidden="true"
-                                                                                                />
-                                                                                                <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
-                                                                                                    Needs
-                                                                                                    Review
-                                                                                                </span>
-                                                                                            </span>
-                                                                                        </TooltipTrigger>
-                                                                                        <TooltipContent className="max-w-xs">
-                                                                                            <p className="text-sm">
-                                                                                                Unverified
-                                                                                                FAQs
-                                                                                                need
-                                                                                                review
-                                                                                                before
-                                                                                                appearing
-                                                                                                in
-                                                                                                search
-                                                                                                results.
-                                                                                                Verify
-                                                                                                them
-                                                                                                to
-                                                                                                mark
-                                                                                                as
-                                                                                                approved.
-                                                                                            </p>
-                                                                                        </TooltipContent>
-                                                                                    </Tooltip>
-                                                                                )}
+                                                                            <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
+                                                                                {faq.question}
+                                                                            </h3>
+                                                                            {hasFailed && (
+                                                                                <Badge
+                                                                                    variant="destructive"
+                                                                                    className="text-[10px]"
+                                                                                >
+                                                                                    <AlertCircle className="h-3 w-3 mr-1" />
+                                                                                    Failed
+                                                                                </Badge>
+                                                                            )}
+                                                                            <div className="relative flex-shrink-0">
+                                                                                <ChevronRight
+                                                                                    className={`h-5 w-5 text-muted-foreground transition-transform duration-200 mt-0.5 ${
+                                                                                        isExpanded
+                                                                                            ? "rotate-90"
+                                                                                            : ""
+                                                                                    }`}
+                                                                                />
+                                                                                {/* Focus ring for the icon */}
+                                                                                <div className="absolute inset-0 -m-2 rounded-md opacity-0 group-focus-visible/trigger:opacity-100 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background transition-opacity pointer-events-none" />
                                                                             </div>
                                                                         </div>
-                                                                    </div>
-                                                                </CollapsibleTrigger>
-                                                            ) : (
-                                                                <div
-                                                                    className="w-full focus-visible:outline-none cursor-pointer"
-                                                                    tabIndex={0}
-                                                                    onFocus={() => {
-                                                                        // Sync Tab navigation with keyboard selection
-                                                                        setSelectedIndex(index);
-                                                                    }}
-                                                                    onClick={() => {
-                                                                        // Set selection when clicking on FAQ
-                                                                        setSelectedIndex(index);
-                                                                    }}
-                                                                >
-                                                                    <div className="flex items-start justify-between gap-3">
-                                                                        {bulkSelectionMode && (
-                                                                            <div className="flex items-start pt-1">
-                                                                                <Checkbox
-                                                                                    checked={selectedFaqIds.has(
-                                                                                        faq.id
-                                                                                    )}
-                                                                                    onCheckedChange={() =>
-                                                                                        handleSelectFaq(
-                                                                                            faq.id
-                                                                                        )
-                                                                                    }
-                                                                                    disabled={
-                                                                                        isSubmitting
-                                                                                    }
-                                                                                    aria-label={`Select FAQ: ${faq.question}`}
-                                                                                />
-                                                                            </div>
-                                                                        )}
-                                                                        <div className="flex-1 space-y-2">
-                                                                            <div className="flex items-start gap-2">
-                                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
-                                                                                    {faq.question}
-                                                                                </h3>
-                                                                                {hasFailed && (
-                                                                                    <Badge
-                                                                                        variant="destructive"
-                                                                                        className="text-[10px]"
-                                                                                    >
-                                                                                        <AlertCircle className="h-3 w-3 mr-1" />
-                                                                                        Failed
-                                                                                    </Badge>
-                                                                                )}
-                                                                            </div>
 
-                                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
-                                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
-                                                                                    {faq.category}
-                                                                                </span>
-                                                                                <span className="font-medium tracking-[0.3px]">
-                                                                                    Source:{" "}
-                                                                                    {faq.source}
-                                                                                </span>
-                                                                                {faq.bisq_version && (
-                                                                                    <Badge
-                                                                                        variant="outline"
-                                                                                        className={`text-[11px] ${
-                                                                                            faq.bisq_version ===
-                                                                                            "Bisq 1"
-                                                                                                ? "bg-blue-50 text-blue-700 border-blue-300"
-                                                                                                : faq.bisq_version ===
-                                                                                                    "Bisq 2"
-                                                                                                  ? "bg-green-50 text-green-700 border-green-300"
-                                                                                                  : faq.bisq_version ===
-                                                                                                      "Both"
-                                                                                                    ? "bg-purple-50 text-purple-700 border-purple-300"
-                                                                                                    : "bg-gray-50 text-gray-700 border-gray-300"
-                                                                                        }`}
+                                                                        <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
+                                                                                {faq.category}
+                                                                            </span>
+                                                                            <span className="font-medium tracking-[0.3px]">
+                                                                                Source: {faq.source}
+                                                                            </span>
+                                                                            {faq.bisq_version && (
+                                                                                <Badge
+                                                                                    variant="outline"
+                                                                                    className={`text-[11px] ${
+                                                                                        faq.bisq_version ===
+                                                                                        "Bisq 1"
+                                                                                            ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                            : faq.bisq_version ===
+                                                                                                "Bisq 2"
+                                                                                              ? "bg-green-50 text-green-700 border-green-300"
+                                                                                              : faq.bisq_version ===
+                                                                                                  "Both"
+                                                                                                ? "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                                : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                                    }`}
+                                                                                >
+                                                                                    {
+                                                                                        faq.bisq_version
+                                                                                    }
+                                                                                </Badge>
+                                                                            )}
+                                                                            {faq.verified ? (
+                                                                                <Tooltip>
+                                                                                    <TooltipTrigger
+                                                                                        asChild
                                                                                     >
-                                                                                        {
-                                                                                            faq.bisq_version
-                                                                                        }
-                                                                                    </Badge>
-                                                                                )}
+                                                                                        <span
+                                                                                            className="inline-flex items-center gap-1 text-green-600 cursor-help"
+                                                                                            aria-label="Verified FAQ"
+                                                                                        >
+                                                                                            <BadgeCheck
+                                                                                                className="h-4 w-4"
+                                                                                                aria-hidden="true"
+                                                                                            />
+                                                                                            <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
+                                                                                                Verified
+                                                                                            </span>
+                                                                                        </span>
+                                                                                    </TooltipTrigger>
+                                                                                    <TooltipContent className="max-w-xs">
+                                                                                        <p className="text-sm">
+                                                                                            Verified
+                                                                                            FAQs are
+                                                                                            marked
+                                                                                            as
+                                                                                            reviewed
+                                                                                            and
+                                                                                            approved.
+                                                                                            They
+                                                                                            receive
+                                                                                            higher
+                                                                                            priority
+                                                                                            in
+                                                                                            search
+                                                                                            results.
+                                                                                        </p>
+                                                                                    </TooltipContent>
+                                                                                </Tooltip>
+                                                                            ) : (
                                                                                 <Tooltip>
                                                                                     <TooltipTrigger
                                                                                         asChild
@@ -2442,7 +2382,7 @@ export default function ManageFaqsPage() {
                                                                                                 className="h-4 w-4"
                                                                                                 aria-hidden="true"
                                                                                             />
-                                                                                            <span className="text-xs font-medium">
+                                                                                            <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
                                                                                                 Needs
                                                                                                 Review
                                                                                             </span>
@@ -2466,235 +2406,340 @@ export default function ManageFaqsPage() {
                                                                                         </p>
                                                                                     </TooltipContent>
                                                                                 </Tooltip>
+                                                                            )}
+                                                                        </div>
                                                                             </div>
+                                                                        </div>
+                                                                </CollapsibleTrigger>
+                                                            </div>
+                                                        ) : (
+                                                            <div
+                                                                className="w-full focus-visible:outline-none cursor-pointer"
+                                                                tabIndex={0}
+                                                                onFocus={() => {
+                                                                    // Sync Tab navigation with keyboard selection
+                                                                    setSelectedIndex(index);
+                                                                }}
+                                                                onClick={() => {
+                                                                    // Set selection when clicking on FAQ
+                                                                    setSelectedIndex(index);
+                                                                }}
+                                                            >
+                                                                <div className="flex items-start justify-between gap-3">
+                                                                    {bulkSelectionMode && (
+                                                                        <div className="flex items-start pt-1">
+                                                                            <Checkbox
+                                                                                checked={selectedFaqIds.has(
+                                                                                    faq.id
+                                                                                )}
+                                                                                onCheckedChange={() =>
+                                                                                    handleSelectFaq(
+                                                                                        faq.id
+                                                                                    )
+                                                                                }
+                                                                                disabled={
+                                                                                    isSubmitting
+                                                                                }
+                                                                                aria-label={`Select FAQ: ${faq.question}`}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="flex-1 space-y-2">
+                                                                        <div className="flex items-start gap-2">
+                                                                            <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
+                                                                                {faq.question}
+                                                                            </h3>
+                                                                            {hasFailed && (
+                                                                                <Badge
+                                                                                    variant="destructive"
+                                                                                    className="text-[10px]"
+                                                                                >
+                                                                                    <AlertCircle className="h-3 w-3 mr-1" />
+                                                                                    Failed
+                                                                                </Badge>
+                                                                            )}
+                                                                        </div>
+
+                                                                        <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
+                                                                                {faq.category}
+                                                                            </span>
+                                                                            <span className="font-medium tracking-[0.3px]">
+                                                                                Source: {faq.source}
+                                                                            </span>
+                                                                            {faq.bisq_version && (
+                                                                                <Badge
+                                                                                    variant="outline"
+                                                                                    className={`text-[11px] ${
+                                                                                        faq.bisq_version ===
+                                                                                        "Bisq 1"
+                                                                                            ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                            : faq.bisq_version ===
+                                                                                                "Bisq 2"
+                                                                                              ? "bg-green-50 text-green-700 border-green-300"
+                                                                                              : faq.bisq_version ===
+                                                                                                  "Both"
+                                                                                                ? "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                                : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                                    }`}
+                                                                                >
+                                                                                    {
+                                                                                        faq.bisq_version
+                                                                                    }
+                                                                                </Badge>
+                                                                            )}
+                                                                            <Tooltip>
+                                                                                <TooltipTrigger
+                                                                                    asChild
+                                                                                >
+                                                                                    <span
+                                                                                        className="inline-flex items-center gap-1 text-amber-600 cursor-help"
+                                                                                        aria-label="Unverified FAQ - Needs Review"
+                                                                                    >
+                                                                                        <AlertCircle
+                                                                                            className="h-4 w-4"
+                                                                                            aria-hidden="true"
+                                                                                        />
+                                                                                        <span className="text-xs font-medium">
+                                                                                            Needs
+                                                                                            Review
+                                                                                        </span>
+                                                                                    </span>
+                                                                                </TooltipTrigger>
+                                                                                <TooltipContent className="max-w-xs">
+                                                                                    <p className="text-sm">
+                                                                                        Unverified
+                                                                                        FAQs need
+                                                                                        review
+                                                                                        before
+                                                                                        appearing in
+                                                                                        search
+                                                                                        results.
+                                                                                        Verify them
+                                                                                        to mark as
+                                                                                        approved.
+                                                                                    </p>
+                                                                                </TooltipContent>
+                                                                            </Tooltip>
                                                                         </div>
                                                                     </div>
                                                                 </div>
-                                                            )}
+                                                            </div>
+                                                        )}
 
-                                                            <CollapsibleContent className="pt-3 data-[state=open]:animate-slide-down data-[state=closed]:animate-slide-up overflow-hidden">
-                                                                <div className="flex items-start justify-between gap-4">
-                                                                    <div className="flex-1 space-y-3">
-                                                                        <div>
-                                                                            <p className="text-muted-foreground text-[14px] leading-[1.6] whitespace-pre-wrap">
-                                                                                {faq.answer}
-                                                                            </p>
-                                                                        </div>
+                                                        <CollapsibleContent className="pt-3 data-[state=open]:animate-slide-down data-[state=closed]:animate-slide-up overflow-hidden">
+                                                            <div className="flex items-start justify-between gap-4">
+                                                                <div className="flex-1 space-y-3">
+                                                                    <div>
+                                                                        <p className="text-muted-foreground text-[14px] leading-[1.6] whitespace-pre-wrap">
+                                                                            {faq.answer}
+                                                                        </p>
                                                                     </div>
+                                                                </div>
 
-                                                                    <div
-                                                                        className={`flex items-center gap-1 ml-4 transition-opacity duration-200 ${isSelected || "opacity-0 group-hover:opacity-100"}`}
-                                                                    >
-                                                                        {!faq.verified &&
-                                                                            (skipVerifyConfirmation ? (
-                                                                                <Button
-                                                                                    variant="outline"
-                                                                                    size="sm"
-                                                                                    disabled={
-                                                                                        isSubmitting
-                                                                                    }
-                                                                                    onClick={() =>
-                                                                                        handleVerifyFaq(
-                                                                                            faq
-                                                                                        )
-                                                                                    }
-                                                                                    aria-label={`Verify FAQ: ${faq.question}`}
+                                                                <div
+                                                                    className={`flex items-center gap-1 ml-4 transition-opacity duration-200 ${isSelected || "opacity-0 group-hover:opacity-100"}`}
+                                                                >
+                                                                    {!faq.verified &&
+                                                                        (skipVerifyConfirmation ? (
+                                                                            <Button
+                                                                                variant="outline"
+                                                                                size="sm"
+                                                                                disabled={
+                                                                                    isSubmitting
+                                                                                }
+                                                                                onClick={() =>
+                                                                                    handleVerifyFaq(
+                                                                                        faq
+                                                                                    )
+                                                                                }
+                                                                                aria-label={`Verify FAQ: ${faq.question}`}
+                                                                            >
+                                                                                <BadgeCheck className="h-4 w-4 mr-2" />
+                                                                                Verify FAQ
+                                                                            </Button>
+                                                                        ) : (
+                                                                            <AlertDialog>
+                                                                                <AlertDialogTrigger
+                                                                                    asChild
                                                                                 >
-                                                                                    <BadgeCheck className="h-4 w-4 mr-2" />
-                                                                                    Verify FAQ
-                                                                                </Button>
-                                                                            ) : (
-                                                                                <AlertDialog>
-                                                                                    <AlertDialogTrigger
-                                                                                        asChild
+                                                                                    <Button
+                                                                                        variant="outline"
+                                                                                        size="sm"
+                                                                                        disabled={
+                                                                                            isSubmitting
+                                                                                        }
+                                                                                        aria-label={`Verify FAQ: ${faq.question}`}
                                                                                     >
-                                                                                        <Button
-                                                                                            variant="outline"
-                                                                                            size="sm"
+                                                                                        <BadgeCheck className="h-4 w-4 mr-2" />
+                                                                                        Verify FAQ
+                                                                                    </Button>
+                                                                                </AlertDialogTrigger>
+                                                                                <AlertDialogContent>
+                                                                                    <AlertDialogHeader>
+                                                                                        <AlertDialogTitle>
+                                                                                            Verify
+                                                                                            this
+                                                                                            FAQ?
+                                                                                        </AlertDialogTitle>
+                                                                                        <AlertDialogDescription>
+                                                                                            This
+                                                                                            will
+                                                                                            mark
+                                                                                            this FAQ
+                                                                                            as
+                                                                                            verified,
+                                                                                            indicating
+                                                                                            it has
+                                                                                            been
+                                                                                            reviewed
+                                                                                            and
+                                                                                            approved
+                                                                                            by a
+                                                                                            Bisq
+                                                                                            Support
+                                                                                            Admin.
+                                                                                            This
+                                                                                            action
+                                                                                            is
+                                                                                            irreversible.
+                                                                                        </AlertDialogDescription>
+                                                                                    </AlertDialogHeader>
+                                                                                    <div className="flex items-center space-x-2 px-6 pb-4">
+                                                                                        <Checkbox
+                                                                                            id={`do-not-show-again-${faq.id}`}
+                                                                                            checked={
+                                                                                                doNotShowAgain
+                                                                                            }
+                                                                                            onCheckedChange={(
+                                                                                                checked
+                                                                                            ) =>
+                                                                                                setDoNotShowAgain(
+                                                                                                    checked ===
+                                                                                                        true
+                                                                                                )
+                                                                                            }
+                                                                                        />
+                                                                                        <Label
+                                                                                            htmlFor={`do-not-show-again-${faq.id}`}
+                                                                                            className="text-sm font-normal cursor-pointer"
+                                                                                        >
+                                                                                            Do not
+                                                                                            show
+                                                                                            this
+                                                                                            confirmation
+                                                                                            again
+                                                                                        </Label>
+                                                                                    </div>
+                                                                                    <AlertDialogFooter>
+                                                                                        <AlertDialogCancel
+                                                                                            onClick={() =>
+                                                                                                setDoNotShowAgain(
+                                                                                                    false
+                                                                                                )
+                                                                                            }
+                                                                                        >
+                                                                                            Cancel
+                                                                                        </AlertDialogCancel>
+                                                                                        <AlertDialogAction
+                                                                                            onClick={() => {
+                                                                                                if (
+                                                                                                    doNotShowAgain
+                                                                                                ) {
+                                                                                                    localStorage.setItem(
+                                                                                                        "skipVerifyFaqConfirmation",
+                                                                                                        "true"
+                                                                                                    );
+                                                                                                    setSkipVerifyConfirmation(
+                                                                                                        true
+                                                                                                    );
+                                                                                                }
+                                                                                                setDoNotShowAgain(
+                                                                                                    false
+                                                                                                );
+                                                                                                handleVerifyFaq(
+                                                                                                    faq
+                                                                                                );
+                                                                                            }}
+                                                                                            className="!bg-green-600 hover:!bg-green-700"
                                                                                             disabled={
                                                                                                 isSubmitting
                                                                                             }
                                                                                             aria-label={`Verify FAQ: ${faq.question}`}
                                                                                         >
-                                                                                            <BadgeCheck className="h-4 w-4 mr-2" />
+                                                                                            {isSubmitting ? (
+                                                                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                                                            ) : null}
                                                                                             Verify
                                                                                             FAQ
-                                                                                        </Button>
-                                                                                    </AlertDialogTrigger>
-                                                                                    <AlertDialogContent>
-                                                                                        <AlertDialogHeader>
-                                                                                            <AlertDialogTitle>
-                                                                                                Verify
-                                                                                                this
-                                                                                                FAQ?
-                                                                                            </AlertDialogTitle>
-                                                                                            <AlertDialogDescription>
-                                                                                                This
-                                                                                                will
-                                                                                                mark
-                                                                                                this
-                                                                                                FAQ
-                                                                                                as
-                                                                                                verified,
-                                                                                                indicating
-                                                                                                it
-                                                                                                has
-                                                                                                been
-                                                                                                reviewed
-                                                                                                and
-                                                                                                approved
-                                                                                                by a
-                                                                                                Bisq
-                                                                                                Support
-                                                                                                Admin.
-                                                                                                This
-                                                                                                action
-                                                                                                is
-                                                                                                irreversible.
-                                                                                            </AlertDialogDescription>
-                                                                                        </AlertDialogHeader>
-                                                                                        <div className="flex items-center space-x-2 px-6 pb-4">
-                                                                                            <Checkbox
-                                                                                                id={`do-not-show-again-${faq.id}`}
-                                                                                                checked={
-                                                                                                    doNotShowAgain
-                                                                                                }
-                                                                                                onCheckedChange={(
-                                                                                                    checked
-                                                                                                ) =>
-                                                                                                    setDoNotShowAgain(
-                                                                                                        checked ===
-                                                                                                            true
-                                                                                                    )
-                                                                                                }
-                                                                                            />
-                                                                                            <Label
-                                                                                                htmlFor={`do-not-show-again-${faq.id}`}
-                                                                                                className="text-sm font-normal cursor-pointer"
-                                                                                            >
-                                                                                                Do
-                                                                                                not
-                                                                                                show
-                                                                                                this
-                                                                                                confirmation
-                                                                                                again
-                                                                                            </Label>
-                                                                                        </div>
-                                                                                        <AlertDialogFooter>
-                                                                                            <AlertDialogCancel
-                                                                                                onClick={() =>
-                                                                                                    setDoNotShowAgain(
-                                                                                                        false
-                                                                                                    )
-                                                                                                }
-                                                                                            >
-                                                                                                Cancel
-                                                                                            </AlertDialogCancel>
-                                                                                            <AlertDialogAction
-                                                                                                onClick={() => {
-                                                                                                    if (
-                                                                                                        doNotShowAgain
-                                                                                                    ) {
-                                                                                                        localStorage.setItem(
-                                                                                                            "skipVerifyFaqConfirmation",
-                                                                                                            "true"
-                                                                                                        );
-                                                                                                        setSkipVerifyConfirmation(
-                                                                                                            true
-                                                                                                        );
-                                                                                                    }
-                                                                                                    setDoNotShowAgain(
-                                                                                                        false
-                                                                                                    );
-                                                                                                    handleVerifyFaq(
-                                                                                                        faq
-                                                                                                    );
-                                                                                                }}
-                                                                                                className="!bg-green-600 hover:!bg-green-700"
-                                                                                                disabled={
-                                                                                                    isSubmitting
-                                                                                                }
-                                                                                                aria-label={`Verify FAQ: ${faq.question}`}
-                                                                                            >
-                                                                                                {isSubmitting ? (
-                                                                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                                                                ) : null}
-                                                                                                Verify
-                                                                                                FAQ
-                                                                                            </AlertDialogAction>
-                                                                                        </AlertDialogFooter>
-                                                                                    </AlertDialogContent>
-                                                                                </AlertDialog>
-                                                                            ))}
-                                                                        <Button
-                                                                            variant="ghost"
-                                                                            size="icon"
-                                                                            onClick={() =>
-                                                                                enterEditMode(faq)
-                                                                            }
-                                                                            className="h-8 w-8"
-                                                                            data-testid="edit-faq-button"
-                                                                        >
-                                                                            <Pencil className="h-4 w-4" />
-                                                                        </Button>
-                                                                        <AlertDialog>
-                                                                            <AlertDialogTrigger
-                                                                                asChild
+                                                                                        </AlertDialogAction>
+                                                                                    </AlertDialogFooter>
+                                                                                </AlertDialogContent>
+                                                                            </AlertDialog>
+                                                                        ))}
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        onClick={() =>
+                                                                            enterEditMode(faq)
+                                                                        }
+                                                                        className="h-8 w-8"
+                                                                        data-testid="edit-faq-button"
+                                                                    >
+                                                                        <Pencil className="h-4 w-4" />
+                                                                    </Button>
+                                                                    <AlertDialog>
+                                                                        <AlertDialogTrigger asChild>
+                                                                            <Button
+                                                                                variant="ghost"
+                                                                                size="icon"
+                                                                                disabled={
+                                                                                    isSubmitting
+                                                                                }
+                                                                                className="h-8 w-8"
+                                                                                data-testid="delete-faq-button"
                                                                             >
-                                                                                <Button
-                                                                                    variant="ghost"
-                                                                                    size="icon"
-                                                                                    disabled={
-                                                                                        isSubmitting
+                                                                                <Trash2 className="h-4 w-4 text-red-500" />
+                                                                            </Button>
+                                                                        </AlertDialogTrigger>
+                                                                        <AlertDialogContent>
+                                                                            <AlertDialogHeader>
+                                                                                <AlertDialogTitle>
+                                                                                    Are you
+                                                                                    absolutely sure?
+                                                                                </AlertDialogTitle>
+                                                                                <AlertDialogDescription>
+                                                                                    This action
+                                                                                    cannot be
+                                                                                    undone. This
+                                                                                    will permanently
+                                                                                    delete this FAQ.
+                                                                                </AlertDialogDescription>
+                                                                            </AlertDialogHeader>
+                                                                            <AlertDialogFooter>
+                                                                                <AlertDialogCancel>
+                                                                                    Cancel
+                                                                                </AlertDialogCancel>
+                                                                                <AlertDialogAction
+                                                                                    onClick={() =>
+                                                                                        handleDelete(
+                                                                                            faq.id
+                                                                                        )
                                                                                     }
-                                                                                    className="h-8 w-8"
-                                                                                    data-testid="delete-faq-button"
                                                                                 >
-                                                                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                                                                </Button>
-                                                                            </AlertDialogTrigger>
-                                                                            <AlertDialogContent>
-                                                                                <AlertDialogHeader>
-                                                                                    <AlertDialogTitle>
-                                                                                        Are you
-                                                                                        absolutely
-                                                                                        sure?
-                                                                                    </AlertDialogTitle>
-                                                                                    <AlertDialogDescription>
-                                                                                        This action
-                                                                                        cannot be
-                                                                                        undone. This
-                                                                                        will
-                                                                                        permanently
-                                                                                        delete this
-                                                                                        FAQ.
-                                                                                    </AlertDialogDescription>
-                                                                                </AlertDialogHeader>
-                                                                                <AlertDialogFooter>
-                                                                                    <AlertDialogCancel>
-                                                                                        Cancel
-                                                                                    </AlertDialogCancel>
-                                                                                    <AlertDialogAction
-                                                                                        onClick={() =>
-                                                                                            handleDelete(
-                                                                                                faq.id
-                                                                                            )
-                                                                                        }
-                                                                                    >
-                                                                                        Continue
-                                                                                    </AlertDialogAction>
-                                                                                </AlertDialogFooter>
-                                                                            </AlertDialogContent>
-                                                                        </AlertDialog>
-                                                                    </div>
+                                                                                    Continue
+                                                                                </AlertDialogAction>
+                                                                            </AlertDialogFooter>
+                                                                        </AlertDialogContent>
+                                                                    </AlertDialog>
                                                                 </div>
-                                                            </CollapsibleContent>
-                                                        </div>
-                                                    </Collapsible>
-                                                </motion.div>
-                                            );
-                                        })}
-                                    </AnimatePresence>
+                                                            </div>
+                                                        </CollapsibleContent>
+                                                    </div>
+                                                </Collapsible>
+                                            </motion.div>
+                                        );
+                                    })}
                                 </div>
                             )}
 
@@ -2950,12 +2995,16 @@ export default function ManageFaqsPage() {
                     </CommandDialog>
 
                     {/* Shared Delete Confirmation Dialog (for keyboard shortcut) */}
-                    <AlertDialog open={showDeleteConfirmDialog} onOpenChange={setShowDeleteConfirmDialog}>
+                    <AlertDialog
+                        open={showDeleteConfirmDialog}
+                        onOpenChange={setShowDeleteConfirmDialog}
+                    >
                         <AlertDialogContent>
                             <AlertDialogHeader>
                                 <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                    This action cannot be undone. This will permanently delete this FAQ.
+                                    This action cannot be undone. This will permanently delete this
+                                    FAQ.
                                 </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>

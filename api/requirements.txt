@@ -12,7 +12,7 @@ aiosignal==1.4.0
     # via aiohttp
 aisuite==0.1.12
     # via -r api/requirements.in
-annotated-doc==0.0.3
+annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
