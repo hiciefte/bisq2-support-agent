@@ -137,18 +137,31 @@ restart_service_with_deps() {
 
     case "$service" in
         "api")
-            docker compose -f "$compose_file" up -d api web nginx
+            if ! docker compose -f "$compose_file" up -d api web nginx; then
+                log_error "Failed to restart api, web, nginx"
+                return 1
+            fi
             ;;
         "web")
-            docker compose -f "$compose_file" up -d web nginx
+            if ! docker compose -f "$compose_file" up -d web nginx; then
+                log_error "Failed to restart web, nginx"
+                return 1
+            fi
             ;;
         "nginx")
-            docker compose -f "$compose_file" up -d nginx
+            if ! docker compose -f "$compose_file" up -d nginx; then
+                log_error "Failed to restart nginx"
+                return 1
+            fi
             ;;
         *)
-            docker compose -f "$compose_file" up -d "$service"
+            if ! docker compose -f "$compose_file" up -d "$service"; then
+                log_error "Failed to restart $service"
+                return 1
+            fi
             ;;
     esac
+    return 0
 }
 
 # Function to ensure dependent services are running
@@ -370,8 +383,12 @@ check_and_repair_services() {
     for service in "${failed_critical[@]}"; do
         echo ""
         log_info "Auto-restarting critical service: $service"
-        restart_service_with_deps "$service" "$docker_dir" "$compose_file"
-        restarted_services+=("$service")
+        if restart_service_with_deps "$service" "$docker_dir" "$compose_file"; then
+            restarted_services+=("$service")
+        else
+            log_error "Failed to restart $service - skipping health check"
+            # Continue to try other services instead of failing immediately
+        fi
     done
 
     # Wait for restarted services to become healthy
@@ -380,14 +397,14 @@ check_and_repair_services() {
         log_info "Waiting for restarted services to become healthy..."
         sleep 10  # Initial wait for services to start
 
-        local all_healthy=0
+        local any_unhealthy=0
         for service in "${restarted_services[@]}"; do
             if ! wait_for_healthy "$service" 120 "$docker_dir" "$compose_file"; then
-                all_healthy=1
+                any_unhealthy=1
             fi
         done
 
-        if [ $all_healthy -eq 0 ]; then
+        if [ $any_unhealthy -eq 0 ]; then
             echo ""
             log_success "All restarted services are now healthy!"
             return 0
