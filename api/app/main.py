@@ -19,7 +19,7 @@ from app.core.tor_metrics import (
 )
 from app.db.run_migrations import run_migrations
 from app.middleware import TorDetectionMiddleware
-from app.routes import chat, feedback_routes, health, onion_verify
+from app.routes import chat, feedback_routes, health, metrics_update, onion_verify
 from app.routes.admin import include_admin_routers
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
@@ -296,6 +296,7 @@ async def metrics(request: Request):
 app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback_routes.router, tags=["Feedback"])
+app.include_router(metrics_update.router, tags=["Metrics"])
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 
