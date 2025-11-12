@@ -333,10 +333,17 @@ check_and_repair_services() {
     log_info "Checking all services..."
     echo ""
 
-    # Check all services
+    # Check all services and separate critical from non-critical failures
+    local failed_critical=()
     for service in "${all_services[@]}"; do
         if ! check_service "$service" "$docker_dir" "$compose_file"; then
             failed_services+=("$service")
+            # Check if this is a critical service
+            case " ${critical_services[*]} " in
+              *" ${service} "*)
+                failed_critical+=("$service")
+                ;;
+            esac
         fi
     done
 
@@ -350,17 +357,21 @@ check_and_repair_services() {
     echo ""
     log_warning "Found ${#failed_services[@]} unhealthy service(s): ${failed_services[*]}"
 
+    # If only non-critical services failed, consider it a success
+    # (non-critical services like bisq2-api may still be starting)
+    if [ ${#failed_critical[@]} -eq 0 ]; then
+        echo ""
+        log_warning "Only non-critical services are unhealthy. Continuing..."
+        return 0
+    fi
+
     # Auto-restart failed critical services
     local restarted_services=()
-    for service in "${failed_services[@]}"; do
-        case " ${critical_services[*]} " in
-          *" ${service} "*)
-            echo ""
-            log_info "Auto-restarting critical service: $service"
-            restart_service_with_deps "$service" "$docker_dir" "$compose_file"
-            restarted_services+=("$service")
-            ;;
-        esac
+    for service in "${failed_critical[@]}"; do
+        echo ""
+        log_info "Auto-restarting critical service: $service"
+        restart_service_with_deps "$service" "$docker_dir" "$compose_file"
+        restarted_services+=("$service")
     done
 
     # Wait for restarted services to become healthy
@@ -371,13 +382,9 @@ check_and_repair_services() {
 
         local all_healthy=0
         for service in "${restarted_services[@]}"; do
-            case " ${critical_services[*]} " in
-              *" ${service} "*)
-                if ! wait_for_healthy "$service" 120 "$docker_dir" "$compose_file"; then
-                    all_healthy=1
-                fi
-                ;;
-            esac
+            if ! wait_for_healthy "$service" 120 "$docker_dir" "$compose_file"; then
+                all_healthy=1
+            fi
         done
 
         if [ $all_healthy -eq 0 ]; then
@@ -391,7 +398,7 @@ check_and_repair_services() {
         fi
     else
         echo ""
-        log_warning "No critical services needed restart. Manual intervention may be required."
+        log_error "Critical services failed but restart was unsuccessful"
         return 1
     fi
 }
