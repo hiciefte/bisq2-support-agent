@@ -268,7 +268,10 @@ apply_updates() {
 
         # Perform health checks after rebuild
         log_info "Performing health checks..."
-        sleep 15  # Give services time to start
+        # Wait 120s for bisq2-api start_period (longest of all services)
+        # API: 60s, Web: 20s, bisq2-api: 120s, nginx: 20s
+        log_info "Waiting 120 seconds for bisq2-api start_period to complete..."
+        sleep 120
 
         if ! check_and_repair_services "$DOCKER_DIR" "$COMPOSE_FILE"; then
             rollback_update "Health check failed after rebuild"
