@@ -10,7 +10,9 @@ The actual processing logic lives in download_bisq2_media_wiki.py and process_wi
 This wrapper provides unified metrics collection and error handling.
 """
 
+import argparse
 import asyncio
+import json
 import logging
 import os
 from typing import Dict, Optional
@@ -20,10 +22,10 @@ from app.scripts.process_wiki_dump import WikiDumpProcessor
 from app.utils.task_metrics import instrument_wiki_update
 
 # Configure logging
-logging.basicConfig(  # type: ignore[attr-defined]
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # type: ignore[attr-defined]
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logger = logging.getLogger(__name__)
 
 
 @instrument_wiki_update
@@ -74,5 +76,24 @@ async def main() -> Optional[Dict[str, int]]:
 
 
 if __name__ == "__main__":
+    # Set up command line argument parsing
+    parser = argparse.ArgumentParser(
+        description="Download and process Bisq MediaWiki dump",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Output metrics as JSON for easier parsing by bash scripts",
+    )
+    args = parser.parse_args()
+
     # Run the wiki update process
-    asyncio.run(main())
+    result = asyncio.run(main())
+
+    # Output metrics in JSON format if requested
+    if args.json_output and result:
+        print(json.dumps(result))
+    elif result:
+        # Default human-readable output for backward compatibility
+        print(f"pages_processed: {result['pages_processed']}")

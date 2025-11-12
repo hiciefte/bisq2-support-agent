@@ -395,7 +395,8 @@ check_and_repair_services() {
     if [ ${#restarted_services[@]} -gt 0 ]; then
         echo ""
         log_info "Waiting for restarted services to become healthy..."
-        sleep 10  # Initial wait for services to start
+        local restart_wait_time="${RESTART_WAIT_TIME:-10}"
+        sleep "$restart_wait_time"  # Initial wait for services to start
 
         local any_unhealthy=0
         for service in "${restarted_services[@]}"; do

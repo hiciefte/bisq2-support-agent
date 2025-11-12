@@ -37,9 +37,9 @@ if ! docker ps --format '{{.Names}}' | grep -q "$API_CONTAINER"; then
   exit 1
 fi
 
-# Run the FAQ extractor and capture output
+# Run the FAQ extractor with JSON output and capture output
 log "Running FAQ extractor in API container..."
-OUTPUT=$(docker exec $API_CONTAINER python -m app.scripts.extract_faqs 2>&1)
+OUTPUT=$(docker exec $API_CONTAINER python -m app.scripts.extract_faqs --json-output 2>&1)
 EXIT_CODE=$?
 
 # Calculate duration
@@ -60,9 +60,9 @@ fi
 log "FAQ extraction finished."
 log "Output: $OUTPUT"
 
-# Parse metrics from output (assumes extract_faqs.py prints stats)
-MESSAGES_PROCESSED=$(echo "$OUTPUT" | grep -oP 'messages_processed:\s*\K\d+' || echo "0")
-FAQS_GENERATED=$(echo "$OUTPUT" | grep -oP 'faqs_generated:\s*\K\d+' || echo "0")
+# Parse metrics from JSON output (more reliable than grep)
+MESSAGES_PROCESSED=$(echo "$OUTPUT" | jq -r '.messages_processed // 0' 2>/dev/null || echo "0")
+FAQS_GENERATED=$(echo "$OUTPUT" | jq -r '.faqs_generated // 0' 2>/dev/null || echo "0")
 
 # Report success metrics
 if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
@@ -72,8 +72,7 @@ fi
 log "Restarting API container ($API_CONTAINER) to load new FAQs..."
 if ! docker restart $API_CONTAINER; then
   log "ERROR: Failed to restart API container $API_CONTAINER"
-  # Optionally, decide if this should be a script-halting error
-  # exit 1
+  exit 1
 else
   log "API container $API_CONTAINER restarted successfully."
 fi

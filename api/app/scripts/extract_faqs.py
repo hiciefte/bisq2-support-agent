@@ -23,6 +23,7 @@ Environment variables:
 
 import argparse
 import asyncio
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -164,6 +165,11 @@ if __name__ == "__main__":
         help="Reprocess all conversations, ignoring previously processed IDs",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Output metrics as JSON for easier parsing by bash scripts",
+    )
     args = parser.parse_args()
 
     # Configure logging based on debug flag
@@ -172,4 +178,12 @@ if __name__ == "__main__":
         logger.debug("Debug logging enabled")
 
     # Run the extraction process
-    asyncio.run(main(force_reprocess=args.force_reprocess))
+    result = asyncio.run(main(force_reprocess=args.force_reprocess))
+
+    # Output metrics in JSON format if requested
+    if args.json_output and result:
+        print(json.dumps(result))
+    elif result:
+        # Default human-readable output for backward compatibility
+        print(f"messages_processed: {result['messages_processed']}")
+        print(f"faqs_generated: {result['faqs_generated']}")

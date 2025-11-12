@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(
     prefix="/admin/metrics",
-    tags=["metrics"],
+    tags=["Metrics"],
     dependencies=[Depends(verify_admin_key)],
 )
 

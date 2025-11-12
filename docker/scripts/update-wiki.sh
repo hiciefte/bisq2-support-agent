@@ -30,9 +30,9 @@ API_CONTAINER_NAME="${PROJECT_NAME}-${API_SERVICE_NAME}-1"
 
 # No additional path configuration needed - the unified wrapper handles all paths internally
 
-# 1. Run the unified wiki update wrapper (downloads and processes wiki dump with metrics instrumentation)
+# 1. Run the unified wiki update wrapper with JSON output (downloads and processes wiki dump with metrics instrumentation)
 log "Step 1: Running unified wiki update (download + process with metrics)..."
-OUTPUT=$(docker exec "$API_CONTAINER_NAME" python3 -m app.scripts.update_wiki 2>&1)
+OUTPUT=$(docker exec "$API_CONTAINER_NAME" python3 -m app.scripts.update_wiki --json-output 2>&1)
 EXIT_CODE=$?
 
 # Calculate duration
@@ -53,8 +53,8 @@ fi
 log "Wiki update finished."
 log "Output: $OUTPUT"
 
-# Parse metrics from output (assumes update_wiki.py prints stats)
-PAGES_PROCESSED=$(echo "$OUTPUT" | grep -oP 'pages_processed:\s*\K\d+' || echo "0")
+# Parse metrics from JSON output (more reliable than grep)
+PAGES_PROCESSED=$(echo "$OUTPUT" | jq -r '.pages_processed // 0' 2>/dev/null || echo "0")
 
 # Report success metrics
 if command -v report_wiki_update_metrics >/dev/null 2>&1; then
