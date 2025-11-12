@@ -96,7 +96,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "min(faq_extraction_last_run_status, wiki_update_last_run_status)",
+          "expr": "min({__name__=~\"faq_extraction_last_run_status|wiki_update_last_run_status\"})",
           "refId": "A"
         }
       ],
