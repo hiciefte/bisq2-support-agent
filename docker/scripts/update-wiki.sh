@@ -53,11 +53,9 @@ fi
 log "Wiki update finished."
 log "Output: $OUTPUT"
 
-# Extract JSON payload from mixed output (last valid JSON line)
-JSON_LINE=$(echo "$OUTPUT" | grep -E '^\{.*\}$' | tail -n1)
-
-if [ -z "$JSON_LINE" ]; then
-  log "ERROR: No valid JSON found in output"
+# Extract and validate JSON metrics using shared helper
+if ! extract_json_metrics "$OUTPUT"; then
+  log "ERROR: Failed to extract JSON metrics from output"
 
   # Report failure metrics - cannot parse results
   if command -v report_wiki_update_metrics >/dev/null 2>&1; then
@@ -67,12 +65,11 @@ if [ -z "$JSON_LINE" ]; then
   exit 1
 fi
 
-# Parse metrics from extracted JSON
-PAGES_PROCESSED=$(echo "$JSON_LINE" | jq -r '.pages_processed')
-JQ_EXIT=$?
+# Parse metrics from extracted JSON (EXTRACTED_JSON is set by extract_json_metrics)
+PAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.pages_processed')
 
-if [ $JQ_EXIT -ne 0 ] || [ "$PAGES_PROCESSED" = "null" ]; then
-  log "ERROR: Failed to parse JSON metrics"
+if [ "$PAGES_PROCESSED" = "null" ]; then
+  log "ERROR: Missing pages_processed field in JSON"
 
   # Report failure metrics - invalid JSON structure
   if command -v report_wiki_update_metrics >/dev/null 2>&1; then

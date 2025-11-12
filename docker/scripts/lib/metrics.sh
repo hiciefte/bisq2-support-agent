@@ -132,6 +132,47 @@ report_feedback_processing_metrics() {
         || echo "Warning: Failed to report feedback processing metrics" >&2
 }
 
+# Extract and validate JSON metrics from script output
+# This helper extracts JSON from mixed log/JSON output and validates it with jq
+#
+# Args:
+#   $1: raw_output - The raw output from a script containing mixed logs and JSON
+#
+# Returns:
+#   0: Success - extracted JSON is valid
+#   1: Failure - no valid JSON found or parsing failed
+#
+# Sets global variable:
+#   EXTRACTED_JSON: The validated JSON line (only set on success)
+#
+# Example usage:
+#   OUTPUT=$(docker exec container python script.py --json-output 2>&1)
+#   if extract_json_metrics "$OUTPUT"; then
+#       METRIC=$(echo "$EXTRACTED_JSON" | jq -r '.some_field')
+#   else
+#       echo "Failed to extract JSON metrics"
+#       return 1
+#   fi
+extract_json_metrics() {
+    local raw_output="$1"
+
+    # Extract the last line that looks like valid JSON
+    EXTRACTED_JSON=$(echo "$raw_output" | grep -E '^\{.*\}$' | tail -n1)
+
+    if [ -z "$EXTRACTED_JSON" ]; then
+        echo "ERROR: No valid JSON found in output" >&2
+        return 1
+    fi
+
+    # Validate that jq can parse the JSON
+    if ! echo "$EXTRACTED_JSON" | jq -e '.' >/dev/null 2>&1; then
+        echo "ERROR: Failed to parse JSON with jq" >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # Example usage:
 # report_faq_extraction_metrics "success" 42 5 123.45
 # report_wiki_update_metrics "failure" 0 89.12

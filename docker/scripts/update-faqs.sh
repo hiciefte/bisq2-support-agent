@@ -60,11 +60,9 @@ fi
 log "FAQ extraction finished."
 log "Output: $OUTPUT"
 
-# Extract JSON payload from mixed output (last valid JSON line)
-JSON_LINE=$(echo "$OUTPUT" | grep -E '^\{.*\}$' | tail -n1)
-
-if [ -z "$JSON_LINE" ]; then
-  log "ERROR: No valid JSON found in output"
+# Extract and validate JSON metrics using shared helper
+if ! extract_json_metrics "$OUTPUT"; then
+  log "ERROR: Failed to extract JSON metrics from output"
 
   # Report failure metrics - cannot parse results
   if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
@@ -74,13 +72,12 @@ if [ -z "$JSON_LINE" ]; then
   exit 1
 fi
 
-# Parse metrics from extracted JSON
-MESSAGES_PROCESSED=$(echo "$JSON_LINE" | jq -r '.messages_processed')
-FAQS_GENERATED=$(echo "$JSON_LINE" | jq -r '.faqs_generated')
-JQ_EXIT=$?
+# Parse metrics from extracted JSON (EXTRACTED_JSON is set by extract_json_metrics)
+MESSAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.messages_processed')
+FAQS_GENERATED=$(echo "$EXTRACTED_JSON" | jq -r '.faqs_generated')
 
-if [ $JQ_EXIT -ne 0 ] || [ "$MESSAGES_PROCESSED" = "null" ] || [ "$FAQS_GENERATED" = "null" ]; then
-  log "ERROR: Failed to parse JSON metrics"
+if [ "$MESSAGES_PROCESSED" = "null" ] || [ "$FAQS_GENERATED" = "null" ]; then
+  log "ERROR: Missing required fields in JSON (messages_processed or faqs_generated)"
 
   # Report failure metrics - invalid JSON structure
   if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
