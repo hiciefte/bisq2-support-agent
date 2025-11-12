@@ -60,11 +60,37 @@ fi
 log "FAQ extraction finished."
 log "Output: $OUTPUT"
 
-# Parse metrics from JSON output (more reliable than grep)
-MESSAGES_PROCESSED=$(echo "$OUTPUT" | jq -r '.messages_processed // 0' 2>/dev/null || echo "0")
-FAQS_GENERATED=$(echo "$OUTPUT" | jq -r '.faqs_generated // 0' 2>/dev/null || echo "0")
+# Extract JSON payload from mixed output (last valid JSON line)
+JSON_LINE=$(echo "$OUTPUT" | grep -E '^\{.*\}$' | tail -n1)
 
-# Report success metrics
+if [ -z "$JSON_LINE" ]; then
+  log "ERROR: No valid JSON found in output"
+
+  # Report failure metrics - cannot parse results
+  if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
+      report_faq_extraction_metrics "failure" 0 0 "$DURATION"
+  fi
+
+  exit 1
+fi
+
+# Parse metrics from extracted JSON
+MESSAGES_PROCESSED=$(echo "$JSON_LINE" | jq -r '.messages_processed')
+FAQS_GENERATED=$(echo "$JSON_LINE" | jq -r '.faqs_generated')
+JQ_EXIT=$?
+
+if [ $JQ_EXIT -ne 0 ] || [ "$MESSAGES_PROCESSED" = "null" ] || [ "$FAQS_GENERATED" = "null" ]; then
+  log "ERROR: Failed to parse JSON metrics"
+
+  # Report failure metrics - invalid JSON structure
+  if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
+      report_faq_extraction_metrics "failure" 0 0 "$DURATION"
+  fi
+
+  exit 1
+fi
+
+# Report success metrics only when JSON extraction and parsing succeed
 if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
     report_faq_extraction_metrics "success" "$MESSAGES_PROCESSED" "$FAQS_GENERATED" "$DURATION"
 fi

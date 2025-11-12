@@ -53,8 +53,34 @@ fi
 log "Wiki update finished."
 log "Output: $OUTPUT"
 
-# Parse metrics from JSON output (more reliable than grep)
-PAGES_PROCESSED=$(echo "$OUTPUT" | jq -r '.pages_processed // 0' 2>/dev/null || echo "0")
+# Extract JSON payload from mixed output (last valid JSON line)
+JSON_LINE=$(echo "$OUTPUT" | grep -E '^\{.*\}$' | tail -n1)
+
+if [ -z "$JSON_LINE" ]; then
+  log "ERROR: No valid JSON found in output"
+
+  # Report failure metrics - cannot parse results
+  if command -v report_wiki_update_metrics >/dev/null 2>&1; then
+      report_wiki_update_metrics "failure" 0 "$DURATION"
+  fi
+
+  exit 1
+fi
+
+# Parse metrics from extracted JSON
+PAGES_PROCESSED=$(echo "$JSON_LINE" | jq -r '.pages_processed')
+JQ_EXIT=$?
+
+if [ $JQ_EXIT -ne 0 ] || [ "$PAGES_PROCESSED" = "null" ]; then
+  log "ERROR: Failed to parse JSON metrics"
+
+  # Report failure metrics - invalid JSON structure
+  if command -v report_wiki_update_metrics >/dev/null 2>&1; then
+      report_wiki_update_metrics "failure" 0 "$DURATION"
+  fi
+
+  exit 1
+fi
 
 # Report success metrics
 if command -v report_wiki_update_metrics >/dev/null 2>&1; then

@@ -380,12 +380,14 @@ check_and_repair_services() {
 
     # Auto-restart failed critical services
     local restarted_services=()
+    local restart_failed=0
     for service in "${failed_critical[@]}"; do
         echo ""
         log_info "Auto-restarting critical service: $service"
         if restart_service_with_deps "$service" "$docker_dir" "$compose_file"; then
             restarted_services+=("$service")
         else
+            restart_failed=1
             log_error "Failed to restart $service - skipping health check"
             # Continue to try other services instead of failing immediately
         fi
@@ -405,7 +407,7 @@ check_and_repair_services() {
             fi
         done
 
-        if [ $any_unhealthy -eq 0 ]; then
+        if [ $restart_failed -eq 0 ] && [ $any_unhealthy -eq 0 ]; then
             echo ""
             log_success "All restarted services are now healthy!"
             return 0
@@ -414,6 +416,10 @@ check_and_repair_services() {
             log_error "Some services failed to become healthy after restart"
             return 1
         fi
+    elif [ $restart_failed -eq 1 ]; then
+        echo ""
+        log_error "Some critical services failed to restart"
+        return 1
     else
         echo ""
         log_error "Critical services failed but restart was unsuccessful"
