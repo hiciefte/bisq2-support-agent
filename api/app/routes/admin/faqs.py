@@ -83,7 +83,7 @@ async def get_all_faqs_for_admin_route(
         )
         return result
     except Exception as e:
-        logger.error(f"Failed to fetch FAQs: {e}", exc_info=True)
+        logger.exception("Failed to fetch FAQs")
         raise BaseAppException(
             detail="Failed to fetch FAQs",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -99,7 +99,7 @@ async def add_new_faq_route(faq_item: FAQItem):
         new_faq = faq_service.add_faq(faq_item)
         return new_faq
     except Exception as e:
-        logger.error(f"Failed to add FAQ: {e}", exc_info=True)
+        logger.exception("Failed to add FAQ")
         raise BaseAppException(
             detail="Failed to add FAQ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -151,7 +151,7 @@ async def verify_faq_route(faq_id: str):
     except FAQNotFoundError:
         raise
     except Exception as e:
-        logger.error(f"Failed to verify FAQ: {e}", exc_info=True)
+        logger.exception("Failed to verify FAQ")
         raise BaseAppException(
             detail="Failed to verify FAQ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -208,7 +208,7 @@ async def bulk_delete_faqs_route(request: BulkFAQRequest):
             message=message,
         )
     except Exception as e:
-        logger.error(f"Bulk delete operation failed: {e}", exc_info=True)
+        logger.exception("Bulk delete operation failed")
         raise BaseAppException(
             detail="Bulk delete operation failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -285,7 +285,7 @@ async def get_faq_stats(
             "breakdown_by_source": source_breakdown,
         }
     except Exception as e:
-        logger.error(f"Failed to fetch FAQ stats: {e}", exc_info=True)
+        logger.exception("Failed to fetch FAQ stats")
         raise BaseAppException(
             detail="Failed to fetch FAQ statistics",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -332,7 +332,7 @@ async def bulk_verify_faqs_route(request: BulkFAQRequest):
             message=message,
         )
     except Exception as e:
-        logger.error(f"Bulk verify operation failed: {e}", exc_info=True)
+        logger.exception("Bulk verify operation failed")
         raise BaseAppException(
             detail="Bulk verify operation failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -389,7 +389,7 @@ async def export_faqs_to_csv(
             [cat.strip() for cat in categories.split(",")] if categories else None
         )
     except Exception as e:
-        logger.error(f"Invalid categories parameter: {e}")
+        logger.exception("Invalid categories parameter")
         raise BaseAppException(
             detail="Invalid categories parameter",
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -450,16 +450,16 @@ async def export_faqs_to_csv(
                     yield (row + "\n").encode("utf-8")
                 except Exception as e:
                     # Log error but continue processing remaining FAQs
-                    logger.error(f"Error formatting FAQ row: {e}", exc_info=True)
+                    logger.exception("Error formatting FAQ row")
                     error_row = sanitize_csv_field(
                         f"ERROR: Failed to export FAQ - {str(e)}"
                     )
                     yield (error_row + "\n").encode("utf-8")
 
             logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
-        except Exception as e:
+        except Exception:
             # Log critical error that prevents export from continuing
-            logger.error(f"CSV export failed: {e}", exc_info=True)
+            logger.exception("CSV export failed")
             # Yield clear error message instead of exposing stack trace
             error_msg = sanitize_csv_field(
                 "ERROR: CSV export failed - please contact administrator"
