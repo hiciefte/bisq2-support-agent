@@ -47,10 +47,21 @@ async def get_all_faqs_for_admin_route(
     source: Optional[str] = None,
     verified: Optional[bool] = None,  # Filter by verification status
     bisq_version: Optional[str] = None,  # Filter by Bisq version
+    verified_from: Optional[
+        str
+    ] = None,  # ISO 8601 date string for start of verified_at range
+    verified_to: Optional[
+        str
+    ] = None,  # ISO 8601 date string for end of verified_at range
 ):
-    """Get FAQs for the admin interface with pagination and filtering support."""
+    """Get FAQs for the admin interface with pagination and filtering support.
+
+    Date filtering example:
+    - verified_from=2024-01-01T00:00:00Z
+    - verified_to=2024-12-31T23:59:59Z
+    """
     logger.info(
-        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, bisq_version={bisq_version}"
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, bisq_version={bisq_version}, verified_from={verified_from}, verified_to={verified_to}"
     )
 
     try:
@@ -67,6 +78,8 @@ async def get_all_faqs_for_admin_route(
             source=source,
             verified=verified,
             bisq_version=bisq_version,
+            verified_from=verified_from,
+            verified_to=verified_to,
         )
         return result
     except Exception as e:
@@ -200,6 +213,87 @@ async def bulk_delete_faqs_route(request: BulkFAQRequest):
             detail="Bulk delete operation failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="BULK_DELETE_FAILED",
+        ) from e
+
+
+@router.get("/faqs/stats")
+async def get_faq_stats(
+    verified_from: Optional[str] = None,  # ISO 8601 date string
+    verified_to: Optional[str] = None,  # ISO 8601 date string
+    categories: Optional[str] = None,  # Comma-separated list
+    source: Optional[str] = None,
+    bisq_version: Optional[str] = None,
+):
+    """Get FAQ statistics including counts by verification date range.
+
+    This endpoint provides aggregate statistics about FAQs, useful for reporting.
+    Date filtering allows admins to answer questions like "How many FAQs were
+    verified between date X and date Y?"
+
+    Example queries:
+    - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&verified_to=2024-12-31T23:59:59Z
+    - /admin/faqs/stats?verified_from=2024-Q1&categories=Trading,Mediation
+    """
+    logger.info(
+        f"Admin request for FAQ stats: verified_from={verified_from}, verified_to={verified_to}, categories={categories}, source={source}, bisq_version={bisq_version}"
+    )
+
+    try:
+        # Parse comma-separated categories
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
+
+        # Get all FAQs matching the filters (no pagination)
+        # We pass verified=True to only count verified FAQs for the date range stats
+        result = faq_service.get_faqs_paginated(
+            page=1,
+            page_size=999999,  # Large number to get all matching FAQs
+            categories=categories_list,
+            source=source,
+            verified=True,  # Only count verified FAQs
+            bisq_version=bisq_version,
+            verified_from=verified_from,
+            verified_to=verified_to,
+        )
+
+        # Calculate additional statistics
+        total_verified = result.total_count
+
+        # Get breakdown by category
+        category_breakdown: dict[str, int] = {}
+        for faq in result.faqs:
+            cat = faq.category or "Uncategorized"
+            category_breakdown[cat] = category_breakdown.get(cat, 0) + 1
+
+        # Get breakdown by source
+        source_breakdown: dict[str, int] = {}
+        for faq in result.faqs:
+            src = faq.source or "Unknown"
+            source_breakdown[src] = source_breakdown.get(src, 0) + 1
+
+        stats = {
+            "total_verified_count": total_verified,
+            "date_range": {
+                "from": verified_from,
+                "to": verified_to,
+            },
+            "filters": {
+                "categories": categories_list,
+                "source": source,
+                "bisq_version": bisq_version,
+            },
+            "breakdown_by_category": category_breakdown,
+            "breakdown_by_source": source_breakdown,
+        }
+
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to fetch FAQ stats: {e}", exc_info=True)
+        raise BaseAppException(
+            detail="Failed to fetch FAQ statistics",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FAQ_STATS_FAILED",
         ) from e
 
 

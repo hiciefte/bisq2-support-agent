@@ -176,6 +176,38 @@ def sample_feedback_data() -> list[dict]:
     ]
 
 
+@pytest.fixture(autouse=True)
+def reset_faq_service_singleton():
+    """Reset FAQService singleton before each test to prevent state pollution."""
+    from app.services.faq_service import FAQService
+
+    # Reset singleton state
+    if FAQService._instance is not None:
+        if hasattr(FAQService._instance, "initialized"):
+            delattr(FAQService._instance, "initialized")
+        if hasattr(FAQService, "_file_lock") and FAQService._file_lock is not None:
+            try:
+                FAQService._file_lock.release()
+            except Exception:
+                pass
+    FAQService._instance = None
+    FAQService._file_lock = None
+
+    yield
+
+    # Cleanup after test
+    if FAQService._instance is not None:
+        if hasattr(FAQService._instance, "initialized"):
+            delattr(FAQService._instance, "initialized")
+        if hasattr(FAQService, "_file_lock") and FAQService._file_lock is not None:
+            try:
+                FAQService._file_lock.release()
+            except Exception:
+                pass
+    FAQService._instance = None
+    FAQService._file_lock = None
+
+
 @pytest.fixture
 def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQService:
     """Create an FAQService instance with sample data.
@@ -190,6 +222,7 @@ def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQServ
     Returns:
         FAQService: Initialized FAQ service with sample data
     """
+    # Initialize service (creates necessary directories and lock files)
     service = FAQService(settings=test_settings)
 
     # Create the FAQ file with sample data
@@ -203,8 +236,8 @@ def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQServ
         for faq in sample_faq_data:
             f.write(json.dumps(faq) + "\n")
 
-    # Reload FAQs from file
-    service._load_faqs()
+    # No need to reload - FAQService reads from file on each operation
+    # The _load_faqs method was removed during refactoring
 
     return service
 

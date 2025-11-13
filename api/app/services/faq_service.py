@@ -61,9 +61,12 @@ class FAQService:
             self.conversations_path = data_dir / "conversations.jsonl"
             self.existing_input_path = data_dir / "support_chat_export.json"
 
-            self._file_lock = portalocker.Lock(
-                str(self._faq_file_path) + ".lock", timeout=10
-            )
+            # Ensure lock file parent directory exists
+            # Portalocker may create subdirectories for lock files
+            lock_file_path = Path(str(self._faq_file_path) + ".lock")
+            lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            self._file_lock = portalocker.Lock(str(lock_file_path), timeout=10)
 
             # Initialize FAQ repository for CRUD operations
             self.repository = FAQRepository(self._faq_file_path, self._file_lock)
@@ -175,10 +178,65 @@ class FAQService:
         source: Optional[str] = None,
         verified: Optional[bool] = None,
         bisq_version: Optional[str] = None,
+        verified_from: Optional[str] = None,
+        verified_to: Optional[str] = None,
     ) -> FAQListResponse:
-        """Get FAQs with pagination and filtering support."""
+        """Get FAQs with pagination and filtering support.
+
+        Args:
+            verified_from: ISO 8601 date string for start of verified_at range
+            verified_to: ISO 8601 date string for end of verified_at range
+        """
+        from datetime import datetime, timezone
+
+        # Parse date strings to datetime objects if provided
+        # IMPORTANT: Convert to timezone-aware datetime (UTC) for comparison with FAQ timestamps
+        verified_from_dt = None
+        verified_to_dt = None
+
+        if verified_from:
+            try:
+                # Parse the date string
+                parsed_date = datetime.fromisoformat(
+                    verified_from.replace("Z", "+00:00")
+                )
+                # If timezone-naive (no timezone info), assume UTC
+                if parsed_date.tzinfo is None:
+                    verified_from_dt = parsed_date.replace(tzinfo=timezone.utc)
+                else:
+                    verified_from_dt = parsed_date
+            except ValueError:
+                logger.warning(f"Invalid verified_from date format: {verified_from}")
+
+        if verified_to:
+            try:
+                # Parse the date string
+                parsed_date = datetime.fromisoformat(verified_to.replace("Z", "+00:00"))
+                # If timezone-naive (no timezone info), assume UTC
+                # For end date, set time to end of day (23:59:59.999999)
+                if parsed_date.tzinfo is None:
+                    verified_to_dt = parsed_date.replace(
+                        hour=23,
+                        minute=59,
+                        second=59,
+                        microsecond=999999,
+                        tzinfo=timezone.utc,
+                    )
+                else:
+                    verified_to_dt = parsed_date
+            except ValueError:
+                logger.warning(f"Invalid verified_to date format: {verified_to}")
+
         return self.repository.get_faqs_paginated(
-            page, page_size, search_text, categories, source, verified, bisq_version
+            page,
+            page_size,
+            search_text,
+            categories,
+            source,
+            verified,
+            bisq_version,
+            verified_from_dt,
+            verified_to_dt,
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
