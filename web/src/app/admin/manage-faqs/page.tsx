@@ -81,7 +81,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/config";
 import debounce from "lodash.debounce";
-import { format } from "date-fns";
+import { format, startOfDay, endOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "sonner";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -317,18 +317,11 @@ const formatTimestamp = (timestamp?: string | null): string => {
 };
 
 // Helper function to serialize dates for API requests
-const serializeDateFilter = (date: Date | undefined, endOfDay: boolean = false): string | null => {
+const serializeDateFilter = (date: Date | undefined, toEndOfDay: boolean = false): string | null => {
     if (!date) return null;
-
-    const normalized = new Date(date);
-    if (endOfDay) {
-        // Set to end of day in UTC (23:59:59.999)
-        normalized.setUTCHours(23, 59, 59, 999);
-    } else {
-        // Set to start of day in UTC (00:00:00.000)
-        normalized.setUTCHours(0, 0, 0, 0);
-    }
-    return format(normalized, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+    // Use startOfDay/endOfDay to preserve the full local day and convert to proper UTC instants
+    const localBoundary = toEndOfDay ? endOfDay(date) : startOfDay(date);
+    return localBoundary.toISOString();
 };
 
 export default function ManageFaqsPage() {
@@ -1982,9 +1975,10 @@ export default function ManageFaqsPage() {
 
                                                     // Fetch CSV via server-side streaming endpoint
                                                     // Authentication handled via cookies in makeAuthenticatedRequest
-                                                    const exportUrl = `${API_BASE_URL}/admin/faqs/export?${params.toString()}`;
-                                                    const response =
-                                                        await makeAuthenticatedRequest(exportUrl);
+                                                    // makeAuthenticatedRequest internally prefixes with API_BASE_URL
+                                                    const response = await makeAuthenticatedRequest(
+                                                        `/admin/faqs/export?${params.toString()}`
+                                                    );
 
                                                     if (!response.ok) {
                                                         throw new Error(
@@ -2595,7 +2589,7 @@ export default function ManageFaqsPage() {
                                                                                                     "Bisq 2"
                                                                                                   ? "bg-green-50 text-green-700 border-green-300"
                                                                                                   : faq.bisq_version ===
-                                                                                                      "Both"
+                                                                                                      "General"
                                                                                                     ? "bg-purple-50 text-purple-700 border-purple-300"
                                                                                                     : "bg-gray-50 text-gray-700 border-gray-300"
                                                                                         }`}
