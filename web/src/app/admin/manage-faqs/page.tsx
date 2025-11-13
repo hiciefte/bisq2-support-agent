@@ -313,6 +313,13 @@ const formatTimestamp = (timestamp?: string | null): string => {
     }
 };
 
+// Helper function to sanitize CSV values against Excel CSV injection
+const sanitizeForCSV = (value: string) => {
+    const needsPrefix = /^[=+\-@]/.test(value);
+    const safe = needsPrefix ? "'" + value : value;
+    return `"${safe.replace(/"/g, '""')}"`; // quote and escape
+};
+
 // Helper function to export FAQs as CSV
 const exportToCSV = (faqs: FAQ[], filters: any) => {
     // CSV header
@@ -330,13 +337,13 @@ const exportToCSV = (faqs: FAQ[], filters: any) => {
 
     // CSV rows
     const rows = faqs.map((faq) => [
-        `"${faq.question.replace(/"/g, '""')}"`, // Escape quotes in CSV
-        `"${faq.answer.replace(/"/g, '""')}"`,
-        faq.category,
-        faq.source,
+        sanitizeForCSV(faq.question),
+        sanitizeForCSV(faq.answer),
+        sanitizeForCSV(faq.category ?? ""),
+        sanitizeForCSV(faq.source ?? ""),
         faq.verified ? "Yes" : "No",
-        faq.bisq_version || "",
-        `"${formatTimestamp(faq.created_at)}"`, // Quote timestamps to handle commas
+        sanitizeForCSV(faq.bisq_version || ""),
+        `"${formatTimestamp(faq.created_at)}"`,
         `"${formatTimestamp(faq.updated_at)}"`,
         `"${formatTimestamp(faq.verified_at)}"`,
     ]);
@@ -706,97 +713,102 @@ export default function ManageFaqsPage() {
         setSelectedIndex(-1);
     }, [currentPage, filters]);
 
-    const fetchFaqs = useCallback(async (page = 1, isBackgroundRefresh = false) => {
-        // Save scroll position for background refreshes
-        if (isBackgroundRefresh) {
-            savedScrollPositionRef.current = window.scrollY;
-        }
-
-        // Only show loading spinner if not a background refresh
-        if (!isBackgroundRefresh) {
-            setIsLoading(true);
-        }
-
-        try {
-            // Build query parameters
-            const params = new URLSearchParams({
-                page: page.toString(),
-                page_size: pageSize.toString(),
-            });
-
-            if (filters.search_text && filters.search_text.trim()) {
-                params.append("search_text", filters.search_text.trim());
+    const fetchFaqs = useCallback(
+        async (page = 1, isBackgroundRefresh = false) => {
+            // Save scroll position for background refreshes
+            if (isBackgroundRefresh) {
+                savedScrollPositionRef.current = window.scrollY;
             }
 
-            if (filters.categories.length > 0) {
-                params.append("categories", filters.categories.join(","));
+            // Only show loading spinner if not a background refresh
+            if (!isBackgroundRefresh) {
+                setIsLoading(true);
             }
 
-            if (filters.source) {
-                params.append("source", filters.source);
-            }
+            try {
+                // Build query parameters
+                const params = new URLSearchParams({
+                    page: page.toString(),
+                    page_size: pageSize.toString(),
+                });
 
-            if (filters.verified && filters.verified !== "all") {
-                params.append("verified", filters.verified === "verified" ? "true" : "false");
-            }
+                if (filters.search_text && filters.search_text.trim()) {
+                    params.append("search_text", filters.search_text.trim());
+                }
 
-            if (filters.bisq_version && filters.bisq_version.trim()) {
-                params.append("bisq_version", filters.bisq_version.trim());
-            }
+                if (filters.categories.length > 0) {
+                    params.append("categories", filters.categories.join(","));
+                }
 
-            if (filters.verified_from) {
-                params.append("verified_from", format(filters.verified_from, "yyyy-MM-dd"));
-            }
+                if (filters.source) {
+                    params.append("source", filters.source);
+                }
 
-            if (filters.verified_to) {
-                params.append("verified_to", format(filters.verified_to, "yyyy-MM-dd"));
-            }
+                if (filters.verified && filters.verified !== "all") {
+                    params.append("verified", filters.verified === "verified" ? "true" : "false");
+                }
 
-            const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
-            if (response.ok) {
-                const data = await response.json();
+                if (filters.bisq_version && filters.bisq_version.trim()) {
+                    params.append("bisq_version", filters.bisq_version.trim());
+                }
 
-                // Calculate hash of new data for comparison
-                const dataHash = JSON.stringify(data);
+                if (filters.verified_from) {
+                    params.append("verified_from", format(filters.verified_from, "yyyy-MM-dd"));
+                }
 
-                // Only update state if data has actually changed
-                if (dataHash !== previousDataHashRef.current) {
-                    previousDataHashRef.current = dataHash;
-                    setFaqData(data);
-                    setError(null);
+                if (filters.verified_to) {
+                    params.append("verified_to", format(filters.verified_to, "yyyy-MM-dd"));
+                }
 
-                    // Extract unique categories and sources ONLY if no filters are active
-                    // This prevents the category list from disappearing when a category filter is applied
-                    if (data.faqs && !hasActiveFilters) {
-                        const categories = [
-                            ...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)),
-                        ] as string[];
-                        const sources = [
-                            ...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean)),
-                        ] as string[];
-                        setAvailableCategories(categories);
-                        setAvailableSources(sources);
+                const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
+                if (response.ok) {
+                    const data = await response.json();
+
+                    // Calculate hash of new data for comparison
+                    const dataHash = JSON.stringify(data);
+
+                    // Only update state if data has actually changed
+                    if (dataHash !== previousDataHashRef.current) {
+                        previousDataHashRef.current = dataHash;
+                        setFaqData(data);
+                        setError(null);
+
+                        // Extract unique categories and sources ONLY if no filters are active
+                        // This prevents the category list from disappearing when a category filter is applied
+                        if (data.faqs && !hasActiveFilters) {
+                            const categories = [
+                                ...new Set(
+                                    data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)
+                                ),
+                            ] as string[];
+                            const sources = [
+                                ...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean)),
+                            ] as string[];
+                            setAvailableCategories(categories);
+                            setAvailableSources(sources);
+                        }
+                    }
+                } else {
+                    const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
+                    console.error(errorText);
+                    setError(errorText);
+                    if (response.status === 401 || response.status === 403) {
+                        // Let SecureAuth handle authentication errors
+                        window.location.reload();
                     }
                 }
-            } else {
-                const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
-                console.error(errorText);
+            } catch (error) {
+                const errorText = "An unexpected error occurred while fetching FAQs.";
+                console.error(errorText, error);
                 setError(errorText);
-                if (response.status === 401 || response.status === 403) {
-                    // Let SecureAuth handle authentication errors
-                    window.location.reload();
+            } finally {
+                if (!isBackgroundRefresh) {
+                    setIsLoading(false);
                 }
             }
-        } catch (error) {
-            const errorText = "An unexpected error occurred while fetching FAQs.";
-            console.error(errorText, error);
-            setError(errorText);
-        } finally {
-            if (!isBackgroundRefresh) {
-                setIsLoading(false);
-            }
-        }
-    }, [filters, pageSize]); // Dependencies: filters and pageSize are read inside fetchFaqs
+        },
+        [filters, pageSize]
+    ); // Dependencies: filters and pageSize are read inside fetchFaqs
 
     // Auto-refresh interval - must be AFTER fetchFaqs definition
     useEffect(() => {
@@ -979,7 +991,10 @@ export default function ManageFaqsPage() {
                             params.append("source", filters.source);
                         }
                         if (filters.verified && filters.verified !== "all") {
-                            params.append("verified", filters.verified);
+                            params.append(
+                                "verified",
+                                filters.verified === "verified" ? "true" : "false"
+                            );
                         }
 
                         const fetchResponse = await makeAuthenticatedRequest(
@@ -1195,7 +1210,7 @@ export default function ManageFaqsPage() {
                     params.append("source", filters.source);
                 }
                 if (filters.verified && filters.verified !== "all") {
-                    params.append("verified", filters.verified);
+                    params.append("verified", filters.verified === "verified" ? "true" : "false");
                 }
 
                 const fetchResponse = await makeAuthenticatedRequest(

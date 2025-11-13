@@ -179,19 +179,22 @@ def sample_feedback_data() -> list[dict]:
 @pytest.fixture(autouse=True)
 def reset_faq_service_singleton():
     """Reset FAQService singleton before each test to prevent state pollution."""
+    import logging
+
     from app.services.faq_service import FAQService
 
     # Reset singleton state
     if FAQService._instance is not None:
         if hasattr(FAQService._instance, "initialized"):
             delattr(FAQService._instance, "initialized")
-        if hasattr(FAQService, "_file_lock") and FAQService._file_lock is not None:
+        lock = getattr(FAQService._instance, "_file_lock", None)
+        if lock is not None:
             try:
-                FAQService._file_lock.release()
-            except Exception:
-                pass
+                # Safe to attempt; lock may not be acquired at this moment
+                lock.release()
+            except Exception as e:
+                logging.debug("FAQService lock release (pre-test) ignored: %s", e)
     FAQService._instance = None
-    FAQService._file_lock = None
 
     yield
 
@@ -199,13 +202,13 @@ def reset_faq_service_singleton():
     if FAQService._instance is not None:
         if hasattr(FAQService._instance, "initialized"):
             delattr(FAQService._instance, "initialized")
-        if hasattr(FAQService, "_file_lock") and FAQService._file_lock is not None:
+        lock = getattr(FAQService._instance, "_file_lock", None)
+        if lock is not None:
             try:
-                FAQService._file_lock.release()
-            except Exception:
-                pass
+                lock.release()
+            except Exception as e:
+                logging.debug("FAQService lock release (post-test) ignored: %s", e)
     FAQService._instance = None
-    FAQService._file_lock = None
 
 
 @pytest.fixture

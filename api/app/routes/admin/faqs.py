@@ -232,7 +232,7 @@ async def get_faq_stats(
 
     Example queries:
     - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&verified_to=2024-12-31T23:59:59Z
-    - /admin/faqs/stats?verified_from=2024-Q1&categories=Trading,Mediation
+    - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&categories=Trading,Mediation
     """
     logger.info(
         f"Admin request for FAQ stats: verified_from={verified_from}, verified_to={verified_to}, categories={categories}, source={source}, bisq_version={bisq_version}"
