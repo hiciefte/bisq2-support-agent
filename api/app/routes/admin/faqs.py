@@ -411,43 +411,60 @@ async def export_faqs_to_csv(
         return str(timestamp)
 
     def generate_csv_rows():
-        """Generator that yields CSV rows in chunks."""
-        # Write CSV header
-        header = (
-            "Question,Answer,Category,Source,Verified,Bisq Version,"
-            "Created At,Updated At,Verified At\n"
-        )
-        yield header.encode("utf-8")
-
-        # Get all filtered FAQs
-        faqs = faq_service.get_filtered_faqs(
-            search_text=search_text,
-            categories=categories_list,
-            source=source,
-            verified=verified,
-            bisq_version=bisq_version,
-            verified_from=verified_from,
-            verified_to=verified_to,
-        )
-
-        # Stream each FAQ as CSV row
-        for faq in faqs:
-            row = ",".join(
-                [
-                    sanitize_csv_field(faq.question),
-                    sanitize_csv_field(faq.answer),
-                    sanitize_csv_field(faq.category),
-                    sanitize_csv_field(faq.source),
-                    sanitize_csv_field("Yes" if faq.verified else "No"),
-                    sanitize_csv_field(faq.bisq_version),
-                    sanitize_csv_field(format_timestamp(faq.created_at)),
-                    sanitize_csv_field(format_timestamp(faq.updated_at)),
-                    sanitize_csv_field(format_timestamp(faq.verified_at)),
-                ]
+        """Generator that yields CSV rows in chunks with error handling."""
+        try:
+            # Write CSV header
+            header = (
+                "Question,Answer,Category,Source,Verified,Bisq Version,"
+                "Created At,Updated At,Verified At\n"
             )
-            yield (row + "\n").encode("utf-8")
+            yield header.encode("utf-8")
 
-        logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
+            # Get all filtered FAQs
+            faqs = faq_service.get_filtered_faqs(
+                search_text=search_text,
+                categories=categories_list,
+                source=source,
+                verified=verified,
+                bisq_version=bisq_version,
+                verified_from=verified_from,
+                verified_to=verified_to,
+            )
+
+            # Stream each FAQ as CSV row
+            for faq in faqs:
+                try:
+                    row = ",".join(
+                        [
+                            sanitize_csv_field(faq.question),
+                            sanitize_csv_field(faq.answer),
+                            sanitize_csv_field(faq.category),
+                            sanitize_csv_field(faq.source),
+                            sanitize_csv_field("Yes" if faq.verified else "No"),
+                            sanitize_csv_field(faq.bisq_version),
+                            sanitize_csv_field(format_timestamp(faq.created_at)),
+                            sanitize_csv_field(format_timestamp(faq.updated_at)),
+                            sanitize_csv_field(format_timestamp(faq.verified_at)),
+                        ]
+                    )
+                    yield (row + "\n").encode("utf-8")
+                except Exception as e:
+                    # Log error but continue processing remaining FAQs
+                    logger.error(f"Error formatting FAQ row: {e}", exc_info=True)
+                    error_row = sanitize_csv_field(
+                        f"ERROR: Failed to export FAQ - {str(e)}"
+                    )
+                    yield (error_row + "\n").encode("utf-8")
+
+            logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
+        except Exception as e:
+            # Log critical error that prevents export from continuing
+            logger.error(f"CSV export failed: {e}", exc_info=True)
+            # Yield clear error message instead of exposing stack trace
+            error_msg = sanitize_csv_field(
+                "ERROR: CSV export failed - please contact administrator"
+            )
+            yield (error_msg + "\n").encode("utf-8")
 
     # Generate filename with sanitized date range if applicable
     filename_parts = ["faqs_export"]
