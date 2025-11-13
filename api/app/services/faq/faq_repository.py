@@ -340,11 +340,12 @@ class FAQRepository:
         all_faqs_with_ids = self._read_all_faqs_with_ids()
         for faq in all_faqs_with_ids:
             if faq.id == faq_id:
-                # Check if FAQ is being verified for the first time
-                if updated_data.verified and not faq.verified:
-                    updated_data.verified_at = now
-                # If being unverified, clear verified_at
-                elif not updated_data.verified:
+                if updated_data.verified:
+                    if not faq.verified:
+                        updated_data.verified_at = now
+                    elif updated_data.verified_at is None:
+                        updated_data.verified_at = faq.verified_at
+                else:
                     updated_data.verified_at = None
                 # Preserve created_at from original FAQ if not provided
                 if updated_data.created_at is None:
