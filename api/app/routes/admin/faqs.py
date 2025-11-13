@@ -350,10 +350,10 @@ async def export_faqs_to_csv(
     verified_from: Optional[str] = None,
     verified_to: Optional[str] = None,
 ):
-    """Stream FAQs as CSV file with memory-efficient pagination.
+    """Stream FAQs as CSV file.
 
-    This endpoint streams CSV data in chunks to avoid memory issues with large datasets.
-    The browser receives the file progressively without holding all data in memory.
+    This endpoint streams CSV data progressively to the client.
+    Note: Currently loads all filtered FAQs into memory before streaming.
 
     Date filtering example:
     - verified_from=2024-01-01T00:00:00Z
@@ -364,6 +364,37 @@ async def export_faqs_to_csv(
         f"source={source}, verified={verified}, bisq_version={bisq_version}, "
         f"verified_from={verified_from}, verified_to={verified_to}"
     )
+
+    # Validate and sanitize date params for filename (prevent header injection)
+    def sanitize_date_for_filename(date_str: Optional[str], fallback: str) -> str:
+        """Sanitize date string for safe use in filename."""
+        if not date_str:
+            return fallback
+        try:
+            # Parse as ISO 8601 date and reformat to safe YYYY-MM-DD
+            from datetime import datetime
+
+            parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d")
+        except (ValueError, AttributeError):
+            # If parsing fails, sanitize by removing special chars
+            import re
+
+            safe = re.sub(r"[^\w\-]", "_", date_str)[:10]
+            return safe if safe else fallback
+
+    # Pre-validate inputs before streaming starts
+    try:
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
+    except Exception as e:
+        logger.error(f"Invalid categories parameter: {e}")
+        raise BaseAppException(
+            detail="Invalid categories parameter",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="INVALID_CATEGORIES",
+        ) from e
 
     def sanitize_csv_field(value: Optional[str]) -> str:
         """Escape and quote CSV field values."""
@@ -381,59 +412,49 @@ async def export_faqs_to_csv(
 
     def generate_csv_rows():
         """Generator that yields CSV rows in chunks."""
-        try:
-            # Parse comma-separated categories
-            categories_list = (
-                [cat.strip() for cat in categories.split(",")] if categories else None
+        # Write CSV header
+        header = (
+            "Question,Answer,Category,Source,Verified,Bisq Version,"
+            "Created At,Updated At,Verified At\n"
+        )
+        yield header.encode("utf-8")
+
+        # Get all filtered FAQs
+        faqs = faq_service.get_filtered_faqs(
+            search_text=search_text,
+            categories=categories_list,
+            source=source,
+            verified=verified,
+            bisq_version=bisq_version,
+            verified_from=verified_from,
+            verified_to=verified_to,
+        )
+
+        # Stream each FAQ as CSV row
+        for faq in faqs:
+            row = ",".join(
+                [
+                    sanitize_csv_field(faq.question),
+                    sanitize_csv_field(faq.answer),
+                    sanitize_csv_field(faq.category),
+                    sanitize_csv_field(faq.source),
+                    sanitize_csv_field("Yes" if faq.verified else "No"),
+                    sanitize_csv_field(faq.bisq_version),
+                    sanitize_csv_field(format_timestamp(faq.created_at)),
+                    sanitize_csv_field(format_timestamp(faq.updated_at)),
+                    sanitize_csv_field(format_timestamp(faq.verified_at)),
+                ]
             )
+            yield (row + "\n").encode("utf-8")
 
-            # Write CSV header
-            header = (
-                "Question,Answer,Category,Source,Verified,Bisq Version,"
-                "Created At,Updated At,Verified At\n"
-            )
-            yield header.encode("utf-8")
+        logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
 
-            # Get all filtered FAQs (uses memory-efficient method without pagination)
-            faqs = faq_service.get_filtered_faqs(
-                search_text=search_text,
-                categories=categories_list,
-                source=source,
-                verified=verified,
-                bisq_version=bisq_version,
-                verified_from=verified_from,
-                verified_to=verified_to,
-            )
-
-            # Stream each FAQ as CSV row
-            for faq in faqs:
-                row = ",".join(
-                    [
-                        sanitize_csv_field(faq.question),
-                        sanitize_csv_field(faq.answer),
-                        sanitize_csv_field(faq.category),
-                        sanitize_csv_field(faq.source),
-                        sanitize_csv_field("Yes" if faq.verified else "No"),
-                        sanitize_csv_field(faq.bisq_version),
-                        sanitize_csv_field(format_timestamp(faq.created_at)),
-                        sanitize_csv_field(format_timestamp(faq.updated_at)),
-                        sanitize_csv_field(format_timestamp(faq.verified_at)),
-                    ]
-                )
-                yield (row + "\n").encode("utf-8")
-
-            logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
-
-        except Exception as e:
-            logger.error(f"CSV export failed: {e}", exc_info=True)
-            error_msg = "An internal error occurred while exporting FAQs.\n"
-            yield error_msg.encode("utf-8")
-
-    # Generate filename with date range if applicable
+    # Generate filename with sanitized date range if applicable
     filename_parts = ["faqs_export"]
     if verified_from or verified_to:
-        date_range = f"{verified_from or 'start'}_to_{verified_to or 'end'}"
-        filename_parts.append(date_range)
+        safe_from = sanitize_date_for_filename(verified_from, "start")
+        safe_to = sanitize_date_for_filename(verified_to, "end")
+        filename_parts.append(f"{safe_from}_to_{safe_to}")
     filename = "_".join(filename_parts) + ".csv"
 
     # Return streaming response with proper headers

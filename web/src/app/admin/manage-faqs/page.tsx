@@ -316,6 +316,21 @@ const formatTimestamp = (timestamp?: string | null): string => {
     }
 };
 
+// Helper function to serialize dates for API requests
+const serializeDateFilter = (date: Date | undefined, endOfDay: boolean = false): string | null => {
+    if (!date) return null;
+
+    const normalized = new Date(date);
+    if (endOfDay) {
+        // Set to end of day in UTC (23:59:59.999)
+        normalized.setUTCHours(23, 59, 59, 999);
+    } else {
+        // Set to start of day in UTC (00:00:00.000)
+        normalized.setUTCHours(0, 0, 0, 0);
+    }
+    return format(normalized, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+};
+
 export default function ManageFaqsPage() {
     const { toast } = useToast();
     const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
@@ -698,17 +713,13 @@ export default function ManageFaqsPage() {
                 }
 
                 if (filters.verified_from) {
-                    // Set to start of day in UTC (00:00:00)
-                    const startOfDay = new Date(filters.verified_from);
-                    startOfDay.setUTCHours(0, 0, 0, 0);
-                    params.append("verified_from", format(startOfDay, "yyyy-MM-dd'T'HH:mm:ss'Z'"));
+                    const serialized = serializeDateFilter(filters.verified_from, false);
+                    if (serialized) params.append("verified_from", serialized);
                 }
 
                 if (filters.verified_to) {
-                    // Set to end of day in UTC (23:59:59)
-                    const endOfDay = new Date(filters.verified_to);
-                    endOfDay.setUTCHours(23, 59, 59, 999);
-                    params.append("verified_to", format(endOfDay, "yyyy-MM-dd'T'HH:mm:ss'Z'"));
+                    const serialized = serializeDateFilter(filters.verified_to, true);
+                    if (serialized) params.append("verified_to", serialized);
                 }
 
                 const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
@@ -1856,7 +1867,6 @@ export default function ManageFaqsPage() {
                                                     setCurrentPage(1);
                                                 }}
                                                 placeholder="Select start date"
-                                                disabled={false}
                                             />
                                         </div>
 
@@ -1872,7 +1882,6 @@ export default function ManageFaqsPage() {
                                                     setCurrentPage(1);
                                                 }}
                                                 placeholder="Select end date"
-                                                disabled={false}
                                             />
                                         </div>
                                     </div>
@@ -1948,33 +1957,27 @@ export default function ManageFaqsPage() {
                                                     }
 
                                                     if (filters.verified_from) {
-                                                        // Set to start of day in UTC (00:00:00)
-                                                        const startOfDay = new Date(
-                                                            filters.verified_from
+                                                        const serialized = serializeDateFilter(
+                                                            filters.verified_from,
+                                                            false
                                                         );
-                                                        startOfDay.setUTCHours(0, 0, 0, 0);
-                                                        params.append(
-                                                            "verified_from",
-                                                            format(
-                                                                startOfDay,
-                                                                "yyyy-MM-dd'T'HH:mm:ss'Z'"
-                                                            )
-                                                        );
+                                                        if (serialized)
+                                                            params.append(
+                                                                "verified_from",
+                                                                serialized
+                                                            );
                                                     }
 
                                                     if (filters.verified_to) {
-                                                        // Set to end of day in UTC (23:59:59)
-                                                        const endOfDay = new Date(
-                                                            filters.verified_to
+                                                        const serialized = serializeDateFilter(
+                                                            filters.verified_to,
+                                                            true
                                                         );
-                                                        endOfDay.setUTCHours(23, 59, 59, 999);
-                                                        params.append(
-                                                            "verified_to",
-                                                            format(
-                                                                endOfDay,
-                                                                "yyyy-MM-dd'T'HH:mm:ss'Z'"
-                                                            )
-                                                        );
+                                                        if (serialized)
+                                                            params.append(
+                                                                "verified_to",
+                                                                serialized
+                                                            );
                                                     }
 
                                                     // Fetch CSV via server-side streaming endpoint
