@@ -313,64 +313,6 @@ const formatTimestamp = (timestamp?: string | null): string => {
     }
 };
 
-// Helper function to sanitize CSV values against Excel CSV injection
-const sanitizeForCSV = (value: string) => {
-    const needsPrefix = /^[=+\-@]/.test(value);
-    const safe = needsPrefix ? "'" + value : value;
-    return `"${safe.replace(/"/g, '""')}"`; // quote and escape
-};
-
-// Helper function to export FAQs as CSV
-const exportToCSV = (faqs: FAQ[], filters: any) => {
-    // CSV header
-    const headers = [
-        "Question",
-        "Answer",
-        "Category",
-        "Source",
-        "Verified",
-        "Bisq Version",
-        "Created At",
-        "Updated At",
-        "Verified At",
-    ];
-
-    // CSV rows
-    const rows = faqs.map((faq) => [
-        sanitizeForCSV(faq.question),
-        sanitizeForCSV(faq.answer),
-        sanitizeForCSV(faq.category ?? ""),
-        sanitizeForCSV(faq.source ?? ""),
-        faq.verified ? "Yes" : "No",
-        sanitizeForCSV(faq.bisq_version || ""),
-        `"${formatTimestamp(faq.created_at)}"`,
-        `"${formatTimestamp(faq.updated_at)}"`,
-        `"${formatTimestamp(faq.verified_at)}"`,
-    ]);
-
-    // Combine headers and rows
-    const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
-
-    // Create download link
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-
-    // Generate filename with date range if applicable
-    const dateRange =
-        filters.verified_from || filters.verified_to
-            ? `_${filters.verified_from ? format(filters.verified_from, "yyyy-MM-dd") : "start"}_to_${filters.verified_to ? format(filters.verified_to, "yyyy-MM-dd") : "end"}`
-            : "";
-    link.setAttribute("download", `faqs_export${dateRange}.csv`);
-
-    // Trigger download
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-};
-
 export default function ManageFaqsPage() {
     const { toast } = useToast();
     const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
@@ -1584,6 +1526,7 @@ export default function ManageFaqsPage() {
         filters.categories.length > 0 ||
         filters.source ||
         filters.verified !== "all" ||
+        filters.bisq_version ||
         filters.verified_from ||
         filters.verified_to;
 
@@ -1949,10 +1892,8 @@ export default function ManageFaqsPage() {
                                                 }
 
                                                 try {
-                                                    const params = new URLSearchParams({
-                                                        page: "1",
-                                                        page_size: "999999",
-                                                    });
+                                                    // Build query parameters for export endpoint
+                                                    const params = new URLSearchParams();
 
                                                     if (
                                                         filters.search_text &&
@@ -2002,7 +1943,7 @@ export default function ManageFaqsPage() {
                                                             "verified_from",
                                                             format(
                                                                 filters.verified_from,
-                                                                "yyyy-MM-dd"
+                                                                "yyyy-MM-dd'T'HH:mm:ss'Z'"
                                                             )
                                                         );
                                                     }
@@ -2012,30 +1953,27 @@ export default function ManageFaqsPage() {
                                                             "verified_to",
                                                             format(
                                                                 filters.verified_to,
-                                                                "yyyy-MM-dd"
+                                                                "yyyy-MM-dd'T'HH:mm:ss'Z'"
                                                             )
                                                         );
                                                     }
 
-                                                    const response = await makeAuthenticatedRequest(
-                                                        `/admin/faqs?${params.toString()}`
-                                                    );
+                                                    // Get API key from session storage
+                                                    const apiKey =
+                                                        sessionStorage.getItem("adminApiKey");
+                                                    if (apiKey) {
+                                                        params.append("api_key", apiKey);
+                                                    }
 
-                                                    if (!response.ok)
-                                                        throw new Error(
-                                                            "Failed to fetch FAQs for export"
-                                                        );
+                                                    // Trigger download via server-side streaming endpoint
+                                                    const exportUrl = `${API_URL}/admin/faqs/export?${params.toString()}`;
+                                                    window.open(exportUrl, "_blank");
 
-                                                    const allFaqsData = await response.json();
-                                                    exportToCSV(allFaqsData.faqs, filters);
-                                                    sonnerToast.success(
-                                                        `Exported ${allFaqsData.faqs.length} FAQ${allFaqsData.faqs.length === 1 ? "" : "s"}`,
-                                                        {
-                                                            description: hasActiveFilters
-                                                                ? "All filtered results exported"
-                                                                : "All FAQs exported",
-                                                        }
-                                                    );
+                                                    sonnerToast.success("Export started", {
+                                                        description: hasActiveFilters
+                                                            ? "Downloading filtered FAQs"
+                                                            : "Downloading all FAQs",
+                                                    });
                                                 } catch (error) {
                                                     console.error("Export failed:", error);
                                                     sonnerToast.error("Failed to export FAQs", {
