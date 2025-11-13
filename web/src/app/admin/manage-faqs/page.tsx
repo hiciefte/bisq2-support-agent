@@ -79,6 +79,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DatePicker } from "@/components/ui/date-picker";
 import { makeAuthenticatedRequest } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/config";
 import debounce from "lodash.debounce";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -1966,7 +1967,7 @@ export default function ManageFaqsPage() {
                                                     }
 
                                                     // Trigger download via server-side streaming endpoint
-                                                    const exportUrl = `${API_URL}/admin/faqs/export?${params.toString()}`;
+                                                    const exportUrl = `${API_BASE_URL}/admin/faqs/export?${params.toString()}`;
                                                     window.open(exportUrl, "_blank");
 
                                                     sonnerToast.success("Export started", {

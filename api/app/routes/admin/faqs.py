@@ -426,7 +426,7 @@ async def export_faqs_to_csv(
 
         except Exception as e:
             logger.error(f"CSV export failed: {e}", exc_info=True)
-            error_msg = f"Export error: {str(e)}\n"
+            error_msg = "An internal error occurred while exporting FAQs.\n"
             yield error_msg.encode("utf-8")
 
     # Generate filename with date range if applicable
