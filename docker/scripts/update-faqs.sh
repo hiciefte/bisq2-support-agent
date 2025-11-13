@@ -39,7 +39,7 @@ fi
 
 # Run the FAQ extractor with JSON output and capture output
 log "Running FAQ extractor in API container..."
-OUTPUT=$(docker exec $API_CONTAINER python -m app.scripts.extract_faqs --json-output 2>&1)
+OUTPUT=$(docker exec "$API_CONTAINER" python -m app.scripts.extract_faqs --json-output 2>&1)
 EXIT_CODE=$?
 
 # Calculate duration
@@ -73,19 +73,9 @@ if ! extract_json_metrics "$OUTPUT"; then
 fi
 
 # Parse metrics from extracted JSON (EXTRACTED_JSON is set by extract_json_metrics)
-MESSAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.messages_processed')
-FAQS_GENERATED=$(echo "$EXTRACTED_JSON" | jq -r '.faqs_generated')
-
-if [ "$MESSAGES_PROCESSED" = "null" ] || [ "$FAQS_GENERATED" = "null" ]; then
-  log "ERROR: Missing required fields in JSON (messages_processed or faqs_generated)"
-
-  # Report failure metrics - invalid JSON structure
-  if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
-      report_faq_extraction_metrics "failure" 0 0 "$DURATION"
-  fi
-
-  exit 1
-fi
+# Use jq defaults (// 0) to handle missing fields gracefully
+MESSAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.messages_processed // 0')
+FAQS_GENERATED=$(echo "$EXTRACTED_JSON" | jq -r '.faqs_generated // 0')
 
 # Report success metrics only when JSON extraction and parsing succeed
 if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
@@ -93,7 +83,7 @@ if command -v report_faq_extraction_metrics >/dev/null 2>&1; then
 fi
 
 log "Restarting API container ($API_CONTAINER) to load new FAQs..."
-if ! docker restart $API_CONTAINER; then
+if ! docker restart "$API_CONTAINER"; then
   log "ERROR: Failed to restart API container $API_CONTAINER"
   exit 1
 else

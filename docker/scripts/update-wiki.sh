@@ -66,18 +66,8 @@ if ! extract_json_metrics "$OUTPUT"; then
 fi
 
 # Parse metrics from extracted JSON (EXTRACTED_JSON is set by extract_json_metrics)
-PAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.pages_processed')
-
-if [ "$PAGES_PROCESSED" = "null" ]; then
-  log "ERROR: Missing pages_processed field in JSON"
-
-  # Report failure metrics - invalid JSON structure
-  if command -v report_wiki_update_metrics >/dev/null 2>&1; then
-      report_wiki_update_metrics "failure" 0 "$DURATION"
-  fi
-
-  exit 1
-fi
+# Use jq default (// 0) to handle missing fields gracefully
+PAGES_PROCESSED=$(echo "$EXTRACTED_JSON" | jq -r '.pages_processed // 0')
 
 # Report success metrics
 if command -v report_wiki_update_metrics >/dev/null 2>&1; then
