@@ -284,8 +284,6 @@ async def get_faq_stats(
             "breakdown_by_category": category_breakdown,
             "breakdown_by_source": source_breakdown,
         }
-
-        return stats
     except Exception as e:
         logger.error(f"Failed to fetch FAQ stats: {e}", exc_info=True)
         raise BaseAppException(
@@ -293,6 +291,8 @@ async def get_faq_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="FAQ_STATS_FAILED",
         ) from e
+    else:
+        return stats
 
 
 @router.post("/faqs/bulk-verify", response_model=BulkFAQResponse)

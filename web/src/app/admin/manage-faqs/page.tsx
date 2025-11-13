@@ -308,6 +308,8 @@ const formatTimestamp = (timestamp?: string | null): string => {
             day: "numeric",
             hour: "2-digit",
             minute: "2-digit",
+            timeZone: "UTC",
+            timeZoneName: "short",
         }).format(date);
     } catch {
         return "Invalid date";
@@ -696,11 +698,17 @@ export default function ManageFaqsPage() {
                 }
 
                 if (filters.verified_from) {
-                    params.append("verified_from", format(filters.verified_from, "yyyy-MM-dd"));
+                    // Set to start of day in UTC (00:00:00)
+                    const startOfDay = new Date(filters.verified_from);
+                    startOfDay.setUTCHours(0, 0, 0, 0);
+                    params.append("verified_from", format(startOfDay, "yyyy-MM-dd'T'HH:mm:ss'Z'"));
                 }
 
                 if (filters.verified_to) {
-                    params.append("verified_to", format(filters.verified_to, "yyyy-MM-dd"));
+                    // Set to end of day in UTC (23:59:59)
+                    const endOfDay = new Date(filters.verified_to);
+                    endOfDay.setUTCHours(23, 59, 59, 999);
+                    params.append("verified_to", format(endOfDay, "yyyy-MM-dd'T'HH:mm:ss'Z'"));
                 }
 
                 const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
@@ -1940,40 +1948,73 @@ export default function ManageFaqsPage() {
                                                     }
 
                                                     if (filters.verified_from) {
+                                                        // Set to start of day in UTC (00:00:00)
+                                                        const startOfDay = new Date(
+                                                            filters.verified_from
+                                                        );
+                                                        startOfDay.setUTCHours(0, 0, 0, 0);
                                                         params.append(
                                                             "verified_from",
                                                             format(
-                                                                filters.verified_from,
+                                                                startOfDay,
                                                                 "yyyy-MM-dd'T'HH:mm:ss'Z'"
                                                             )
                                                         );
                                                     }
 
                                                     if (filters.verified_to) {
+                                                        // Set to end of day in UTC (23:59:59)
+                                                        const endOfDay = new Date(
+                                                            filters.verified_to
+                                                        );
+                                                        endOfDay.setUTCHours(23, 59, 59, 999);
                                                         params.append(
                                                             "verified_to",
                                                             format(
-                                                                filters.verified_to,
+                                                                endOfDay,
                                                                 "yyyy-MM-dd'T'HH:mm:ss'Z'"
                                                             )
                                                         );
                                                     }
 
-                                                    // Get API key from session storage
-                                                    const apiKey =
-                                                        sessionStorage.getItem("adminApiKey");
-                                                    if (apiKey) {
-                                                        params.append("api_key", apiKey);
+                                                    // Fetch CSV via server-side streaming endpoint
+                                                    // Authentication handled via cookies in makeAuthenticatedRequest
+                                                    const exportUrl = `${API_BASE_URL}/admin/faqs/export?${params.toString()}`;
+                                                    const response =
+                                                        await makeAuthenticatedRequest(exportUrl);
+
+                                                    if (!response.ok) {
+                                                        throw new Error(
+                                                            `Export failed: ${response.status}`
+                                                        );
                                                     }
 
-                                                    // Trigger download via server-side streaming endpoint
-                                                    const exportUrl = `${API_BASE_URL}/admin/faqs/export?${params.toString()}`;
-                                                    window.open(exportUrl, "_blank");
+                                                    // Create blob and trigger download
+                                                    const blob = await response.blob();
+                                                    const url = window.URL.createObjectURL(blob);
+                                                    const a = document.createElement("a");
+                                                    a.href = url;
 
-                                                    sonnerToast.success("Export started", {
+                                                    // Extract filename from Content-Disposition header or use default
+                                                    const contentDisposition =
+                                                        response.headers.get("Content-Disposition");
+                                                    const filenameMatch =
+                                                        contentDisposition?.match(
+                                                            /filename="?([^"]+)"?/
+                                                        );
+                                                    a.download = filenameMatch
+                                                        ? filenameMatch[1]
+                                                        : "faqs_export.csv";
+
+                                                    document.body.appendChild(a);
+                                                    a.click();
+                                                    document.body.removeChild(a);
+                                                    window.URL.revokeObjectURL(url);
+
+                                                    sonnerToast.success("Export complete", {
                                                         description: hasActiveFilters
-                                                            ? "Downloading filtered FAQs"
-                                                            : "Downloading all FAQs",
+                                                            ? "Filtered FAQs downloaded"
+                                                            : "All FAQs downloaded",
                                                     });
                                                 } catch (error) {
                                                     console.error("Export failed:", error);
