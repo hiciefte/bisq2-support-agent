@@ -123,7 +123,7 @@ httpx==0.27.2
     #   huggingface-hub
     #   langsmith
     #   openai
-huggingface-hub==1.1.2
+huggingface-hub==1.1.4
     # via tokenizers
 humanfriendly==10.0
     # via coloredlogs
