@@ -764,6 +764,9 @@ export default function ManageFaqsPage() {
                 if (response.ok) {
                     const data = await response.json();
 
+                    // Clear error on successful response (regardless of whether data changed)
+                    setError(null);
+
                     // Calculate hash of new data for comparison
                     const dataHash = JSON.stringify(data);
 
@@ -771,7 +774,6 @@ export default function ManageFaqsPage() {
                     if (dataHash !== previousDataHashRef.current) {
                         previousDataHashRef.current = dataHash;
                         setFaqData(data);
-                        setError(null);
 
                         // Extract unique categories and sources ONLY if no filters are active
                         // This prevents the category list from disappearing when a category filter is applied

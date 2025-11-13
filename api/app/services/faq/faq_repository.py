@@ -208,6 +208,53 @@ class FAQRepository:
         """
         return self._read_all_faqs_with_ids()
 
+    def get_filtered_faqs(
+        self,
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
+        verified: Optional[bool] = None,
+        bisq_version: Optional[str] = None,
+        verified_from: Optional[datetime] = None,
+        verified_to: Optional[datetime] = None,
+    ) -> List[FAQIdentifiedItem]:
+        """Get all FAQs matching the specified filters without pagination.
+
+        This method is designed for aggregation operations (e.g., statistics)
+        where all matching FAQs are needed without pagination limits.
+
+        Args:
+            search_text: Optional text search filter
+            categories: Optional category filter
+            source: Optional source filter
+            verified: Optional verification status filter
+            bisq_version: Optional Bisq version filter
+            verified_from: Optional start date for verified_at filter (inclusive)
+            verified_to: Optional end date for verified_at filter (inclusive)
+
+        Returns:
+            List of all FAQs matching the specified filters
+        """
+        # Get all FAQs
+        all_faqs = self._read_all_faqs_with_ids()
+
+        # Reverse order to show newest FAQs first
+        all_faqs = list(reversed(all_faqs))
+
+        # Apply filters
+        filtered_faqs = self._apply_filters(
+            all_faqs,
+            search_text,
+            categories,
+            source,
+            verified,
+            bisq_version,
+            verified_from,
+            verified_to,
+        )
+
+        return filtered_faqs
+
     def get_faqs_paginated(
         self,
         page: int = 1,

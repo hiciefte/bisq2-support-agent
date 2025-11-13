@@ -169,6 +169,68 @@ class FAQService:
         """Get all FAQs with their stable IDs."""
         return self.repository.get_all_faqs()
 
+    def get_filtered_faqs(
+        self,
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
+        verified: Optional[bool] = None,
+        bisq_version: Optional[str] = None,
+        verified_from: Optional[str] = None,
+        verified_to: Optional[str] = None,
+    ) -> List[FAQIdentifiedItem]:
+        """Get all FAQs matching the specified filters without pagination.
+
+        This method is designed for aggregation operations (e.g., statistics)
+        where all matching FAQs are needed without pagination limits.
+
+        Args:
+            search_text: Optional text search filter
+            categories: Optional category filter
+            source: Optional source filter
+            verified: Optional verification status filter
+            bisq_version: Optional Bisq version filter
+            verified_from: ISO 8601 date string for start of verified_at range
+            verified_to: ISO 8601 date string for end of verified_at range
+
+        Returns:
+            List of all FAQs matching the specified filters
+        """
+        from datetime import datetime, timezone
+
+        # Parse date strings to datetime objects if provided
+        verified_from_dt = None
+        if verified_from:
+            try:
+                verified_from_dt = datetime.fromisoformat(
+                    verified_from.replace("Z", "+00:00")
+                )
+                if verified_from_dt.tzinfo is None:
+                    verified_from_dt = verified_from_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                logger.warning(f"Invalid verified_from date format: {verified_from}")
+
+        verified_to_dt = None
+        if verified_to:
+            try:
+                verified_to_dt = datetime.fromisoformat(
+                    verified_to.replace("Z", "+00:00")
+                )
+                if verified_to_dt.tzinfo is None:
+                    verified_to_dt = verified_to_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                logger.warning(f"Invalid verified_to date format: {verified_to}")
+
+        return self.repository.get_filtered_faqs(
+            search_text=search_text,
+            categories=categories,
+            source=source,
+            verified=verified,
+            bisq_version=bisq_version,
+            verified_from=verified_from_dt,
+            verified_to=verified_to_dt,
+        )
+
     def get_faqs_paginated(
         self,
         page: int = 1,

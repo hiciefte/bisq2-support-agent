@@ -244,11 +244,9 @@ async def get_faq_stats(
             [cat.strip() for cat in categories.split(",")] if categories else None
         )
 
-        # Get all FAQs matching the filters (no pagination)
-        # We pass verified=True to only count verified FAQs for the date range stats
-        result = faq_service.get_faqs_paginated(
-            page=1,
-            page_size=999999,  # Large number to get all matching FAQs
+        # Get all FAQs matching the filters without pagination
+        # Use get_filtered_faqs() instead of paginated method for aggregation
+        faqs = faq_service.get_filtered_faqs(
             categories=categories_list,
             source=source,
             verified=True,  # Only count verified FAQs
@@ -258,17 +256,17 @@ async def get_faq_stats(
         )
 
         # Calculate additional statistics
-        total_verified = result.total_count
+        total_verified = len(faqs)
 
         # Get breakdown by category
         category_breakdown: dict[str, int] = {}
-        for faq in result.faqs:
+        for faq in faqs:
             cat = faq.category or "Uncategorized"
             category_breakdown[cat] = category_breakdown.get(cat, 0) + 1
 
         # Get breakdown by source
         source_breakdown: dict[str, int] = {}
-        for faq in result.faqs:
+        for faq in faqs:
             src = faq.source or "Unknown"
             source_breakdown[src] = source_breakdown.get(src, 0) + 1
 
