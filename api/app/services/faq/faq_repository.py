@@ -8,6 +8,7 @@ handling file I/O with proper locking and stable ID generation.
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -47,6 +48,9 @@ class FAQRepository:
                 f"FAQ file not found at {self._faq_file_path}. Creating an empty file."
             )
             try:
+                # Ensure parent directory exists before creating lock/file
+                self._faq_file_path.parent.mkdir(parents=True, exist_ok=True)
+
                 # Use 'a' mode to create if it doesn't exist without truncating
                 with self._file_lock, open(self._faq_file_path, "a"):
                     pass
@@ -102,7 +106,8 @@ class FAQRepository:
         try:
             with self._file_lock, open(self._faq_file_path, "w") as f:
                 for faq in faqs:
-                    f.write(json.dumps(faq.model_dump()) + "\n")
+                    # Use mode='json' to serialize datetime objects to ISO 8601 strings
+                    f.write(json.dumps(faq.model_dump(mode="json")) + "\n")
         except IOError as e:
             logger.error(f"Failed to write FAQs to disk: {e}")
 
@@ -114,6 +119,8 @@ class FAQRepository:
         source: Optional[str] = None,
         verified: Optional[bool] = None,
         bisq_version: Optional[str] = None,
+        verified_from: Optional[datetime] = None,
+        verified_to: Optional[datetime] = None,
     ) -> List[FAQIdentifiedItem]:
         """Apply filters to FAQ list.
 
@@ -124,6 +131,8 @@ class FAQRepository:
             source: Source type to filter by
             verified: Verification status to filter by
             bisq_version: Bisq version to filter by
+            verified_from: Start date for verified_at filter (inclusive)
+            verified_to: End date for verified_at filter (inclusive)
 
         Returns:
             Filtered list of FAQs
@@ -171,6 +180,24 @@ class FAQRepository:
                 if faq.bisq_version and faq.bisq_version.lower() == version_lower
             ]
 
+        # Date range filter for verified_at
+        if verified_from is not None or verified_to is not None:
+            date_filtered_faqs = []
+            for faq in filtered_faqs:
+                # Only filter FAQs that have a verified_at timestamp
+                if faq.verified_at is None:
+                    continue
+
+                # Check if verified_at is within the date range
+                if verified_from is not None and faq.verified_at < verified_from:
+                    continue
+                if verified_to is not None and faq.verified_at > verified_to:
+                    continue
+
+                date_filtered_faqs.append(faq)
+
+            filtered_faqs = date_filtered_faqs
+
         return filtered_faqs
 
     def get_all_faqs(self) -> List[FAQIdentifiedItem]:
@@ -181,6 +208,53 @@ class FAQRepository:
         """
         return self._read_all_faqs_with_ids()
 
+    def get_filtered_faqs(
+        self,
+        search_text: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        source: Optional[str] = None,
+        verified: Optional[bool] = None,
+        bisq_version: Optional[str] = None,
+        verified_from: Optional[datetime] = None,
+        verified_to: Optional[datetime] = None,
+    ) -> List[FAQIdentifiedItem]:
+        """Get all FAQs matching the specified filters without pagination.
+
+        This method is designed for aggregation operations (e.g., statistics)
+        where all matching FAQs are needed without pagination limits.
+
+        Args:
+            search_text: Optional text search filter
+            categories: Optional category filter
+            source: Optional source filter
+            verified: Optional verification status filter
+            bisq_version: Optional Bisq version filter
+            verified_from: Optional start date for verified_at filter (inclusive)
+            verified_to: Optional end date for verified_at filter (inclusive)
+
+        Returns:
+            List of all FAQs matching the specified filters
+        """
+        # Get all FAQs
+        all_faqs = self._read_all_faqs_with_ids()
+
+        # Reverse order to show newest FAQs first
+        all_faqs = list(reversed(all_faqs))
+
+        # Apply filters
+        filtered_faqs = self._apply_filters(
+            all_faqs,
+            search_text,
+            categories,
+            source,
+            verified,
+            bisq_version,
+            verified_from,
+            verified_to,
+        )
+
+        return filtered_faqs
+
     def get_faqs_paginated(
         self,
         page: int = 1,
@@ -190,6 +264,8 @@ class FAQRepository:
         source: Optional[str] = None,
         verified: Optional[bool] = None,
         bisq_version: Optional[str] = None,
+        verified_from: Optional[datetime] = None,
+        verified_to: Optional[datetime] = None,
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support.
 
@@ -201,6 +277,8 @@ class FAQRepository:
             source: Optional source filter
             verified: Optional verification status filter
             bisq_version: Optional Bisq version filter
+            verified_from: Optional start date for verified_at filter (inclusive)
+            verified_to: Optional end date for verified_at filter (inclusive)
 
         Returns:
             Paginated FAQ response with metadata
@@ -215,7 +293,14 @@ class FAQRepository:
 
         # Apply filters
         filtered_faqs = self._apply_filters(
-            all_faqs, search_text, categories, source, verified, bisq_version
+            all_faqs,
+            search_text,
+            categories,
+            source,
+            verified,
+            bisq_version,
+            verified_from,
+            verified_to,
         )
         total_count = len(filtered_faqs)
 
@@ -254,6 +339,16 @@ class FAQRepository:
         Raises:
             ValueError: If duplicate FAQ already exists
         """
+        # Auto-populate timestamp fields if not provided
+        now = datetime.now(timezone.utc)
+        if faq_item.created_at is None:
+            faq_item.created_at = now
+        if faq_item.updated_at is None:
+            faq_item.updated_at = now
+        # verified_at should only be set if verified=True
+        if faq_item.verified and faq_item.verified_at is None:
+            faq_item.verified_at = now
+
         new_id = self._generate_stable_id(faq_item)
 
         # Prevent duplicates
@@ -263,7 +358,8 @@ class FAQRepository:
 
         try:
             with self._file_lock, open(self._faq_file_path, "a") as f:
-                f.write(json.dumps(faq_item.model_dump()) + "\n")
+                # Use mode='json' to serialize datetime objects to ISO 8601 strings
+                f.write(json.dumps(faq_item.model_dump(mode="json")) + "\n")
 
             logger.info(f"Added new FAQ with ID: {new_id}")
             return FAQIdentifiedItem(id=new_id, **faq_item.model_dump())
@@ -283,9 +379,27 @@ class FAQRepository:
         Returns:
             Updated FAQ with new ID, or None if not found
         """
-        all_faqs_with_ids = self._read_all_faqs_with_ids()
-        updated = False
+        # Auto-populate updated_at timestamp
+        now = datetime.now(timezone.utc)
+        updated_data.updated_at = now
 
+        # If verification status changed from False to True, set verified_at
+        all_faqs_with_ids = self._read_all_faqs_with_ids()
+        for faq in all_faqs_with_ids:
+            if faq.id == faq_id:
+                if updated_data.verified:
+                    if not faq.verified:
+                        updated_data.verified_at = now
+                    elif updated_data.verified_at is None:
+                        updated_data.verified_at = faq.verified_at
+                else:
+                    updated_data.verified_at = None
+                # Preserve created_at from original FAQ if not provided
+                if updated_data.created_at is None:
+                    updated_data.created_at = faq.created_at
+                break
+
+        updated = False
         core_faqs_to_write: List[FAQItem] = []
         updated_faq_with_id: Optional[FAQIdentifiedItem] = None
 

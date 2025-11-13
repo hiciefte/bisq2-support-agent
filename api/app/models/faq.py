@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,11 @@ class FAQItem(BaseModel):
     bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = (
         "Bisq 2"  # Bisq version applicability
     )
+    created_at: Optional[datetime] = None  # When FAQ was created
+    updated_at: Optional[datetime] = None  # When FAQ was last updated
+    verified_at: Optional[datetime] = (
+        None  # When FAQ was verified (only set when verified=True)
+    )
 
 
 class FAQIdentifiedItem(FAQItem):
@@ -25,6 +31,9 @@ class FAQUpdateRequest(BaseModel):
     source: Optional[str] = None
     verified: Optional[bool] = None
     bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = None
+    created_at: Optional[datetime] = None  # Normally not updated, used for migrations
+    updated_at: Optional[datetime] = None  # Auto-populated on updates
+    verified_at: Optional[datetime] = None  # Auto-populated when verified=True
 
 
 class FAQListResponse(BaseModel):

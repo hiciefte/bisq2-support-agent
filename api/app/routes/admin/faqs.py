@@ -17,7 +17,7 @@ from app.models.faq import (
 )
 from app.services.faq_service import FAQService
 from fastapi import APIRouter, Depends, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -47,10 +47,21 @@ async def get_all_faqs_for_admin_route(
     source: Optional[str] = None,
     verified: Optional[bool] = None,  # Filter by verification status
     bisq_version: Optional[str] = None,  # Filter by Bisq version
+    verified_from: Optional[
+        str
+    ] = None,  # ISO 8601 date string for start of verified_at range
+    verified_to: Optional[
+        str
+    ] = None,  # ISO 8601 date string for end of verified_at range
 ):
-    """Get FAQs for the admin interface with pagination and filtering support."""
+    """Get FAQs for the admin interface with pagination and filtering support.
+
+    Date filtering example:
+    - verified_from=2024-01-01T00:00:00Z
+    - verified_to=2024-12-31T23:59:59Z
+    """
     logger.info(
-        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, bisq_version={bisq_version}"
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, bisq_version={bisq_version}, verified_from={verified_from}, verified_to={verified_to}"
     )
 
     try:
@@ -67,10 +78,12 @@ async def get_all_faqs_for_admin_route(
             source=source,
             verified=verified,
             bisq_version=bisq_version,
+            verified_from=verified_from,
+            verified_to=verified_to,
         )
         return result
     except Exception as e:
-        logger.error(f"Failed to fetch FAQs: {e}", exc_info=True)
+        logger.exception("Failed to fetch FAQs")
         raise BaseAppException(
             detail="Failed to fetch FAQs",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -86,7 +99,7 @@ async def add_new_faq_route(faq_item: FAQItem):
         new_faq = faq_service.add_faq(faq_item)
         return new_faq
     except Exception as e:
-        logger.error(f"Failed to add FAQ: {e}", exc_info=True)
+        logger.exception("Failed to add FAQ")
         raise BaseAppException(
             detail="Failed to add FAQ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -138,7 +151,7 @@ async def verify_faq_route(faq_id: str):
     except FAQNotFoundError:
         raise
     except Exception as e:
-        logger.error(f"Failed to verify FAQ: {e}", exc_info=True)
+        logger.exception("Failed to verify FAQ")
         raise BaseAppException(
             detail="Failed to verify FAQ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -195,12 +208,91 @@ async def bulk_delete_faqs_route(request: BulkFAQRequest):
             message=message,
         )
     except Exception as e:
-        logger.error(f"Bulk delete operation failed: {e}", exc_info=True)
+        logger.exception("Bulk delete operation failed")
         raise BaseAppException(
             detail="Bulk delete operation failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="BULK_DELETE_FAILED",
         ) from e
+
+
+@router.get("/faqs/stats")
+async def get_faq_stats(
+    verified_from: Optional[str] = None,  # ISO 8601 date string
+    verified_to: Optional[str] = None,  # ISO 8601 date string
+    categories: Optional[str] = None,  # Comma-separated list
+    source: Optional[str] = None,
+    bisq_version: Optional[str] = None,
+):
+    """Get FAQ statistics including counts by verification date range.
+
+    This endpoint provides aggregate statistics about FAQs, useful for reporting.
+    Date filtering allows admins to answer questions like "How many FAQs were
+    verified between date X and date Y?"
+
+    Example queries:
+    - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&verified_to=2024-12-31T23:59:59Z
+    - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&categories=Trading,Mediation
+    """
+    logger.info(
+        f"Admin request for FAQ stats: verified_from={verified_from}, verified_to={verified_to}, categories={categories}, source={source}, bisq_version={bisq_version}"
+    )
+
+    try:
+        # Parse comma-separated categories
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
+
+        # Get all FAQs matching the filters without pagination
+        # Use get_filtered_faqs() instead of paginated method for aggregation
+        faqs = faq_service.get_filtered_faqs(
+            categories=categories_list,
+            source=source,
+            verified=True,  # Only count verified FAQs
+            bisq_version=bisq_version,
+            verified_from=verified_from,
+            verified_to=verified_to,
+        )
+
+        # Calculate additional statistics
+        total_verified = len(faqs)
+
+        # Get breakdown by category
+        category_breakdown: dict[str, int] = {}
+        for faq in faqs:
+            cat = faq.category or "Uncategorized"
+            category_breakdown[cat] = category_breakdown.get(cat, 0) + 1
+
+        # Get breakdown by source
+        source_breakdown: dict[str, int] = {}
+        for faq in faqs:
+            src = faq.source or "Unknown"
+            source_breakdown[src] = source_breakdown.get(src, 0) + 1
+
+        stats = {
+            "total_verified_count": total_verified,
+            "date_range": {
+                "from": verified_from,
+                "to": verified_to,
+            },
+            "filters": {
+                "categories": categories_list,
+                "source": source,
+                "bisq_version": bisq_version,
+            },
+            "breakdown_by_category": category_breakdown,
+            "breakdown_by_source": source_breakdown,
+        }
+    except Exception as e:
+        logger.exception("Failed to fetch FAQ stats")
+        raise BaseAppException(
+            detail="Failed to fetch FAQ statistics",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FAQ_STATS_FAILED",
+        ) from e
+    else:
+        return stats
 
 
 @router.post("/faqs/bulk-verify", response_model=BulkFAQResponse)
@@ -240,9 +332,154 @@ async def bulk_verify_faqs_route(request: BulkFAQRequest):
             message=message,
         )
     except Exception as e:
-        logger.error(f"Bulk verify operation failed: {e}", exc_info=True)
+        logger.exception("Bulk verify operation failed")
         raise BaseAppException(
             detail="Bulk verify operation failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="BULK_VERIFY_FAILED",
         ) from e
+
+
+@router.get("/faqs/export")
+async def export_faqs_to_csv(
+    search_text: Optional[str] = None,
+    categories: Optional[str] = None,
+    source: Optional[str] = None,
+    verified: Optional[bool] = None,
+    bisq_version: Optional[str] = None,
+    verified_from: Optional[str] = None,
+    verified_to: Optional[str] = None,
+):
+    """Stream FAQs as CSV file.
+
+    This endpoint streams CSV data progressively to the client.
+    Note: Currently loads all filtered FAQs into memory before streaming.
+
+    Date filtering example:
+    - verified_from=2024-01-01T00:00:00Z
+    - verified_to=2024-12-31T23:59:59Z
+    """
+    logger.info(
+        f"CSV export request: search_text={search_text}, categories={categories}, "
+        f"source={source}, verified={verified}, bisq_version={bisq_version}, "
+        f"verified_from={verified_from}, verified_to={verified_to}"
+    )
+
+    # Validate and sanitize date params for filename (prevent header injection)
+    def sanitize_date_for_filename(date_str: Optional[str], fallback: str) -> str:
+        """Sanitize date string for safe use in filename."""
+        if not date_str:
+            return fallback
+        try:
+            # Parse as ISO 8601 date and reformat to safe YYYY-MM-DD
+            from datetime import datetime
+
+            parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d")
+        except (ValueError, AttributeError):
+            # If parsing fails, sanitize by removing special chars
+            import re
+
+            safe = re.sub(r"[^\w\-]", "_", date_str)[:10]
+            return safe if safe else fallback
+
+    # Pre-validate inputs before streaming starts
+    try:
+        categories_list = (
+            [cat.strip() for cat in categories.split(",")] if categories else None
+        )
+    except Exception as e:
+        logger.exception("Invalid categories parameter")
+        raise BaseAppException(
+            detail="Invalid categories parameter",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="INVALID_CATEGORIES",
+        ) from e
+
+    def sanitize_csv_field(value: Optional[str]) -> str:
+        """Escape and quote CSV field values."""
+        if value is None:
+            return '""'
+        # Replace double quotes with two double quotes (CSV escaping)
+        safe = str(value).replace('"', '""')
+        return f'"{safe}"'
+
+    def format_timestamp(timestamp: Optional[str]) -> str:
+        """Format timestamp for CSV output."""
+        if timestamp is None:
+            return ""
+        return str(timestamp)
+
+    def generate_csv_rows():
+        """Generator that yields CSV rows in chunks with error handling."""
+        try:
+            # Write CSV header
+            header = (
+                "Question,Answer,Category,Source,Verified,Bisq Version,"
+                "Created At,Updated At,Verified At\n"
+            )
+            yield header.encode("utf-8")
+
+            # Get all filtered FAQs
+            faqs = faq_service.get_filtered_faqs(
+                search_text=search_text,
+                categories=categories_list,
+                source=source,
+                verified=verified,
+                bisq_version=bisq_version,
+                verified_from=verified_from,
+                verified_to=verified_to,
+            )
+
+            # Stream each FAQ as CSV row
+            for faq in faqs:
+                try:
+                    row = ",".join(
+                        [
+                            sanitize_csv_field(faq.question),
+                            sanitize_csv_field(faq.answer),
+                            sanitize_csv_field(faq.category),
+                            sanitize_csv_field(faq.source),
+                            sanitize_csv_field("Yes" if faq.verified else "No"),
+                            sanitize_csv_field(faq.bisq_version),
+                            sanitize_csv_field(format_timestamp(faq.created_at)),
+                            sanitize_csv_field(format_timestamp(faq.updated_at)),
+                            sanitize_csv_field(format_timestamp(faq.verified_at)),
+                        ]
+                    )
+                    yield (row + "\n").encode("utf-8")
+                except Exception as e:
+                    # Log error but continue processing remaining FAQs
+                    logger.exception("Error formatting FAQ row")
+                    error_row = sanitize_csv_field(
+                        f"ERROR: Failed to export FAQ - {str(e)}"
+                    )
+                    yield (error_row + "\n").encode("utf-8")
+
+            logger.info(f"CSV export completed: {len(faqs)} FAQs exported")
+        except Exception:
+            # Log critical error that prevents export from continuing
+            logger.exception("CSV export failed")
+            # Yield clear error message instead of exposing stack trace
+            error_msg = sanitize_csv_field(
+                "ERROR: CSV export failed - please contact administrator"
+            )
+            yield (error_msg + "\n").encode("utf-8")
+
+    # Generate filename with sanitized date range if applicable
+    filename_parts = ["faqs_export"]
+    if verified_from or verified_to:
+        safe_from = sanitize_date_for_filename(verified_from, "start")
+        safe_to = sanitize_date_for_filename(verified_to, "end")
+        filename_parts.append(f"{safe_from}_to_{safe_to}")
+    filename = "_".join(filename_parts) + ".csv"
+
+    # Return streaming response with proper headers
+    return StreamingResponse(
+        generate_csv_rows(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache",
+        },
+    )

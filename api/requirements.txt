@@ -39,7 +39,7 @@ build==1.3.0
     # via
     #   chromadb
     #   pip-tools
-cachetools==6.2.1
+cachetools==6.2.2
     # via google-auth
 certifi==2025.11.12
     # via
@@ -80,7 +80,7 @@ docstring-parser==0.14.1
     # via aisuite
 durationpy==0.10
     # via kubernetes
-fastapi==0.121.1
+fastapi==0.121.2
     # via -r api/requirements.in
 filelock==3.20.0
     # via
@@ -123,7 +123,7 @@ httpx==0.27.2
     #   huggingface-hub
     #   langsmith
     #   openai
-huggingface-hub==1.1.2
+huggingface-hub==1.1.4
     # via tokenizers
 humanfriendly==10.0
     # via coloredlogs
@@ -305,7 +305,7 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-protobuf==6.33.0
+protobuf==6.33.1
     # via
     #   googleapis-common-protos
     #   onnxruntime

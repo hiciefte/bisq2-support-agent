@@ -7,9 +7,12 @@ Tests cover:
 - Thread-safe file operations with locking
 - Duplicate prevention
 - Pagination and filtering
+- Timestamp management (created_at, updated_at, verified_at)
+- Date range filtering
 """
 
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import portalocker
@@ -359,3 +362,371 @@ class TestFAQRepositoryThreadSafety:
         assert (
             len(all_faqs) >= 8
         ), f"Expected at least 8 FAQs written, got {len(all_faqs)}"
+
+
+class TestFAQRepositoryTimestamps:
+    """Test timestamp management for FAQs."""
+
+    def test_add_faq_auto_populates_timestamps(self, faq_repository, sample_faq_item):
+        """Test that adding FAQ auto-populates created_at and updated_at."""
+        before_add = datetime.now(timezone.utc)
+        result = faq_repository.add_faq(sample_faq_item)
+        after_add = datetime.now(timezone.utc)
+
+        assert result.created_at is not None
+        assert result.updated_at is not None
+        assert before_add <= result.created_at <= after_add
+        assert before_add <= result.updated_at <= after_add
+
+    def test_add_verified_faq_sets_verified_at(self, faq_repository):
+        """Test that adding verified FAQ sets verified_at timestamp."""
+        faq = FAQItem(
+            question="Test question?",
+            answer="Test answer",
+            category="test",
+            source="manual",
+            verified=True,
+        )
+
+        before_add = datetime.now(timezone.utc)
+        result = faq_repository.add_faq(faq)
+        after_add = datetime.now(timezone.utc)
+
+        assert result.verified is True
+        assert result.verified_at is not None
+        assert before_add <= result.verified_at <= after_add
+
+    def test_add_unverified_faq_has_null_verified_at(
+        self, faq_repository, sample_faq_item
+    ):
+        """Test that adding unverified FAQ has None verified_at."""
+        result = faq_repository.add_faq(sample_faq_item)
+
+        assert result.verified is False
+        assert result.verified_at is None
+
+    def test_update_faq_updates_updated_at(self, faq_repository, sample_faq_item):
+        """Test that updating FAQ updates the updated_at timestamp."""
+        # Add FAQ
+        added_faq = faq_repository.add_faq(sample_faq_item)
+        original_updated_at = added_faq.updated_at
+
+        # Wait a small amount to ensure timestamp difference
+        import time
+
+        time.sleep(0.01)
+
+        # Update FAQ
+        updated_data = FAQItem(
+            question=sample_faq_item.question,
+            answer="Updated answer",
+            category="test",
+            source="manual",
+        )
+
+        result = faq_repository.update_faq(added_faq.id, updated_data)
+
+        assert result is not None
+        assert result.updated_at > original_updated_at
+
+    def test_update_faq_preserves_created_at(self, faq_repository, sample_faq_item):
+        """Test that updating FAQ preserves the original created_at."""
+        # Add FAQ
+        added_faq = faq_repository.add_faq(sample_faq_item)
+        original_created_at = added_faq.created_at
+
+        # Update FAQ
+        updated_data = FAQItem(
+            question=sample_faq_item.question,
+            answer="Updated answer",
+            category="test",
+            source="manual",
+        )
+
+        result = faq_repository.update_faq(added_faq.id, updated_data)
+
+        assert result is not None
+        assert result.created_at == original_created_at
+
+    def test_verify_faq_sets_verified_at(self, faq_repository, sample_faq_item):
+        """Test that verifying FAQ sets verified_at timestamp."""
+        # Add unverified FAQ
+        added_faq = faq_repository.add_faq(sample_faq_item)
+        assert added_faq.verified_at is None
+
+        # Verify it
+        updated_data = FAQItem(
+            question=sample_faq_item.question,
+            answer=sample_faq_item.answer,
+            category=sample_faq_item.category,
+            source=sample_faq_item.source,
+            verified=True,
+        )
+
+        before_verify = datetime.now(timezone.utc)
+        result = faq_repository.update_faq(added_faq.id, updated_data)
+        after_verify = datetime.now(timezone.utc)
+
+        assert result is not None
+        assert result.verified is True
+        assert result.verified_at is not None
+        assert before_verify <= result.verified_at <= after_verify
+
+    def test_unverify_faq_clears_verified_at(self, faq_repository):
+        """Test that unverifying FAQ clears verified_at timestamp."""
+        # Add verified FAQ
+        faq = FAQItem(
+            question="Test question?",
+            answer="Test answer",
+            category="test",
+            source="manual",
+            verified=True,
+        )
+        added_faq = faq_repository.add_faq(faq)
+        assert added_faq.verified_at is not None
+
+        # Unverify it
+        updated_data = FAQItem(
+            question=faq.question,
+            answer=faq.answer,
+            category=faq.category,
+            source=faq.source,
+            verified=False,
+        )
+
+        result = faq_repository.update_faq(added_faq.id, updated_data)
+
+        assert result is not None
+        assert result.verified is False
+        assert result.verified_at is None
+
+
+class TestFAQRepositoryDateRangeFiltering:
+    """Test date range filtering for FAQs."""
+
+    def test_filter_by_verified_from_date(self, faq_repository):
+        """Test filtering FAQs by verified_from date."""
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+
+        # Add verified FAQ with specific timestamp
+        faq1 = FAQItem(
+            question="Old FAQ?",
+            answer="Old answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=yesterday,
+        )
+        faq2 = FAQItem(
+            question="New FAQ?",
+            answer="New answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+
+        faq_repository.add_faq(faq1)
+        faq_repository.add_faq(faq2)
+
+        # Filter by verified_from = now (should exclude yesterday's FAQ)
+        response = faq_repository.get_faqs_paginated(verified_from=now)
+
+        # Should only include FAQs verified at or after 'now'
+        assert all(faq.verified_at >= now for faq in response.faqs if faq.verified_at)
+
+    def test_filter_by_verified_to_date(self, faq_repository):
+        """Test filtering FAQs by verified_to date."""
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+        tomorrow = now + timedelta(days=1)
+
+        # Add verified FAQs with different timestamps
+        faq1 = FAQItem(
+            question="Old FAQ?",
+            answer="Old answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=yesterday,
+        )
+        faq2 = FAQItem(
+            question="Future FAQ?",
+            answer="Future answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=tomorrow,
+        )
+
+        faq_repository.add_faq(faq1)
+        faq_repository.add_faq(faq2)
+
+        # Filter by verified_to = now (should exclude tomorrow's FAQ)
+        response = faq_repository.get_faqs_paginated(verified_to=now)
+
+        # Should only include FAQs verified at or before 'now'
+        assert all(faq.verified_at <= now for faq in response.faqs if faq.verified_at)
+
+    def test_filter_by_date_range(self, faq_repository):
+        """Test filtering FAQs by date range (from and to)."""
+        now = datetime.now(timezone.utc)
+        two_days_ago = now - timedelta(days=2)
+        yesterday = now - timedelta(days=1)
+        tomorrow = now + timedelta(days=1)
+
+        # Add verified FAQs across date range
+        faq1 = FAQItem(
+            question="Very old FAQ?",
+            answer="Very old answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=two_days_ago,
+        )
+        faq2 = FAQItem(
+            question="Yesterday FAQ?",
+            answer="Yesterday answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=yesterday,
+        )
+        faq3 = FAQItem(
+            question="Today FAQ?",
+            answer="Today answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+        faq4 = FAQItem(
+            question="Future FAQ?",
+            answer="Future answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=tomorrow,
+        )
+
+        faq_repository.add_faq(faq1)
+        faq_repository.add_faq(faq2)
+        faq_repository.add_faq(faq3)
+        faq_repository.add_faq(faq4)
+
+        # Filter by date range: yesterday to today (should include 2 FAQs)
+        response = faq_repository.get_faqs_paginated(
+            verified_from=yesterday, verified_to=now
+        )
+
+        # Should only include FAQs in date range
+        assert all(
+            yesterday <= faq.verified_at <= now
+            for faq in response.faqs
+            if faq.verified_at
+        )
+
+    def test_date_filter_excludes_unverified_faqs(self, faq_repository):
+        """Test that date filtering excludes FAQs without verified_at."""
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+
+        # Add unverified FAQ (no verified_at)
+        faq1 = FAQItem(
+            question="Unverified FAQ?",
+            answer="Unverified answer",
+            category="test",
+            source="manual",
+            verified=False,
+        )
+
+        # Add verified FAQ
+        faq2 = FAQItem(
+            question="Verified FAQ?",
+            answer="Verified answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+
+        faq_repository.add_faq(faq1)
+        faq_repository.add_faq(faq2)
+
+        # Filter by date range (should exclude unverified FAQ)
+        response = faq_repository.get_faqs_paginated(
+            verified_from=yesterday, verified_to=now
+        )
+
+        # All results should have verified_at timestamps
+        assert all(faq.verified_at is not None for faq in response.faqs)
+
+    def test_date_filter_with_empty_results(self, faq_repository):
+        """Test date filtering with no matching results."""
+        now = datetime.now(timezone.utc)
+        future_start = now + timedelta(days=10)
+        future_end = now + timedelta(days=20)
+
+        # Add FAQ with current timestamp
+        faq = FAQItem(
+            question="Current FAQ?",
+            answer="Current answer",
+            category="test",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+        faq_repository.add_faq(faq)
+
+        # Filter by future date range (should return empty)
+        response = faq_repository.get_faqs_paginated(
+            verified_from=future_start, verified_to=future_end
+        )
+
+        assert response.total_count == 0
+        assert len(response.faqs) == 0
+
+    def test_date_filter_combined_with_other_filters(self, faq_repository):
+        """Test date filtering combined with category and search filters."""
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+
+        # Add verified FAQs with different categories
+        faq1 = FAQItem(
+            question="Backup FAQ?",
+            answer="Backup answer",
+            category="backup",
+            source="manual",
+            verified=True,
+            verified_at=yesterday,
+        )
+        faq2 = FAQItem(
+            question="Security FAQ?",
+            answer="Security answer",
+            category="security",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+        faq3 = FAQItem(
+            question="Another backup FAQ?",
+            answer="Another backup answer",
+            category="backup",
+            source="manual",
+            verified=True,
+            verified_at=now,
+        )
+
+        faq_repository.add_faq(faq1)
+        faq_repository.add_faq(faq2)
+        faq_repository.add_faq(faq3)
+
+        # Filter by date range + category
+        response = faq_repository.get_faqs_paginated(
+            verified_from=now, categories=["backup"]
+        )
+
+        # Should only include backup FAQs verified today or later
+        assert all(faq.category == "backup" for faq in response.faqs)
+        assert all(faq.verified_at >= now for faq in response.faqs if faq.verified_at)

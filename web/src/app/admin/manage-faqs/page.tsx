@@ -36,6 +36,8 @@ import {
     Check,
     FileQuestion,
     MoreVertical,
+    Download,
+    Clock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -75,8 +77,11 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DatePicker } from "@/components/ui/date-picker";
 import { makeAuthenticatedRequest } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/config";
 import debounce from "lodash.debounce";
+import { format, startOfDay, endOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "sonner";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -90,6 +95,9 @@ interface FAQ {
     source: string;
     verified: boolean;
     bisq_version?: "Bisq 1" | "Bisq 2" | "General";
+    created_at?: string;
+    updated_at?: string;
+    verified_at?: string | null;
 }
 
 interface FAQListResponse {
@@ -289,6 +297,33 @@ const InlineEditFAQ = memo(
 
 InlineEditFAQ.displayName = "InlineEditFAQ";
 
+// Helper function to format dates for display
+const formatTimestamp = (timestamp?: string | null): string => {
+    if (!timestamp) return "N/A";
+    try {
+        const date = new Date(timestamp);
+        return new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "UTC",
+            timeZoneName: "short",
+        }).format(date);
+    } catch {
+        return "Invalid date";
+    }
+};
+
+// Helper function to serialize dates for API requests
+const serializeDateFilter = (date: Date | undefined, toEndOfDay: boolean = false): string | null => {
+    if (!date) return null;
+    // Use startOfDay/endOfDay to preserve the full local day and convert to proper UTC instants
+    const localBoundary = toEndOfDay ? endOfDay(date) : startOfDay(date);
+    return localBoundary.toISOString();
+};
+
 export default function ManageFaqsPage() {
     const { toast } = useToast();
     const [faqData, setFaqData] = useState<FAQListResponse | null>(null);
@@ -314,6 +349,8 @@ export default function ManageFaqsPage() {
         source: "",
         verified: "all" as "all" | "verified" | "unverified",
         bisq_version: "",
+        verified_from: undefined as Date | undefined,
+        verified_to: undefined as Date | undefined,
     });
 
     // Available categories and sources from the data
@@ -403,17 +440,6 @@ export default function ManageFaqsPage() {
         fetchFaqs(1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filters]);
-
-    // Auto-refresh interval - runs once on mount, independent of filters
-    useEffect(() => {
-        const intervalId = setInterval(() => {
-            fetchFaqs(currentPageRef.current, true);
-        }, 30000);
-
-        // Cleanup interval on unmount
-        return () => clearInterval(intervalId);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Empty array = runs once on mount
 
     // Keyboard shortcuts using react-hotkeys-hook
     // Command palette (works everywhere)
@@ -640,88 +666,118 @@ export default function ManageFaqsPage() {
         setSelectedIndex(-1);
     }, [currentPage, filters]);
 
-    const fetchFaqs = async (page = 1, isBackgroundRefresh = false) => {
-        // Save scroll position for background refreshes
-        if (isBackgroundRefresh) {
-            savedScrollPositionRef.current = window.scrollY;
-        }
-
-        // Only show loading spinner if not a background refresh
-        if (!isBackgroundRefresh) {
-            setIsLoading(true);
-        }
-
-        try {
-            // Build query parameters
-            const params = new URLSearchParams({
-                page: page.toString(),
-                page_size: pageSize.toString(),
-            });
-
-            if (filters.search_text && filters.search_text.trim()) {
-                params.append("search_text", filters.search_text.trim());
+    const fetchFaqs = useCallback(
+        async (page = 1, isBackgroundRefresh = false) => {
+            // Save scroll position for background refreshes
+            if (isBackgroundRefresh) {
+                savedScrollPositionRef.current = window.scrollY;
             }
 
-            if (filters.categories.length > 0) {
-                params.append("categories", filters.categories.join(","));
+            // Only show loading spinner if not a background refresh
+            if (!isBackgroundRefresh) {
+                setIsLoading(true);
             }
 
-            if (filters.source) {
-                params.append("source", filters.source);
-            }
+            try {
+                // Build query parameters
+                const params = new URLSearchParams({
+                    page: page.toString(),
+                    page_size: pageSize.toString(),
+                });
 
-            if (filters.verified && filters.verified !== "all") {
-                params.append("verified", filters.verified === "verified" ? "true" : "false");
-            }
+                if (filters.search_text && filters.search_text.trim()) {
+                    params.append("search_text", filters.search_text.trim());
+                }
 
-            if (filters.bisq_version && filters.bisq_version.trim()) {
-                params.append("bisq_version", filters.bisq_version.trim());
-            }
+                if (filters.categories.length > 0) {
+                    params.append("categories", filters.categories.join(","));
+                }
 
-            const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
-            if (response.ok) {
-                const data = await response.json();
+                if (filters.source) {
+                    params.append("source", filters.source);
+                }
 
-                // Calculate hash of new data for comparison
-                const dataHash = JSON.stringify(data);
+                if (filters.verified && filters.verified !== "all") {
+                    params.append("verified", filters.verified === "verified" ? "true" : "false");
+                }
 
-                // Only update state if data has actually changed
-                if (dataHash !== previousDataHashRef.current) {
-                    previousDataHashRef.current = dataHash;
-                    setFaqData(data);
+                if (filters.bisq_version && filters.bisq_version.trim()) {
+                    params.append("bisq_version", filters.bisq_version.trim());
+                }
+
+                if (filters.verified_from) {
+                    const serialized = serializeDateFilter(filters.verified_from, false);
+                    if (serialized) params.append("verified_from", serialized);
+                }
+
+                if (filters.verified_to) {
+                    const serialized = serializeDateFilter(filters.verified_to, true);
+                    if (serialized) params.append("verified_to", serialized);
+                }
+
+                const response = await makeAuthenticatedRequest(`/admin/faqs?${params.toString()}`);
+                if (response.ok) {
+                    const data = await response.json();
+
+                    // Clear error on successful response (regardless of whether data changed)
                     setError(null);
 
-                    // Extract unique categories and sources for filter options
-                    if (data.faqs) {
-                        const categories = [
-                            ...new Set(data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)),
-                        ] as string[];
-                        const sources = [
-                            ...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean)),
-                        ] as string[];
-                        setAvailableCategories(categories);
-                        setAvailableSources(sources);
+                    // Calculate hash of new data for comparison
+                    const dataHash = JSON.stringify(data);
+
+                    // Only update state if data has actually changed
+                    if (dataHash !== previousDataHashRef.current) {
+                        previousDataHashRef.current = dataHash;
+                        setFaqData(data);
+
+                        // Extract unique categories and sources ONLY if no filters are active
+                        // This prevents the category list from disappearing when a category filter is applied
+                        if (data.faqs && !hasActiveFilters) {
+                            const categories = [
+                                ...new Set(
+                                    data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)
+                                ),
+                            ] as string[];
+                            const sources = [
+                                ...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean)),
+                            ] as string[];
+                            setAvailableCategories(categories);
+                            setAvailableSources(sources);
+                        }
+                    }
+                } else {
+                    const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
+                    console.error(errorText);
+                    setError(errorText);
+                    if (response.status === 401 || response.status === 403) {
+                        // Let SecureAuth handle authentication errors
+                        window.location.reload();
                     }
                 }
-            } else {
-                const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
-                console.error(errorText);
+            } catch (error) {
+                const errorText = "An unexpected error occurred while fetching FAQs.";
+                console.error(errorText, error);
                 setError(errorText);
-                if (response.status === 401 || response.status === 403) {
-                    // Let SecureAuth handle authentication errors
-                    window.location.reload();
+            } finally {
+                if (!isBackgroundRefresh) {
+                    setIsLoading(false);
                 }
             }
-        } catch (error) {
-            const errorText = "An unexpected error occurred while fetching FAQs.";
-            console.error(errorText, error);
-            setError(errorText);
-        } finally {
-            if (!isBackgroundRefresh) {
-                setIsLoading(false);
-            }
-        }
-    };
+        },
+        [filters, pageSize]
+    ); // Dependencies: filters and pageSize are read inside fetchFaqs
+
+    // Auto-refresh interval - must be AFTER fetchFaqs definition
+    useEffect(() => {
+        const intervalId = setInterval(() => {
+            // Use current page from ref, and pass true for background refresh
+            // The fetchFaqs function will use the current filters state
+            fetchFaqs(currentPageRef.current, true);
+        }, 30000);
+
+        // Cleanup interval on unmount
+        return () => clearInterval(intervalId);
+    }, [fetchFaqs]); // Include fetchFaqs so interval uses latest version with current filters
 
     const handleFormSubmit = async (e: FormEvent) => {
         e.preventDefault();
@@ -892,7 +948,10 @@ export default function ManageFaqsPage() {
                             params.append("source", filters.source);
                         }
                         if (filters.verified && filters.verified !== "all") {
-                            params.append("verified", filters.verified);
+                            params.append(
+                                "verified",
+                                filters.verified === "verified" ? "true" : "false"
+                            );
                         }
 
                         const fetchResponse = await makeAuthenticatedRequest(
@@ -1108,7 +1167,7 @@ export default function ManageFaqsPage() {
                     params.append("source", filters.source);
                 }
                 if (filters.verified && filters.verified !== "all") {
-                    params.append("verified", filters.verified);
+                    params.append("verified", filters.verified === "verified" ? "true" : "false");
                 }
 
                 const fetchResponse = await makeAuthenticatedRequest(
@@ -1466,6 +1525,8 @@ export default function ManageFaqsPage() {
             source: "",
             verified: "all",
             bisq_version: "",
+            verified_from: undefined,
+            verified_to: undefined,
         });
         // Also clear the input field value
         if (searchInputRef.current) {
@@ -1477,7 +1538,10 @@ export default function ManageFaqsPage() {
         filters.search_text ||
         filters.categories.length > 0 ||
         filters.source ||
-        filters.verified !== "all";
+        filters.verified !== "all" ||
+        filters.bisq_version ||
+        filters.verified_from ||
+        filters.verified_to;
 
     return (
         <TooltipProvider>
@@ -1566,26 +1630,6 @@ export default function ManageFaqsPage() {
                                     </SelectContent>
                                 </Select>
 
-                                {/* Source Filter Chip */}
-                                <Select
-                                    value={filters.source || "all"}
-                                    onValueChange={handleSourceChange}
-                                >
-                                    <SelectTrigger className="h-8 w-auto gap-2 px-3 border-dashed">
-                                        <Badge variant="outline" className="px-0 border-0">
-                                            {filters.source || "All Sources"}
-                                        </Badge>
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Sources</SelectItem>
-                                        {availableSources.map((source) => (
-                                            <SelectItem key={source} value={source}>
-                                                {source}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-
                                 {/* Verified Status Filter Chip */}
                                 <Select
                                     value={filters.verified || "all"}
@@ -1612,7 +1656,18 @@ export default function ManageFaqsPage() {
                                     </SelectContent>
                                 </Select>
 
-                                {/* Active Filter Badges */}
+                                {/* Advanced Filter Button */}
+                                <Button
+                                    onClick={() => setShowFilters(!showFilters)}
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 border-dashed"
+                                >
+                                    <Filter className="mr-2 h-4 w-4" />
+                                    Advanced
+                                </Button>
+
+                                {/* Reset All Filters Button */}
                                 {hasActiveFilters && (
                                     <Button
                                         variant="ghost"
@@ -1624,17 +1679,6 @@ export default function ManageFaqsPage() {
                                         Reset
                                     </Button>
                                 )}
-
-                                {/* Legacy Filter Button (for backwards compatibility) */}
-                                <Button
-                                    onClick={() => setShowFilters(!showFilters)}
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 border-dashed ml-auto"
-                                >
-                                    <Filter className="mr-2 h-4 w-4" />
-                                    Advanced
-                                </Button>
                             </div>
                         </div>
                     </div>
@@ -1713,78 +1757,300 @@ export default function ManageFaqsPage() {
                                     </div>
                                 </div>
 
-                                {/* Source */}
-                                <div className="space-y-2">
-                                    <Label htmlFor="source">Source</Label>
-                                    <Select
-                                        value={filters.source || "all"}
-                                        onValueChange={handleSourceChange}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Select source" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="all">All Sources</SelectItem>
-                                            {availableSources.map((source) => (
-                                                <SelectItem key={source} value={source}>
-                                                    {source}
+                                {/* Verified Status, Source, and Bisq Version - Three columns */}
+                                <div className="grid grid-cols-3 gap-4">
+                                    {/* Verified Status */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="verified-status">Verification Status</Label>
+                                        <Select
+                                            value={filters.verified || "all"}
+                                            onValueChange={(value) => {
+                                                setFilters((prev) => ({
+                                                    ...prev,
+                                                    verified: value as
+                                                        | "all"
+                                                        | "verified"
+                                                        | "unverified",
+                                                }));
+                                            }}
+                                        >
+                                            <SelectTrigger id="verified-status">
+                                                <SelectValue placeholder="All Status" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All Status</SelectItem>
+                                                <SelectItem value="verified">
+                                                    Verified Only
                                                 </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                                <SelectItem value="unverified">
+                                                    Unverified Only
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    {/* Source */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="source">Source</Label>
+                                        <Select
+                                            value={filters.source || "all"}
+                                            onValueChange={handleSourceChange}
+                                        >
+                                            <SelectTrigger id="source">
+                                                <SelectValue placeholder="Select source" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All Sources</SelectItem>
+                                                {availableSources.map((source) => (
+                                                    <SelectItem key={source} value={source}>
+                                                        {source}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    {/* Bisq Version */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bisq-version-filter">Bisq Version</Label>
+                                        <Select
+                                            value={filters.bisq_version || "all"}
+                                            onValueChange={(value) => {
+                                                setFilters({
+                                                    ...filters,
+                                                    bisq_version: value === "all" ? "" : value,
+                                                });
+                                                setCurrentPage(1);
+                                            }}
+                                        >
+                                            <SelectTrigger id="bisq-version-filter">
+                                                <SelectValue placeholder="All Versions" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All Versions</SelectItem>
+                                                <SelectItem value="Bisq 1">Bisq 1</SelectItem>
+                                                <SelectItem value="Bisq 2">Bisq 2</SelectItem>
+                                                <SelectItem value="General">General</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 </div>
 
-                                {/* Bisq Version */}
-                                <div className="space-y-2">
-                                    <Label htmlFor="bisq-version-filter">Bisq Version</Label>
-                                    <Select
-                                        value={filters.bisq_version || "all"}
-                                        onValueChange={(value) => {
-                                            setFilters({
-                                                ...filters,
-                                                bisq_version: value === "all" ? "" : value,
-                                            });
-                                            setCurrentPage(1);
-                                        }}
-                                    >
-                                        <SelectTrigger id="bisq-version-filter">
-                                            <SelectValue placeholder="All Versions" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="all">All Versions</SelectItem>
-                                            <SelectItem value="Bisq 1">Bisq 1</SelectItem>
-                                            <SelectItem value="Bisq 2">Bisq 2</SelectItem>
-                                            <SelectItem value="General">General</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                                {/* Date Range Filtering */}
+                                <div className="space-y-4 pt-4 border-t">
+                                    <div className="space-y-2">
+                                        <Label className="text-sm font-medium">
+                                            Verification Date Range
+                                        </Label>
+                                        <p className="text-xs text-muted-foreground">
+                                            Filter FAQs verified within a specific date range
+                                        </p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {/* From Date */}
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">
+                                                From Date
+                                            </Label>
+                                            <DatePicker
+                                                value={filters.verified_from}
+                                                onChange={(date) => {
+                                                    setFilters({ ...filters, verified_from: date });
+                                                    setCurrentPage(1);
+                                                }}
+                                                placeholder="Select start date"
+                                            />
+                                        </div>
+
+                                        {/* To Date */}
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">
+                                                To Date
+                                            </Label>
+                                            <DatePicker
+                                                value={filters.verified_to}
+                                                onChange={(date) => {
+                                                    setFilters({ ...filters, verified_to: date });
+                                                    setCurrentPage(1);
+                                                }}
+                                                placeholder="Select end date"
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {/* Filter Actions */}
-                                <div className="flex justify-between pt-4 border-t">
-                                    <Button
-                                        variant="outline"
-                                        onClick={clearAllFilters}
-                                        disabled={!hasActiveFilters}
-                                        size="sm"
-                                    >
-                                        <RotateCcw className="mr-2 h-4 w-4" />
-                                        Reset Filters
-                                    </Button>
-                                    <div className="text-sm text-muted-foreground">
-                                        {hasActiveFilters && (
+                                {/* Filter Actions - Reset and Export */}
+                                <div className="space-y-3 pt-4 border-t">
+                                    {/* Action Buttons Row */}
+                                    <div className="flex items-center gap-3">
+                                        <Button
+                                            variant="outline"
+                                            onClick={clearAllFilters}
+                                            disabled={!hasActiveFilters}
+                                            size="sm"
+                                            className="flex-shrink-0"
+                                        >
+                                            <RotateCcw className="mr-2 h-4 w-4" />
+                                            Reset Filters
+                                        </Button>
+
+                                        <Button
+                                            onClick={async () => {
+                                                if (!faqData || faqData.total_count === 0) {
+                                                    sonnerToast.error("No FAQs to export");
+                                                    return;
+                                                }
+
+                                                try {
+                                                    // Build query parameters for export endpoint
+                                                    const params = new URLSearchParams();
+
+                                                    if (
+                                                        filters.search_text &&
+                                                        filters.search_text.trim()
+                                                    ) {
+                                                        params.append(
+                                                            "search_text",
+                                                            filters.search_text.trim()
+                                                        );
+                                                    }
+
+                                                    if (filters.categories.length > 0) {
+                                                        params.append(
+                                                            "categories",
+                                                            filters.categories.join(",")
+                                                        );
+                                                    }
+
+                                                    if (filters.source && filters.source.trim()) {
+                                                        params.append(
+                                                            "source",
+                                                            filters.source.trim()
+                                                        );
+                                                    }
+
+                                                    if (filters.verified !== "all") {
+                                                        params.append(
+                                                            "verified",
+                                                            filters.verified === "verified"
+                                                                ? "true"
+                                                                : "false"
+                                                        );
+                                                    }
+
+                                                    if (
+                                                        filters.bisq_version &&
+                                                        filters.bisq_version.trim()
+                                                    ) {
+                                                        params.append(
+                                                            "bisq_version",
+                                                            filters.bisq_version.trim()
+                                                        );
+                                                    }
+
+                                                    if (filters.verified_from) {
+                                                        const serialized = serializeDateFilter(
+                                                            filters.verified_from,
+                                                            false
+                                                        );
+                                                        if (serialized)
+                                                            params.append(
+                                                                "verified_from",
+                                                                serialized
+                                                            );
+                                                    }
+
+                                                    if (filters.verified_to) {
+                                                        const serialized = serializeDateFilter(
+                                                            filters.verified_to,
+                                                            true
+                                                        );
+                                                        if (serialized)
+                                                            params.append(
+                                                                "verified_to",
+                                                                serialized
+                                                            );
+                                                    }
+
+                                                    // Fetch CSV via server-side streaming endpoint
+                                                    // Authentication handled via cookies in makeAuthenticatedRequest
+                                                    // makeAuthenticatedRequest internally prefixes with API_BASE_URL
+                                                    const response = await makeAuthenticatedRequest(
+                                                        `/admin/faqs/export?${params.toString()}`
+                                                    );
+
+                                                    if (!response.ok) {
+                                                        throw new Error(
+                                                            `Export failed: ${response.status}`
+                                                        );
+                                                    }
+
+                                                    // Create blob and trigger download
+                                                    const blob = await response.blob();
+                                                    const url = window.URL.createObjectURL(blob);
+                                                    const a = document.createElement("a");
+                                                    a.href = url;
+
+                                                    // Extract filename from Content-Disposition header or use default
+                                                    const contentDisposition =
+                                                        response.headers.get("Content-Disposition");
+                                                    const filenameMatch =
+                                                        contentDisposition?.match(
+                                                            /filename="?([^"]+)"?/
+                                                        );
+                                                    a.download = filenameMatch
+                                                        ? filenameMatch[1]
+                                                        : "faqs_export.csv";
+
+                                                    document.body.appendChild(a);
+                                                    a.click();
+                                                    document.body.removeChild(a);
+                                                    window.URL.revokeObjectURL(url);
+
+                                                    sonnerToast.success("Export complete", {
+                                                        description: hasActiveFilters
+                                                            ? "Filtered FAQs downloaded"
+                                                            : "All FAQs downloaded",
+                                                    });
+                                                } catch (error) {
+                                                    console.error("Export failed:", error);
+                                                    sonnerToast.error("Failed to export FAQs", {
+                                                        description: "Please try again",
+                                                    });
+                                                }
+                                            }}
+                                            variant="default"
+                                            size="sm"
+                                            disabled={!faqData || faqData.total_count === 0}
+                                        >
+                                            <Download className="mr-2 h-4 w-4" />
+                                            Export {faqData?.total_count || 0} FAQs to CSV
+                                        </Button>
+                                    </div>
+
+                                    {/* Active Filters Summary */}
+                                    {hasActiveFilters && (
+                                        <div className="text-sm text-muted-foreground">
                                             <span>
                                                 {[
                                                     filters.search_text && "Text search",
                                                     filters.categories.length > 0 &&
                                                         `${filters.categories.length} categor${filters.categories.length === 1 ? "y" : "ies"}`,
                                                     filters.source && "Source",
+                                                    filters.verified !== "all" &&
+                                                        "Verification status",
+                                                    filters.bisq_version && "Bisq version",
+                                                    (filters.verified_from ||
+                                                        filters.verified_to) &&
+                                                        "Date range",
                                                 ]
                                                     .filter(Boolean)
                                                     .join(", ")}{" "}
                                                 applied
                                             </span>
-                                        )}
-                                    </div>
+                                        </div>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
@@ -2235,9 +2501,7 @@ export default function ManageFaqsPage() {
                                                                                     faq.id
                                                                                 )
                                                                             }
-                                                                            disabled={
-                                                                                isSubmitting
-                                                                            }
+                                                                            disabled={isSubmitting}
                                                                             aria-label={`Select FAQ: ${faq.question}`}
                                                                         />
                                                                     </div>
@@ -2267,7 +2531,9 @@ export default function ManageFaqsPage() {
                                                                                 return; // Let collapse happen naturally
                                                                             } else {
                                                                                 // Clicking content when expanded: Select but stay expanded
-                                                                                setSelectedIndex(index);
+                                                                                setSelectedIndex(
+                                                                                    index
+                                                                                );
                                                                                 e.preventDefault();
                                                                             }
                                                                         } else {
@@ -2279,137 +2545,141 @@ export default function ManageFaqsPage() {
                                                                     <div className="flex items-start justify-between gap-3 text-left">
                                                                         <div className="flex-1 space-y-2">
                                                                             <div className="flex items-start gap-2">
-                                                                            <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
-                                                                                {faq.question}
-                                                                            </h3>
-                                                                            {hasFailed && (
-                                                                                <Badge
-                                                                                    variant="destructive"
-                                                                                    className="text-[10px]"
-                                                                                >
-                                                                                    <AlertCircle className="h-3 w-3 mr-1" />
-                                                                                    Failed
-                                                                                </Badge>
-                                                                            )}
-                                                                            <div className="relative flex-shrink-0">
-                                                                                <ChevronRight
-                                                                                    className={`h-5 w-5 text-muted-foreground transition-transform duration-200 mt-0.5 ${
-                                                                                        isExpanded
-                                                                                            ? "rotate-90"
-                                                                                            : ""
-                                                                                    }`}
-                                                                                />
-                                                                                {/* Focus ring for the icon */}
-                                                                                <div className="absolute inset-0 -m-2 rounded-md opacity-0 group-focus-visible/trigger:opacity-100 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background transition-opacity pointer-events-none" />
+                                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
+                                                                                    {faq.question}
+                                                                                </h3>
+                                                                                {hasFailed && (
+                                                                                    <Badge
+                                                                                        variant="destructive"
+                                                                                        className="text-[10px]"
+                                                                                    >
+                                                                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                                                                        Failed
+                                                                                    </Badge>
+                                                                                )}
+                                                                                <div className="relative flex-shrink-0">
+                                                                                    <ChevronRight
+                                                                                        className={`h-5 w-5 text-muted-foreground transition-transform duration-200 mt-0.5 ${
+                                                                                            isExpanded
+                                                                                                ? "rotate-90"
+                                                                                                : ""
+                                                                                        }`}
+                                                                                    />
+                                                                                    {/* Focus ring for the icon */}
+                                                                                    <div className="absolute inset-0 -m-2 rounded-md opacity-0 group-focus-visible/trigger:opacity-100 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background transition-opacity pointer-events-none" />
+                                                                                </div>
                                                                             </div>
-                                                                        </div>
 
-                                                                        <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
-                                                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
-                                                                                {faq.category}
-                                                                            </span>
-                                                                            <span className="font-medium tracking-[0.3px]">
-                                                                                Source: {faq.source}
-                                                                            </span>
-                                                                            {faq.bisq_version && (
-                                                                                <Badge
-                                                                                    variant="outline"
-                                                                                    className={`text-[11px] ${
-                                                                                        faq.bisq_version ===
-                                                                                        "Bisq 1"
-                                                                                            ? "bg-blue-50 text-blue-700 border-blue-300"
-                                                                                            : faq.bisq_version ===
-                                                                                                "Bisq 2"
-                                                                                              ? "bg-green-50 text-green-700 border-green-300"
-                                                                                              : faq.bisq_version ===
-                                                                                                  "Both"
-                                                                                                ? "bg-purple-50 text-purple-700 border-purple-300"
-                                                                                                : "bg-gray-50 text-gray-700 border-gray-300"
-                                                                                    }`}
-                                                                                >
-                                                                                    {
-                                                                                        faq.bisq_version
-                                                                                    }
-                                                                                </Badge>
-                                                                            )}
-                                                                            {faq.verified ? (
-                                                                                <Tooltip>
-                                                                                    <TooltipTrigger
-                                                                                        asChild
+                                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
+                                                                                    {faq.category}
+                                                                                </span>
+                                                                                <span className="font-medium tracking-[0.3px]">
+                                                                                    Source:{" "}
+                                                                                    {faq.source}
+                                                                                </span>
+                                                                                {faq.bisq_version && (
+                                                                                    <Badge
+                                                                                        variant="outline"
+                                                                                        className={`text-[11px] ${
+                                                                                            faq.bisq_version ===
+                                                                                            "Bisq 1"
+                                                                                                ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                                : faq.bisq_version ===
+                                                                                                    "Bisq 2"
+                                                                                                  ? "bg-green-50 text-green-700 border-green-300"
+                                                                                                  : faq.bisq_version ===
+                                                                                                      "General"
+                                                                                                    ? "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                                    : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                                        }`}
                                                                                     >
-                                                                                        <span
-                                                                                            className="inline-flex items-center gap-1 text-green-600 cursor-help"
-                                                                                            aria-label="Verified FAQ"
+                                                                                        {
+                                                                                            faq.bisq_version
+                                                                                        }
+                                                                                    </Badge>
+                                                                                )}
+                                                                                {faq.verified ? (
+                                                                                    <Tooltip>
+                                                                                        <TooltipTrigger
+                                                                                            asChild
                                                                                         >
-                                                                                            <BadgeCheck
-                                                                                                className="h-4 w-4"
-                                                                                                aria-hidden="true"
-                                                                                            />
-                                                                                            <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
+                                                                                            <span
+                                                                                                className="inline-flex items-center gap-1 text-green-600 cursor-help"
+                                                                                                aria-label="Verified FAQ"
+                                                                                            >
+                                                                                                <BadgeCheck
+                                                                                                    className="h-4 w-4"
+                                                                                                    aria-hidden="true"
+                                                                                                />
+                                                                                                <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
+                                                                                                    Verified
+                                                                                                </span>
+                                                                                            </span>
+                                                                                        </TooltipTrigger>
+                                                                                        <TooltipContent className="max-w-xs">
+                                                                                            <p className="text-sm">
                                                                                                 Verified
-                                                                                            </span>
-                                                                                        </span>
-                                                                                    </TooltipTrigger>
-                                                                                    <TooltipContent className="max-w-xs">
-                                                                                        <p className="text-sm">
-                                                                                            Verified
-                                                                                            FAQs are
-                                                                                            marked
-                                                                                            as
-                                                                                            reviewed
-                                                                                            and
-                                                                                            approved.
-                                                                                            They
-                                                                                            receive
-                                                                                            higher
-                                                                                            priority
-                                                                                            in
-                                                                                            search
-                                                                                            results.
-                                                                                        </p>
-                                                                                    </TooltipContent>
-                                                                                </Tooltip>
-                                                                            ) : (
-                                                                                <Tooltip>
-                                                                                    <TooltipTrigger
-                                                                                        asChild
-                                                                                    >
-                                                                                        <span
-                                                                                            className="inline-flex items-center gap-1 text-amber-600 cursor-help"
-                                                                                            aria-label="Unverified FAQ - Needs Review"
+                                                                                                FAQs
+                                                                                                are
+                                                                                                marked
+                                                                                                as
+                                                                                                reviewed
+                                                                                                and
+                                                                                                approved.
+                                                                                                They
+                                                                                                receive
+                                                                                                higher
+                                                                                                priority
+                                                                                                in
+                                                                                                search
+                                                                                                results.
+                                                                                            </p>
+                                                                                        </TooltipContent>
+                                                                                    </Tooltip>
+                                                                                ) : (
+                                                                                    <Tooltip>
+                                                                                        <TooltipTrigger
+                                                                                            asChild
                                                                                         >
-                                                                                            <AlertCircle
-                                                                                                className="h-4 w-4"
-                                                                                                aria-hidden="true"
-                                                                                            />
-                                                                                            <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
-                                                                                                Needs
-                                                                                                Review
+                                                                                            <span
+                                                                                                className="inline-flex items-center gap-1 text-amber-600 cursor-help"
+                                                                                                aria-label="Unverified FAQ - Needs Review"
+                                                                                            >
+                                                                                                <AlertCircle
+                                                                                                    className="h-4 w-4"
+                                                                                                    aria-hidden="true"
+                                                                                                />
+                                                                                                <span className="text-[12px] font-medium tracking-[0.3px] uppercase">
+                                                                                                    Needs
+                                                                                                    Review
+                                                                                                </span>
                                                                                             </span>
-                                                                                        </span>
-                                                                                    </TooltipTrigger>
-                                                                                    <TooltipContent className="max-w-xs">
-                                                                                        <p className="text-sm">
-                                                                                            Unverified
-                                                                                            FAQs
-                                                                                            need
-                                                                                            review
-                                                                                            before
-                                                                                            appearing
-                                                                                            in
-                                                                                            search
-                                                                                            results.
-                                                                                            Verify
-                                                                                            them to
-                                                                                            mark as
-                                                                                            approved.
-                                                                                        </p>
-                                                                                    </TooltipContent>
-                                                                                </Tooltip>
-                                                                            )}
-                                                                        </div>
+                                                                                        </TooltipTrigger>
+                                                                                        <TooltipContent className="max-w-xs">
+                                                                                            <p className="text-sm">
+                                                                                                Unverified
+                                                                                                FAQs
+                                                                                                need
+                                                                                                review
+                                                                                                before
+                                                                                                appearing
+                                                                                                in
+                                                                                                search
+                                                                                                results.
+                                                                                                Verify
+                                                                                                them
+                                                                                                to
+                                                                                                mark
+                                                                                                as
+                                                                                                approved.
+                                                                                            </p>
+                                                                                        </TooltipContent>
+                                                                                    </Tooltip>
+                                                                                )}
                                                                             </div>
                                                                         </div>
+                                                                    </div>
                                                                 </CollapsibleTrigger>
                                                             </div>
                                                         ) : (
@@ -2534,6 +2804,68 @@ export default function ManageFaqsPage() {
                                                                         <p className="text-muted-foreground text-[14px] leading-[1.6] whitespace-pre-wrap">
                                                                             {faq.answer}
                                                                         </p>
+                                                                    </div>
+
+                                                                    {/* Timestamp Information - Compact with Progressive Disclosure */}
+                                                                    <div className="pt-2 border-t border-border/40">
+                                                                        <Tooltip>
+                                                                            <TooltipTrigger asChild>
+                                                                                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-help">
+                                                                                    <Clock className="h-3 w-3" />
+                                                                                    <span>
+                                                                                        {formatTimestamp(
+                                                                                            faq.verified_at ||
+                                                                                                faq.updated_at ||
+                                                                                                faq.created_at
+                                                                                        )}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </TooltipTrigger>
+                                                                            <TooltipContent
+                                                                                side="bottom"
+                                                                                align="start"
+                                                                                className="text-xs"
+                                                                            >
+                                                                                <div className="space-y-1">
+                                                                                    <div className="flex items-center justify-between gap-3">
+                                                                                        <span className="font-medium opacity-70">
+                                                                                            Created:
+                                                                                        </span>
+                                                                                        <span>
+                                                                                            {formatTimestamp(
+                                                                                                faq.created_at
+                                                                                            )}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {faq.updated_at &&
+                                                                                        faq.updated_at !==
+                                                                                            faq.created_at && (
+                                                                                            <div className="flex items-center justify-between gap-3">
+                                                                                                <span className="font-medium opacity-70">
+                                                                                                    Updated:
+                                                                                                </span>
+                                                                                                <span>
+                                                                                                    {formatTimestamp(
+                                                                                                        faq.updated_at
+                                                                                                    )}
+                                                                                                </span>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    {faq.verified_at && (
+                                                                                        <div className="flex items-center justify-between gap-3">
+                                                                                            <span className="font-medium opacity-70">
+                                                                                                Verified:
+                                                                                            </span>
+                                                                                            <span>
+                                                                                                {formatTimestamp(
+                                                                                                    faq.verified_at
+                                                                                                )}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </TooltipContent>
+                                                                        </Tooltip>
                                                                     </div>
                                                                 </div>
 
