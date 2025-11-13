@@ -417,6 +417,8 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - HEALTHCHECK_URL=${HEALTHCHECK_URL:-https://hc-ping.com/27867359-f4f3-4e22-8f46-8d18a73cf219}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - API_HOST=api:8000
     volumes:
       - ./scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
