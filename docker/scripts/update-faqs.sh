@@ -23,8 +23,11 @@ log "Starting FAQ update process..."
 # Track start time for duration calculation
 START_TIME=$(date +%s)
 
-# Check if API container exists and is running
-API_CONTAINER="docker-api-1"
+# Names of the services/containers as defined in docker-compose.yml
+# The default project name is 'docker' when running 'docker compose' from that directory
+PROJECT_NAME="docker"
+API_SERVICE_NAME="api"
+API_CONTAINER="${PROJECT_NAME}-${API_SERVICE_NAME}-1"
 if ! docker ps --format '{{.Names}}' | grep -q "$API_CONTAINER"; then
   log "ERROR: API container $API_CONTAINER not found or not running"
 
