@@ -9,7 +9,32 @@ Architecture:
 - Single table with 7 rows (one per metric)
 - Atomic transactions for data integrity
 - Automatic restoration on startup via main.py lifespan
-- Reuses existing feedback.db database
+- Reuses existing feedback.db database (see Database Strategy below)
+
+Database Strategy:
+Task metrics are stored in feedback.db alongside user feedback data. This design
+choice prioritizes operational simplicity over strict separation of concerns:
+
+Advantages:
+- Single backup/restore target for production data
+- Simpler Docker volume management (one database file)
+- Reduced file I/O overhead (SQLite performs better with larger files)
+- Faster deployment (no additional database initialization)
+
+Trade-offs:
+- Conceptual coupling between unrelated systems (metrics vs feedback)
+- Future migrations may require splitting if scaling patterns diverge
+- Schema changes must consider both systems
+
+Rationale:
+Both systems are low-volume (7 metrics + occasional feedback entries), have
+similar lifecycle requirements (persist indefinitely), and use identical
+technology (SQLite with simple CRUD operations). The operational benefits
+outweigh the coupling concerns at current scale.
+
+Future Consideration:
+If retention policies, scaling needs, or database technologies diverge between
+metrics and feedback systems, consider splitting to dedicated metrics.db file.
 
 Database Schema:
     CREATE TABLE task_metrics (
