@@ -54,7 +54,8 @@ def migrate_faq_timestamps(dry_run: bool = False) -> dict:
     # Create backup
     if not dry_run:
         backup_path = faq_file_path.with_suffix(".jsonl.backup")
-        shutil.copy2(faq_file_path, backup_path)
+        # Use shutil.copy() instead of copy2() to avoid permission issues with metadata
+        shutil.copy(faq_file_path, backup_path)
         logger.info(f"Created backup at {backup_path}")
 
     # Read existing FAQs
