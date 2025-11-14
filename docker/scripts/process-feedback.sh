@@ -19,7 +19,7 @@ log "Starting weekly feedback processing..."
 API_CONTAINER="docker-api-1"
 if ! docker ps --format '{{.Names}}' | grep -q "$API_CONTAINER"; then
   log "ERROR: API container $API_CONTAINER not found or not running"
-  report_feedback_processing_metrics "failure" 0
+  report_feedback_processing_metrics "failure" 0 0
   exit 1
 fi
 

@@ -611,6 +611,7 @@ class FeedbackService:
 
         # Group by issues
         issues_dict: Dict[str, List[FeedbackItem]] = defaultdict(list)
+        # Type checker doesn't recognize Pydantic @computed_field properties
         for item in feedback_items:  # type: ignore[assignment]
             for issue in item.issues:  # type: ignore[attr-defined]
                 issues_dict[issue].append(item)  # type: ignore[arg-type]

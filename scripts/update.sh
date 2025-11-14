@@ -319,7 +319,7 @@ apply_updates() {
             fi
 
             # Check API health (wait for start_period: 60s before checking)
-            sleep 15
+            sleep 65
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after rebuild"
             fi
@@ -339,7 +339,7 @@ apply_updates() {
             fi
 
             # Check API health (wait for start_period: 60s before checking)
-            sleep 15
+            sleep 65
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after restart"
             fi

@@ -162,7 +162,7 @@ class DashboardService:
             )
 
             # Convert to dictionary format expected by the dashboard
-            faq_candidates = []
+            faq_candidates: list[dict[str, Any]] = []
             for feedback in feedback_items:
                 # Use the same criteria as feedback service: negative feedback with explanations or "no source" responses
                 # AND exclude already-processed feedback (feedback that has been turned into FAQs)
@@ -187,9 +187,11 @@ class DashboardService:
                     )
 
             # Return the most recent 10 candidates
-            return sorted(faq_candidates, key=lambda x: x["timestamp"], reverse=True)[  # type: ignore[arg-type, return-value]
-                :10
-            ]
+            return sorted(
+                faq_candidates,
+                key=lambda x: x["timestamp"],
+                reverse=True,
+            )[:10]
 
         except Exception as e:
             logger.error(f"Failed to get feedback items for FAQ: {e}", exc_info=True)

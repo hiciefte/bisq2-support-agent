@@ -9,7 +9,7 @@ This module handles:
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, DefaultDict, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class FeedbackWeightManager:
             return self.source_weights
 
         # Count positive/negative responses by source type
-        source_scores: Dict[str, Dict[str, int]] = defaultdict(
+        source_scores: DefaultDict[str, Dict[str, int]] = defaultdict(
             lambda: {"positive": 0, "negative": 0, "total": 0}
         )
 
