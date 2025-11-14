@@ -209,6 +209,7 @@ async def get_feedback_list(
     source_types: Optional[str] = None,  # Comma-separated list
     search_text: Optional[str] = None,
     needs_faq: Optional[bool] = None,
+    processed: Optional[bool] = None,
     page: int = 1,
     page_size: int = 50,
     sort_by: str = "newest",
@@ -222,6 +223,7 @@ async def get_feedback_list(
     - Filter by source types
     - Text search across questions/answers/explanations
     - Filter for feedback needing FAQ creation
+    - Filter by processed status
     - Pagination and sorting support
 
     Authentication required via API key.
@@ -245,6 +247,7 @@ async def get_feedback_list(
         source_types=source_types_list,
         search_text=search_text,
         needs_faq=needs_faq,
+        processed=processed,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -510,7 +513,7 @@ async def get_feedback_by_issues() -> Dict[str, Any]:
             )
 
         # Sort by count descending
-        result.sort(key=lambda x: x["count"], reverse=True)
+        result.sort(key=lambda x: x["count"], reverse=True)  # type: ignore[arg-type, return-value]  # Dict key access
 
         return {"issues": result, "total_issues": len(result)}
     except Exception as e:

@@ -1,6 +1,6 @@
 import time
 
-import psutil
+import psutil  # type: ignore[import-untyped]
 from fastapi import APIRouter
 
 router = APIRouter()

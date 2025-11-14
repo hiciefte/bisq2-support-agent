@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import httpx
 from app.core.config import Settings
 
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logger = logging.getLogger(__name__)
 
 
 class PrometheusClient:

@@ -73,6 +73,9 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
+# ⚠️ CRITICAL: This COPY instruction bakes code into the image
+# Any changes to api/app/ require container REBUILD, not just restart
+# The deployment script checks for these changes using needs_api_rebuild()
 COPY api/app /app/app
 
 # Set ownership of the app directory
