@@ -215,6 +215,11 @@ def init_persistence(settings: Settings) -> None:
     _persistence_instance = TaskMetricsPersistence(settings)
 
 
+_PERSISTENCE_NOT_INITIALIZED = (
+    "TaskMetricsPersistence not initialized. Call init_persistence() first."
+)
+
+
 def get_persistence() -> TaskMetricsPersistence:
     """
     Get the global persistence instance.
@@ -226,7 +231,5 @@ def get_persistence() -> TaskMetricsPersistence:
         RuntimeError: If persistence not initialized
     """
     if _persistence_instance is None:
-        raise RuntimeError(
-            "TaskMetricsPersistence not initialized. Call init_persistence() first."
-        )
+        raise RuntimeError(_PERSISTENCE_NOT_INITIALIZED)
     return _persistence_instance

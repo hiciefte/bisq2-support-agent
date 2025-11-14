@@ -453,8 +453,8 @@ def _persist_faq_metrics() -> None:
                 "faq_extraction_faqs_generated": FAQ_EXTRACTION_FAQS_GENERATED._value.get(),
             }
         )
-    except Exception as e:
-        logger.error(f"Failed to persist FAQ metrics: {e}")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist FAQ metrics")
 
 
 def _persist_wiki_metrics() -> None:
@@ -469,8 +469,8 @@ def _persist_wiki_metrics() -> None:
                 "wiki_update_pages_processed": WIKI_UPDATE_PAGES_PROCESSED._value.get(),
             }
         )
-    except Exception as e:
-        logger.error(f"Failed to persist wiki metrics: {e}")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist wiki metrics")
 
 
 def _persist_feedback_metrics() -> None:
@@ -485,8 +485,8 @@ def _persist_feedback_metrics() -> None:
                 "feedback_processing_entries_processed": FEEDBACK_PROCESSING_ENTRIES._value.get(),
             }
         )
-    except Exception as e:
-        logger.error(f"Failed to persist feedback metrics: {e}")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist feedback metrics")
 
 
 def restore_metrics_from_database() -> None:
@@ -532,5 +532,5 @@ def restore_metrics_from_database() -> None:
 
         logger.info(f"Restored {len(metrics)} metrics from database")
 
-    except Exception as e:
-        logger.warning(f"Failed to restore metrics from database: {e}")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to restore metrics from database")

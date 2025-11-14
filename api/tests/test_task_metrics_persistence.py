@@ -85,7 +85,7 @@ def reset_metrics():
 class TestTableCreation:
     """Test database table initialization."""
 
-    def test_table_created_on_init(self, persistence, test_settings):
+    def test_table_created_on_init(self, persistence, test_settings):  # noqa: ARG002
         """Table should be created automatically on first init."""
         db_path = Path(test_settings.DATA_DIR) / "feedback.db"
         assert db_path.exists()
@@ -98,7 +98,7 @@ class TestTableCreation:
         assert cursor.fetchone() is not None
         conn.close()
 
-    def test_table_schema(self, persistence, test_settings):
+    def test_table_schema(self, persistence, test_settings):  # noqa: ARG002
         """Table should have correct columns and types."""
         db_path = Path(test_settings.DATA_DIR) / "feedback.db"
         conn = sqlite3.connect(db_path)
@@ -113,7 +113,7 @@ class TestTableCreation:
         }
         conn.close()
 
-    def test_table_primary_key(self, persistence, test_settings):
+    def test_table_primary_key(self, persistence, test_settings):  # noqa: ARG002
         """metric_name should be primary key."""
         db_path = Path(test_settings.DATA_DIR) / "feedback.db"
         conn = sqlite3.connect(db_path)
@@ -383,7 +383,7 @@ class TestErrorHandling:
         settings = Settings()
         settings.DATA_DIR = "/nonexistent/path"
 
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.OperationalError):
             persistence = TaskMetricsPersistence(settings)
             persistence.save_metric("test", 42.0)
 
