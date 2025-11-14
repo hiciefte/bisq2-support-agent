@@ -10,7 +10,7 @@ This module handles initialization of language models and embeddings:
 import logging
 from dataclasses import dataclass
 
-import aisuite as ai
+import aisuite as ai  # type: ignore[import-untyped]
 from app.core.config import Settings
 from langchain_openai import OpenAIEmbeddings
 
@@ -146,7 +146,7 @@ class LLMProvider:
 
         try:
             self.embeddings = OpenAIEmbeddings(
-                api_key=self.settings.OPENAI_API_KEY,
+                api_key=self.settings.OPENAI_API_KEY,  # type: ignore[arg-type]
                 model=self.settings.OPENAI_EMBEDDING_MODEL,
             )
             logger.info("OpenAI embeddings model initialized")

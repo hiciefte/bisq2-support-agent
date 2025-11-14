@@ -67,6 +67,15 @@ async def lifespan(app: FastAPI):
     run_migrations(db_path)
     logger.info("Database migrations completed")
 
+    # Initialize task metrics persistence and restore values
+    logger.info("Initializing task metrics persistence...")
+    from app.utils.task_metrics import restore_metrics_from_database
+    from app.utils.task_metrics_persistence import init_persistence
+
+    init_persistence(settings)
+    restore_metrics_from_database()
+    logger.info("Task metrics persistence initialized and restored")
+
     logger.info("Initializing WikiService...")
     wiki_service = WikiService(settings=settings)
 

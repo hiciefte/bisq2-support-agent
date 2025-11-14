@@ -71,8 +71,6 @@ class Settings(BaseSettings):
     # Simple config - let Pydantic handle things
     model_config = SettingsConfigDict(
         env_file=".env",  # Enable .env file loading
-        env_parse_json=False,  # Disable trying to parse values as JSON
-        env_file_override=True,  # Ensure environment variables take precedence
         extra="allow",  # Allow extra fields for backward compatibility during migration
     )
 

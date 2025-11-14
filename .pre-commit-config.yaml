@@ -51,23 +51,17 @@ repos:
         exclude: ^(api/venv/|api/data/)
         args: ['--profile', 'black']
 
-  # Python: mypy type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.18.2
+  # Python: mypy type checking (using local installation)
+  - repo: local
     hooks:
       - id: mypy
         name: Type check Python code with mypy
+        entry: bash -c 'cd api && mypy "${@#api/}"' --
+        language: system
+        types: [python]
         files: ^api/app/
         exclude: ^(api/venv/|api/data/)
-        args: [
-          '--ignore-missing-imports',
-          '--no-strict-optional',
-          '--warn-redundant-casts',
-          '--warn-unused-ignores',
-        ]
-        additional_dependencies:
-          - types-requests
-          - types-python-dateutil
+        pass_filenames: true
 
   # Python: flake8 linting (light mode - main checks done by black/mypy)
   - repo: https://github.com/pycqa/flake8

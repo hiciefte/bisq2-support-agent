@@ -18,7 +18,7 @@ from typing import Callable
 
 from prometheus_client import Counter, Gauge, Histogram
 
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # RAG Pipeline Metrics

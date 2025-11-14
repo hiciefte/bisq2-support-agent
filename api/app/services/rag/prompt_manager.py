@@ -171,6 +171,7 @@ Your PRIMARY focus is Bisq 2. When the user doesn't specify a version, assume th
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
 - Keep answers concise (2-3 sentences maximum)
+- Use PLAIN TEXT ONLY - do not use markdown formatting (no **, `, #, [], etc.)
 - If you don't know the answer for the requested version, say so clearly{additional_guidance}
 
 Question: {{question}}
@@ -218,6 +219,7 @@ Instructions:
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic about Bisq 1 not in the conversation, respond: "I don't have specific information about that for Bisq 1 in my knowledge base. However, I can help you with Bisq 2 questions. Would you like information about Bisq 2 instead, or do you need help finding Bisq 1 resources?"
 - Keep your answer to 2-3 sentences maximum
+- Use PLAIN TEXT ONLY - do not use markdown formatting
 
 Answer:"""
         else:
@@ -235,6 +237,7 @@ Instructions:
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic not in the conversation, respond: "I don't have information about that in our knowledge base"
 - Keep your answer to 2-3 sentences maximum
+- Use PLAIN TEXT ONLY - do not use markdown formatting
 
 Answer:"""
 
