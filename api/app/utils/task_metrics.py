@@ -466,6 +466,9 @@ def _persist_faq_metrics() -> None:
         "faq_extraction_last_run_status": REGISTRY.get_sample_value(
             "faq_extraction_last_run_status"
         ),
+        "faq_extraction_last_success_timestamp": REGISTRY.get_sample_value(
+            "faq_extraction_last_success_timestamp"
+        ),
         "faq_extraction_messages_processed": REGISTRY.get_sample_value(
             "faq_extraction_messages_processed"
         ),
@@ -496,6 +499,9 @@ def _persist_wiki_metrics() -> None:
         "wiki_update_last_run_status": REGISTRY.get_sample_value(
             "wiki_update_last_run_status"
         ),
+        "wiki_update_last_success_timestamp": REGISTRY.get_sample_value(
+            "wiki_update_last_success_timestamp"
+        ),
         "wiki_update_pages_processed": REGISTRY.get_sample_value(
             "wiki_update_pages_processed"
         ),
@@ -521,6 +527,9 @@ def _persist_feedback_metrics() -> None:
     metrics = {
         "feedback_processing_last_run_status": REGISTRY.get_sample_value(
             "feedback_processing_last_run_status"
+        ),
+        "feedback_processing_last_success_timestamp": REGISTRY.get_sample_value(
+            "feedback_processing_last_success_timestamp"
         ),
         "feedback_processing_entries_processed": REGISTRY.get_sample_value(
             "feedback_processing_entries_processed"
@@ -554,6 +563,10 @@ def restore_metrics_from_database() -> None:
             FAQ_EXTRACTION_LAST_RUN_STATUS.set(
                 metrics["faq_extraction_last_run_status"]
             )
+        if "faq_extraction_last_success_timestamp" in metrics:
+            FAQ_EXTRACTION_LAST_SUCCESS_TIMESTAMP.set(
+                metrics["faq_extraction_last_success_timestamp"]
+            )
         if "faq_extraction_messages_processed" in metrics:
             FAQ_EXTRACTION_MESSAGES_PROCESSED.set(
                 metrics["faq_extraction_messages_processed"]
@@ -564,6 +577,10 @@ def restore_metrics_from_database() -> None:
         # Restore wiki update metrics
         if "wiki_update_last_run_status" in metrics:
             WIKI_UPDATE_LAST_RUN_STATUS.set(metrics["wiki_update_last_run_status"])
+        if "wiki_update_last_success_timestamp" in metrics:
+            WIKI_UPDATE_LAST_SUCCESS_TIMESTAMP.set(
+                metrics["wiki_update_last_success_timestamp"]
+            )
         if "wiki_update_pages_processed" in metrics:
             WIKI_UPDATE_PAGES_PROCESSED.set(metrics["wiki_update_pages_processed"])
 
@@ -571,6 +588,10 @@ def restore_metrics_from_database() -> None:
         if "feedback_processing_last_run_status" in metrics:
             FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(
                 metrics["feedback_processing_last_run_status"]
+            )
+        if "feedback_processing_last_success_timestamp" in metrics:
+            FEEDBACK_PROCESSING_LAST_SUCCESS_TIMESTAMP.set(
+                metrics["feedback_processing_last_success_timestamp"]
             )
         if "feedback_processing_entries_processed" in metrics:
             FEEDBACK_PROCESSING_ENTRIES.set(
