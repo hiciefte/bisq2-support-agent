@@ -91,7 +91,7 @@ class FeedbackAnalyzer:
         Returns:
             List of detected issues
         """
-        detected_issues = []
+        detected_issues: List[str] = []
 
         # Simple keyword-based issue detection
         if not explanation_text:
@@ -117,7 +117,7 @@ class FeedbackAnalyzer:
         Returns:
             Dictionary mapping issue types to their counts
         """
-        issues = defaultdict(int)
+        issues: Dict[str, int] = defaultdict(int)
 
         for item in feedback:
             if not item.get("helpful", True):
@@ -220,7 +220,7 @@ class FeedbackAnalyzer:
         Returns:
             Dictionary mapping month (YYYY-MM) to count
         """
-        monthly_counts = defaultdict(int)
+        monthly_counts: Dict[str, int] = defaultdict(int)
         for item in feedback_items:
             try:
                 month_key = item.timestamp[:7]  # YYYY-MM
@@ -242,7 +242,9 @@ class FeedbackAnalyzer:
         Returns:
             Dictionary mapping source types to effectiveness metrics
         """
-        source_stats = defaultdict(lambda: {"total": 0, "positive": 0})
+        source_stats: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"total": 0, "positive": 0}
+        )
 
         for item in feedback_items:
             sources = (

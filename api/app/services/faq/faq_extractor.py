@@ -14,7 +14,7 @@ import time
 import unicodedata
 from typing import Any, Dict, List, Optional, Set
 
-import aisuite as ai
+import aisuite as ai  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

@@ -265,6 +265,15 @@ analyze_changes() {
     export NGINX_RESTART_NEEDED
 }
 
+# Helper function to check if no service changes are needed
+check_no_changes_needed() {
+    [ "$API_REBUILD_NEEDED" = "false" ] && \
+    [ "$WEB_REBUILD_NEEDED" = "false" ] && \
+    [ "$API_RESTART_NEEDED" = "false" ] && \
+    [ "$WEB_RESTART_NEEDED" = "false" ] && \
+    [ "$NGINX_RESTART_NEEDED" = "false" ]
+}
+
 # Apply updates
 apply_updates() {
     log_info "Applying updates..."
@@ -309,8 +318,8 @@ apply_updates() {
                 rollback_update "API rebuild failed"
             fi
 
-            # Check API health
-            sleep 10
+            # Check API health (wait for start_period: 60s before checking)
+            sleep 15
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after rebuild"
             fi
@@ -329,8 +338,8 @@ apply_updates() {
                 rollback_update "API restart failed"
             fi
 
-            # Check API health
-            sleep 10
+            # Check API health (wait for start_period: 60s before checking)
+            sleep 15
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after restart"
             fi
@@ -351,8 +360,8 @@ apply_updates() {
                 rollback_update "Web rebuild failed"
             fi
 
-            # Check Web health
-            sleep 10
+            # Check Web health (wait for start_period: 20s before checking)
+            sleep 20
             if ! wait_for_healthy "web" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "Web health check failed after rebuild"
             fi
@@ -366,8 +375,8 @@ apply_updates() {
                 rollback_update "Web restart failed"
             fi
 
-            # Check Web health
-            sleep 10
+            # Check Web health (wait for start_period: 20s before checking)
+            sleep 20
             if ! wait_for_healthy "web" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "Web health check failed after restart"
             fi
@@ -392,7 +401,8 @@ apply_updates() {
             log_success "Nginx service restarted and verified successfully!"
         fi
 
-        if [ "$API_REBUILD_NEEDED" = "false" ] && [ "$WEB_REBUILD_NEEDED" = "false" ] && [ "$API_RESTART_NEEDED" = "false" ] && [ "$WEB_RESTART_NEEDED" = "false" ] && [ "$NGINX_RESTART_NEEDED" = "false" ]; then
+        # Check if no service changes are needed
+        if check_no_changes_needed; then
             log_info "No service rebuilds or restarts needed. Configuration or non-service files changed"
         fi
     fi

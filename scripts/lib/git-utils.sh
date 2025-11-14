@@ -760,6 +760,8 @@ export -f restore_production_data
 export -f run_faq_migration
 export -f update_repository
 export -f needs_rebuild
+export -f needs_api_rebuild
+export -f needs_web_rebuild
 export -f needs_api_restart
 export -f needs_web_restart
 export -f needs_nginx_restart

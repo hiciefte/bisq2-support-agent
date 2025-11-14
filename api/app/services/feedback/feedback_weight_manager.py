@@ -53,7 +53,9 @@ class FeedbackWeightManager:
             return self.source_weights
 
         # Count positive/negative responses by source type
-        source_scores = defaultdict(lambda: {"positive": 0, "negative": 0, "total": 0})
+        source_scores: Dict[str, Dict[str, int]] = defaultdict(
+            lambda: {"positive": 0, "negative": 0, "total": 0}
+        )
 
         for item in feedback_data:
             # Skip items without necessary data

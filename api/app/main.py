@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
 
 # Configure logging
 logging.basicConfig(
@@ -193,7 +194,7 @@ def custom_openapi() -> Dict[str, Any]:
     return app.openapi_schema
 
 
-app.openapi = custom_openapi
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Configure CORS
 # Toggle credentials off when wildcard is used (Starlette forbids wildcard + credentials)
@@ -211,7 +212,28 @@ app.add_middleware(TorDetectionMiddleware)
 logger.info("Tor detection middleware registered")
 
 # Set up Prometheus metrics
-instrumentator = Instrumentator().instrument(app)
+# Configure Instrumentator to use default REGISTRY and add standard metrics
+# DON'T call .expose() - we handle /metrics endpoint ourselves to include task metrics
+instrumentator = Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    should_respect_env_var=False,  # Always enable metrics
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=["/health", "/healthcheck"],  # Don't instrument health checks
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+)
+
+# Add standard metrics to default REGISTRY
+instrumentator.add(instrumentator_metrics.default())
+instrumentator.add(
+    instrumentator_metrics.latency(
+        buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60)  # Custom latency buckets
+    )
+)
+
+# Instrument app but DON'T expose /metrics (we have custom endpoint below)
+instrumentator.instrument(app)
 logger.info("Prometheus metrics instrumentation initialized")
 
 
@@ -317,7 +339,7 @@ async def healthcheck():
 
 # Register exception handlers
 # Register specific application exceptions first
-app.add_exception_handler(BaseAppException, base_exception_handler)
+app.add_exception_handler(BaseAppException, base_exception_handler)  # type: ignore[arg-type]
 # Then register generic exception handler as fallback
 app.add_exception_handler(Exception, unhandled_exception_handler)
 

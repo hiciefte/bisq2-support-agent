@@ -595,7 +595,7 @@ class FeedbackService:
     def get_feedback_by_issues(self) -> Dict[str, List[FeedbackItem]]:
         """Get feedback grouped by issue types for analysis."""
         all_feedback = self.load_feedback()
-        feedback_items = []
+        feedback_items: List[FeedbackItem] = []
 
         for item in all_feedback:
             try:
@@ -610,10 +610,10 @@ class FeedbackService:
                 continue
 
         # Group by issues
-        issues_dict = defaultdict(list)
-        for item in feedback_items:
-            for issue in item.issues:
-                issues_dict[issue].append(item)
+        issues_dict: Dict[str, List[FeedbackItem]] = defaultdict(list)
+        for item in feedback_items:  # type: ignore[assignment]
+            for issue in item.issues:  # type: ignore[attr-defined]
+                issues_dict[issue].append(item)  # type: ignore[arg-type]
 
         return dict(issues_dict)
 

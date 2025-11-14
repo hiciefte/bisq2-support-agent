@@ -187,7 +187,7 @@ class DashboardService:
                     )
 
             # Return the most recent 10 candidates
-            return sorted(faq_candidates, key=lambda x: x["timestamp"], reverse=True)[
+            return sorted(faq_candidates, key=lambda x: x["timestamp"], reverse=True)[  # type: ignore[arg-type, return-value]
                 :10
             ]
 

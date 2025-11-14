@@ -245,6 +245,7 @@ async def get_feedback_list(
         source_types=source_types_list,
         search_text=search_text,
         needs_faq=needs_faq,
+        processed=None,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -510,7 +511,7 @@ async def get_feedback_by_issues() -> Dict[str, Any]:
             )
 
         # Sort by count descending
-        result.sort(key=lambda x: x["count"], reverse=True)
+        result.sort(key=lambda x: x["count"], reverse=True)  # type: ignore[arg-type, return-value]
 
         return {"issues": result, "total_issues": len(result)}
     except Exception as e:

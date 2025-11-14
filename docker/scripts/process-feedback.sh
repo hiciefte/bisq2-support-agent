@@ -47,8 +47,15 @@ fi
 log "Feedback processing completed successfully"
 echo "$OUTPUT"
 
-# Parse processed entries count from output (look for "Processed X entries")
+# Parse processed entries count from output
+# Expected format from app.scripts.process_feedback: "Processed <N> entries"
 ENTRIES_PROCESSED=$(echo "$OUTPUT" | grep -o 'Processed [0-9]* entries' | grep -o '[0-9]*' | tail -1 || echo "0")
+
+# Validate that we got a valid number
+if ! [[ "$ENTRIES_PROCESSED" =~ ^[0-9]+$ ]]; then
+  log "WARNING: Could not parse entry count from feedback processor output"
+  ENTRIES_PROCESSED="0"
+fi
 
 # Report metrics
 report_feedback_processing_metrics "success" "$ENTRIES_PROCESSED" "$DURATION"

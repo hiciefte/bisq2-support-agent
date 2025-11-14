@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
 # Import AISuite
-import aisuite as ai
+import aisuite as ai  # type: ignore[import-untyped]
 import portalocker
 
 # Import Pydantic models
