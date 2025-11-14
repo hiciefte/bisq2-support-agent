@@ -19,7 +19,7 @@ import time
 from functools import wraps
 from typing import Any, Callable, Optional
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
 logger = logging.getLogger(__name__)
 
@@ -448,9 +448,15 @@ def _persist_faq_metrics() -> None:
         persistence = get_persistence()
         persistence.save_metrics(
             {
-                "faq_extraction_last_run_status": FAQ_EXTRACTION_LAST_RUN_STATUS._value.get(),
-                "faq_extraction_messages_processed": FAQ_EXTRACTION_MESSAGES_PROCESSED._value.get(),
-                "faq_extraction_faqs_generated": FAQ_EXTRACTION_FAQS_GENERATED._value.get(),
+                "faq_extraction_last_run_status": REGISTRY.get_sample_value(
+                    "faq_extraction_last_run_status"
+                ),
+                "faq_extraction_messages_processed": REGISTRY.get_sample_value(
+                    "faq_extraction_messages_processed"
+                ),
+                "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
+                    "faq_extraction_faqs_generated"
+                ),
             }
         )
     except Exception:  # noqa: BLE001
@@ -465,8 +471,12 @@ def _persist_wiki_metrics() -> None:
         persistence = get_persistence()
         persistence.save_metrics(
             {
-                "wiki_update_last_run_status": WIKI_UPDATE_LAST_RUN_STATUS._value.get(),
-                "wiki_update_pages_processed": WIKI_UPDATE_PAGES_PROCESSED._value.get(),
+                "wiki_update_last_run_status": REGISTRY.get_sample_value(
+                    "wiki_update_last_run_status"
+                ),
+                "wiki_update_pages_processed": REGISTRY.get_sample_value(
+                    "wiki_update_pages_processed"
+                ),
             }
         )
     except Exception:  # noqa: BLE001
@@ -481,8 +491,12 @@ def _persist_feedback_metrics() -> None:
         persistence = get_persistence()
         persistence.save_metrics(
             {
-                "feedback_processing_last_run_status": FEEDBACK_PROCESSING_LAST_RUN_STATUS._value.get(),
-                "feedback_processing_entries_processed": FEEDBACK_PROCESSING_ENTRIES._value.get(),
+                "feedback_processing_last_run_status": REGISTRY.get_sample_value(
+                    "feedback_processing_last_run_status"
+                ),
+                "feedback_processing_entries_processed": REGISTRY.get_sample_value(
+                    "feedback_processing_entries_processed"
+                ),
             }
         )
     except Exception:  # noqa: BLE001
