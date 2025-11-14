@@ -218,23 +218,36 @@ analyze_changes() {
     cd "$INSTALL_DIR" || exit 1
 
     REBUILD_NEEDED=false
+    API_REBUILD_NEEDED=false
+    WEB_REBUILD_NEEDED=false
     API_RESTART_NEEDED=false
     WEB_RESTART_NEEDED=false
     NGINX_RESTART_NEEDED=false
 
+    # Check for dependency changes requiring full rebuild
     if needs_rebuild "$INSTALL_DIR"; then
         log_warning "Dependency changes detected. Full rebuild needed"
         REBUILD_NEEDED=true
     else
         log_success "No dependency changes detected. Checking for code changes..."
 
-        if needs_api_restart "$INSTALL_DIR"; then
-            log_warning "API code changes detected. API restart needed"
+        # Check for API code changes requiring rebuild
+        # CRITICAL: Production uses COPY for code, so code changes need rebuild
+        if needs_api_rebuild "$INSTALL_DIR"; then
+            log_warning "API code changes detected. API rebuild needed"
+            API_REBUILD_NEEDED=true
+        elif needs_api_restart "$INSTALL_DIR"; then
+            log_warning "API config changes detected. API restart needed"
             API_RESTART_NEEDED=true
         fi
 
-        if needs_web_restart "$INSTALL_DIR"; then
-            log_warning "Web code changes detected. Web restart needed"
+        # Check for Web code changes requiring rebuild
+        # CRITICAL: Production uses COPY for code, so code changes need rebuild
+        if needs_web_rebuild "$INSTALL_DIR"; then
+            log_warning "Web code changes detected. Web rebuild needed"
+            WEB_REBUILD_NEEDED=true
+        elif needs_web_restart "$INSTALL_DIR"; then
+            log_warning "Web config changes detected. Web restart needed"
             WEB_RESTART_NEEDED=true
         fi
 
@@ -245,6 +258,8 @@ analyze_changes() {
     fi
 
     export REBUILD_NEEDED
+    export API_REBUILD_NEEDED
+    export WEB_REBUILD_NEEDED
     export API_RESTART_NEEDED
     export WEB_RESTART_NEEDED
     export NGINX_RESTART_NEEDED
@@ -284,8 +299,29 @@ apply_updates() {
 
         log_success "Full rebuild completed successfully!"
     else
-        # Selective restarts
-        if [ "$API_RESTART_NEEDED" = "true" ]; then
+        # Selective rebuilds or restarts
+        # CRITICAL: Code changes require rebuild (production uses COPY)
+        if [ "$API_REBUILD_NEEDED" = "true" ]; then
+            log_info "Rebuilding API service..."
+
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps api; then
+                log_error "Failed to rebuild API service"
+                rollback_update "API rebuild failed"
+            fi
+
+            # Check API health
+            sleep 10
+            if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "API health check failed after rebuild"
+            fi
+
+            # Test chat functionality after API rebuild
+            if ! test_chat_endpoint; then
+                rollback_update "Chat functionality test failed after API rebuild"
+            fi
+
+            log_success "API service rebuilt and verified successfully!"
+        elif [ "$API_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting API service..."
 
             if ! docker compose -f "$COMPOSE_FILE" restart api; then
@@ -307,7 +343,22 @@ apply_updates() {
             log_success "API service restarted and verified successfully!"
         fi
 
-        if [ "$WEB_RESTART_NEEDED" = "true" ]; then
+        if [ "$WEB_REBUILD_NEEDED" = "true" ]; then
+            log_info "Rebuilding Web service..."
+
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps web; then
+                log_error "Failed to rebuild Web service"
+                rollback_update "Web rebuild failed"
+            fi
+
+            # Check Web health
+            sleep 10
+            if ! wait_for_healthy "web" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Web health check failed after rebuild"
+            fi
+
+            log_success "Web service rebuilt and verified successfully!"
+        elif [ "$WEB_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting Web service..."
 
             if ! docker compose -f "$COMPOSE_FILE" restart web; then
@@ -341,8 +392,8 @@ apply_updates() {
             log_success "Nginx service restarted and verified successfully!"
         fi
 
-        if [ "$API_RESTART_NEEDED" = "false" ] && [ "$WEB_RESTART_NEEDED" = "false" ] && [ "$NGINX_RESTART_NEEDED" = "false" ]; then
-            log_info "No service restarts needed. Configuration or non-service files changed"
+        if [ "$API_REBUILD_NEEDED" = "false" ] && [ "$WEB_REBUILD_NEEDED" = "false" ] && [ "$API_RESTART_NEEDED" = "false" ] && [ "$WEB_RESTART_NEEDED" = "false" ] && [ "$NGINX_RESTART_NEEDED" = "false" ]; then
+            log_info "No service rebuilds or restarts needed. Configuration or non-service files changed"
         fi
     fi
 }

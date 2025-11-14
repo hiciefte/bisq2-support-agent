@@ -16,6 +16,9 @@ RUN npm cache clean --force && \
   npm install
 
 # Copy application code
+# ⚠️ CRITICAL: This COPY instruction bakes code into the image
+# Any changes to web/src/, web/app/, web/components/, web/lib/, web/styles/ require container REBUILD, not just restart
+# The deployment script checks for these changes using needs_web_rebuild()
 COPY web/ ./
 
 # Set build argument

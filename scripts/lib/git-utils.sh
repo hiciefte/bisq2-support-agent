@@ -438,6 +438,8 @@ update_repository() {
 }
 
 # Function to check if rebuild is needed based on file changes
+# NOTE: This function checks for dependency/Dockerfile changes only.
+# For code changes requiring rebuild, use needs_api_rebuild() or needs_web_rebuild()
 needs_rebuild() {
     local repo_dir="${1:-.}"
     local prev_head="${2:-$PREV_HEAD}"
@@ -466,6 +468,82 @@ needs_rebuild() {
         else
             # Use HEAD@{1} as fallback
             if git diff --name-only "HEAD@{1}" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+                return 0  # True, needs rebuild
+            fi
+        fi
+    fi
+
+    return 1  # False, no rebuild needed
+}
+
+# Function to check if API rebuild is needed due to code changes
+# CRITICAL: Production uses COPY (not volume mounts) for Python code
+# Any changes to api/app/ require container REBUILD, not just restart
+needs_api_rebuild() {
+    local repo_dir="${1:-.}"
+    local prev_head="${2:-$PREV_HEAD}"
+
+    cd "$repo_dir" || return 2
+
+    # Fallback for CI/CD or environments where reflog might not be available
+    if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+        local base
+        base=$(git merge-base HEAD "${GIT_REMOTE:-origin}/${GIT_BRANCH:-main}" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+        if [ -n "$base" ]; then
+            # Check for API code changes that require rebuild (Python code is COPY'd, not mounted)
+            if git diff --name-only "$base" HEAD | grep -qE '^(docker/api/|api/app/|api/requirements\.txt|api/requirements\.in)'; then
+                return 0  # True, needs rebuild
+            fi
+        else
+            log_warning "Unable to determine git base for comparison. Assuming API rebuild needed"
+            return 0
+        fi
+    else
+        if [ -n "$prev_head" ]; then
+            # Check for API code changes that require rebuild
+            if git diff --name-only "$prev_head" HEAD | grep -qE '^(docker/api/|api/app/|api/requirements\.txt|api/requirements\.in)'; then
+                return 0  # True, needs rebuild
+            fi
+        else
+            if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^(docker/api/|api/app/|api/requirements\.txt|api/requirements\.in)'; then
+                return 0  # True, needs rebuild
+            fi
+        fi
+    fi
+
+    return 1  # False, no rebuild needed
+}
+
+# Function to check if Web rebuild is needed due to code changes
+# CRITICAL: Production uses COPY (not volume mounts) for TypeScript/React code
+# Any changes to web/src/ or web/app/ require container REBUILD, not just restart
+needs_web_rebuild() {
+    local repo_dir="${1:-.}"
+    local prev_head="${2:-$PREV_HEAD}"
+
+    cd "$repo_dir" || return 2
+
+    # Fallback for CI/CD or environments where reflog might not be available
+    if [ -z "$(git reflog show -n 1 2>/dev/null)" ]; then
+        local base
+        base=$(git merge-base HEAD "${GIT_REMOTE:-origin}/${GIT_BRANCH:-main}" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
+        if [ -n "$base" ]; then
+            # Check for Web code changes that require rebuild (TypeScript/React code is COPY'd, not mounted)
+            if git diff --name-only "$base" HEAD | grep -qE '^(docker/web/|web/(src|app|components|lib|styles)/|web/package.*\.json|web/.*\.lock)'; then
+                return 0  # True, needs rebuild
+            fi
+        else
+            log_warning "Unable to determine git base for comparison. Assuming Web rebuild needed"
+            return 0
+        fi
+    else
+        if [ -n "$prev_head" ]; then
+            # Check for Web code changes that require rebuild
+            if git diff --name-only "$prev_head" HEAD | grep -qE '^(docker/web/|web/(src|app|components|lib|styles)/|web/package.*\.json|web/.*\.lock)'; then
+                return 0  # True, needs rebuild
+            fi
+        else
+            if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^(docker/web/|web/(src|app|components|lib|styles)/|web/package.*\.json|web/.*\.lock)'; then
                 return 0  # True, needs rebuild
             fi
         fi
