@@ -71,14 +71,19 @@ class TaskMetricsPersistence:
 
         Args:
             settings: Application settings containing data directory path
+
+        Note:
+            Assumes Settings.DATA_DIR exists. The Settings.ensure_data_dirs()
+            method must be called during application startup (in main.py lifespan)
+            before initializing TaskMetricsPersistence. SQLite will create the
+            database file automatically, but the parent directory must exist.
         """
         self.db_path = Path(settings.DATA_DIR) / "feedback.db"
         self._ensure_table()
 
     def _ensure_table(self) -> None:
         """Create task_metrics table if it doesn't exist."""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS task_metrics (
@@ -88,9 +93,6 @@ class TaskMetricsPersistence:
                 )
                 """
             )
-            conn.commit()
-        finally:
-            conn.close()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:

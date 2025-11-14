@@ -459,19 +459,29 @@ def _persist_faq_metrics() -> None:
     from app.utils.task_metrics_persistence import get_persistence
 
     persistence = get_persistence()
-    persistence.save_metrics(
-        {
-            "faq_extraction_last_run_status": REGISTRY.get_sample_value(
-                "faq_extraction_last_run_status"
-            ),
-            "faq_extraction_messages_processed": REGISTRY.get_sample_value(
-                "faq_extraction_messages_processed"
-            ),
-            "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
-                "faq_extraction_faqs_generated"
-            ),
-        }
-    )
+
+    # Collect metrics, filtering out None values
+    # REGISTRY.get_sample_value() returns None if metric doesn't exist yet
+    metrics = {
+        "faq_extraction_last_run_status": REGISTRY.get_sample_value(
+            "faq_extraction_last_run_status"
+        ),
+        "faq_extraction_messages_processed": REGISTRY.get_sample_value(
+            "faq_extraction_messages_processed"
+        ),
+        "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
+            "faq_extraction_faqs_generated"
+        ),
+    }
+
+    # Filter out None values and ensure float type
+    # Database has NOT NULL constraint and save_metrics expects Dict[str, float]
+    valid_metrics = {
+        name: float(value) for name, value in metrics.items() if value is not None
+    }
+
+    if valid_metrics:
+        persistence.save_metrics(valid_metrics)
 
 
 @_safe_persist
@@ -480,16 +490,24 @@ def _persist_wiki_metrics() -> None:
     from app.utils.task_metrics_persistence import get_persistence
 
     persistence = get_persistence()
-    persistence.save_metrics(
-        {
-            "wiki_update_last_run_status": REGISTRY.get_sample_value(
-                "wiki_update_last_run_status"
-            ),
-            "wiki_update_pages_processed": REGISTRY.get_sample_value(
-                "wiki_update_pages_processed"
-            ),
-        }
-    )
+
+    # Collect metrics, filtering out None values
+    metrics = {
+        "wiki_update_last_run_status": REGISTRY.get_sample_value(
+            "wiki_update_last_run_status"
+        ),
+        "wiki_update_pages_processed": REGISTRY.get_sample_value(
+            "wiki_update_pages_processed"
+        ),
+    }
+
+    # Filter out None values and ensure float type
+    valid_metrics = {
+        name: float(value) for name, value in metrics.items() if value is not None
+    }
+
+    if valid_metrics:
+        persistence.save_metrics(valid_metrics)
 
 
 @_safe_persist
@@ -498,16 +516,24 @@ def _persist_feedback_metrics() -> None:
     from app.utils.task_metrics_persistence import get_persistence
 
     persistence = get_persistence()
-    persistence.save_metrics(
-        {
-            "feedback_processing_last_run_status": REGISTRY.get_sample_value(
-                "feedback_processing_last_run_status"
-            ),
-            "feedback_processing_entries_processed": REGISTRY.get_sample_value(
-                "feedback_processing_entries_processed"
-            ),
-        }
-    )
+
+    # Collect metrics, filtering out None values
+    metrics = {
+        "feedback_processing_last_run_status": REGISTRY.get_sample_value(
+            "feedback_processing_last_run_status"
+        ),
+        "feedback_processing_entries_processed": REGISTRY.get_sample_value(
+            "feedback_processing_entries_processed"
+        ),
+    }
+
+    # Filter out None values and ensure float type
+    valid_metrics = {
+        name: float(value) for name, value in metrics.items() if value is not None
+    }
+
+    if valid_metrics:
+        persistence.save_metrics(valid_metrics)
 
 
 def restore_metrics_from_database() -> None:
