@@ -440,67 +440,74 @@ def record_feedback_processing_failure(duration: Optional[float] = None) -> None
 # =============================================================================
 
 
+def _safe_persist(func: Callable[[], None]) -> Callable[[], None]:
+    """Decorator to handle persistence errors gracefully."""
+
+    @wraps(func)
+    def wrapper() -> None:
+        try:
+            func()
+        except Exception:  # noqa: BLE001
+            logger.exception(f"Failed to persist metrics in {func.__name__}")
+
+    return wrapper
+
+
+@_safe_persist
 def _persist_faq_metrics() -> None:
     """Persist FAQ extraction Gauge metrics to database."""
-    try:
-        from app.utils.task_metrics_persistence import get_persistence
+    from app.utils.task_metrics_persistence import get_persistence
 
-        persistence = get_persistence()
-        persistence.save_metrics(
-            {
-                "faq_extraction_last_run_status": REGISTRY.get_sample_value(
-                    "faq_extraction_last_run_status"
-                ),
-                "faq_extraction_messages_processed": REGISTRY.get_sample_value(
-                    "faq_extraction_messages_processed"
-                ),
-                "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
-                    "faq_extraction_faqs_generated"
-                ),
-            }
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to persist FAQ metrics")
+    persistence = get_persistence()
+    persistence.save_metrics(
+        {
+            "faq_extraction_last_run_status": REGISTRY.get_sample_value(
+                "faq_extraction_last_run_status"
+            ),
+            "faq_extraction_messages_processed": REGISTRY.get_sample_value(
+                "faq_extraction_messages_processed"
+            ),
+            "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
+                "faq_extraction_faqs_generated"
+            ),
+        }
+    )
 
 
+@_safe_persist
 def _persist_wiki_metrics() -> None:
     """Persist wiki update Gauge metrics to database."""
-    try:
-        from app.utils.task_metrics_persistence import get_persistence
+    from app.utils.task_metrics_persistence import get_persistence
 
-        persistence = get_persistence()
-        persistence.save_metrics(
-            {
-                "wiki_update_last_run_status": REGISTRY.get_sample_value(
-                    "wiki_update_last_run_status"
-                ),
-                "wiki_update_pages_processed": REGISTRY.get_sample_value(
-                    "wiki_update_pages_processed"
-                ),
-            }
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to persist wiki metrics")
+    persistence = get_persistence()
+    persistence.save_metrics(
+        {
+            "wiki_update_last_run_status": REGISTRY.get_sample_value(
+                "wiki_update_last_run_status"
+            ),
+            "wiki_update_pages_processed": REGISTRY.get_sample_value(
+                "wiki_update_pages_processed"
+            ),
+        }
+    )
 
 
+@_safe_persist
 def _persist_feedback_metrics() -> None:
     """Persist feedback processing Gauge metrics to database."""
-    try:
-        from app.utils.task_metrics_persistence import get_persistence
+    from app.utils.task_metrics_persistence import get_persistence
 
-        persistence = get_persistence()
-        persistence.save_metrics(
-            {
-                "feedback_processing_last_run_status": REGISTRY.get_sample_value(
-                    "feedback_processing_last_run_status"
-                ),
-                "feedback_processing_entries_processed": REGISTRY.get_sample_value(
-                    "feedback_processing_entries_processed"
-                ),
-            }
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to persist feedback metrics")
+    persistence = get_persistence()
+    persistence.save_metrics(
+        {
+            "feedback_processing_last_run_status": REGISTRY.get_sample_value(
+                "feedback_processing_last_run_status"
+            ),
+            "feedback_processing_entries_processed": REGISTRY.get_sample_value(
+                "feedback_processing_entries_processed"
+            ),
+        }
+    )
 
 
 def restore_metrics_from_database() -> None:

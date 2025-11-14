@@ -30,8 +30,9 @@ Metrics persisted:
 
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Generator, Optional
 
 from app.core.config import Settings
 
@@ -66,6 +67,26 @@ class TaskMetricsPersistence:
         finally:
             conn.close()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """
+        Context manager for database connections.
+
+        Handles connection lifecycle and automatic commit/close.
+
+        Yields:
+            Active database connection
+
+        Raises:
+            sqlite3.Error: If database operation fails
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
     def save_metric(self, metric_name: str, metric_value: float) -> None:
         """
         Save a single metric value to database.
@@ -79,8 +100,7 @@ class TaskMetricsPersistence:
         Raises:
             sqlite3.Error: If database operation fails
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO task_metrics (metric_name, metric_value, last_updated)
@@ -88,9 +108,6 @@ class TaskMetricsPersistence:
                 """,
                 (metric_name, metric_value, time.time()),
             )
-            conn.commit()
-        finally:
-            conn.close()
 
     def save_metrics(self, metrics: Dict[str, float]) -> None:
         """
@@ -107,8 +124,7 @@ class TaskMetricsPersistence:
         if not metrics:
             return
 
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             timestamp = time.time()
             conn.executemany(
                 """
@@ -117,9 +133,6 @@ class TaskMetricsPersistence:
                 """,
                 [(name, value, timestamp) for name, value in metrics.items()],
             )
-            conn.commit()
-        finally:
-            conn.close()
 
     def load_metric(self, metric_name: str) -> Optional[float]:
         """
@@ -134,16 +147,13 @@ class TaskMetricsPersistence:
         Raises:
             sqlite3.Error: If database operation fails
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             cursor = conn.execute(
                 "SELECT metric_value FROM task_metrics WHERE metric_name = ?",
                 (metric_name,),
             )
             row = cursor.fetchone()
             return row[0] if row else None
-        finally:
-            conn.close()
 
     def load_all_metrics(self) -> Dict[str, float]:
         """
@@ -155,12 +165,9 @@ class TaskMetricsPersistence:
         Raises:
             sqlite3.Error: If database operation fails
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             cursor = conn.execute("SELECT metric_name, metric_value FROM task_metrics")
             return {row[0]: row[1] for row in cursor.fetchall()}
-        finally:
-            conn.close()
 
     def delete_metric(self, metric_name: str) -> None:
         """
@@ -172,14 +179,10 @@ class TaskMetricsPersistence:
         Raises:
             sqlite3.Error: If database operation fails
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             conn.execute(
                 "DELETE FROM task_metrics WHERE metric_name = ?", (metric_name,)
             )
-            conn.commit()
-        finally:
-            conn.close()
 
     def clear_all_metrics(self) -> None:
         """
@@ -190,12 +193,8 @@ class TaskMetricsPersistence:
         Raises:
             sqlite3.Error: If database operation fails
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with self._get_connection() as conn:
             conn.execute("DELETE FROM task_metrics")
-            conn.commit()
-        finally:
-            conn.close()
 
 
 # Global instance - initialized in main.py
