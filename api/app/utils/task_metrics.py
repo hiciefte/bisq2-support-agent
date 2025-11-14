@@ -8,13 +8,20 @@ This module provides metrics instrumentation for periodic tasks like:
 
 Metrics are exposed via the /metrics endpoint and monitored by Prometheus
 for alerting on task failures, staleness, and performance issues.
+
+Persistence:
+All Gauge metrics are automatically persisted to SQLite database to survive
+container restarts, deployments, and crashes.
 """
 
+import logging
 import time
 from functools import wraps
 from typing import Any, Callable, Optional
 
 from prometheus_client import Counter, Gauge, Histogram
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # FAQ Extraction Metrics
@@ -327,6 +334,9 @@ def record_faq_extraction_success(
     if duration is not None:
         FAQ_EXTRACTION_DURATION.observe(duration)
 
+    # Persist Gauge values to database
+    _persist_faq_metrics()
+
 
 def record_faq_extraction_failure(duration: Optional[float] = None) -> None:
     """
@@ -340,6 +350,9 @@ def record_faq_extraction_failure(duration: Optional[float] = None) -> None:
 
     if duration is not None:
         FAQ_EXTRACTION_DURATION.observe(duration)
+
+    # Persist failure status to database
+    _persist_faq_metrics()
 
 
 def record_wiki_update_success(
@@ -361,6 +374,9 @@ def record_wiki_update_success(
     if duration is not None:
         WIKI_UPDATE_DURATION.observe(duration)
 
+    # Persist Gauge values to database
+    _persist_wiki_metrics()
+
 
 def record_wiki_update_failure(duration: Optional[float] = None) -> None:
     """
@@ -374,6 +390,9 @@ def record_wiki_update_failure(duration: Optional[float] = None) -> None:
 
     if duration is not None:
         WIKI_UPDATE_DURATION.observe(duration)
+
+    # Persist failure status to database
+    _persist_wiki_metrics()
 
 
 def record_feedback_processing_success(
@@ -395,6 +414,9 @@ def record_feedback_processing_success(
     if duration is not None:
         FEEDBACK_PROCESSING_DURATION.observe(duration)
 
+    # Persist Gauge values to database
+    _persist_feedback_metrics()
+
 
 def record_feedback_processing_failure(duration: Optional[float] = None) -> None:
     """
@@ -408,3 +430,107 @@ def record_feedback_processing_failure(duration: Optional[float] = None) -> None
 
     if duration is not None:
         FEEDBACK_PROCESSING_DURATION.observe(duration)
+
+    # Persist failure status to database
+    _persist_feedback_metrics()
+
+
+# =============================================================================
+# Persistence Helper Functions
+# =============================================================================
+
+
+def _persist_faq_metrics() -> None:
+    """Persist FAQ extraction Gauge metrics to database."""
+    try:
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        persistence.save_metrics(
+            {
+                "faq_extraction_last_run_status": FAQ_EXTRACTION_LAST_RUN_STATUS._value.get(),
+                "faq_extraction_messages_processed": FAQ_EXTRACTION_MESSAGES_PROCESSED._value.get(),
+                "faq_extraction_faqs_generated": FAQ_EXTRACTION_FAQS_GENERATED._value.get(),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist FAQ metrics: {e}")
+
+
+def _persist_wiki_metrics() -> None:
+    """Persist wiki update Gauge metrics to database."""
+    try:
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        persistence.save_metrics(
+            {
+                "wiki_update_last_run_status": WIKI_UPDATE_LAST_RUN_STATUS._value.get(),
+                "wiki_update_pages_processed": WIKI_UPDATE_PAGES_PROCESSED._value.get(),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist wiki metrics: {e}")
+
+
+def _persist_feedback_metrics() -> None:
+    """Persist feedback processing Gauge metrics to database."""
+    try:
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        persistence.save_metrics(
+            {
+                "feedback_processing_last_run_status": FEEDBACK_PROCESSING_LAST_RUN_STATUS._value.get(),
+                "feedback_processing_entries_processed": FEEDBACK_PROCESSING_ENTRIES._value.get(),
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist feedback metrics: {e}")
+
+
+def restore_metrics_from_database() -> None:
+    """
+    Restore Prometheus Gauge metrics from database on application startup.
+
+    Called from main.py lifespan to recover persisted metric values after
+    container restarts, deployments, or crashes.
+    """
+    try:
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        metrics = persistence.load_all_metrics()
+
+        # Restore FAQ extraction metrics
+        if "faq_extraction_last_run_status" in metrics:
+            FAQ_EXTRACTION_LAST_RUN_STATUS.set(
+                metrics["faq_extraction_last_run_status"]
+            )
+        if "faq_extraction_messages_processed" in metrics:
+            FAQ_EXTRACTION_MESSAGES_PROCESSED.set(
+                metrics["faq_extraction_messages_processed"]
+            )
+        if "faq_extraction_faqs_generated" in metrics:
+            FAQ_EXTRACTION_FAQS_GENERATED.set(metrics["faq_extraction_faqs_generated"])
+
+        # Restore wiki update metrics
+        if "wiki_update_last_run_status" in metrics:
+            WIKI_UPDATE_LAST_RUN_STATUS.set(metrics["wiki_update_last_run_status"])
+        if "wiki_update_pages_processed" in metrics:
+            WIKI_UPDATE_PAGES_PROCESSED.set(metrics["wiki_update_pages_processed"])
+
+        # Restore feedback processing metrics
+        if "feedback_processing_last_run_status" in metrics:
+            FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(
+                metrics["feedback_processing_last_run_status"]
+            )
+        if "feedback_processing_entries_processed" in metrics:
+            FEEDBACK_PROCESSING_ENTRIES.set(
+                metrics["feedback_processing_entries_processed"]
+            )
+
+        logger.info(f"Restored {len(metrics)} metrics from database")
+
+    except Exception as e:
+        logger.warning(f"Failed to restore metrics from database: {e}")
