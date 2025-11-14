@@ -728,24 +728,51 @@ cleanup_old_backups() {
 
     cd "$repo_dir" || return 1
 
+    # Clean up old git backup tags
     local backup_count
     backup_count=$(git tag -l "backup-*" | wc -l)
 
-    if [ "$backup_count" -le "$keep_count" ]; then
-        log_info "No old backups to clean up (current: $backup_count, keeping: $keep_count)"
-        return 0
+    if [ "$backup_count" -gt "$keep_count" ]; then
+        log_info "Cleaning up old backup tags (keeping $keep_count most recent)..."
+        local old_backups
+        old_backups=$(git tag -l "backup-*" --sort=-creatordate | tail -n +$((keep_count + 1)))
+
+        for tag in $old_backups; do
+            log_debug "Deleting old backup tag: $tag"
+            git tag -d "$tag" >/dev/null 2>&1
+        done
+
+        log_success "Old backup tags cleaned up"
     fi
 
-    log_info "Cleaning up old backup tags (keeping $keep_count most recent)..."
-    local old_backups
-    old_backups=$(git tag -l "backup-*" --sort=-creatordate | tail -n +$((keep_count + 1)))
+    # Clean up old data backup directories
+    local data_dir="$repo_dir/api/data"
+    if [ -d "$data_dir" ]; then
+        local backup_dirs
+        backup_dirs=$(find "$data_dir" -maxdepth 1 -type d -name ".backup_*" 2>/dev/null | sort -r)
+        local backup_dir_count
+        backup_dir_count=$(echo "$backup_dirs" | grep -c "." || echo "0")
 
-    for tag in $old_backups; do
-        log_debug "Deleting old backup tag: $tag"
-        git tag -d "$tag" >/dev/null 2>&1
-    done
+        if [ "$backup_dir_count" -gt "$keep_count" ]; then
+            log_info "Cleaning up old data backup directories (keeping $keep_count most recent)..."
+            local dirs_to_remove
+            dirs_to_remove=$(echo "$backup_dirs" | tail -n +$((keep_count + 1)))
 
-    log_success "Old backup tags cleaned up"
+            for dir in $dirs_to_remove; do
+                log_debug "Removing old backup directory: $(basename "$dir")"
+                rm -rf "$dir"
+            done
+
+            local removed_count=$((backup_dir_count - keep_count))
+            log_success "Removed $removed_count old backup directories"
+        fi
+    fi
+
+    # Clean up old standalone backup files
+    if [ -d "$data_dir" ]; then
+        find "$data_dir" -maxdepth 1 -type f -name "*.backup*" -mtime +30 -delete 2>/dev/null
+    fi
+
     return 0
 }
 
