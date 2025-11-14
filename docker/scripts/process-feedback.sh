@@ -28,7 +28,7 @@ START_TIME=$(date +%s)
 
 # Run the feedback processor and capture output
 log "Running feedback processor in API container..."
-OUTPUT=$(docker exec $API_CONTAINER python -m app.scripts.process_feedback 2>&1)
+OUTPUT=$(docker exec "$API_CONTAINER" python -m app.scripts.process_feedback 2>&1)
 EXIT_CODE=$?
 
 # Calculate duration

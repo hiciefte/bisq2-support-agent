@@ -162,7 +162,7 @@ class DashboardService:
             )
 
             # Convert to dictionary format expected by the dashboard
-            faq_candidates: list[dict[str, Any]] = []
+            faq_candidates: List[Dict[str, Any]] = []
             for feedback in feedback_items:
                 # Use the same criteria as feedback service: negative feedback with explanations or "no source" responses
                 # AND exclude already-processed feedback (feedback that has been turned into FAQs)
