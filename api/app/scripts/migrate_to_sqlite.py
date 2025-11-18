@@ -114,8 +114,26 @@ def main():
     logger.info("=" * 80)
 
     try:
-        # Create repositories
+        # Create JSONL repository (always needed)
         jsonl_repo = FAQRepository(jsonl_path, portalocker.Lock(jsonl_path, "a"))
+
+        # Only create SQLite repository if not in dry-run mode
+        # (dry-run should not create or modify the database)
+        if args.dry_run:
+            logger.info("DRY RUN: Skipping database creation and migration")
+            logger.info(f"Would read from: {jsonl_path}")
+            logger.info(f"Would write to: {db_path}")
+
+            # Read JSONL to show what would be migrated
+            all_faqs = list(jsonl_repo.get_all_faqs())
+            logger.info(f"Found {len(all_faqs)} FAQs that would be migrated")
+
+            logger.info("=" * 80)
+            logger.info("DRY RUN COMPLETE - No changes made")
+            logger.info("=" * 80)
+            sys.exit(0)
+
+        # Create SQLite repository (creates/opens database)
         sqlite_repo = FAQRepositorySQLite(str(db_path))
 
         if args.rollback:

@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Any, Dict
 
+from app.models.faq import FAQItem
 from app.services.faq.faq_repository import FAQRepository
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
 
@@ -69,7 +70,7 @@ def migrate_jsonl_to_sqlite(
     logger.info("Starting JSONL to SQLite migration")
     start_time = time.time()
 
-    stats: Dict[str, Any] = {"total": 0, "migrated": 0, "errors": 0, "skipped": 0}
+    stats: Dict[str, Any] = {"total": 0, "migrated": 0, "errors": 0}
 
     try:
         # Read all FAQs from JSONL
@@ -82,8 +83,6 @@ def migrate_jsonl_to_sqlite(
         for faq in faqs:
             try:
                 # Convert FAQIdentifiedItem to FAQItem (remove id for SQLite auto-generation)
-                from app.models.faq import FAQItem
-
                 faq_item = FAQItem(
                     question=faq.question,
                     answer=faq.answer,
@@ -103,8 +102,8 @@ def migrate_jsonl_to_sqlite(
                 if stats["migrated"] % 10 == 0:
                     logger.info(f"Migrated {stats['migrated']}/{stats['total']} FAQs")
 
-            except Exception as e:
-                logger.error(f"Error migrating FAQ '{faq.question}': {e}")
+            except Exception:
+                logger.exception(f"Error migrating FAQ '{faq.question}'")
                 stats["errors"] += 1
                 continue
 
@@ -116,13 +115,13 @@ def migrate_jsonl_to_sqlite(
             f"in {stats['duration_seconds']}s ({stats['errors']} errors)"
         )
 
-        return stats
-
-    except Exception as e:
-        logger.error(f"Migration failed: {e}")
+    except Exception:
+        logger.exception("Migration failed")
         duration = time.time() - start_time
         stats["duration_seconds"] = float(round(duration, 2))
         raise
+    else:
+        return stats
 
 
 def rollback_sqlite_to_jsonl(
@@ -161,15 +160,14 @@ def rollback_sqlite_to_jsonl(
 
         logger.info(f"Found {stats['total']} FAQs to rollback")
 
-        # Clear existing JSONL file (we're doing a full restore)
-        # Note: This is safe because FAQRepository.add_faq() writes to file
+        # Clear existing JSONL file (we're doing a full restore from SQLite)
+        # This ensures we don't append to existing data, but completely replace it
+        jsonl_repo._clear_file()
 
         # Rollback each FAQ to JSONL
         for faq in faqs:
             try:
                 # Convert FAQIdentifiedItem to FAQItem for JSONL storage
-                from app.models.faq import FAQItem
-
                 faq_item = FAQItem(
                     question=faq.question,
                     answer=faq.answer,
@@ -191,8 +189,8 @@ def rollback_sqlite_to_jsonl(
                         f"Rolled back {stats['rolled_back']}/{stats['total']} FAQs"
                     )
 
-            except Exception as e:
-                logger.error(f"Error rolling back FAQ '{faq.question}': {e}")
+            except Exception:
+                logger.exception(f"Error rolling back FAQ '{faq.question}'")
                 stats["errors"] += 1
                 continue
 
@@ -204,13 +202,13 @@ def rollback_sqlite_to_jsonl(
             f"in {stats['duration_seconds']}s ({stats['errors']} errors)"
         )
 
-        return stats
-
-    except Exception as e:
-        logger.error(f"Rollback failed: {e}")
+    except Exception:
+        logger.exception("Rollback failed")
         duration = time.time() - start_time
         stats["duration_seconds"] = float(round(duration, 2))
         raise
+    else:
+        return stats
 
 
 def verify_migration(

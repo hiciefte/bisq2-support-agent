@@ -264,13 +264,13 @@ class FAQRepositorySQLite:
                 else:
                     # Non-retryable error, raise immediately
                     raise
-            except sqlite3.DatabaseError as e:
+            except sqlite3.DatabaseError:
                 # Database corruption or other serious errors - don't retry
-                logger.error(f"Database error (not retrying): {e}")
+                logger.exception("Database error (not retrying)")
                 raise
 
         # All retries exhausted
-        logger.error(f"All {MAX_RETRIES} retries exhausted for database operation")
+        logger.error("All %s retries exhausted for database operation", MAX_RETRIES)
         raise last_error
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
@@ -307,11 +307,14 @@ class FAQRepositorySQLite:
         now = datetime.now(timezone.utc).isoformat()
         created_at = faq_item.created_at.isoformat() if faq_item.created_at else now
         updated_at = faq_item.updated_at.isoformat() if faq_item.updated_at else now
-        verified_at = (
-            faq_item.verified_at.isoformat()
-            if faq_item.verified and faq_item.verified_at
-            else None
-        )
+
+        # Auto-populate verified_at for new verified FAQs (data consistency)
+        if faq_item.verified:
+            verified_at = (
+                faq_item.verified_at.isoformat() if faq_item.verified_at else now
+            )
+        else:
+            verified_at = None
 
         # Define write operation
         def _write_operation():
@@ -403,6 +406,10 @@ class FAQRepositorySQLite:
         where_clauses: List[str] = []
         total = 0  # Default value in case of errors
 
+        # SECURITY NOTE: Dynamic SQL construction below is safe because:
+        # - All where_clauses are static strings (no user input)
+        # - All user values go through params list (parameterized queries)
+        # - No string interpolation or concatenation of user data
         # Build WHERE clause with parameterized queries only
         if category is not None:
             where_clauses.append("category = ?")
@@ -530,6 +537,11 @@ class FAQRepositorySQLite:
         This method is designed for aggregation operations (e.g., statistics)
         where all matching FAQs are needed without pagination limits.
 
+        SCALING NOTE: Uses page_size=10000 which aligns with the documented
+        SQLite capacity limit (≤10k FAQs). If FAQ count exceeds this threshold,
+        results will be silently truncated. At that point, migration to PostgreSQL
+        is recommended per the system's scaling guidelines.
+
         Args:
             search_text: Optional text search filter
             categories: Optional list of categories to filter by
@@ -540,7 +552,7 @@ class FAQRepositorySQLite:
             verified_to: Optional end date for verified_at filter (inclusive)
 
         Returns:
-            List of all FAQs matching the specified filters
+            List of all FAQs matching the specified filters (up to 10k per category)
         """
         # Use get_faqs_paginated with large page size to get all results
         # Categories list needs to be converted to single category for pagination

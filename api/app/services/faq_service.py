@@ -1,9 +1,10 @@
 """
 FAQ service for loading and processing FAQ data for the Bisq Support Assistant.
 
-This service handles loading FAQ documentation from JSONL files,
+This service handles loading FAQ documentation from SQLite database,
 processing the documents, preparing them for use in the RAG system,
 and extracting new FAQs from support chat conversations.
+Note: JSONL format is maintained for RAG/extraction workflows.
 """
 
 import json
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class FAQService:
-    """Service for managing FAQs using a JSONL file and stable content-based IDs."""
+    """Service for managing FAQs using SQLite storage with JSONL for RAG integration."""
 
     _instance: Optional["FAQService"] = None
     _instance_lock = threading.Lock()
@@ -106,7 +107,7 @@ class FAQService:
             ] = []
 
             self.initialized = True
-            logger.info("FAQService initialized with JSONL backend.")
+            logger.info("FAQService initialized with SQLite storage backend.")
 
     def register_update_callback(
         self,
@@ -247,9 +248,29 @@ class FAQService:
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support.
 
+        IMPORTANT: Multi-category filtering limitation
+        -------------------------------------------
+        The SQLite backend currently supports only a SINGLE category filter.
+        If the categories list contains multiple values, only the FIRST category
+        will be used, and the rest will be silently ignored.
+
+        This is a known limitation for backward API compatibility. If multi-category
+        filtering is required, the repository layer needs to be enhanced to support
+        IN (...) predicates.
+
         Args:
+            page: Page number (1-indexed)
+            page_size: Number of items per page
+            search_text: Text search across questions and answers
+            categories: Category filters (ONLY first category used if multiple provided)
+            source: Source filter (e.g., "Manual", "Extracted")
+            verified: Verification status filter
+            bisq_version: Bisq version filter
             verified_from: ISO 8601 date string for start of verified_at range
             verified_to: ISO 8601 date string for end of verified_at range
+
+        Returns:
+            FAQ list response with pagination metadata
         """
         from datetime import datetime, timezone
 

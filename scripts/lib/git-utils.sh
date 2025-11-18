@@ -264,6 +264,7 @@ restore_production_data() {
         "extracted_faq.jsonl"
         "processed_message_ids.jsonl"
         "conversations.jsonl"
+        "faqs.db"
     )
 
     for allowed_file in "${allowed_files[@]}"; do

@@ -247,12 +247,13 @@ class TestJSONLToSQLiteMigration:
         # Perform migration with statistics tracking
         stats = migrate_jsonl_to_sqlite(jsonl_repo, sqlite_repo)
 
-        # Verify: Statistics returned
+        # Verify: Statistics returned (exact values for happy path)
         assert stats is not None
         assert stats["total"] == 3
-        assert stats["migrated"] >= 3
-        assert "errors" in stats
+        assert stats["migrated"] == 3  # Expect all 3 FAQs migrated successfully
+        assert stats["errors"] == 0  # No errors expected for valid FAQs
         assert "duration_seconds" in stats
+        assert stats["duration_seconds"] >= 0  # Can be 0.0 for instant migrations
 
 
 class TestSQLiteToJSONLRollback:
@@ -304,6 +305,47 @@ class TestSQLiteToJSONLRollback:
         assert rolled_back.answer == faq.answer
         assert rolled_back.category == faq.category
         assert rolled_back.verified == faq.verified
+
+    def test_rollback_overwrites_existing_jsonl(self, temp_migration_files):
+        """Test that rollback OVERWRITES existing JSONL data (not append)."""
+        jsonl_path, db_path = temp_migration_files
+
+        # Setup: Add OLD FAQs to JSONL
+        old_faqs = [
+            {"id": "old-1", "question": "Old Q1?", "answer": "Old A1"},
+            {"id": "old-2", "question": "Old Q2?", "answer": "Old A2"},
+        ]
+
+        with open(jsonl_path, "w") as f:
+            for faq in old_faqs:
+                f.write(json.dumps(faq) + "\n")
+
+        # Verify JSONL has 2 old FAQs
+        jsonl_repo = FAQRepository(jsonl_path, portalocker.Lock(jsonl_path, "a"))
+        assert len(jsonl_repo.get_all_faqs()) == 2
+
+        # Setup: Add DIFFERENT FAQs to SQLite
+        sqlite_repo = FAQRepositorySQLite(str(db_path))
+        new_faq = FAQItem(
+            question="New Q from SQLite?",
+            answer="New A from SQLite",
+            category="General",
+        )
+        sqlite_repo.add_faq(new_faq)
+
+        # Perform rollback (should OVERWRITE, not append)
+        rollback_sqlite_to_jsonl(sqlite_repo, jsonl_repo)
+
+        # Verify: JSONL should contain ONLY the SQLite FAQ (old data overwritten)
+        jsonl_faqs = jsonl_repo.get_all_faqs()
+        assert len(jsonl_faqs) == 1, "Rollback should overwrite, not append"
+        assert jsonl_faqs[0].question == "New Q from SQLite?"
+        assert jsonl_faqs[0].answer == "New A from SQLite"
+
+        # Verify old FAQs are gone
+        questions = [faq.question for faq in jsonl_faqs]
+        assert "Old Q1?" not in questions
+        assert "Old Q2?" not in questions
 
 
 # Pytest fixtures

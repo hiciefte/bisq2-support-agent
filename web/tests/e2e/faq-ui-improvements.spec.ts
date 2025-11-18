@@ -131,6 +131,8 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         // SKIPPED: Source filter chip is no longer in the top filter bar (UI change)
         // The source filter functionality may have been moved or removed
         // This test should be updated or removed based on the new UI design
+        // TODO: Track source filter removal/relocation and update or remove this test
+        //       Issue: Need to clarify final UI design for source filtering
     });
 
     test("should show Reset button when filters are active", async ({ page }) => {

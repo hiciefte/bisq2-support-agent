@@ -437,8 +437,10 @@ def sqlite_faq_repo():
         # Cleanup
         try:
             repo.close()  # Uses the close() method which closes both connections
-        except Exception:
-            pass
+        except Exception as e:
+            # Log exceptions during teardown to detect resource leaks or race conditions
+            # but don't fail the test since cleanup is best-effort
+            print(f"Warning: Exception during repository cleanup: {e}")
 
         # Remove temporary directory
         import shutil
