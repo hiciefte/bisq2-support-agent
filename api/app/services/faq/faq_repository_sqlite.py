@@ -818,13 +818,13 @@ class FAQRepositorySQLite:
                     stats["success"] += 1
 
                 except json.JSONDecodeError as e:
-                    logger.error(f"Line {line_num}: Malformed JSON - {e}")
+                    logger.exception(f"Line {line_num}: Malformed JSON - {e}")
                     stats["errors"] += 1
                 except ValueError as e:
-                    logger.error(f"Line {line_num}: Validation error - {e}")
+                    logger.exception(f"Line {line_num}: Validation error - {e}")
                     stats["errors"] += 1
-                except Exception as e:
-                    logger.error(f"Line {line_num}: Unexpected error - {e}")
+                except Exception as e:  # noqa: BLE001
+                    logger.exception(f"Line {line_num}: Unexpected error - {e}")
                     stats["errors"] += 1
 
         logger.info(

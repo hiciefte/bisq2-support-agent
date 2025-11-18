@@ -288,5 +288,5 @@ def verify_migration(
         return True
 
     except Exception as e:
-        logger.error(f"Verification failed with error: {e}")
+        logger.exception(f"Verification failed with error: {e}")
         return False

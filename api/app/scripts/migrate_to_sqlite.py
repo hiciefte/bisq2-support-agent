@@ -50,7 +50,13 @@ def create_backup(jsonl_path: Path) -> Path:
 
     Returns:
         Path: Backup file path
+
+    Raises:
+        FileNotFoundError: If JSONL file doesn't exist
     """
+    if not jsonl_path.exists():
+        raise FileNotFoundError(f"JSONL file not found: {jsonl_path}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = jsonl_path.parent / f"extracted_faq_{timestamp}.jsonl.backup"
 
@@ -182,9 +188,8 @@ def main():
                 sys.exit(1)
 
         # MIGRATION MODE
-        if not args.dry_run:
-            # Create backup before migration
-            backup_path = create_backup(jsonl_path)
+        # Create backup before migration
+        backup_path = create_backup(jsonl_path)
 
         # Perform migration
         logger.info("Starting migration...")

@@ -122,7 +122,7 @@ class FAQRepository:
                 pass  # Empty write truncates the file
             logger.info("Cleared JSONL file for rollback")
         except IOError as e:
-            logger.error(f"Failed to clear JSONL file: {e}")
+            logger.exception(f"Failed to clear JSONL file: {e}")
             raise
 
     def _apply_filters(
