@@ -51,6 +51,20 @@ class Settings(BaseSettings):
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
 
+    # CRITICAL: Single-Admin System Design Constraint
+    # This system is designed for SINGLE CONCURRENT ADMIN operation.
+    # The SQLite FAQ repository uses optimistic concurrency (last-write-wins).
+    #
+    # If multiple support agents need concurrent access, you MUST:
+    # 1. Add optimistic locking (version column in faqs table)
+    # 2. Implement connection pooling for concurrent reads (remove _read_lock serialization)
+    # 3. Migrate to PostgreSQL when exceeding any of these thresholds:
+    #    - 3+ concurrent support admins
+    #    - 50+ concurrent read requests
+    #    - 10,000+ FAQs in database
+    #    - Geographic distribution required
+    MAX_CONCURRENT_ADMINS: int = 1  # Enforced by application design (not runtime check)
+
     # Security settings for cookie handling
     COOKIE_SECURE: bool = True  # Set to False for .onion/HTTP development environments
     ADMIN_SESSION_MAX_AGE: int = (
@@ -114,6 +128,11 @@ class Settings(BaseSettings):
     def PROCESSED_MESSAGE_IDS_FILE_PATH(self) -> str:
         """Complete path to the processed message IDs file"""
         return os.path.join(self.DATA_DIR, "processed_message_ids.jsonl")
+
+    @property
+    def FAQ_DB_PATH(self) -> str:
+        """Complete path to the SQLite FAQ database file"""
+        return os.path.join(self.DATA_DIR, "faqs.db")
 
     def get_data_path(self, *path_parts) -> str:
         """Utility method to construct paths within DATA_DIR

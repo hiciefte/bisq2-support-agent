@@ -7,7 +7,6 @@ vector store rebuilds when unverified FAQs (which are not in the vector
 store) are updated or deleted.
 """
 
-import json
 import uuid
 from pathlib import Path
 from unittest.mock import Mock
@@ -56,14 +55,10 @@ def faq_service_with_mock_callback(test_data_dir):
         MAX_CONTEXT_LENGTH=1000,
     )
 
-    # Use the FAQ file path from settings to ensure consistency
-    faq_file = Path(settings.FAQ_FILE_PATH)
+    # Create FAQ service (creates SQLite database)
+    faq_service = FAQService(settings=settings)
 
-    # Ensure parent directory exists
-    faq_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write test FAQs to the file BEFORE creating FAQService
-    # This ensures the file exists and is populated when FAQRepository initializes
+    # Add test FAQs to the database
     test_faqs = [
         {
             "question": "Verified FAQ 1",
@@ -95,12 +90,9 @@ def faq_service_with_mock_callback(test_data_dir):
         },
     ]
 
-    with open(faq_file, "w", encoding="utf-8") as f:
-        for faq in test_faqs:
-            f.write(json.dumps(faq) + "\n")
-
-    # Now create FAQ service (repository will find the populated file)
-    faq_service = FAQService(settings=settings)
+    for faq_dict in test_faqs:
+        faq_item = FAQItem(**faq_dict)
+        faq_service.add_faq(faq_item)
 
     # Create a mock callback to track when rebuilds are triggered
     mock_callback = Mock()

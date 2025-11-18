@@ -22,7 +22,7 @@ from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
-from app.services.faq.faq_repository import FAQRepository
+from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -68,8 +68,10 @@ class FAQService:
 
             self._file_lock = portalocker.Lock(str(lock_file_path), timeout=10)
 
-            # Initialize FAQ repository for CRUD operations
-            self.repository = FAQRepository(self._faq_file_path, self._file_lock)
+            # Initialize SQLite FAQ repository for CRUD operations
+            logger.info("Using SQLite FAQ storage")
+            db_path = Path(settings.FAQ_DB_PATH)
+            self.repository = FAQRepositorySQLite(str(db_path))
 
             # Initialize conversation processor for message threading
             self.conversation_processor = ConversationProcessor(
@@ -289,16 +291,34 @@ class FAQService:
             except ValueError:
                 logger.warning(f"Invalid verified_to date format: {verified_to}")
 
-        return self.repository.get_faqs_paginated(
-            page,
-            page_size,
-            search_text,
-            categories,
-            source,
-            verified,
-            bisq_version,
-            verified_from_dt,
-            verified_to_dt,
+        # Get response from repository (returns Dict)
+        # Note: Repository accepts single category, not list
+        # If categories list provided, use first category (for backward compatibility)
+        category = categories[0] if categories else None
+
+        result = self.repository.get_faqs_paginated(
+            page=page,
+            page_size=page_size,
+            category=category,
+            verified=verified,
+            source=source,
+            search_text=search_text,
+            bisq_version=bisq_version,
+            verified_from=verified_from_dt,
+            verified_to=verified_to_dt,
+        )
+
+        # Wrap in FAQListResponse for API compatibility
+        # Map repository dict keys to FAQListResponse field names
+        # Ensure total_pages is at least 1 (FAQListResponse validation requires >= 1)
+        total_pages = result["total_pages"] if result["total_pages"] > 0 else 1
+
+        return FAQListResponse(
+            faqs=result["items"],
+            total_count=result["total"],
+            page=result["page"],
+            page_size=result["page_size"],
+            total_pages=total_pages,
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:

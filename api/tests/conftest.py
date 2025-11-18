@@ -225,22 +225,15 @@ def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQServ
     Returns:
         FAQService: Initialized FAQ service with sample data
     """
-    # Initialize service (creates necessary directories and lock files)
+    from app.models.faq import FAQItem
+
+    # Initialize service (creates SQLite database)
     service = FAQService(settings=test_settings)
 
-    # Create the FAQ file with sample data
-    faq_file = Path(test_settings.FAQ_FILE_PATH)
-    faq_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write sample FAQs to file
-    import json
-
-    with open(faq_file, "w", encoding="utf-8") as f:
-        for faq in sample_faq_data:
-            f.write(json.dumps(faq) + "\n")
-
-    # No need to reload - FAQService reads from file on each operation
-    # The _load_faqs method was removed during refactoring
+    # Add sample FAQs to the database
+    for faq_dict in sample_faq_data:
+        faq_item = FAQItem(**faq_dict)
+        service.add_faq(faq_item)
 
     return service
 
