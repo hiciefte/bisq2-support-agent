@@ -77,10 +77,13 @@ class FAQRepositorySQLite:
         db_file = Path(db_path)
         db_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create database file with secure permissions (600) before opening
+        # Create database file if missing and enforce secure permissions (600)
         if not db_file.exists():
             db_file.touch(mode=0o600)
-            logger.info(f"Created database file with mode 600: {db_path}")
+            logger.info("Created database file with mode 600: %s", db_path)
+        else:
+            db_file.chmod(0o600)
+            logger.info("Enforced mode 600 on existing database file: %s", db_path)
 
         # Create dedicated writer connection (used only for writes)
         self._writer_conn = sqlite3.connect(
@@ -303,18 +306,21 @@ class FAQRepositorySQLite:
                 f"Answer exceeds maximum length ({self.MAX_ANSWER_LENGTH})"
             )
 
-        # Auto-populate timestamps
-        now = datetime.now(timezone.utc).isoformat()
-        created_at = faq_item.created_at.isoformat() if faq_item.created_at else now
-        updated_at = faq_item.updated_at.isoformat() if faq_item.updated_at else now
+        # Auto-populate timestamps using datetime objects
+        now_dt = datetime.now(timezone.utc)
+        created_at_dt = faq_item.created_at or now_dt
+        updated_at_dt = faq_item.updated_at or now_dt
 
         # Auto-populate verified_at for new verified FAQs (data consistency)
         if faq_item.verified:
-            verified_at = (
-                faq_item.verified_at.isoformat() if faq_item.verified_at else now
-            )
+            verified_at_dt = faq_item.verified_at or now_dt
         else:
-            verified_at = None
+            verified_at_dt = None
+
+        # Convert to ISO strings for database storage
+        created_at = created_at_dt.isoformat()
+        updated_at = updated_at_dt.isoformat()
+        verified_at = verified_at_dt.isoformat() if verified_at_dt else None
 
         # Define write operation
         def _write_operation():
@@ -364,9 +370,9 @@ class FAQRepositorySQLite:
             source=faq_item.source or "Manual",
             verified=faq_item.verified or False,
             bisq_version=faq_item.bisq_version or "Bisq 2",
-            created_at=faq_item.created_at or datetime.fromisoformat(created_at),
-            updated_at=faq_item.updated_at or datetime.fromisoformat(updated_at),
-            verified_at=faq_item.verified_at,
+            created_at=created_at_dt,
+            updated_at=updated_at_dt,
+            verified_at=verified_at_dt,
         )
 
     def get_faqs_paginated(
@@ -817,14 +823,16 @@ class FAQRepositorySQLite:
                     self.add_faq(faq_item)
                     stats["success"] += 1
 
-                except json.JSONDecodeError as e:
-                    logger.exception(f"Line {line_num}: Malformed JSON - {e}")
+                except json.JSONDecodeError:
+                    logger.exception("Line %s: Malformed JSON", line_num)
                     stats["errors"] += 1
-                except ValueError as e:
-                    logger.exception(f"Line {line_num}: Validation error - {e}")
+                except ValueError:
+                    logger.exception("Line %s: Validation error", line_num)
                     stats["errors"] += 1
-                except Exception as e:  # noqa: BLE001
-                    logger.exception(f"Line {line_num}: Unexpected error - {e}")
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Line %s: Unexpected error during migration", line_num
+                    )
                     stats["errors"] += 1
 
         logger.info(

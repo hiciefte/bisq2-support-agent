@@ -279,14 +279,18 @@ def verify_migration(
 
                 sqlite_faq = sqlite_matches[0]
                 if jsonl_faq.verified != sqlite_faq.verified:
-                    logger.warning(
-                        f"Verified status mismatch for '{jsonl_faq.question}': "
-                        f"JSONL={jsonl_faq.verified}, SQLite={sqlite_faq.verified}"
+                    logger.error(
+                        "Verification failed: verified status mismatch for %r "
+                        "JSONL=%s SQLite=%s",
+                        jsonl_faq.question,
+                        jsonl_faq.verified,
+                        sqlite_faq.verified,
                     )
+                    return False
 
         logger.info("Migration verification passed")
         return True
 
-    except Exception as e:
-        logger.exception(f"Verification failed with error: {e}")
+    except Exception:
+        logger.exception("Verification failed with error")
         return False
