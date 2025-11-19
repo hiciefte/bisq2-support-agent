@@ -320,7 +320,7 @@ apply_updates() {
         if [ "$API_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps api; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps api; then
                 log_error "Failed to rebuild API service"
                 rollback_update "API rebuild failed"
             fi
