@@ -181,7 +181,7 @@ test.describe("FAQ Management", () => {
         await page.waitForTimeout(3000);
 
         // Wait for network to stabilize after reindexing
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Verify change persisted by checking the FAQ card contains updated text
         const updatedCard = await faqCard.textContent();
@@ -217,7 +217,7 @@ test.describe("FAQ Management", () => {
         await continueButton.click();
 
         // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Verify FAQ is removed from list
         const deletedFaq = page.locator(
@@ -255,7 +255,7 @@ test.describe("FAQ Management", () => {
             await categoryOptions.nth(1).click();
 
             // Wait for network to stabilize after filter
-            await page.waitForLoadState("networkidle");
+            await page.waitForTimeout(200);
 
             // Verify FAQs are filtered
             const faqCards = page.locator(FAQ_CARD_SELECTOR);
@@ -285,14 +285,14 @@ test.describe("FAQ Management", () => {
         createdFaqQuestions.push(testQuestion);
 
         // Wait for network to stabilize after FAQ creation
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill(searchTerm);
 
         // Wait for search results to update (debounced search completes)
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Verify the FAQ we created appears in search results
         const faqCards = page.locator(FAQ_CARD_SELECTOR);
@@ -339,7 +339,7 @@ test.describe("FAQ Management", () => {
         await continueButton.click();
 
         // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Reload page
         await page.reload();
@@ -383,7 +383,7 @@ test.describe("FAQ Management", () => {
         createdFaqQuestions.push(testQuestion);
 
         // Wait for creation to complete
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Refresh second page and verify FAQ appears
         await page2.reload();
@@ -450,7 +450,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Verify Badge component with "Verified" text is now visible
         const verifiedBadgeAfter = faqCard.locator(
@@ -504,7 +504,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // Verify badge shows "Verified"
         const verifiedBadge = faqCard.locator("text=Verified");
@@ -574,7 +574,7 @@ test.describe("FAQ Management", () => {
         await confirmButton.click();
 
         // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(200);
 
         // After verification, the button should no longer be visible
         const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');

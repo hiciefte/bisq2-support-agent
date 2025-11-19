@@ -292,6 +292,14 @@ rebuild_services() {
         log_warning "Failed to ensure nginx is running"
     fi
 
+    log_info "Ensuring monitoring services are running..."
+    # Start all monitoring services (if defined in compose file)
+    # These services are essential for observability and system health tracking
+    local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler" "matrix-alertmanager-webhook")
+    if ! docker compose -f "$compose_file" up -d "${monitoring_services[@]}" 2>/dev/null; then
+        log_warning "Some monitoring services may not be defined or failed to start"
+    fi
+
     return 0
 }
 
@@ -340,8 +348,9 @@ check_and_repair_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
     local failed_services=()
-    local critical_services=("api" "web" "nginx")
-    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler")
+    # All core and monitoring services are critical for production operation
+    local critical_services=("api" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor" "matrix-alertmanager-webhook")
 
     cd "$docker_dir" || return 1
 

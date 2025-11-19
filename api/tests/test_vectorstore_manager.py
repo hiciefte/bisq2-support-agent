@@ -44,11 +44,11 @@ class TestVectorStoreManager:
         wiki_file.parent.mkdir(parents=True, exist_ok=True)
         wiki_file.write_text('{"title": "Test Wiki"}\n')
 
-        # Create FAQ file
-        faq_file = data_dir / "extracted_faq.jsonl"
-        faq_file.write_text('{"question": "Test?"}\n')
+        # Create FAQ database file (SQLite)
+        faq_db = data_dir / "faqs.db"
+        faq_db.write_text("fake database content")
 
-        return {"wiki": wiki_file, "faq": faq_file}
+        return {"wiki": wiki_file, "faq": faq_db}
 
     def test_manager_initialization(self, manager, temp_dir):
         """Test VectorStoreManager initialization."""

@@ -1,6 +1,9 @@
 """
 Tests for FAQ RAG Loader verified FAQ filtering functionality.
 
+DEPRECATED: These tests use the old JSONL file-based FAQ loading API.
+The new SQLite-based API is tested in test_faq_rag_loader_sqlite.py.
+
 This module tests the FAQRAGLoader's ability to filter FAQs based on
 their verified status, ensuring only verified FAQs are loaded into
 the vector store for RAG context.
@@ -11,6 +14,10 @@ from pathlib import Path
 
 import pytest
 from app.services.faq.faq_rag_loader import FAQRAGLoader
+
+pytestmark = pytest.mark.skip(
+    reason="Deprecated JSONL-based tests. Use test_faq_rag_loader_sqlite.py instead."
+)
 
 
 @pytest.fixture

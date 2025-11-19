@@ -76,12 +76,12 @@ class VectorStoreManager:
                 "size": st.st_size,
             }
 
-        # Track FAQ file
-        faq_file = self.data_dir / "extracted_faq.jsonl"
-        if faq_file.exists():
-            st = faq_file.stat()
+        # Track FAQ database
+        faq_db = self.data_dir / "faqs.db"
+        if faq_db.exists():
+            st = faq_db.stat()
             sources["faq"] = {
-                "path": str(faq_file),
+                "path": str(faq_db),
                 "mtime": st.st_mtime,
                 "size": st.st_size,
             }
