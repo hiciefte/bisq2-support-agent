@@ -778,6 +778,60 @@ cleanup_old_backups() {
     return 0
 }
 
+# Function to get build ID for cache invalidation
+# Computes a unique build ID based on git commit hash for Next.js build caching
+# Used by update.sh to inject BUILD_ID into Docker build process
+get_build_id() {
+    local repo_dir="${1:-.}"
+
+    # SECURITY: Canonicalize path to prevent traversal attacks
+    # macOS and Linux have different realpath implementations
+    # macOS: realpath doesn't support -e flag
+    # Linux: realpath supports -e flag for existence check
+    if command -v realpath >/dev/null 2>&1; then
+        # Try GNU realpath first (Linux)
+        repo_dir=$(realpath -e "$repo_dir" 2>/dev/null) || \
+        # Fallback to BSD realpath (macOS)
+        repo_dir=$(realpath "$repo_dir" 2>/dev/null) || {
+            log_error "Repository directory does not exist: $repo_dir"
+            return 1
+        }
+    else
+        # Fallback if realpath not available
+        cd "$repo_dir" >/dev/null 2>&1 || {
+            log_error "Repository directory does not exist: $repo_dir"
+            return 1
+        }
+        repo_dir=$(pwd -P)
+    fi
+
+    cd "$repo_dir" || {
+        log_error "Failed to change to repository directory: $repo_dir"
+        return 1
+    }
+
+    local git_dir="$repo_dir/.git"
+
+    # Check if .git directory exists
+    if [ -d "$git_dir" ]; then
+        # Use git to get short commit hash
+        local commit_hash
+        commit_hash=$(git --git-dir="$git_dir" rev-parse --short HEAD 2>/dev/null)
+
+        if [ -n "$commit_hash" ]; then
+            # Return build ID in format: build-{hash}
+            # Example: build-a3f2c1b
+            echo "build-${commit_hash}"
+            return 0
+        fi
+    fi
+
+    # Fallback to constant build ID (maintains current behavior)
+    # This ensures backward compatibility if git is unavailable
+    echo "bisq-support-build"
+    return 0
+}
+
 # Export all functions
 export -f check_local_changes
 export -f stash_changes
@@ -799,3 +853,4 @@ export -f rollback_to_ref
 export -f get_latest_backup
 export -f list_backups
 export -f cleanup_old_backups
+export -f get_build_id

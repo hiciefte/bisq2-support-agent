@@ -19,9 +19,12 @@ const nextConfig = {
     // Security: Remove fingerprinting
     poweredByHeader: false,
     generateBuildId: async () => {
-        // Use a constant build ID to prevent version fingerprinting
-        // This makes it harder for attackers to identify specific versions
-        return 'bisq-support-build'
+        // Use dynamic build ID based on git commit hash for cache invalidation
+        // BUILD_ID is injected via Docker build arg: --build-arg BUILD_ID=build-{hash}
+        // Format: build-{git-hash} (e.g., build-a3f2c1b)
+        // Fallback to constant for backward compatibility if not provided
+        const buildId = process.env.NEXT_BUILD_ID || 'bisq-support-build';
+        return buildId;
     },
     // Performance optimizations
     compress: true,

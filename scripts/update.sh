@@ -155,6 +155,12 @@ rollback_update() {
         fi
     fi
 
+    # Recompute BUILD_ID to reflect rolled-back commit
+    # This ensures /health endpoint shows correct build_id after rollback
+    BUILD_ID=$(get_build_id "$INSTALL_DIR")
+    export BUILD_ID
+    log_info "Rollback build ID: $BUILD_ID"
+
     # Rebuild and restart with previous version
     log_info "Rebuilding and restarting with previous version..."
     cd "$DOCKER_DIR" || exit 2
@@ -283,6 +289,13 @@ apply_updates() {
         exit 1
     }
 
+    # Compute build ID for Next.js cache invalidation
+    # This must be done BEFORE docker compose build
+    local build_id
+    build_id=$(get_build_id "$INSTALL_DIR")
+    export BUILD_ID="$build_id"
+    log_info "Using build ID: $BUILD_ID"
+
     if [ "$REBUILD_NEEDED" = "true" ]; then
         log_info "Performing full rebuild..."
 
@@ -313,7 +326,7 @@ apply_updates() {
         if [ "$API_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps api; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps api; then
                 log_error "Failed to rebuild API service"
                 rollback_update "API rebuild failed"
             fi
@@ -355,7 +368,7 @@ apply_updates() {
         if [ "$WEB_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding Web service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps web; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps web; then
                 log_error "Failed to rebuild Web service"
                 rollback_update "Web rebuild failed"
             fi

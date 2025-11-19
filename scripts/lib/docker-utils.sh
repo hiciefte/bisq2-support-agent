@@ -273,7 +273,9 @@ rebuild_services() {
     fi
 
     log_info "Building backend containers (pulling fresh base images)..."
-    if ! docker compose -f "$compose_file" build --pull "${rebuild_services[@]}"; then
+    # Pass BUILD_ID as build arg for Next.js cache invalidation
+    # BUILD_ID is set by update.sh via get_build_id() function
+    if ! docker compose -f "$compose_file" build --pull --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" "${rebuild_services[@]}"; then
         log_error "Failed to rebuild backend containers"
         return 1
     fi

@@ -165,7 +165,7 @@ kubernetes==34.1.0
     # via chromadb
 langchain-chroma==1.0.0
     # via -r api/requirements.in
-langchain-core==1.0.5
+langchain-core==1.0.6
     # via
     #   -r api/requirements.in
     #   langchain-chroma

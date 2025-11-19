@@ -21,13 +21,17 @@ RUN npm cache clean --force && \
 # The deployment script checks for these changes using needs_web_rebuild()
 COPY web/ ./
 
-# Set build argument
+# Set build arguments
 ARG BUILD_ENV=production
 ARG HOSTNAME
 ARG NEXT_PUBLIC_API_URL
+ARG BUILD_ID=bisq-support-build
+
+# Set environment variables for build
 ENV NODE_ENV=${BUILD_ENV}
 ENV HOSTNAME=${HOSTNAME}
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_BUILD_ID=${BUILD_ID}
 
 # Build the application
 RUN npm run build
