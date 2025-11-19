@@ -407,6 +407,9 @@ class FAQRepositorySQLite:
         Returns:
             Dict with paginated results and metadata
         """
+        # Clamp page to valid range for consistency with JSONL repository
+        if page < 1:
+            page = 1
         offset = (page - 1) * page_size
         params: List = []
         where_clauses: List[str] = []
@@ -676,20 +679,37 @@ class FAQRepositorySQLite:
 
         updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Handle verified_at timestamp:
-        # - If FAQ is being verified (verified=True) and verified_at is not set, auto-populate with current time
-        # - If FAQ is being verified and verified_at is already set, preserve it
-        # - If FAQ is unverified, set verified_at to None
-        if faq_item.verified:
-            if faq_item.verified_at:
-                # Preserve existing verification timestamp
-                verified_at = faq_item.verified_at.isoformat()
-            else:
-                # Auto-populate verification timestamp with current time
-                verified_at = updated_at
-        else:
-            # Unverified FAQ - no verification timestamp
+        # Fetch existing FAQ to check current verification status
+        with self._read_lock:
+            cursor = self._reader_conn.execute(
+                "SELECT verified, verified_at FROM faqs WHERE id = ?", (faq_id_int,)
+            )
+            existing_row = cursor.fetchone()
+
+        if not existing_row:
+            # FAQ not found - will fail in update operation
             verified_at = None
+        else:
+            existing_verified = bool(existing_row[0])
+            existing_verified_at = existing_row[1]
+
+            # Handle verified_at timestamp (matching JSONL behavior):
+            # - If verification status changes from False→True, set verified_at to now
+            # - If FAQ stays verified, preserve existing verified_at timestamp
+            # - If FAQ becomes unverified, clear verified_at to None
+            if faq_item.verified:
+                if not existing_verified:
+                    # Verification status changed from False→True: set new timestamp
+                    verified_at = updated_at
+                elif faq_item.verified_at:
+                    # FAQ stays verified, explicit verified_at provided: use it
+                    verified_at = faq_item.verified_at.isoformat()
+                else:
+                    # FAQ stays verified, no explicit verified_at: preserve existing
+                    verified_at = existing_verified_at
+            else:
+                # FAQ is being unverified: clear timestamp
+                verified_at = None
 
         # Define write operation
         def _update_operation():
@@ -758,7 +778,15 @@ class FAQRepositorySQLite:
                     return cursor.rowcount > 0
 
         # Execute with retry logic
-        return self._execute_with_retry(_delete_operation)
+        success = self._execute_with_retry(_delete_operation)
+
+        # Log outcome for parity with JSONL repository
+        if success:
+            logger.info("Deleted FAQ with ID: %s", faq_id_int)
+        else:
+            logger.warning("Delete failed: FAQ with ID %s not found", faq_id_int)
+
+        return success
 
     def migrate_from_jsonl(self, jsonl_path: str) -> Dict[str, int]:
         """
@@ -829,7 +857,7 @@ class FAQRepositorySQLite:
                 except ValueError:
                     logger.exception("Line %s: Validation error", line_num)
                     stats["errors"] += 1
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception(
                         "Line %s: Unexpected error during migration", line_num
                     )

@@ -8,6 +8,7 @@ This module provides functions to:
 """
 
 import logging
+import sqlite3
 import time
 from typing import Any, Dict
 
@@ -102,8 +103,8 @@ def migrate_jsonl_to_sqlite(
                 if stats["migrated"] % 10 == 0:
                     logger.info(f"Migrated {stats['migrated']}/{stats['total']} FAQs")
 
-            except Exception:
-                logger.exception(f"Error migrating FAQ '{faq.question}'")
+            except (ValueError, OSError, sqlite3.Error):
+                logger.exception("Error migrating FAQ %r", faq.question)
                 stats["errors"] += 1
                 continue
 
@@ -262,11 +263,9 @@ def verify_migration(
 
         logger.info("All questions verified in SQLite")
 
-        # Check 3: Verified status should match for sample of FAQs
-        sample_size = min(10, jsonl_count)
-        if sample_size > 0:
-            jsonl_sample = jsonl_faqs[:sample_size]
-            for jsonl_faq in jsonl_sample:
+        # Check 3: Verified status should match for all FAQs
+        if jsonl_count > 0:
+            for jsonl_faq in jsonl_faqs:
                 # Find matching FAQ in SQLite
                 sqlite_matches = [
                     f for f in sqlite_faqs if f.question == jsonl_faq.question
