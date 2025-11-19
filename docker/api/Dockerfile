@@ -85,8 +85,12 @@ RUN chown -R bisq-support:bisq-support /app
 COPY docker/api/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Set build arguments
+ARG BUILD_ID=bisq-support-build
+
 # Set environment variables
 ENV PYTHONPATH=/app
+ENV BUILD_ID=${BUILD_ID}
 
 # Expose the port the app runs on
 EXPOSE 8000

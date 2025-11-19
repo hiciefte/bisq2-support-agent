@@ -19,6 +19,7 @@ from app.core.tor_metrics import (
 )
 from app.db.run_migrations import run_migrations
 from app.middleware import TorDetectionMiddleware
+from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import chat, feedback_routes, health, metrics_update, onion_verify
 from app.routes.admin import include_admin_routers
 from app.services.faq_service import FAQService
@@ -210,6 +211,10 @@ app.add_middleware(
 # Add Tor detection middleware
 app.add_middleware(TorDetectionMiddleware)
 logger.info("Tor detection middleware registered")
+
+# Add cache control middleware to prevent API response caching
+app.add_middleware(CacheControlMiddleware)
+logger.info("Cache control middleware registered")
 
 # Set up Prometheus metrics
 # Configure Instrumentator to use default REGISTRY and add standard metrics

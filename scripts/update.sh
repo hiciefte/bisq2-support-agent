@@ -283,6 +283,13 @@ apply_updates() {
         exit 1
     }
 
+    # Compute build ID for Next.js cache invalidation
+    # This must be done BEFORE docker compose build
+    local build_id
+    build_id=$(get_build_id "$INSTALL_DIR")
+    export BUILD_ID="$build_id"
+    log_info "Using build ID: $BUILD_ID"
+
     if [ "$REBUILD_NEEDED" = "true" ]; then
         log_info "Performing full rebuild..."
 
@@ -355,7 +362,7 @@ apply_updates() {
         if [ "$WEB_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding Web service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --no-deps web; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps web; then
                 log_error "Failed to rebuild Web service"
                 rollback_update "Web rebuild failed"
             fi
