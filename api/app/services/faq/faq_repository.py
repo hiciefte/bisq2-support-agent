@@ -111,6 +111,20 @@ class FAQRepository:
         except IOError as e:
             logger.error(f"Failed to write FAQs to disk: {e}")
 
+    def _clear_file(self):
+        """Clears the JSONL file by writing an empty file.
+
+        This is used during disaster recovery rollback to ensure we replace
+        (not append to) existing JSONL data when restoring from SQLite.
+        """
+        try:
+            with self._file_lock, open(self._faq_file_path, "w"):
+                pass  # Empty write truncates the file
+            logger.info("Cleared JSONL file for rollback")
+        except IOError as e:
+            logger.exception(f"Failed to clear JSONL file: {e}")
+            raise
+
     def _apply_filters(
         self,
         faqs: List[FAQIdentifiedItem],

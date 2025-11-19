@@ -446,6 +446,45 @@ fix_permissions() {
     fi
 }
 
+# Run FAQ SQLite migration if needed
+run_faq_sqlite_migration() {
+    log_info "Checking for FAQ SQLite migration needs..."
+
+    # Check if migration script exists
+    if [ ! -f "$INSTALL_DIR/api/app/scripts/migrate_to_sqlite.py" ]; then
+        log_info "Migration script not found - skipping SQLite migration"
+        return 0
+    fi
+
+    # Check if API container is running
+    if ! docker ps --format '{{.Names}}' | grep -q "docker-api-1"; then
+        log_warning "API container not running - starting services first..."
+        cd "$DOCKER_DIR" || return 1
+        docker compose -f "$COMPOSE_FILE" up -d api
+        sleep 10
+    fi
+
+    # Run migration in dry-run mode first
+    log_info "Running SQLite migration dry-run..."
+    if docker exec docker-api-1 python -m app.scripts.migrate_to_sqlite --dry-run 2>&1 | tee /tmp/migration_dryrun.log; then
+        log_success "Dry-run completed successfully"
+
+        # Run actual migration
+        log_info "Running SQLite migration..."
+        if docker exec docker-api-1 python -m app.scripts.migrate_to_sqlite 2>&1 | tee /tmp/migration.log; then
+            log_success "SQLite migration completed successfully"
+            return 0
+        else
+            log_error "SQLite migration failed - check /tmp/migration.log for details"
+            return 1
+        fi
+    else
+        log_error "SQLite migration dry-run failed - aborting migration"
+        log_info "Check /tmp/migration_dryrun.log for details"
+        return 1
+    fi
+}
+
 # Cleanup old backups
 cleanup_backups() {
     log_info "Cleaning up old backups..."
@@ -499,6 +538,13 @@ main() {
 
     # Fix permissions before applying updates
     fix_permissions
+
+    # Run FAQ SQLite migration if migration script exists
+    run_faq_sqlite_migration || {
+        log_error "FAQ SQLite migration failed - rolling back update"
+        rollback_update "SQLite migration failed"
+        return 1
+    }
 
     # Apply updates (rebuild or restart services)
     apply_updates

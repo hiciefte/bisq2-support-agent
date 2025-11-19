@@ -1,9 +1,10 @@
 """
 FAQ service for loading and processing FAQ data for the Bisq Support Assistant.
 
-This service handles loading FAQ documentation from JSONL files,
+This service handles loading FAQ documentation from SQLite database,
 processing the documents, preparing them for use in the RAG system,
 and extracting new FAQs from support chat conversations.
+Note: JSONL format is maintained for RAG/extraction workflows.
 """
 
 import json
@@ -22,7 +23,7 @@ from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
-from app.services.faq.faq_repository import FAQRepository
+from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class FAQService:
-    """Service for managing FAQs using a JSONL file and stable content-based IDs."""
+    """Service for managing FAQs using SQLite storage with JSONL for RAG integration."""
 
     _instance: Optional["FAQService"] = None
     _instance_lock = threading.Lock()
@@ -68,8 +69,10 @@ class FAQService:
 
             self._file_lock = portalocker.Lock(str(lock_file_path), timeout=10)
 
-            # Initialize FAQ repository for CRUD operations
-            self.repository = FAQRepository(self._faq_file_path, self._file_lock)
+            # Initialize SQLite FAQ repository for CRUD operations
+            logger.info("Using SQLite FAQ storage")
+            db_path = Path(settings.FAQ_DB_PATH)
+            self.repository = FAQRepositorySQLite(str(db_path))
 
             # Initialize conversation processor for message threading
             self.conversation_processor = ConversationProcessor(
@@ -104,7 +107,7 @@ class FAQService:
             ] = []
 
             self.initialized = True
-            logger.info("FAQService initialized with JSONL backend.")
+            logger.info("FAQService initialized with SQLite storage backend.")
 
     def register_update_callback(
         self,
@@ -245,9 +248,29 @@ class FAQService:
     ) -> FAQListResponse:
         """Get FAQs with pagination and filtering support.
 
+        IMPORTANT: Multi-category filtering limitation
+        -------------------------------------------
+        The SQLite backend currently supports only a SINGLE category filter.
+        If the categories list contains multiple values, only the FIRST category
+        will be used, and the rest will be silently ignored.
+
+        This is a known limitation for backward API compatibility. If multi-category
+        filtering is required, the repository layer needs to be enhanced to support
+        IN (...) predicates.
+
         Args:
+            page: Page number (1-indexed)
+            page_size: Number of items per page
+            search_text: Text search across questions and answers
+            categories: Category filters (ONLY first category used if multiple provided)
+            source: Source filter (e.g., "Manual", "Extracted")
+            verified: Verification status filter
+            bisq_version: Bisq version filter
             verified_from: ISO 8601 date string for start of verified_at range
             verified_to: ISO 8601 date string for end of verified_at range
+
+        Returns:
+            FAQ list response with pagination metadata
         """
         from datetime import datetime, timezone
 
@@ -289,16 +312,34 @@ class FAQService:
             except ValueError:
                 logger.warning(f"Invalid verified_to date format: {verified_to}")
 
-        return self.repository.get_faqs_paginated(
-            page,
-            page_size,
-            search_text,
-            categories,
-            source,
-            verified,
-            bisq_version,
-            verified_from_dt,
-            verified_to_dt,
+        # Get response from repository (returns Dict)
+        # Note: Repository accepts single category, not list
+        # If categories list provided, use first category (for backward compatibility)
+        category = categories[0] if categories else None
+
+        result = self.repository.get_faqs_paginated(
+            page=page,
+            page_size=page_size,
+            category=category,
+            verified=verified,
+            source=source,
+            search_text=search_text,
+            bisq_version=bisq_version,
+            verified_from=verified_from_dt,
+            verified_to=verified_to_dt,
+        )
+
+        # Wrap in FAQListResponse for API compatibility
+        # Map repository dict keys to FAQListResponse field names
+        # Ensure total_pages is at least 1 (FAQListResponse validation requires >= 1)
+        total_pages = result["total_pages"] if result["total_pages"] > 0 else 1
+
+        return FAQListResponse(
+            faqs=result["items"],
+            total_count=result["total"],
+            page=result["page"],
+            page_size=result["page_size"],
+            total_pages=total_pages,
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:

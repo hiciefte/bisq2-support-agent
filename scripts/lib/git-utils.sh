@@ -179,6 +179,7 @@ preserve_production_data() {
         "api/data/extracted_faq.jsonl"
         "api/data/processed_message_ids.jsonl"
         "api/data/conversations.jsonl"
+        "api/data/faqs.db"
     )
 
     # Create backup directory with restrictive permissions
@@ -263,6 +264,7 @@ restore_production_data() {
         "extracted_faq.jsonl"
         "processed_message_ids.jsonl"
         "conversations.jsonl"
+        "faqs.db"
     )
 
     for allowed_file in "${allowed_files[@]}"; do

@@ -78,6 +78,9 @@ docker-compose.override.yml
 # Data
 api/data/vectorstore/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite3
 *.log
 
