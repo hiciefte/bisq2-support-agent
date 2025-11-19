@@ -79,11 +79,29 @@ class FAQRepositorySQLite:
 
         # Create database file if missing and enforce secure permissions (600)
         if not db_file.exists():
-            db_file.touch(mode=0o600)
-            logger.info("Created database file with mode 600: %s", db_path)
+            try:
+                db_file.touch(mode=0o600)
+                logger.info("Created database file with mode 600: %s", db_path)
+            except (OSError, PermissionError) as e:
+                # Fall back to default permissions if we can't set mode
+                db_file.touch()
+                logger.warning(
+                    "Created database file with default permissions (couldn't set 600): %s - %s",
+                    db_path,
+                    e,
+                )
         else:
-            db_file.chmod(0o600)
-            logger.info("Enforced mode 600 on existing database file: %s", db_path)
+            try:
+                db_file.chmod(0o600)
+                logger.info("Enforced mode 600 on existing database file: %s", db_path)
+            except (OSError, PermissionError) as e:
+                # Permission change failed - likely file owned by different user
+                # This is not critical for functionality, just log warning
+                logger.warning(
+                    "Could not enforce mode 600 on database file: %s - %s. Continuing anyway.",
+                    db_path,
+                    e,
+                )
 
         # Create dedicated writer connection (used only for writes)
         self._writer_conn = sqlite3.connect(
