@@ -155,6 +155,12 @@ rollback_update() {
         fi
     fi
 
+    # Recompute BUILD_ID to reflect rolled-back commit
+    # This ensures /health endpoint shows correct build_id after rollback
+    BUILD_ID=$(get_build_id "$INSTALL_DIR")
+    export BUILD_ID
+    log_info "Rollback build ID: $BUILD_ID"
+
     # Rebuild and restart with previous version
     log_info "Rebuilding and restarting with previous version..."
     cd "$DOCKER_DIR" || exit 2

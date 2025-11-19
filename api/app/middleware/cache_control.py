@@ -42,6 +42,12 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response with cache control headers added
+
+        Note:
+            Currently applies no-cache headers to ALL API responses.
+            For selective caching (e.g., public static JSON endpoints),
+            consider implementing path-based or method-based conditional
+            header application in future iterations.
         """
         # Call the next middleware or route handler
         response = await call_next(request)
