@@ -338,6 +338,11 @@ test_chat_endpoint() {
         http_code=$(echo "$response" | tail -n1)
         response=$(echo "$response" | sed '$d')
 
+        # Validate HTTP code is numeric (curl may fail with connection errors)
+        if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
+            http_code="000"
+        fi
+
         # Check if response contains expected fields
         if echo "$response" | jq -e '.answer and .sources and .response_time' > /dev/null 2>&1; then
             log_success "Chat endpoint test successful"
