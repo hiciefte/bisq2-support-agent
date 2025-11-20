@@ -587,18 +587,13 @@ class FAQService:
         """
         self.rag_loader.update_source_weights(new_weights)
 
-    def load_faq_data(self, faq_file: Optional[str] = None) -> List[Document]:
-        """Load FAQ data from JSONL file using the RAG loader.
-
-        Args:
-            faq_file: Path to the FAQ JSONL file.
-                      If None, uses the default path from settings.
+    def load_faq_data(self) -> List[Document]:
+        """Load FAQ data from SQLite repository using the RAG loader.
 
         Returns:
             List of Document objects prepared for RAG system
         """
-        faq_path = Path(faq_file) if faq_file else self._faq_file_path
-        return self.rag_loader.load_faq_data(faq_path)
+        return self.rag_loader.load_faq_data(self.repository, only_verified=True)
 
     # FAQ Extraction Methods from extract_faqs.py
 

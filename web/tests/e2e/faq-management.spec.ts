@@ -162,8 +162,8 @@ test.describe("FAQ Management", () => {
         const editButton = faqCard.locator('[data-testid="edit-faq-button"]');
         await editButton.click({ timeout: 5000 });
 
-        // Wait for inline edit mode to activate
-        await page.waitForTimeout(500);
+        // Wait for inline edit mode to activate (textarea becomes visible)
+        await page.locator("textarea").first().waitFor({ state: "visible", timeout: 5000 });
 
         // In inline edit mode, the FAQ card is replaced with a Card component containing editable fields
         // Find the textarea in the edit form (it's the only textarea visible on the page)
@@ -176,16 +176,12 @@ test.describe("FAQ Management", () => {
         const saveButton = page.locator('button:has-text("Save")');
         await saveButton.click({ timeout: 5000 });
 
-        // Wait for save operation to complete
+        // Wait for save operation to complete (Save button disappears, view mode returns)
         // The API reindexes the vector store which can take several seconds
-        await page.waitForTimeout(3000);
+        await expect(saveButton).toBeHidden({ timeout: 15000 });
 
-        // Wait for network to stabilize after reindexing
-        await page.waitForLoadState("networkidle");
-
-        // Verify change persisted by checking the FAQ card contains updated text
-        const updatedCard = await faqCard.textContent();
-        expect(updatedCard).toContain("Updated answer");
+        // Wait for the updated content to appear in the FAQ card
+        await expect(faqCard).toContainText("Updated answer", { timeout: 10000 });
     });
 
     test("should delete a FAQ (CRITICAL: Tests permission issue)", async ({ page }) => {
@@ -216,14 +212,14 @@ test.describe("FAQ Management", () => {
         const continueButton = dialog.getByRole("button", { name: "Continue" });
         await continueButton.click();
 
-        // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState("networkidle");
+        // Wait for dialog to close after deletion
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
 
         // Verify FAQ is removed from list
         const deletedFaq = page.locator(
             `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
         );
-        await expect(deletedFaq).toHaveCount(0);
+        await expect(deletedFaq).toHaveCount(0, { timeout: 10000 });
 
         // CRITICAL: Verify no permission errors in console
         const logs = await page.evaluate(() => {
@@ -254,11 +250,12 @@ test.describe("FAQ Management", () => {
             // Click second option (first real category)
             await categoryOptions.nth(1).click();
 
-            // Wait for network to stabilize after filter
-            await page.waitForLoadState("networkidle");
+            // Wait for dropdown to close after selection
+            await page.waitForSelector('[role="option"]', { state: "hidden", timeout: 5000 });
 
-            // Verify FAQs are filtered
+            // Verify FAQs are filtered (at least one result)
             const faqCards = page.locator(FAQ_CARD_SELECTOR);
+            await expect(faqCards.first()).toBeVisible({ timeout: 10000 });
             const count = await faqCards.count();
             expect(count).toBeGreaterThan(0);
         }
@@ -284,18 +281,20 @@ test.describe("FAQ Management", () => {
         // Track for cleanup
         createdFaqQuestions.push(testQuestion);
 
-        // Wait for network to stabilize after FAQ creation
-        await page.waitForLoadState("networkidle");
+        // Wait for the created FAQ to appear in the list
+        const createdFaq = page.locator(
+            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+        );
+        await createdFaq.waitFor({ state: "visible", timeout: 10000 });
 
         // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
         await searchInput.fill(searchTerm);
 
-        // Wait for search results to update (debounced search completes)
-        await page.waitForLoadState("networkidle");
-
-        // Verify the FAQ we created appears in search results
+        // Wait for search results to show our FAQ (debounced search completes)
         const faqCards = page.locator(FAQ_CARD_SELECTOR);
+        await expect(faqCards.first()).toContainText(searchTerm, { timeout: 5000 });
+
         const count = await faqCards.count();
 
         expect(count).toBeGreaterThan(0);
@@ -338,8 +337,14 @@ test.describe("FAQ Management", () => {
         await continueButton.waitFor({ state: "visible", timeout: 5000 });
         await continueButton.click();
 
-        // Wait for deletion to complete and network to stabilize
-        await page.waitForLoadState("networkidle");
+        // Wait for dialog to close after deletion
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
+
+        // Wait for FAQ to be removed from DOM
+        const deletedFaqCheck = page.locator(
+            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+        );
+        await expect(deletedFaqCheck).toHaveCount(0, { timeout: 10000 });
 
         // Reload page
         await page.reload();
@@ -382,8 +387,11 @@ test.describe("FAQ Management", () => {
         // Track for cleanup
         createdFaqQuestions.push(testQuestion);
 
-        // Wait for creation to complete
-        await page.waitForLoadState("networkidle");
+        // Wait for FAQ to appear in the first page
+        const newFaqCard = page.locator(
+            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+        );
+        await newFaqCard.waitFor({ state: "visible", timeout: 15000 });
 
         // Refresh second page and verify FAQ appears
         await page2.reload();
@@ -449,14 +457,14 @@ test.describe("FAQ Management", () => {
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
 
-        // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        // Wait for dialog to close after verification
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
 
         // Verify Badge component with "Verified" text is now visible
         const verifiedBadgeAfter = faqCard.locator(
             '.inline-flex.items-center:has-text("Verified")'
         );
-        await expect(verifiedBadgeAfter).toBeVisible();
+        await expect(verifiedBadgeAfter).toBeVisible({ timeout: 10000 });
 
         // Verify "Verify FAQ" button is no longer visible (can't toggle back)
         const verifyButtonAfter = faqCard.locator('button:has-text("Verify FAQ")');
@@ -503,12 +511,12 @@ test.describe("FAQ Management", () => {
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
 
-        // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        // Wait for dialog to close after verification
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
 
         // Verify badge shows "Verified"
         const verifiedBadge = faqCard.locator("text=Verified");
-        await expect(verifiedBadge).toBeVisible();
+        await expect(verifiedBadge).toBeVisible({ timeout: 10000 });
 
         // Reload page
         await page.reload();
@@ -573,12 +581,12 @@ test.describe("FAQ Management", () => {
         const confirmButton = dialog.getByRole("button", { name: "Verify FAQ" });
         await confirmButton.click();
 
-        // Wait for verification to complete
-        await page.waitForLoadState("networkidle");
+        // Wait for dialog to close after verification
+        await dialog.waitFor({ state: "hidden", timeout: 5000 });
 
         // After verification, the button should no longer be visible
         const verifyButtonAfter = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
-        await expect(verifyButtonAfter).toHaveCount(0);
+        await expect(verifyButtonAfter).toHaveCount(0, { timeout: 10000 });
 
         // Verified badge should be visible
         const verifiedBadge = unverifiedFaqCard.locator(

@@ -292,6 +292,23 @@ rebuild_services() {
         log_warning "Failed to ensure nginx is running"
     fi
 
+    log_info "Ensuring monitoring services are running..."
+    # Start all monitoring services (if defined in compose file)
+    # These services enhance observability; graceful degradation if unavailable
+    local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler" "matrix-alertmanager-webhook")
+    local monitoring_failed=0
+    for svc in "${monitoring_services[@]}"; do
+        if docker compose -f "$compose_file" up -d "$svc" 2>/dev/null; then
+            log_success "Monitoring service $svc started"
+        else
+            log_warning "Monitoring service $svc may not be defined or failed to start"
+            monitoring_failed=$((monitoring_failed + 1))
+        fi
+    done
+    if [ $monitoring_failed -gt 0 ]; then
+        log_warning "$monitoring_failed monitoring services failed to start"
+    fi
+
     return 0
 }
 
@@ -340,8 +357,9 @@ check_and_repair_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
     local failed_services=()
-    local critical_services=("api" "web" "nginx")
-    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler")
+    # All core and monitoring services are critical for production operation
+    local critical_services=("api" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor" "matrix-alertmanager-webhook")
 
     cd "$docker_dir" || return 1
 
