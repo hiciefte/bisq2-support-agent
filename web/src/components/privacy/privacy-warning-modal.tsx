@@ -100,7 +100,15 @@ export function PrivacyWarningModal() {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            For full details, read our{" "}
+            By using this service, you agree to our{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              className="text-primary hover:underline"
+            >
+              Terms of Service
+            </Link>
+            {" "}and{" "}
             <Link
               href="/privacy"
               target="_blank"
@@ -118,8 +126,17 @@ export function PrivacyWarningModal() {
             asChild
             className="w-full sm:w-auto"
           >
+            <Link href="/terms" target="_blank">
+              Terms of Service
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            asChild
+            className="w-full sm:w-auto"
+          >
             <Link href="/privacy" target="_blank">
-              Read Full Privacy Policy
+              Privacy Policy
             </Link>
           </Button>
           <Button

@@ -97,7 +97,14 @@ export const ChatInput = ({
                         </button>
                     </div>
                 )}
-                <div className="flex justify-center mt-4 pb-4">
+                <div className="flex justify-center gap-4 mt-4 pb-4">
+                    <Link
+                        href="/terms"
+                        className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
+                    >
+                        Terms of Service
+                    </Link>
+                    <span className="text-xs text-muted-foreground/40">|</span>
                     <Link
                         href="/privacy"
                         className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
