@@ -12,6 +12,13 @@ langchain-chroma
 chromadb
 langchain-text-splitters
 
+# NLI and ML models
+transformers>=4.35.0
+torch>=2.0.0
+
+# Matrix integration
+matrix-nio>=0.21.0
+
 # LLM providers
 # AISuite for unified LLM interface (pinned for reproducible builds)
 aisuite==0.1.12

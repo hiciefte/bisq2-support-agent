@@ -21,9 +21,12 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.rag.auto_send_router import AutoSendRouter
+from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.llm_provider import LLMProvider
+from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
@@ -110,6 +113,11 @@ class SimplifiedRAGService:
 
         # Initialize lock for rebuild serialization to prevent concurrent rebuilds
         self._setup_lock = asyncio.Lock()
+
+        # Initialize confidence scoring components
+        self.nli_validator = NLIValidator()
+        self.confidence_scorer = ConfidenceScorer(self.nli_validator)
+        self.auto_send_router = AutoSendRouter()
 
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
@@ -676,6 +684,21 @@ class SimplifiedRAGService:
             # Deduplicate sources
             sources = self._deduplicate_sources(sources)
 
+            # Calculate confidence score
+            confidence = await self.confidence_scorer.calculate_confidence(
+                answer=response_text,
+                sources=docs,
+                question=preprocessed_question,
+            )
+
+            # Get routing decision based on confidence
+            routing_action = await self.auto_send_router.route_response(
+                confidence=confidence,
+                question=preprocessed_question,
+                answer=response_text,
+                sources=docs,
+            )
+
             # Update error rate (success)
             update_error_rate(is_error=False)
 
@@ -684,8 +707,10 @@ class SimplifiedRAGService:
                 "sources": sources,
                 "response_time": response_time,
                 "answered_from": "documents",  # Metadata flag
-                "forwarded_to_human": False,
+                "forwarded_to_human": routing_action.queue_for_review,
                 "feedback_created": False,
+                "confidence": confidence,
+                "routing_action": routing_action.action,
             }
 
         except Exception as e:
