@@ -315,28 +315,49 @@ rebuild_services() {
 # Function to test the chat endpoint
 test_chat_endpoint() {
     local url="${1:-http://localhost/api/chat/query}"
+    local retries="${2:-5}"
+    local delay="${3:-10}"
 
     log_info "Testing chat endpoint..."
-    local response
-    response=$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d '{
-            "question": "What is Bisq?",
-            "chat_history": []
-        }' \
-        "$url")
 
-    # Check if response contains expected fields
-    if echo "$response" | jq -e '.answer and .sources and .response_time' > /dev/null; then
-        log_success "Chat endpoint test successful"
-        local response_time
-        response_time=$(echo "$response" | jq -r '.response_time')
-        log_success "Response time: ${response_time}"
-        return 0
-    else
-        log_error "Chat endpoint test failed. Response: $response"
-        return 1
-    fi
+    local attempt=1
+    while [ $attempt -le $retries ]; do
+        local response
+        local http_code
+
+        # Get both response body and HTTP status code
+        response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d '{
+                "question": "What is Bisq?",
+                "chat_history": []
+            }' \
+            "$url")
+
+        # Extract HTTP code (last line) and body (everything else)
+        http_code=$(echo "$response" | tail -n1)
+        response=$(echo "$response" | sed '$d')
+
+        # Check if response contains expected fields
+        if echo "$response" | jq -e '.answer and .sources and .response_time' > /dev/null 2>&1; then
+            log_success "Chat endpoint test successful"
+            local response_time
+            response_time=$(echo "$response" | jq -r '.response_time')
+            log_success "Response time: ${response_time}"
+            return 0
+        fi
+
+        # If we got a non-200 status or invalid response, retry
+        if [ "$attempt" -lt "$retries" ]; then
+            log_warning "Chat endpoint test failed (attempt $attempt/$retries, HTTP $http_code). Retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log_error "Chat endpoint test failed after $retries attempts. Last response: $response"
+    return 1
 }
 
 # Function to display service status
