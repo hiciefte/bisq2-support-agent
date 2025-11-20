@@ -69,9 +69,10 @@ class TestVectorStoreManagerSQLite:
         metadata = vectorstore_manager.collect_source_metadata()
 
         # Assert: FAQ source should point to faqs.db, not extracted_faq.jsonl
-        if "faq" in metadata["sources"]:
-            assert "faqs.db" in metadata["sources"]["faq"]["path"]
-            assert "extracted_faq.jsonl" not in metadata["sources"]["faq"]["path"]
+        assert "faq" in metadata["sources"], "FAQ source must be tracked"
+        faq_path = metadata["sources"]["faq"]["path"]
+        assert "faqs.db" in faq_path, "FAQ source must point to faqs.db"
+        assert "extracted_faq.jsonl" not in faq_path, "FAQ source must not be JSONL"
 
     def test_detects_database_changes(
         self, vectorstore_manager, setup_test_files, tmp_path

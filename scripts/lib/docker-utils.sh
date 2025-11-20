@@ -294,10 +294,19 @@ rebuild_services() {
 
     log_info "Ensuring monitoring services are running..."
     # Start all monitoring services (if defined in compose file)
-    # These services are essential for observability and system health tracking
+    # These services enhance observability; graceful degradation if unavailable
     local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler" "matrix-alertmanager-webhook")
-    if ! docker compose -f "$compose_file" up -d "${monitoring_services[@]}" 2>/dev/null; then
-        log_warning "Some monitoring services may not be defined or failed to start"
+    local monitoring_failed=0
+    for svc in "${monitoring_services[@]}"; do
+        if docker compose -f "$compose_file" up -d "$svc" 2>/dev/null; then
+            log_success "Monitoring service $svc started"
+        else
+            log_warning "Monitoring service $svc may not be defined or failed to start"
+            monitoring_failed=$((monitoring_failed + 1))
+        fi
+    done
+    if [ $monitoring_failed -gt 0 ]; then
+        log_warning "$monitoring_failed monitoring services failed to start"
     fi
 
     return 0

@@ -226,12 +226,8 @@ class TestFAQRAGLoaderSQLite:
     def test_bisq_version_handling(self, sqlite_repo, rag_loader):
         """Test that bisq_version metadata is correctly handled."""
         # Setup: Add FAQs with different version tags
-        versions = [
-            ("Bisq 1", "Bisq 1"),
-            ("Bisq 2", "Bisq 2"),
-            ("General", "General"),
-        ]
-        for idx, (version, expected) in enumerate(versions):
+        versions = ["Bisq 1", "Bisq 2", "General"]
+        for idx, version in enumerate(versions):
             faq = FAQItem(
                 question=f"Q{idx}",
                 answer=f"A{idx}",

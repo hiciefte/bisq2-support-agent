@@ -34,7 +34,8 @@ export async function selectCategory(page: Page, category: string) {
     await commandInput.fill(category);
 
     // 4. Wait for filtered list to update (client-side operation, no network needed)
-    await page.waitForTimeout(200);
+    // Wait for cmdk items to be visible (more robust than fixed delay)
+    await page.waitForSelector("[cmdk-item]", { state: "visible", timeout: 1000 });
 
     // 5. Check if the category exists in the list
     const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
