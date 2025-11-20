@@ -74,17 +74,15 @@ class TestVectorStoreManagerSQLite:
         assert "faqs.db" in faq_path, "FAQ source must point to faqs.db"
         assert "extracted_faq.jsonl" not in faq_path, "FAQ source must not be JSONL"
 
-    def test_detects_database_changes(
-        self, vectorstore_manager, setup_test_files, tmp_path
-    ):
+    def test_detects_database_changes(self, vectorstore_manager, setup_test_files):
         """Test that database file changes trigger rebuild detection."""
         # Setup: Get initial metadata
         faq_db = setup_test_files["faq_db"]
         initial_metadata = vectorstore_manager.collect_source_metadata()
         vectorstore_manager.save_metadata(initial_metadata)
 
-        # Wait to ensure mtime difference
-        time.sleep(0.1)
+        # Wait to ensure mtime difference (some filesystems have ~1s resolution)
+        time.sleep(1.1)
 
         # Action: Modify database file
         faq_db.write_text("modified database content")
