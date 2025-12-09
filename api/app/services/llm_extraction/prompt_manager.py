@@ -115,7 +115,7 @@ class ExtractionPromptManager:
         # Estimate tokens and truncate from the beginning
         max_conv_tokens = self.max_tokens - (len(system_msg["content"]) // 4)
         current_tokens = 0
-        truncated_conv = []
+        truncated_conv: List[Dict[str, str]] = []
 
         # Take messages from the end (most recent)
         for msg in reversed(conversation_msgs):

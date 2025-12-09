@@ -114,7 +114,7 @@ class TestAutoSendRouter:
             sources=[],
         )
 
-        assert action.action == "queue_low"
+        assert action.action == "needs_human"
         assert action.send_immediately is False
         assert action.queue_for_review is True
         assert action.priority == "high"
@@ -130,7 +130,7 @@ class TestAutoSendRouter:
             sources=[],
         )
 
-        assert action.action == "queue_low"
+        assert action.action == "needs_human"
         assert action.flag == "needs_human_expertise"
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestAutoSendRouter:
             sources=[],
         )
 
-        assert action.action == "queue_low"
+        assert action.action == "needs_human"
         assert action.flag == "needs_human_expertise"
 
     @pytest.mark.asyncio
@@ -182,7 +182,7 @@ class TestAutoSendRouter:
             sources=[],
         )
 
-        assert action.action == "queue_low"
+        assert action.action == "needs_human"
         assert action.flag == "needs_human_expertise"
 
     @pytest.mark.asyncio

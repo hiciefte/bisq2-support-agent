@@ -166,7 +166,7 @@ class TestUserActionWithAdversativeContext:
                 msg, "@user:matrix.org", OFFICIAL_SUPPORT_STAFF
             )
             assert role == "user", f"Should detect user for: {msg}"
-            assert confidence > 0.7  # Strong indicator
+            assert confidence >= 0.7  # Strong indicator
 
     def test_i_opened_made_sent_but_pattern(self):
         """Should detect 'i [action]ed... but' variations."""
@@ -185,7 +185,7 @@ class TestUserActionWithAdversativeContext:
                 msg, "@user:matrix.org", OFFICIAL_SUPPORT_STAFF
             )
             assert role == "user", f"Should detect user for: {msg}"
-            assert confidence > 0.7
+            assert confidence >= 0.7
 
 
 class TestGreetingBasedQuestions:

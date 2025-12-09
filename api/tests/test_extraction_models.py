@@ -158,7 +158,12 @@ class TestExtractedQuestion:
         from app.services.llm_extraction.models import ExtractedQuestion
 
         # Valid types
-        valid_types = ["initial_question", "follow_up", "staff_question", "not_question"]
+        valid_types = [
+            "initial_question",
+            "follow_up",
+            "staff_question",
+            "not_question",
+        ]
         for qtype in valid_types:
             question = ExtractedQuestion(
                 message_id="$msg1",
@@ -260,14 +265,24 @@ class TestExtractionResult:
 
         assert len(result.questions) == 0
 
-    def test_processing_time_must_be_positive(self):
-        """Should enforce positive processing time."""
+    def test_processing_time_must_be_non_negative(self):
+        """Should enforce non-negative processing time."""
         from app.services.llm_extraction.models import ExtractionResult
 
-        with pytest.raises(ValidationError, match="greater than 0"):
+        # Zero is allowed (very fast processing)
+        result = ExtractionResult(
+            conversation_id="conv_1",
+            questions=[],
+            total_messages=3,
+            processing_time_ms=0,
+        )
+        assert result.processing_time_ms == 0
+
+        # Negative not allowed
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
             ExtractionResult(
                 conversation_id="conv_1",
                 questions=[],
                 total_messages=3,
-                processing_time_ms=-100,  # Negative not allowed
+                processing_time_ms=-100,
             )

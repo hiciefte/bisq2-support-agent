@@ -14,9 +14,7 @@ class MessageInput(BaseModel):
 
     event_id: str = Field(..., description="Matrix event ID")
     sender: str = Field(..., description="Matrix user ID")
-    body: str = Field(
-        ..., min_length=1, max_length=5000, description="Message content"
-    )
+    body: str = Field(..., min_length=1, max_length=5000, description="Message content")
     timestamp: int = Field(..., description="Server timestamp in milliseconds")
 
     @field_validator("body")
@@ -58,5 +56,5 @@ class ExtractionResult(BaseModel):
     )
     total_messages: int = Field(..., description="Total messages processed")
     processing_time_ms: int = Field(
-        ..., gt=0, description="Processing time in milliseconds"
+        ..., ge=0, description="Processing time in milliseconds"
     )
