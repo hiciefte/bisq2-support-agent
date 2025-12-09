@@ -25,6 +25,7 @@ langchain-openai
 # Web scraping and parsing
 beautifulsoup4
 requests
+urllib3>=2.6.0  # Security fix for CVE-2025-66418, CVE-2025-66471
 mwclient
 
 # Data processing
