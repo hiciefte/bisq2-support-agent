@@ -86,6 +86,25 @@ class Settings(BaseSettings):
     LLM_CLASSIFICATION_RATE_LIMIT_REQUESTS: int = 10  # Max requests per user per window
     LLM_CLASSIFICATION_RATE_LIMIT_WINDOW: int = 60  # Rate limit window in seconds
 
+    # Full LLM Extraction Settings (Phase 2: Question Extraction with LLM)
+    # Enables complete LLM-based question extraction from conversations
+    ENABLE_LLM_EXTRACTION: bool = (
+        False  # Enable full LLM extraction (replaces pattern-based)
+    )
+    LLM_EXTRACTION_MODEL: str = (
+        "openai:gpt-4o-mini"  # Model for extraction (format: "provider:model")
+    )
+    LLM_EXTRACTION_BATCH_SIZE: int = (
+        10  # Number of conversations to process in parallel
+    )
+    LLM_EXTRACTION_CACHE_TTL: int = 3600  # Cache time-to-live in seconds (1 hour)
+    LLM_EXTRACTION_MAX_TOKENS: int = (
+        4000  # Max tokens per conversation (for truncation)
+    )
+    LLM_EXTRACTION_TEMPERATURE: float = (
+        0.0  # LLM temperature for extraction (deterministic)
+    )
+
     # Provider-specific API keys (separate from classification config)
     ANTHROPIC_API_KEY: str = ""  # For Anthropic Claude models
     OLLAMA_API_URL: str = "http://localhost:11434"  # For local Ollama deployment

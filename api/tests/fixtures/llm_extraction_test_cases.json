@@ -1,0 +1,275 @@
+{
+  "description": "Test cases extracted from shadow mode database for LLM extraction validation",
+  "version": "1.0",
+  "test_cases": [
+    {
+      "question_id": "$sQ3tneL_knDuUHh-GM4anMw6XnB4ISeLYX_TKK_reLg",
+      "synthesized_question": "Hi all , I found out that all of my BSQ funds are missing from my Bisq app. I tried many times to synchronize the DAO, including from genesis block, but it is still stating 0 . All fields (except \"Available non-BSQ balance (BTC)\") are stating zero.\nAdditionally in the transaction list all the details state: \"Not recognized\" and amount in BSQ states: \"N/A\"",
+      "messages": [
+        {
+          "content": "Hi all , I found out that all of my BSQ funds are missing from my Bisq app. I tried many times to synchronize the DAO, including from genesis block, but it is still stating 0 . All fields (except \"Available non-BSQ balance (BTC)\") are stating zero.\nAdditionally in the transaction list all the details state: \"Not recognized\" and amount in BSQ states: \"N/A\"",
+          "is_primary_question": true,
+          "timestamp": "2025-11-29T17:11:18.787000+00:00",
+          "sender_type": "user",
+          "message_id": "$sQ3tneL_knDuUHh-GM4anMw6XnB4ISeLYX_TKK_reLg",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "fc3360cd",
+      "created_at": "2025-12-02T11:40:05.337135+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$RqVyE9sWvtSz90CClSptOjMa8joEpO5c88diIBjuxL0",
+      "synthesized_question": "Any advice on what to do next?",
+      "messages": [
+        {
+          "content": "what information would you like from me to help?  Trade ID?",
+          "is_context": true,
+          "message_id": "$oTXLoWUw5KUcJsI6onzc1M65ooIs-SNUv2U12F4wyLU",
+          "timestamp": "2025-11-29T19:33:51.730000+00:00",
+          "sender_id": "168866b2"
+        },
+        {
+          "content": "For some reason the arbitration agent is listed as N/A.",
+          "is_context": true,
+          "message_id": "$Q7xt_oYJF2_CCYtx_89t-HnAUibali5FZpnzed5dHbk",
+          "timestamp": "2025-11-29T19:28:13.037000+00:00",
+          "sender_id": "168866b2"
+        },
+        {
+          "content": "According to bisq I believe it was you. suddenwhipvapor ",
+          "is_context": true,
+          "message_id": "$c4hZ0g8zuGL_HZXcZjdOIOklxhnh8kL8l-VSj0-qIzQ",
+          "timestamp": "2025-11-29T19:27:28.063000+00:00",
+          "sender_id": "168866b2"
+        },
+        {
+          "content": "Any advice on what to do next?",
+          "is_primary_question": true,
+          "timestamp": "2025-11-29T19:25:47.141000+00:00",
+          "sender_type": "user",
+          "message_id": "$RqVyE9sWvtSz90CClSptOjMa8joEpO5c88diIBjuxL0",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "168866b2",
+      "created_at": "2025-12-02T11:40:05.333386+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$oTXLoWUw5KUcJsI6onzc1M65ooIs-SNUv2U12F4wyLU",
+      "synthesized_question": "what information would you like from me to help?  Trade ID?",
+      "messages": [
+        {
+          "content": "what information would you like from me to help?  Trade ID?",
+          "is_primary_question": true,
+          "timestamp": "2025-11-29T19:33:51.730000+00:00",
+          "sender_type": "user",
+          "message_id": "$oTXLoWUw5KUcJsI6onzc1M65ooIs-SNUv2U12F4wyLU",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "168866b2",
+      "created_at": "2025-12-02T11:40:05.330600+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$TUr3VYUZ52cER9ofTau4ixruNpNti8zKsCRAu-EB4Po",
+      "synthesized_question": "Still cannot sync to the DAO.  Are the seed nodes down again?",
+      "messages": [
+        {
+          "content": "Still cannot sync to the DAO.  Are the seed nodes down again?",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T00:35:46.757000+00:00",
+          "sender_type": "user",
+          "message_id": "$TUr3VYUZ52cER9ofTau4ixruNpNti8zKsCRAu-EB4Po",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "b89112d2",
+      "created_at": "2025-12-02T11:40:05.327588+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$9WR0CawQTbT1F87htsFF02CwUHPsE4I6mntizmJS4rs",
+      "synthesized_question": "hello everyone, bisq keeps telling me to resync dao . how do i get out ot this loop? Thanks",
+      "messages": [
+        {
+          "content": "ok glad it's a known issue ",
+          "is_context": true,
+          "message_id": "$ZG2ilkvzB-dNSTFtkhD5yB-ievE_PThDEKo0rFpceK4",
+          "timestamp": "2025-11-30T03:50:58.685000+00:00",
+          "sender_id": "e975311c"
+        },
+        {
+          "content": "hello everyone, bisq keeps telling me to resync dao . how do i get out ot this loop? Thanks",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T03:49:09.330000+00:00",
+          "sender_type": "user",
+          "message_id": "$9WR0CawQTbT1F87htsFF02CwUHPsE4I6mntizmJS4rs",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "e975311c",
+      "created_at": "2025-12-02T11:40:05.324413+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$RaR3m1c1WLwdVdbJI-bUlgTGupgYH8t9J9u4pPIqULM",
+      "synthesized_question": "i have already tried to restart ( and shutdown ), with no luck ",
+      "messages": [
+        {
+          "content": "okay i'll leave it be today then ... ",
+          "is_context": true,
+          "message_id": "$EdyAGnFJaNUOzSnWpfqfAibzs0QkpAhWBjRKOXmDSvQ",
+          "timestamp": "2025-11-30T10:12:55.413000+00:00",
+          "sender_id": "66b65b4f"
+        },
+        {
+          "content": "exactly, since yesterday something went wrong ... ",
+          "is_context": true,
+          "message_id": "$Hr425M9RFnY-biTfaotX24xE5DvIX7adpeZNQpKI114",
+          "timestamp": "2025-11-30T10:12:25.190000+00:00",
+          "sender_id": "66b65b4f"
+        },
+        {
+          "content": "i have already tried to restart ( and shutdown ), with no luck ",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T10:02:12.734000+00:00",
+          "sender_type": "user",
+          "message_id": "$RaR3m1c1WLwdVdbJI-bUlgTGupgYH8t9J9u4pPIqULM",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "66b65b4f",
+      "created_at": "2025-12-02T11:40:05.321342+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$gd7Wl9RpoPbbNeStcDuBBScbY5ua6sp1EfUXjXpCehE",
+      "synthesized_question": "`--seedNodes=` but I'm not sure it will help now that the nodes are seriously behind and with wrong hashes",
+      "messages": [
+        {
+          "content": "`--seedNodes=` but I'm not sure it will help now that the nodes are seriously behind and with wrong hashes",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T12:22:17.978000+00:00",
+          "sender_type": "user",
+          "message_id": "$gd7Wl9RpoPbbNeStcDuBBScbY5ua6sp1EfUXjXpCehE",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "82a9c77e",
+      "created_at": "2025-12-02T11:40:05.317886+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$d8Aj9ie9XYY6LmCfLGJWCXfMrIbCBLOGzPRhgu2ioTU",
+      "synthesized_question": "Is there a wiki page that explains how to do it?",
+      "messages": [
+        {
+          "content": "Is there a wiki page that explains how to do it?",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T12:23:50.416000+00:00",
+          "sender_type": "user",
+          "message_id": "$d8Aj9ie9XYY6LmCfLGJWCXfMrIbCBLOGzPRhgu2ioTU",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "26f8b158",
+      "created_at": "2025-12-02T11:40:05.313987+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$CfZTQCDZQDXTbZPag26rlbtKVDaalZIE_lCfVPvaUCE",
+      "synthesized_question": "hello.. Some of my orders are getting deactivated because, allegedly, \"the BSQ fee cannot be localized\"\nThere orders were all inserted several days ago.\n\nIs this related to the DAO issue?",
+      "messages": [
+        {
+          "content": "Any idea how long it will take to fix it?",
+          "is_context": true,
+          "message_id": "$6HI_LjyoIleVzmsdW1MI344Kc2RKiYcRoqzXsw9GB4M",
+          "timestamp": "2025-11-30T13:33:52.660000+00:00",
+          "sender_id": "0fb33e7b"
+        },
+        {
+          "content": "hello.. Some of my orders are getting deactivated because, allegedly, \"the BSQ fee cannot be localized\"\nThere orders were all inserted several days ago.\n\nIs this related to the DAO issue?",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T13:19:09.034000+00:00",
+          "sender_type": "user",
+          "message_id": "$CfZTQCDZQDXTbZPag26rlbtKVDaalZIE_lCfVPvaUCE",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "0fb33e7b",
+      "created_at": "2025-12-02T11:40:05.308376+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    },
+    {
+      "question_id": "$kNxKtY3nQc4tzf3aYmOYHNNRxPcpFZJ_NNsELvrxe2w",
+      "synthesized_question": "Suprisingly this time it has helped. Even though I've restarted 3 times prior to writing a message. Thank you for your help!",
+      "messages": [
+        {
+          "content": "Suprisingly this time it has helped. Even though I've restarted 3 times prior to writing a message. Thank you for your help!",
+          "is_primary_question": true,
+          "timestamp": "2025-11-30T22:39:25.622000+00:00",
+          "sender_type": "user",
+          "message_id": "$kNxKtY3nQc4tzf3aYmOYHNNRxPcpFZJ_NNsELvrxe2w",
+          "schema_version": "1.0"
+        }
+      ],
+      "user_id": "359766be",
+      "created_at": "2025-12-02T11:38:04.549489+00:00",
+      "ground_truth": {
+        "is_initial_question": true,
+        "is_staff_question": false,
+        "is_follow_up": false,
+        "notes": "Extracted from shadow_mode database - needs manual review"
+      }
+    }
+  ]
+}
