@@ -399,6 +399,79 @@ class MatrixShadowModeService:
             self.polling_state.is_processed(event_id) or event_id in self._processed_ids
         )
 
+    async def extract_questions_with_llm(
+        self, messages: List[Dict[str, Any]], settings: Any
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract user questions from messages using UnifiedBatchProcessor.
+
+        This replaces the old multi-layer classification system with a single
+        LLM call that:
+        1. Receives ALL messages (users + staff)
+        2. Uses privacy-preserving username anonymization
+        3. Filters staff messages and extracts user questions
+        4. Returns questions with real usernames for shadow mode queue
+
+        Args:
+            messages: List of ALL message dictionaries (including staff)
+            settings: Application settings with LLM configuration
+
+        Returns:
+            List of messages identified as user questions with extraction metadata
+        """
+        try:
+            # Import here to avoid circular dependencies
+            import aisuite as ai
+            from app.services.llm_extraction.unified_batch_processor import (
+                UnifiedBatchProcessor,
+            )
+
+            # Initialize AISuite client and UnifiedBatchProcessor
+            client = ai.Client()
+            extractor = UnifiedBatchProcessor(
+                ai_client=client,
+                settings=settings,
+            )
+
+            # Extract user questions from ALL messages (single LLM call with anonymization)
+            result = await extractor.extract_questions(
+                messages=messages, room_id=self.room_id
+            )
+
+            # Convert extracted questions back to message format
+            questions = []
+            for extracted_q in result.questions:
+                # Find original message by message_id
+                original_msg = next(
+                    (m for m in messages if m["event_id"] == extracted_q.message_id),
+                    None,
+                )
+
+                if original_msg:
+                    # Add extraction metadata to message (includes real username)
+                    enriched_msg = original_msg.copy()
+                    enriched_msg["_llm_extraction"] = {
+                        "question_text": extracted_q.question_text,
+                        "question_type": extracted_q.question_type,
+                        "confidence": extracted_q.confidence,
+                        "sender": extracted_q.sender,  # Real username (restored from anonymization)
+                        "extraction_method": "unified_batch",
+                        "conversation_count": len(result.conversations),
+                    }
+                    questions.append(enriched_msg)
+
+            logger.info(
+                f"Unified batch extraction: {len(result.questions)} user questions from {result.total_messages} messages "
+                f"in {len(result.conversations)} conversations (processing_time={result.processing_time_ms}ms)"
+            )
+
+            return questions
+
+        except Exception as e:
+            logger.error(f"Batch LLM extraction failed: {e}", exc_info=True)
+            # Fallback: return empty list on error
+            return []
+
     async def poll_for_questions(
         self,
         repository: Optional["ShadowModeRepository"] = None,
@@ -417,8 +490,17 @@ class MatrixShadowModeService:
         # Fetch recent messages
         messages = await self.fetch_messages()
 
-        # Filter to support questions only (requires processor for classification)
-        if processor:
+        # Filter to support questions only
+        if processor and processor.settings.ENABLE_LLM_EXTRACTION:
+            # Use LLM-based extraction when enabled
+            questions = await self.extract_questions_with_llm(
+                messages, processor.settings
+            )
+            logger.info(
+                f"LLM extraction enabled: extracted {len(questions)} questions from {len(messages)} messages"
+            )
+        elif processor:
+            # Use rule-based classification when LLM disabled
             questions = await self.filter_support_questions(messages, processor)
         else:
             # Fallback: return all messages if no processor provided

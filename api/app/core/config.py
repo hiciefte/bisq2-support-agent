@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -88,21 +88,40 @@ class Settings(BaseSettings):
 
     # Full LLM Extraction Settings (Phase 2: Question Extraction with LLM)
     # Enables complete LLM-based question extraction from conversations
-    ENABLE_LLM_EXTRACTION: bool = (
-        False  # Enable full LLM extraction (replaces pattern-based)
+    ENABLE_LLM_EXTRACTION: bool = Field(
+        default=False,
+        description="Enable full LLM extraction (replaces pattern-based)",
+        env="ENABLE_LLM_EXTRACTION",
     )
-    LLM_EXTRACTION_MODEL: str = (
-        "openai:gpt-4o-mini"  # Model for extraction (format: "provider:model")
+    LLM_EXTRACTION_MODEL: str = Field(
+        default="openai:gpt-4o-mini",
+        description="Model for extraction (format: 'provider:model')",
+        env="LLM_EXTRACTION_MODEL",
     )
-    LLM_EXTRACTION_BATCH_SIZE: int = (
-        10  # Number of conversations to process in parallel
+    LLM_EXTRACTION_BATCH_SIZE: int = Field(
+        default=2000,
+        description="Maximum number of messages to process in a single LLM batch (gpt-4o-mini supports ~128K tokens)",
+        env="LLM_EXTRACTION_BATCH_SIZE",
     )
-    LLM_EXTRACTION_CACHE_TTL: int = 3600  # Cache time-to-live in seconds (1 hour)
-    LLM_EXTRACTION_MAX_TOKENS: int = (
-        4000  # Max tokens per conversation (for truncation)
+    LLM_EXTRACTION_CACHE_TTL: int = Field(
+        default=3600,
+        description="Cache time-to-live in seconds (1 hour)",
+        env="LLM_EXTRACTION_CACHE_TTL",
     )
-    LLM_EXTRACTION_TEMPERATURE: float = (
-        0.0  # LLM temperature for extraction (deterministic)
+    LLM_EXTRACTION_CACHE_SIZE: int = Field(
+        default=100,
+        description="Maximum cache entries",
+        env="LLM_EXTRACTION_CACHE_SIZE",
+    )
+    LLM_EXTRACTION_MAX_TOKENS: int = Field(
+        default=4000,
+        description="Max tokens per conversation (for truncation)",
+        env="LLM_EXTRACTION_MAX_TOKENS",
+    )
+    LLM_EXTRACTION_TEMPERATURE: float = Field(
+        default=0.0,
+        description="LLM temperature for extraction (deterministic)",
+        env="LLM_EXTRACTION_TEMPERATURE",
     )
 
     # Provider-specific API keys (separate from classification config)

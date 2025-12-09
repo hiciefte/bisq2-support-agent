@@ -1,17 +1,14 @@
 """Shadow mode processor for Matrix support channel monitoring."""
 
-import asyncio
 import hashlib
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import aisuite as ai
 from app.core.config import Settings
 from app.models.shadow_response import ShadowResponse, ShadowStatus
 from app.services.rag.version_detector import VersionDetector
-from app.services.shadow_mode.aisuite_classifier import AISuiteClassifier
 from app.services.shadow_mode.classifiers import MultiLayerClassifier
 from app.services.shadow_mode.repository import ShadowModeRepository
 
@@ -62,21 +59,12 @@ class ShadowModeProcessor:
         self.settings = settings or Settings()
         self.version_detector = VersionDetector()
 
-        # Initialize LLM classifier if enabled
-        self.llm_classifier = None
-        if self.settings.ENABLE_LLM_CLASSIFICATION:
-            try:
-                ai_client = ai.Client()
-                self.llm_classifier = AISuiteClassifier(ai_client, self.settings)
-                logger.info("LLM classification enabled with AISuite classifier")
-            except Exception as e:
-                logger.warning(f"Failed to initialize LLM classifier: {e}")
-
-        # Initialize multi-layer classifier with optional LLM fallback
+        # Initialize pattern-based classifier (used as fallback when LLM extraction disabled)
+        # Note: LLM-based question extraction (UnifiedBatchProcessor) is now the primary method
         self.classifier = MultiLayerClassifier(
             known_staff=self.SUPPORT_STAFF,
-            llm_classifier=self.llm_classifier,
-            enable_llm=self.settings.ENABLE_LLM_CLASSIFICATION,
+            llm_classifier=None,  # LLM classification removed (replaced by UnifiedBatchProcessor)
+            enable_llm=False,  # Disabled - UnifiedBatchProcessor handles LLM now
             llm_threshold=self.settings.LLM_PATTERN_CONFIDENCE_THRESHOLD,
         )
 

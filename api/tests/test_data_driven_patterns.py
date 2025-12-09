@@ -196,7 +196,7 @@ class TestGreetingBasedQuestions:
     Real data shows many greetings followed by problem statements.
     """
 
-    def test_greeting_with_first_person_action(self):
+    async def test_greeting_with_first_person_action(self):
         """Should detect greeting + 'i [action]' pattern."""
         classifier = MultiLayerClassifier(OFFICIAL_SUPPORT_STAFF)
 
@@ -210,10 +210,10 @@ class TestGreetingBasedQuestions:
         ]
 
         for msg in messages:
-            result = classifier.classify_message(msg, "@user:matrix.org")
+            result = await classifier.classify_message(msg, "@user:matrix.org")
             assert result["is_question"] is True, f"Should accept: {msg}"
 
-    def test_greeting_with_problem_statement(self):
+    async def test_greeting_with_problem_statement(self):
         """Should detect greeting + problem statement (no question mark)."""
         classifier = MultiLayerClassifier(OFFICIAL_SUPPORT_STAFF)
 
@@ -224,7 +224,7 @@ class TestGreetingBasedQuestions:
         ]
 
         for msg in messages:
-            result = classifier.classify_message(msg, "@user:matrix.org")
+            result = await classifier.classify_message(msg, "@user:matrix.org")
             assert result["is_question"] is True, f"Should accept: {msg}"
 
 

@@ -1,11 +1,9 @@
 """Multi-layer classification system for Matrix message filtering."""
 
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-# Avoid circular imports - only import for type hints
-if TYPE_CHECKING:
-    from app.services.shadow_mode.aisuite_classifier import AISuiteClassifier
+# Note: AISuiteClassifier has been removed (deprecated in favor of UnifiedBatchProcessor)
 
 
 class SpeakerRoleClassifier:
@@ -424,7 +422,7 @@ class MultiLayerClassifier:
     def __init__(
         self,
         known_staff: Optional[List[str]] = None,
-        llm_classifier: Optional["AISuiteClassifier"] = None,
+        llm_classifier: Optional[Any] = None,
         enable_llm: bool = False,
         llm_threshold: float = 0.85,
     ):
@@ -444,7 +442,7 @@ class MultiLayerClassifier:
 
     async def classify_message(
         self, message: str, sender: str = "", prev_messages: Optional[List[str]] = None
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Run all classification layers and return comprehensive results.
 
@@ -499,10 +497,12 @@ class MultiLayerClassifier:
 
         logger = logging.getLogger(__name__)
         logger.info(
-            f"📊 Classification for message from {sender}: '{message[:100]}...'"
+            "📊 Classification for message from %s: '%s...'", sender, message[:100]
         )
         logger.info(
-            f"  ├─ Pattern classification: role={speaker_role}, confidence={role_confidence:.2f}"
+            "  ├─ Pattern classification: role=%s, confidence=%.2f",
+            speaker_role,
+            role_confidence,
         )
 
         # LLM Fallback: If pattern confidence is low and LLM is enabled, use LLM classifier
@@ -514,7 +514,7 @@ class MultiLayerClassifier:
             logger.info(
                 f"  ├─ Pattern confidence ({role_confidence:.2f}) < threshold ({self.llm_threshold:.2f})"
             )
-            logger.info(f"  ├─ 🤖 Calling LLM classifier for fallback...")
+            logger.info("  ├─ 🤖 Calling LLM classifier for fallback...")
 
             try:
                 llm_result = await self.llm_classifier.classify(
