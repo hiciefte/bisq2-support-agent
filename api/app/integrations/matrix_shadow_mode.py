@@ -3,7 +3,11 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+
+if TYPE_CHECKING:
+    from app.services.shadow_mode.repository import ShadowModeRepository
+    from app.services.shadow_mode_processor import ShadowModeProcessor
 
 try:
     from nio import AsyncClient, RoomMessagesError  # type: ignore[import-not-found]
@@ -104,6 +108,40 @@ class MatrixShadowModeService:
 
         logger.info(f"Matrix shadow mode initialized for room {room_id}")
 
+    def _extract_reply_to(self, event) -> Optional[str]:
+        """Extract reply reference from Matrix event.
+
+        Args:
+            event: Matrix RoomMessageText event
+
+        Returns:
+            Event ID of replied-to message, or None if not a reply
+        """
+        try:
+            relates_to = event.source["content"].get("m.relates_to")
+            if relates_to and "m.in_reply_to" in relates_to:
+                return relates_to["m.in_reply_to"]["event_id"]
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.debug(f"Failed to extract reply_to: {e}")
+        return None
+
+    def _extract_thread_id(self, event) -> Optional[str]:
+        """Extract thread ID from Matrix event.
+
+        Args:
+            event: Matrix RoomMessageText event
+
+        Returns:
+            Event ID of thread root, or None if not in a thread
+        """
+        try:
+            relates_to = event.source["content"].get("m.relates_to")
+            if relates_to and relates_to.get("rel_type") == "m.thread":
+                return relates_to.get("event_id")
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.debug(f"Failed to extract thread_id: {e}")
+        return None
+
     async def connect(self) -> None:
         """Connect to Matrix homeserver with automatic session restoration."""
         if self._use_password_auth:
@@ -198,6 +236,8 @@ class MatrixShadowModeService:
                             "sender": event.sender,
                             "body": event.body,
                             "timestamp": getattr(event, "server_timestamp", 0),
+                            "reply_to": self._extract_reply_to(event),
+                            "thread_id": self._extract_thread_id(event),
                         }
                     )
 
@@ -302,7 +342,7 @@ class MatrixShadowModeService:
             # Skip reply messages (Matrix replies start with "> <@user:server>")
             # The classifier handles this, but we can skip early for efficiency
             if body.strip().startswith(">"):
-                logger.debug(f"  → Skipped (reply message)")
+                logger.debug("  → Skipped (reply message)")
                 continue
 
             # Extract previous messages for conversation context
