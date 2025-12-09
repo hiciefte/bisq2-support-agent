@@ -2747,10 +2747,7 @@ export default function ManageFaqsPage() {
                                                                                             : faq.bisq_version ===
                                                                                                 "Bisq 2"
                                                                                               ? "bg-green-50 text-green-700 border-green-300"
-                                                                                              : faq.bisq_version ===
-                                                                                                  "Both"
-                                                                                                ? "bg-purple-50 text-purple-700 border-purple-300"
-                                                                                                : "bg-gray-50 text-gray-700 border-gray-300"
+                                                                                              : "bg-gray-50 text-gray-700 border-gray-300"
                                                                                     }`}
                                                                                 >
                                                                                     {

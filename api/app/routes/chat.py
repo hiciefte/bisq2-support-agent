@@ -38,6 +38,7 @@ class Source(BaseModel):
     title: str
     type: str
     content: str
+    bisq_version: str = "General"
 
 
 class QueryRequest(BaseModel):
@@ -51,6 +52,14 @@ class QueryResponse(BaseModel):
     answer: str
     sources: List[Source]
     response_time: float
+    # Phase 1 metadata fields
+    confidence: Optional[float] = None
+    routing_action: Optional[str] = None
+    detected_version: Optional[str] = None
+    version_confidence: Optional[float] = None
+    emotion: Optional[str] = None
+    emotion_intensity: Optional[float] = None
+    forwarded_to_human: bool = False
 
 
 @router.api_route("/query", methods=["POST"])
@@ -122,7 +131,10 @@ async def query(
         # Convert sources to the expected format
         formatted_sources = [
             Source(
-                title=source["title"], type=source["type"], content=source["content"]
+                title=source["title"],
+                type=source["type"],
+                content=source["content"],
+                bisq_version=source.get("bisq_version", "General"),
             )
             for source in result["sources"]
         ]
@@ -131,6 +143,14 @@ async def query(
             answer=result["answer"],
             sources=formatted_sources,
             response_time=result["response_time"],
+            # Phase 1 metadata
+            confidence=result.get("confidence"),
+            routing_action=result.get("routing_action"),
+            detected_version=result.get("detected_version"),
+            version_confidence=result.get("version_confidence"),
+            emotion=result.get("emotion"),
+            emotion_intensity=result.get("emotion_intensity"),
+            forwarded_to_human=result.get("forwarded_to_human", False),
         )
 
         # Log response size and validate JSON serializability

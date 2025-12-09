@@ -5,7 +5,7 @@ import re
 from typing import List
 
 from app.services.rag.nli_validator import NLIValidator
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 

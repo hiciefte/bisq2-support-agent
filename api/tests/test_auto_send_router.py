@@ -1,7 +1,7 @@
 """Tests for Auto-Send Router - TDD approach."""
 
 import pytest
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 
 class TestResponseAction:

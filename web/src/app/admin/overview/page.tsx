@@ -27,6 +27,8 @@ interface FeedbackForFAQ {
   timestamp: string;
   potential_category: string;
   conversation_history?: ConversationMessage[];
+  // Index signature for compatibility with useFeedbackDeletion hook
+  [key: string]: unknown;
 }
 
 interface DashboardData {

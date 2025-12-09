@@ -1,13 +1,19 @@
 """Shadow mode processor for Matrix support channel monitoring."""
 
+import asyncio
 import hashlib
 import logging
 import re
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.models.shadow_response import ShadowResponse
-from app.services.rag.auto_send_router import AutoSendRouter
-from app.services.rag.confidence_scorer import ConfidenceScorer
+import aisuite as ai
+from app.core.config import Settings
+from app.models.shadow_response import ShadowResponse, ShadowStatus
+from app.services.rag.version_detector import VersionDetector
+from app.services.shadow_mode.aisuite_classifier import AISuiteClassifier
+from app.services.shadow_mode.classifiers import MultiLayerClassifier
+from app.services.shadow_mode.repository import ShadowModeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -15,31 +21,65 @@ logger = logging.getLogger(__name__)
 class ShadowModeProcessor:
     """Process Matrix questions through RAG pipeline without sending to users."""
 
-    # Question detection patterns
+    # Question detection patterns - expanded to catch more support requests
     QUESTION_PATTERNS = [
-        r"\?$",  # Ends with question mark
+        r"\?",  # Contains question mark anywhere
         r"^(?:what|how|why|where|when|who|which|can|could|would|should|is|are|do|does)\s",
-        r"^(?:help|please help|can.+help|need help)",  # Help at start of message
+        r"^(?:hi|hello|hey)[\s,.]",  # Starts with greeting (common for support)
+        r"(?:help|please help|can.+help|need help|need.+help)",
         r"(?:i'm stuck|my .+ stuck|problem with|issue with|error|failing)",
+        r"(?:not able|unable|can't|cannot|couldn't|won't|doesn't|don't|hasn't|haven't)",
+        r"(?:not confirmed|not syncing|not working|not showing|not received)",
+        r"(?:opened a trade|open trade|trade.+resolved|trade.+back)",
+        r"(?:arbitration|mediator|arbitrator|refund|dispute)",
+        r"(?:transaction.+confirmed|btc.+confirmed|funds)",
+        r"(?:wallet|bsq|offer|seed)",
+    ]
+
+    # Official support staff from https://bisq.wiki/Support_Agent
+    SUPPORT_STAFF = [
+        "darawhelan",  # @darawhelan:matrix.org
+        "luis3672",  # @luis3672:matrix.org
+        "mwithm",  # @mwithm:matrix.org (MnM)
+        "pazza83",  # @pazza83:matrix.org
+        "strayorigin",  # @strayorigin:matrix.org
+        "suddenwhipvapor",  # @suddenwhipvapor:matrix.org
     ]
 
     def __init__(
         self,
-        rag_service,
-        confidence_scorer: ConfidenceScorer,
-        router: AutoSendRouter,
+        repository: Optional[ShadowModeRepository] = None,
+        settings: Optional[Settings] = None,
     ):
         """
         Initialize shadow mode processor.
 
         Args:
-            rag_service: RAG service for question answering
-            confidence_scorer: Confidence scorer for answer validation
-            router: Router for routing decisions
+            repository: SQLite repository for persistent storage (optional)
+            settings: Application settings for LLM configuration (optional)
         """
-        self.rag_service = rag_service
-        self.confidence_scorer = confidence_scorer
-        self.router = router
+        self.repository = repository
+        self.settings = settings or Settings()
+        self.version_detector = VersionDetector()
+
+        # Initialize LLM classifier if enabled
+        self.llm_classifier = None
+        if self.settings.ENABLE_LLM_CLASSIFICATION:
+            try:
+                ai_client = ai.Client()
+                self.llm_classifier = AISuiteClassifier(ai_client, self.settings)
+                logger.info("LLM classification enabled with AISuite classifier")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM classifier: {e}")
+
+        # Initialize multi-layer classifier with optional LLM fallback
+        self.classifier = MultiLayerClassifier(
+            known_staff=self.SUPPORT_STAFF,
+            llm_classifier=self.llm_classifier,
+            enable_llm=self.settings.ENABLE_LLM_CLASSIFICATION,
+            llm_threshold=self.settings.LLM_PATTERN_CONFIDENCE_THRESHOLD,
+        )
+
         self._responses: Dict[str, ShadowResponse] = {}
         self._question_hashes: set = set()
 
@@ -49,6 +89,8 @@ class ShadowModeProcessor:
         question_id: str,
         room_id: Optional[str] = None,
         sender: Optional[str] = None,
+        timestamp: Optional[int] = None,
+        context_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[ShadowResponse]:
         """
         Process a question through the RAG pipeline.
@@ -58,6 +100,8 @@ class ShadowModeProcessor:
             question_id: Unique identifier for tracking
             room_id: Matrix room ID (optional)
             sender: Anonymized sender ID (optional)
+            timestamp: Original Matrix message timestamp in milliseconds (optional)
+            context_messages: Previous messages for conversation context (optional)
 
         Returns:
             ShadowResponse with answer and confidence, or None on error
@@ -66,35 +110,114 @@ class ShadowModeProcessor:
             # Scrub PII from question
             sanitized_question = self._scrub_pii(question)
 
-            # Query RAG service
-            result = await self.rag_service.query(sanitized_question)
-
-            answer = result.get("answer", "")
-            sources = result.get("sources", [])
-            confidence = result.get("confidence", 0.0)
-
-            # Get routing decision
-            routing_action = await self.router.route_response(
-                confidence=confidence,
-                question=sanitized_question,
-                answer=answer,
-                sources=[],  # Simplified for now
+            # Detect version from question text using shared VersionDetector
+            # This provides consistent detection with the RAG pipeline
+            detected_version, version_confidence, clarifying_question = (
+                await self.version_detector.detect_version(
+                    sanitized_question, []  # No chat history for Matrix messages
+                )
             )
 
-            # Create shadow response
+            # Create shadow response using new two-phase workflow model
+            now = datetime.now(timezone.utc)
+            # Convert Matrix timestamp (milliseconds) to ISO format, or use now if not provided
+            if timestamp and timestamp > 0:
+                msg_timestamp = datetime.fromtimestamp(
+                    timestamp / 1000, tz=timezone.utc
+                ).isoformat()
+            else:
+                msg_timestamp = now.isoformat()
+
+            # Convert detected version format: "Bisq 1" -> "bisq1", "Bisq 2" -> "bisq2"
+            normalized_version = detected_version.lower().replace(" ", "")
+
+            # Build aggregated messages with context
+            aggregated_messages = []
+
+            # Add context messages (bystander filtering applied)
+            if context_messages:
+                # Filter to same-user messages only (GDPR compliance)
+                filtered_context = []
+                for ctx_msg in context_messages:
+                    ctx_sender = ctx_msg.get("sender", "")
+
+                    # Skip bystander messages (not from the current sender)
+                    if self._anonymize_sender(ctx_sender) != self._anonymize_sender(
+                        sender
+                    ):
+                        logger.debug(
+                            f"Skipping bystander context: message_id={ctx_msg.get('event_id', 'unknown')}"
+                        )
+                        continue
+
+                    # Scrub PII from context message
+                    ctx_body = ctx_msg.get("body", "")
+                    sanitized_ctx = self._scrub_pii(ctx_body)
+
+                    # Convert timestamp
+                    ctx_timestamp = ctx_msg.get("timestamp", 0)
+                    if ctx_timestamp and ctx_timestamp > 0:
+                        ctx_ts_iso = datetime.fromtimestamp(
+                            ctx_timestamp / 1000, tz=timezone.utc
+                        ).isoformat()
+                    else:
+                        ctx_ts_iso = now.isoformat()
+
+                    filtered_context.append(
+                        {
+                            "content": sanitized_ctx,
+                            "is_context": True,
+                            "message_id": ctx_msg.get("event_id", "unknown"),
+                            "timestamp": ctx_ts_iso,
+                            "sender_id": self._anonymize_sender(ctx_sender),
+                        }
+                    )
+
+                # Add context messages in chronological order
+                aggregated_messages.extend(filtered_context)
+
+            # Add primary question (always last)
+            aggregated_messages.append(
+                {
+                    "content": sanitized_question,
+                    "is_primary_question": True,
+                    "timestamp": msg_timestamp,
+                    "sender_type": "user",
+                    "message_id": question_id,
+                    "schema_version": "1.0",
+                }
+            )
+
             response = ShadowResponse(
-                question_id=question_id,
-                question=sanitized_question,
-                answer=answer,
-                confidence=confidence,
-                sources=sources if isinstance(sources, list) else [sources],
-                room_id=room_id,
-                sender=self._anonymize_sender(sender) if sender else None,
-                routing_action=routing_action.action,
+                id=question_id,
+                channel_id=room_id or "unknown",
+                user_id=self._anonymize_sender(sender) if sender else "anonymous",
+                messages=aggregated_messages,
+                synthesized_question=sanitized_question,
+                detected_version=normalized_version,
+                version_confidence=version_confidence,
+                generated_response=None,  # RAG deferred until version confirmation
+                sources=[],  # Empty until RAG is called
+                status=ShadowStatus.PENDING_VERSION_REVIEW,
+                created_at=now,
+                updated_at=now,
             )
 
-            # Store response
-            self._responses[question_id] = response
+            # Persist to SQLite repository if available (transactional)
+            if self.repository:
+                success = self.repository.add_response(response)
+                if success:
+                    # Only update memory if database write succeeded
+                    self._responses[question_id] = response
+                    logger.debug(f"Saved response {question_id} to SQLite repository")
+                else:
+                    logger.error(
+                        f"Failed to persist {question_id}, skipping memory update"
+                    )
+                    return None
+            else:
+                # No repository - store in memory only
+                self._responses[question_id] = response
 
             # Track question hash for duplicate detection
             question_hash = self._hash_question(sanitized_question)
@@ -102,8 +225,8 @@ class ShadowModeProcessor:
 
             logger.info(
                 f"Processed question {question_id}: "
-                f"confidence={confidence:.2f}, "
-                f"routing={routing_action.action}"
+                f"detected_version={normalized_version}, confidence={version_confidence:.0%}, "
+                f"context_messages={len(aggregated_messages) - 1}"
             )
 
             return response
@@ -131,7 +254,11 @@ class ShadowModeProcessor:
         Returns:
             List of unprocessed ShadowResponses
         """
-        return [r for r in self._responses.values() if not r.processed]
+        return [
+            r
+            for r in self._responses.values()
+            if r.status == ShadowStatus.PENDING_VERSION_REVIEW
+        ]
 
     def mark_as_processed(self, question_id: str) -> None:
         """
@@ -141,66 +268,122 @@ class ShadowModeProcessor:
             question_id: The question ID to mark
         """
         if question_id in self._responses:
-            self._responses[question_id].processed = True
+            self._responses[question_id].status = ShadowStatus.APPROVED
 
-    @staticmethod
-    def is_support_question(text: str) -> bool:
+    async def is_support_question(
+        self,
+        text: str,
+        sender: str = "",
+        prev_messages: Optional[List[str]] = None,
+    ) -> bool:
         """
-        Detect if text is a support question.
+        Detect if text is a support question using multi-layer classification.
 
         Args:
             text: Text to analyze
+            sender: Sender ID (e.g., @username:matrix.org) for staff detection
+            prev_messages: Previous messages in conversation for context analysis
 
         Returns:
-            True if text appears to be a support question
+            True if text appears to be a genuine user support question
         """
-        text_lower = text.lower().strip()
+        # Run multi-layer classification using instance classifier (supports LLM fallback)
+        result = await self.classifier.classify_message(
+            text, sender, prev_messages or []
+        )
 
-        for pattern in ShadowModeProcessor.QUESTION_PATTERNS:
-            if re.search(pattern, text_lower, re.IGNORECASE):
+        # Log classification details for monitoring
+        if not result["is_question"]:
+            logger.debug(
+                f"Filtered message: reason={result['reason']}, "
+                f"speaker={result['speaker_role']}, intent={result['intent']}, "
+                f"confidence={result['confidence']:.2f}"
+            )
+
+        return result["is_question"]
+
+    @staticmethod
+    def is_support_staff(sender: str) -> bool:
+        """
+        Check if sender is a support staff member.
+
+        Args:
+            sender: Matrix user ID (e.g., @username:server.com)
+
+        Returns:
+            True if sender is support staff
+        """
+        sender_lower = sender.lower()
+        for staff in ShadowModeProcessor.SUPPORT_STAFF:
+            if staff.lower() in sender_lower:
                 return True
-
         return False
 
     def _scrub_pii(self, text: str) -> str:
         """
         Remove personally identifiable information from text.
 
+        Includes Bisq-specific PII patterns (Trade IDs, Offer IDs, Matrix mentions).
+
         Args:
             text: Text to sanitize
 
         Returns:
-            Sanitized text
+            Sanitized text, or "[REDACTED_DUE_TO_ERROR]" if scrubbing fails
         """
-        # Remove email addresses
-        text = re.sub(
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
-            "[EMAIL]",
-            text,
-        )
+        try:
+            # Remove email addresses
+            text = re.sub(
+                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+                "[EMAIL]",
+                text,
+            )
 
-        # Remove phone numbers
-        text = re.sub(
-            r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
-            "[PHONE]",
-            text,
-        )
+            # Remove phone numbers
+            text = re.sub(
+                r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
+                "[PHONE]",
+                text,
+            )
 
-        # Remove IP addresses
-        text = re.sub(
-            r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
-            "[IP]",
-            text,
-        )
+            # Remove IP addresses
+            text = re.sub(
+                r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
+                "[IP]",
+                text,
+            )
 
-        # Remove potential Bitcoin addresses
-        text = re.sub(
-            r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
-            "[BTC_ADDRESS]",
-            text,
-        )
+            # Remove potential Bitcoin addresses
+            text = re.sub(
+                r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
+                "[BTC_ADDRESS]",
+                text,
+            )
 
-        return text
+            # Bisq-specific PII patterns
+            # Trade IDs (UUID format: f8a3c2e1-9b4d-4f3a-a1e2-8c9d3f4e5a6b)
+            text = re.sub(
+                r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+                "[TRADE_ID]",
+                text,
+                flags=re.IGNORECASE,
+            )
+
+            # Offer IDs (numeric with # prefix: #98590482)
+            text = re.sub(r"#\d{8,}", "[OFFER_ID]", text)
+
+            # Matrix user mentions (@username:matrix.org)
+            text = re.sub(
+                r"@[^:]+:matrix\.org",
+                "@[USER]:matrix.org",
+                text,
+            )
+
+            return text
+
+        except Exception as e:
+            logger.error(f"PII scrubbing failed: {e}")
+            return "[REDACTED_DUE_TO_ERROR]"
 
     def _anonymize_sender(self, sender: str) -> str:
         """

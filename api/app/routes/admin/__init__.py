@@ -7,9 +7,21 @@ This package organizes admin routes by domain:
 - faqs: FAQ CRUD operations (4 endpoints)
 - analytics: Dashboard and metrics (2 endpoints)
 - vectorstore: Vector store management (2 endpoints)
+- queue: Moderator review queue (5 endpoints)
+- pending_responses: Simplified pending response endpoints (4 endpoints)
+- shadow_mode: Two-phase shadow mode workflow (11 endpoints)
 """
 
-from app.routes.admin import analytics, auth, faqs, feedback, vectorstore
+from app.routes.admin import (
+    analytics,
+    auth,
+    faqs,
+    feedback,
+    pending_responses,
+    queue,
+    shadow_mode,
+    vectorstore,
+)
 from fastapi import FastAPI
 
 
@@ -27,6 +39,9 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(faqs.router)
     app.include_router(analytics.router)
     app.include_router(vectorstore.router)
+    app.include_router(queue.router)
+    app.include_router(pending_responses.router)
+    app.include_router(shadow_mode.router)
 
 
 __all__ = [
@@ -35,5 +50,8 @@ __all__ = [
     "faqs",
     "feedback",
     "include_admin_routers",
+    "pending_responses",
+    "queue",
+    "shadow_mode",
     "vectorstore",
 ]

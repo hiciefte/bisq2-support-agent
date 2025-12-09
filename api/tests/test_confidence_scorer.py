@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 
 class TestConfidenceScorer:

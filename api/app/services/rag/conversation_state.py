@@ -89,13 +89,21 @@ class ConversationStateManager:
 
         return ". ".join(parts) if parts else ""
 
-    def generate_conversation_id(self, chat_history: List[Dict[str, str]]) -> str:
+    def generate_conversation_id(self, chat_history: List) -> str:
         """Generate consistent ID from chat history."""
         if not chat_history:
             return hashlib.md5(datetime.now().isoformat().encode()).hexdigest()[:12]
 
-        # Use first message as seed
-        first_msg = chat_history[0].get("content", "")
+        # Use first message as seed - handle both dict and Pydantic objects
+        first_item = chat_history[0]
+        if hasattr(first_item, "content"):
+            # Pydantic ChatMessage object
+            first_msg = first_item.content
+        elif isinstance(first_item, dict):
+            # Dict format
+            first_msg = first_item.get("content", "")
+        else:
+            first_msg = str(first_item)
         return hashlib.md5(first_msg.encode()).hexdigest()[:12]
 
     def cleanup_old_states(self, max_age_hours: int = 24):

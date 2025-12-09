@@ -64,7 +64,7 @@ def test_settings(test_data_dir: str) -> Settings:
         DEBUG=True,
         DATA_DIR=test_data_dir,
         OPENAI_API_KEY="test-api-key",
-        ADMIN_API_KEY="test-admin-key",
+        ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
         ENVIRONMENT="testing",
         COOKIE_SECURE=False,
         # Use minimal model configuration for faster tests
@@ -111,10 +111,16 @@ def test_client(test_settings: Settings) -> TestClient:
     from app.core.config import get_settings
     from app.main import app
 
+    # Clear LRU cache to ensure test settings override takes effect
+    get_settings.cache_clear()
+
     app.dependency_overrides[get_settings] = lambda: test_settings
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+    # Clear cache after test to prevent state pollution
+    get_settings.cache_clear()
 
 
 @pytest.fixture

@@ -9,13 +9,17 @@ This module handles intelligent document retrieval with:
 
 import logging
 import re
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
 
 logger = logging.getLogger(__name__)
+
+
+# Type alias for document with similarity score
+DocumentWithScore = Tuple[Document, float]
 
 
 class DocumentRetriever:
@@ -261,3 +265,126 @@ class DocumentRetriever:
             f"Deduplicated sources from {len(sources)} to {len(unique_sources)}"
         )
         return unique_sources
+
+    def retrieve_with_scores(
+        self, query: str, detected_version: str = "Bisq 2"
+    ) -> Tuple[List[Document], List[float]]:
+        """Retrieve documents with similarity scores for confidence calculation.
+
+        This method uses similarity_search_with_score() to return both documents
+        and their relevance scores, which are used by the confidence scorer.
+
+        Args:
+            query: The search query
+            detected_version: Detected Bisq version from user context
+
+        Returns:
+            Tuple of (documents, scores) where scores are similarity values (0-1)
+        """
+        all_docs_with_scores: List[DocumentWithScore] = []
+
+        # Detect version from query
+        query_lower = query.lower()
+        is_bisq1_query = bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", query_lower))
+        mentions_bisq2 = bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", query_lower))
+        comparison_tokens = re.compile(
+            r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
+        )
+        is_comparison_query = (is_bisq1_query and mentions_bisq2) or bool(
+            comparison_tokens.search(query_lower)
+        )
+
+        # Override with detected version if not explicit in query
+        if not is_bisq1_query and not mentions_bisq2 and detected_version == "Bisq 1":
+            is_bisq1_query = True
+            logger.info("Using detected version context: Bisq 1")
+
+        try:
+            if is_bisq1_query and not is_comparison_query:
+                logger.info("Retrieving with scores for Bisq 1 query")
+
+                # Stage 1: Bisq 1 content
+                bisq1_results = self.vectorstore.similarity_search_with_score(
+                    query, k=4, filter={"bisq_version": "Bisq 1"}
+                )
+                all_docs_with_scores.extend(bisq1_results)
+
+                # Stage 2: General content
+                if len(all_docs_with_scores) < 3:
+                    general_results = self.vectorstore.similarity_search_with_score(
+                        query, k=2, filter={"bisq_version": "General"}
+                    )
+                    all_docs_with_scores.extend(general_results)
+            else:
+                logger.info("Retrieving with scores for Bisq 2 query")
+
+                # Stage 1: Bisq 2 content
+                bisq2_results = self.vectorstore.similarity_search_with_score(
+                    query, k=6, filter={"bisq_version": "Bisq 2"}
+                )
+                all_docs_with_scores.extend(bisq2_results)
+
+                # Stage 2: General content
+                if len(all_docs_with_scores) < 4:
+                    general_results = self.vectorstore.similarity_search_with_score(
+                        query, k=4, filter={"bisq_version": "General"}
+                    )
+                    all_docs_with_scores.extend(general_results)
+
+                # Stage 3: Bisq 1 fallback
+                if len(all_docs_with_scores) < 3:
+                    bisq1_results = self.vectorstore.similarity_search_with_score(
+                        query, k=2, filter={"bisq_version": "Bisq 1"}
+                    )
+                    all_docs_with_scores.extend(bisq1_results)
+
+        except Exception as e:
+            logger.error(f"Error in score-based retrieval: {e!s}", exc_info=True)
+            # Fallback to standard retrieval without scores
+            docs = self.retrieve_with_version_priority(query)
+            # Return neutral scores for fallback
+            return docs, [0.5] * len(docs)
+
+        # De-duplicate while preserving scores
+        seen: set[tuple[str, str]] = set()
+        unique_docs: List[Document] = []
+        unique_scores: List[float] = []
+
+        for doc, score in all_docs_with_scores:
+            key = (
+                doc.metadata.get("title", "Unknown"),
+                doc.metadata.get("section", ""),
+            )
+            if key not in seen:
+                seen.add(key)
+                unique_docs.append(doc)
+                # ChromaDB returns distance (lower is better), convert to similarity
+                # Distance is typically 0-2 for cosine, normalize to 0-1 similarity
+                similarity = max(0, 1 - (score / 2))
+                unique_scores.append(similarity)
+
+        logger.info(
+            f"Retrieved {len(unique_docs)} docs with scores "
+            f"(avg similarity: {sum(unique_scores)/len(unique_scores) if unique_scores else 0:.3f})"
+        )
+
+        return unique_docs, unique_scores
+
+    def get_retrieval_confidence(self, scores: List[float]) -> float:
+        """Calculate retrieval confidence from similarity scores.
+
+        Args:
+            scores: List of similarity scores (0-1)
+
+        Returns:
+            Retrieval confidence score (0-1)
+        """
+        if not scores:
+            return 0.0
+
+        # Use weighted average: top results matter more
+        weights = [1.0 / (i + 1) for i in range(len(scores))]
+        weighted_sum = sum(s * w for s, w in zip(scores, weights))
+        total_weight = sum(weights)
+
+        return weighted_sum / total_weight if total_weight > 0 else 0.0

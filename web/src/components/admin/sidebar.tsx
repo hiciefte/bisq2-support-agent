@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut } from "lucide-react"
+import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, Eye, Clock } from "lucide-react"
 
 const navigation = [
   {
@@ -13,6 +13,12 @@ const navigation = [
     href: "/admin/overview",
     icon: BarChart3,
     description: "Dashboard and analytics"
+  },
+  {
+    name: "Pending Review",
+    href: "/admin/pending-responses",
+    icon: Clock,
+    description: "Moderator review queue"
   },
   {
     name: "Feedback",
@@ -25,6 +31,12 @@ const navigation = [
     href: "/admin/manage-faqs",
     icon: HelpCircle,
     description: "Manage FAQ content"
+  },
+  {
+    name: "Shadow Mode",
+    href: "/admin/shadow-mode",
+    icon: Eye,
+    description: "Two-phase review queue"
   }
 ]
 

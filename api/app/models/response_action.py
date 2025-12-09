@@ -8,7 +8,7 @@ from typing import Optional
 class ResponseAction:
     """Routing decision for a RAG response."""
 
-    action: str  # "auto_send", "queue_medium", "queue_low"
+    action: str  # "auto_send", "queue_medium", "needs_human"
     send_immediately: bool
     queue_for_review: bool
     priority: str = "normal"

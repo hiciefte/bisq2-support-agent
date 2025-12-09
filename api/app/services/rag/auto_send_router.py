@@ -4,7 +4,7 @@ import logging
 from typing import List
 
 from app.models.response_action import ResponseAction
-from langchain.schema import Document
+from langchain_core.documents import Document
 from prometheus_client import Counter, Histogram
 
 logger = logging.getLogger(__name__)
@@ -78,11 +78,11 @@ class AutoSendRouter:
         else:
             logger.info(f"Queueing with high priority (confidence={confidence:.2f})")
             action = ResponseAction(
-                action="queue_low",
+                action="needs_human",
                 send_immediately=False,
                 queue_for_review=True,
                 priority="high",
                 flag="needs_human_expertise",
             )
-            ROUTING_DECISIONS.labels(action="queue_low").inc()
+            ROUTING_DECISIONS.labels(action="needs_human").inc()
             return action

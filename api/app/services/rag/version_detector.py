@@ -41,33 +41,37 @@ class VersionDetector:
 
     async def detect_version(
         self, question: str, chat_history: List[Dict[str, str]]
-    ) -> Tuple[str, float]:
+    ) -> Tuple[str, float, Optional[str]]:
         """
         Detect Bisq version from question and chat history.
 
         Returns:
-            Tuple[str, float]: ("Bisq 1" | "Bisq 2" | "Unknown", confidence)
+            Tuple[str, float, Optional[str]]: (version, confidence, clarifying_question)
+                - version: "Bisq 1" | "Bisq 2" | "Unknown"
+                - confidence: 0.0-1.0
+                - clarifying_question: Question to ask user if version unclear (None if confident)
         """
         question_lower = question.lower()
 
-        # 1. Check for explicit version mentions
+        # 1. Check for explicit version mentions (highest confidence)
         explicit_version = self._check_explicit_mentions(question_lower)
         if explicit_version:
-            return explicit_version
+            return (*explicit_version, None)  # No clarification needed
 
         # 2. Check for version-specific keywords
         keyword_version = self._check_keywords(question_lower)
-        if keyword_version[1] > 0.6:  # Confidence threshold
-            return keyword_version
+        if keyword_version[1] > 0.6:  # High confidence threshold
+            return (*keyword_version, None)  # No clarification needed
 
         # 3. Check chat history for context
         history_version = self._check_chat_history(chat_history)
         if history_version:
-            return history_version
+            return (*history_version, None)  # No clarification needed
 
-        # 4. Default to Bisq 2 (current version) with low confidence
-        logger.debug("No version detected, defaulting to Bisq 2")
-        return ("Bisq 2", 0.50)
+        # 4. Low confidence - generate clarifying question
+        clarifying_q = self._generate_clarifying_question(question)
+        logger.debug("Low version confidence, requesting clarification")
+        return ("Unknown", 0.30, clarifying_q)
 
     def _check_explicit_mentions(self, text: str) -> Optional[Tuple[str, float]]:
         """Check for explicit version mentions."""
@@ -92,12 +96,18 @@ class VersionDetector:
 
         return ("Unknown", 0.0)
 
-    def _check_chat_history(
-        self, chat_history: List[Dict[str, str]]
-    ) -> Optional[Tuple[str, float]]:
+    def _check_chat_history(self, chat_history: List) -> Optional[Tuple[str, float]]:
         """Check recent chat history for version context."""
         for msg in reversed(chat_history[-5:]):  # Last 5 messages
-            content = msg.get("content", "").lower()
+            # Handle both dict and Pydantic ChatMessage objects
+            if hasattr(msg, "content"):
+                # Pydantic ChatMessage object
+                content = msg.content.lower()
+            elif isinstance(msg, dict):
+                # Dict format
+                content = msg.get("content", "").lower()
+            else:
+                content = str(msg).lower()
 
             if "bisq 1" in content or "bisq1" in content:
                 return ("Bisq 1", 0.80)
@@ -115,11 +125,40 @@ class VersionDetector:
 
         return None
 
-    def get_clarification_prompt(self, question: str) -> str:
-        """Generate clarification prompt for ambiguous questions."""
+    def _generate_clarifying_question(self, question: str) -> str:
+        """Generate context-aware clarifying question.
+
+        Strategy:
+        1. Use context-aware defaults based on question keywords
+        2. Fall back to generic version question if no context matches
+        """
+        question_lower = question.lower()
+
+        # Context-aware clarifying questions
+        if any(kw in question_lower for kw in ["trade", "payment", "buy", "sell"]):
+            return "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?"
+
+        if any(kw in question_lower for kw in ["wallet", "bitcoin", "btc"]):
+            return "Which Bisq version's wallet are you asking about?"
+
+        if any(kw in question_lower for kw in ["reputation", "profile"]):
+            return "Are you asking about Bisq 2's reputation system, or transferring Bisq 1 reputation?"
+
+        if any(kw in question_lower for kw in ["dao", "bsq", "voting"]):
+            return "This sounds like a Bisq 1 DAO question. Is that correct, or are you asking about Bisq 2?"
+
+        # Generic fallback
         return (
-            "I'd be happy to help! To give you the most accurate answer, "
-            "could you please clarify which version of Bisq you're using?\n\n"
-            "- **Bisq 1**: The original desktop application with DAO and altcoin trading\n"
-            "- **Bisq 2**: The newer version with Bisq Easy for simple BTC purchases"
+            "I can help with both Bisq 1 and Bisq 2. "
+            "Which version are you using?\n\n"
+            "• **Bisq 1**: Desktop app with DAO and altcoin trading\n"
+            "• **Bisq 2**: Newer version with Bisq Easy for simple BTC purchases"
         )
+
+    def get_clarification_prompt(self, question: str) -> str:
+        """Generate clarification prompt for ambiguous questions.
+
+        Deprecated: Use _generate_clarifying_question() instead.
+        Kept for backwards compatibility.
+        """
+        return self._generate_clarifying_question(question)

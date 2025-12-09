@@ -23,13 +23,16 @@ import chromadb
 from app.core.config import get_settings
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
+from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
+from app.services.rag.version_detector import VersionDetector
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -118,6 +121,11 @@ class SimplifiedRAGService:
         self.nli_validator = NLIValidator()
         self.confidence_scorer = ConfidenceScorer(self.nli_validator)
         self.auto_send_router = AutoSendRouter()
+
+        # Initialize Phase 1 components
+        self.version_detector = VersionDetector()
+        self.empathy_detector = EmpathyDetector()
+        self.conversation_state_manager = ConversationStateManager()
 
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
@@ -535,7 +543,10 @@ class SimplifiedRAGService:
             }
 
     async def query(
-        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+        self,
+        question: str,
+        chat_history: List[Union[Dict[str, str], Any]],
+        override_version: Optional[str] = None,
     ) -> dict:
         """Process a query and return a response with metadata.
 
@@ -543,6 +554,7 @@ class SimplifiedRAGService:
             question: The query to process
             chat_history: List of either dictionaries containing chat messages with 'role' and 'content' keys,
                         or objects with role and content attributes
+            override_version: Optional version to use instead of auto-detection (for Shadow Mode)
 
         Returns:
             Dict containing:
@@ -571,6 +583,63 @@ class SimplifiedRAGService:
 
             # Preprocess the question
             preprocessed_question = question.strip()
+
+            # Detect version from question and chat history (unless overridden)
+            if override_version:
+                detected_version = override_version
+                version_confidence = 1.0  # Override has 100% confidence
+                clarifying_question = None
+                logger.info(
+                    f"Using override version: {detected_version} (Shadow Mode confirmed)"
+                )
+            else:
+                detected_version, version_confidence, clarifying_question = (
+                    await self.version_detector.detect_version(
+                        preprocessed_question, chat_history
+                    )
+                )
+                logger.info(
+                    f"Detected version: {detected_version} (confidence: {version_confidence:.2f})"
+                )
+
+                # If clarifying question needed and confidence is low, return it immediately
+                if clarifying_question and version_confidence < 0.5:
+                    logger.info(
+                        f"Requesting clarification from user: {clarifying_question[:50]}..."
+                    )
+                    return {
+                        "answer": clarifying_question,
+                        "sources": [],
+                        "response_time": time.time() - start_time,
+                        "needs_clarification": True,
+                        "detected_version": detected_version,
+                        "version_confidence": version_confidence,
+                        "routing_action": "needs_clarification",
+                        "forwarded_to_human": False,
+                        "feedback_created": False,
+                    }
+
+            # Detect emotional state for empathetic response
+            emotion, emotion_intensity = await self.empathy_detector.detect_emotion(
+                preprocessed_question
+            )
+            response_modifier = self.empathy_detector.get_response_modifier(
+                emotion, emotion_intensity
+            )
+            if response_modifier:
+                logger.info(
+                    f"Detected emotion: {emotion} (intensity: {emotion_intensity:.2f})"
+                )
+
+            # Update conversation state
+            conv_id = self.conversation_state_manager.generate_conversation_id(
+                chat_history
+            )
+            self.conversation_state_manager.update_state(
+                conv_id,
+                detected_version=detected_version,
+                version_confidence=version_confidence,
+            )
 
             # Get relevant documents with version priority
             docs = self._retrieve_with_version_priority(preprocessed_question)
@@ -662,10 +731,11 @@ class SimplifiedRAGService:
                             "title": doc.metadata.get("title", "Unknown"),
                             "type": "wiki",
                             "content": (
-                                doc.page_content[:200] + "..."
-                                if len(doc.page_content) > 200
+                                doc.page_content[:500] + "..."
+                                if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
+                            "bisq_version": doc.metadata.get("bisq_version", "General"),
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
@@ -674,10 +744,11 @@ class SimplifiedRAGService:
                             "title": doc.metadata.get("title", "Unknown"),
                             "type": "faq",
                             "content": (
-                                doc.page_content[:200] + "..."
-                                if len(doc.page_content) > 200
+                                doc.page_content[:500] + "..."
+                                if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
+                            "bisq_version": doc.metadata.get("bisq_version", "General"),
                         }
                     )
 
@@ -711,6 +782,10 @@ class SimplifiedRAGService:
                 "feedback_created": False,
                 "confidence": confidence,
                 "routing_action": routing_action.action,
+                "detected_version": detected_version,
+                "version_confidence": version_confidence,
+                "emotion": emotion,
+                "emotion_intensity": emotion_intensity,
             }
 
         except Exception as e:

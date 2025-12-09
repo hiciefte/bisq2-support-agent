@@ -63,6 +63,8 @@ interface FeedbackItem {
   is_processed?: boolean;
   processed_at?: string;
   faq_id?: string;
+  // Index signature for compatibility with useFeedbackDeletion hook
+  [key: string]: unknown;
 }
 
 interface FeedbackListResponse {
