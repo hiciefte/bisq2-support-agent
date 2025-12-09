@@ -26,7 +26,6 @@ from app.services.matrix_metrics import (
     matrix_questions_detected,
     matrix_questions_processed,
 )
-from app.services.shadow_mode_processor import ShadowModeProcessor
 
 logger = logging.getLogger(__name__)
 
