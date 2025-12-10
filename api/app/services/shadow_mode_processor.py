@@ -9,29 +9,17 @@ from typing import Any, Dict, List, Optional
 from app.core.config import Settings
 from app.models.shadow_response import ShadowResponse, ShadowStatus
 from app.services.rag.version_detector import VersionDetector
-from app.services.shadow_mode.classifiers import MultiLayerClassifier
 from app.services.shadow_mode.repository import ShadowModeRepository
 
 logger = logging.getLogger(__name__)
 
 
 class ShadowModeProcessor:
-    """Process Matrix questions through RAG pipeline without sending to users."""
+    """Process Matrix questions through RAG pipeline without sending to users.
 
-    # Question detection patterns - expanded to catch more support requests
-    QUESTION_PATTERNS = [
-        r"\?",  # Contains question mark anywhere
-        r"^(?:what|how|why|where|when|who|which|can|could|would|should|is|are|do|does)\s",
-        r"^(?:hi|hello|hey)[\s,.]",  # Starts with greeting (common for support)
-        r"(?:help|please help|can.+help|need help|need.+help)",
-        r"(?:i'm stuck|my .+ stuck|problem with|issue with|error|failing)",
-        r"(?:not able|unable|can't|cannot|couldn't|won't|doesn't|don't|hasn't|haven't)",
-        r"(?:not confirmed|not syncing|not working|not showing|not received)",
-        r"(?:opened a trade|open trade|trade.+resolved|trade.+back)",
-        r"(?:arbitration|mediator|arbitrator|refund|dispute)",
-        r"(?:transaction.+confirmed|btc.+confirmed|funds)",
-        r"(?:wallet|bsq|offer|seed)",
-    ]
+    Note: Question extraction is now handled by UnifiedBatchProcessor in matrix_shadow_mode.py.
+    This class focuses on storing and managing shadow responses.
+    """
 
     # Official support staff from https://bisq.wiki/Support_Agent
     SUPPORT_STAFF = [
@@ -59,15 +47,6 @@ class ShadowModeProcessor:
         self.settings = settings or Settings()
         self.version_detector = VersionDetector()
 
-        # Initialize pattern-based classifier (used as fallback when LLM extraction disabled)
-        # Note: LLM-based question extraction (UnifiedBatchProcessor) is now the primary method
-        self.classifier = MultiLayerClassifier(
-            known_staff=self.SUPPORT_STAFF,
-            llm_classifier=None,  # LLM classification removed (replaced by UnifiedBatchProcessor)
-            enable_llm=False,  # Disabled - UnifiedBatchProcessor handles LLM now
-            llm_threshold=self.settings.LLM_PATTERN_CONFIDENCE_THRESHOLD,
-        )
-
         self._responses: Dict[str, ShadowResponse] = {}
         self._question_hashes: set = set()
 
@@ -87,7 +66,7 @@ class ShadowModeProcessor:
             question: The user's question
             question_id: Unique identifier for tracking
             room_id: Matrix room ID (optional)
-            sender: Anonymized sender ID (optional)
+            sender: Real username from LLM extraction or Matrix sender ID (optional)
             timestamp: Original Matrix message timestamp in milliseconds (optional)
             context_messages: Previous messages for conversation context (optional)
 
@@ -179,7 +158,9 @@ class ShadowModeProcessor:
             response = ShadowResponse(
                 id=question_id,
                 channel_id=room_id or "unknown",
-                user_id=self._anonymize_sender(sender) if sender else "anonymous",
+                user_id=(
+                    self._anonymize_sender(sender) if sender else "anonymous"
+                ),  # Anonymize for privacy
                 messages=aggregated_messages,
                 synthesized_question=sanitized_question,
                 detected_version=normalized_version,
@@ -257,38 +238,6 @@ class ShadowModeProcessor:
         """
         if question_id in self._responses:
             self._responses[question_id].status = ShadowStatus.APPROVED
-
-    async def is_support_question(
-        self,
-        text: str,
-        sender: str = "",
-        prev_messages: Optional[List[str]] = None,
-    ) -> bool:
-        """
-        Detect if text is a support question using multi-layer classification.
-
-        Args:
-            text: Text to analyze
-            sender: Sender ID (e.g., @username:matrix.org) for staff detection
-            prev_messages: Previous messages in conversation for context analysis
-
-        Returns:
-            True if text appears to be a genuine user support question
-        """
-        # Run multi-layer classification using instance classifier (supports LLM fallback)
-        result = await self.classifier.classify_message(
-            text, sender, prev_messages or []
-        )
-
-        # Log classification details for monitoring
-        if not result["is_question"]:
-            logger.debug(
-                f"Filtered message: reason={result['reason']}, "
-                f"speaker={result['speaker_role']}, intent={result['intent']}, "
-                f"confidence={result['confidence']:.2f}"
-            )
-
-        return result["is_question"]
 
     @staticmethod
     def is_support_staff(sender: str) -> bool:

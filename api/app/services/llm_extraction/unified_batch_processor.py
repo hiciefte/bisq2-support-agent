@@ -37,44 +37,185 @@ KNOWN_SUPPORT_STAFF = [
 ]
 
 # Unified system prompt for question extraction with staff filtering
-UNIFIED_SYSTEM_PROMPT = """You are an expert at analyzing support chat conversations to extract user questions.
+UNIFIED_SYSTEM_PROMPT = """You are an expert at analyzing support chat conversations and extracting user questions. Your primary goal is to reliably identify **initial user support questions** from mixed-message transcripts, even when they appear in indirect or multi-message form.
 
-You will receive:
-1. A list of ALL messages from a support channel (both users and staff)
-2. A list of staff member identifiers
+You will be given:
+1. A full list of messages from a support channel (user + staff)
+2. A list of official staff identifiers
+3. Instructions to extract user questions and classify them
 
-Your task is to:
-1. Filter out messages from staff members (use the provided staff identifiers list)
-2. Extract genuine user questions from the remaining messages
-3. Group related questions into conversation threads
+-----------------------------
+## GENERAL RULES
 
-For each question, classify it as:
-- "initial_question": The first question starting a new conversation thread
-- "follow_up": A follow-up question continuing the same topic
-- "acknowledgment": User thanking or confirming resolution (e.g., "thanks that fixed it")
-- "not_question": A message that looks like a question but isn't seeking help (rhetorical, statement, warning)
+### DO NOT extract messages from staff.
+Only process messages sent by users not included in the provided staff identifier list.
+
+### What counts as a QUESTION?
+A message is a question if:
+- It explicitly asks for help
+- It implicitly asks for help ("I'm wondering if...", "Is anyone comfortable DMing me…")
+- It expresses uncertainty about a technical problem, scam risk, app behavior, or trading situation
+- It requests mediation or assistance
+- It is phrased as a request for action ("Can someone…", "Is there a way…")
+
+A question does NOT require a question mark (?) to be valid.
+
+### What is an INITIAL QUESTION?
+An **initial_question** is the FIRST question a user asks about a **new topic** they have not asked about before in the current conversation thread.
+
+A topic means: the specific issue the user seeks help for.
+Examples: being scammed, requesting a mediator, app bugs, resync issues, developers not responding, suspicious websites, etc.
+
+Indicators that a user message is an INITIAL QUESTION:
+- It introduces a brand new issue, problem, concern, or request.
+- It does NOT rely on prior back-and-forth context within the same topic.
+- It starts a new line of inquiry distinct from the user's previous questions.
+- It is an indirect help request ("Is anyone comfortable direct messaging me…").
+
+### Multi-message initial questions
+If a user begins a message with a greeting or statement and follows it with a question, extract the **FULL MESSAGE TEXT** including context.
+
+Example: "Hello, I'm a newbie and I'm wondering if I'm scammed and the crypto isn't transferred after I make a payment. How will this issue be resolved?"
+→ Extract the ENTIRE message, not just "How will this issue be resolved?"
+
+If users send multiple consecutive messages that collectively introduce a single issue:
+- Combine related messages into a single question_text.
+- All messages belong to the same conversation thread.
+
+### FOLLOW_UP QUESTIONS
+A follow_up is any question by the same user about the **same topic** as their initial_question.
+
+Examples of follow_up cues:
+- "Also…"
+- "What about…"
+- "How do I…"
+- "Should I…"
+- "I tried that, but…"
+- Any question continuing the same issue.
+
+### ACKNOWLEDGMENT
+User confirms resolution or expresses thanks ("thanks", "that fixed it").
+
+### NOT_QUESTION
+Messages that are not seeking help:
+- Safety reflections ("Lesson learned…")
+- Statements ("It's ok, was a small amount…")
+- Comments without a help request
+- Emotional reactions, jokes, or filler messages
+
+### STAFF MESSAGES
+All messages from the official staff identifiers MUST be ignored completely.
+
+-----------------------------
+## CONVERSATION GROUPING RULES
+
+Conversation grouping is **topic-based**, not time-based.
+
+A topic changes when:
+- The user begins a new issue unrelated to the previous one.
+- The user shifts from "resync issues" to "developer unreachable" → new topic.
+- The user shifts from "trade stuck" to "scam website?" → new topic.
+
+Each topic forms one conversation object.
 
 **Conversation Grouping Rules:**
 - Group messages within 2-minute windows from the same sender
 - Keep related topics together even if timestamps exceed 2 minutes
 - Separate distinct issues into different conversations
 
-**Question Classification Guidelines:**
-- Only extract messages from NON-STAFF senders
-- Only mark clear questions seeking information or help
-- Acknowledgments ("thanks", "got it", "that worked") are type "acknowledgment"
-- Warnings or statements ("be careful", "that's a scam") are type "not_question"
-- Assign confidence scores (0.0-1.0) based on certainty
+### Classification Guidelines
+
+**Only extract messages from NON-STAFF senders** (ignore all Staff_N messages).
+
+**initial_question**: A question introducing a NEW TOPIC or seeking help for a distinct issue. Use this for:
+- First time a user asks about a SPECIFIC PROBLEM (e.g., resync issue, scam concern, deposit question)
+- Questions asking for help with distinct issues (same user can have multiple initial_questions for different topics)
+- Indirect help requests like "Is anyone comfortable direct messaging me regarding a specific issue?"
+- Questions that don't reference or build on previous staff responses
+
+**follow_up**: Questions that continue the SAME TOPIC introduced in a previous question. Use ONLY for:
+- Clarification requests: "What do you mean by X?", "Can you explain that?"
+- Direct continuations: "Thanks for that info. What about Z?" (explicit reference to received answer)
+- Questions that explicitly build on or reference a previous staff response
+
+**acknowledgment**: User thanking or confirming resolution (e.g., "thanks that fixed it", "great! thank you")
+
+**not_question**: Statements, warnings, or rhetorical questions (no help needed)
+
+**Confidence scores**: Assign 0.0-1.0 based on certainty (use 0.9+ for clear questions, 0.7-0.9 for indirect requests, <0.7 for ambiguous)
+
+### Few-Shot Examples
+
+**Example 1: Multi-sentence initial question with greeting**
+Message: "Hello, I'm a newbie and I'm wondering if I'm scammed and the crypto isn't transferred after I make a payment. How will this issue be resolved?"
+→ Classification: initial_question (NEW TOPIC: scam/dispute resolution)
+→ question_text: "Hello, I'm a newbie and I'm wondering if I'm scammed and the crypto isn't transferred after I make a payment. How will this issue be resolved?"
+→ Note: Extract FULL message text, not just the question sentence
+
+**Example 2: Indirect help request**
+Message: "Is anyone comfortable direct messaging me regarding a specific issue I'm having?"
+→ Classification: initial_question (indirect request for help)
+→ question_text: "Is anyone comfortable direct messaging me regarding a specific issue I'm having?"
+
+**Example 3: Follow-up with explicit reference**
+Message: "[User_2] (replying to Msg #55): I'm new, so I apologize for wasting your time. Thanks for your reply. Is BTC collateral required?"
+→ Classification: follow_up (explicit "Thanks for your reply" shows this continues previous conversation)
+→ question_text: "I'm new, so I apologize for wasting your time. Thanks for your reply. Is BTC collateral required?"
+
+**Example 4: Same user, different topic (still initial_question)**
+Message: "[User_6] hey, I'm on an open negotiation since 7a.m. waiting on the first blockchain confirmation which already happened on mempool. Some good soul could give a hint on how to get unstuck?"
+→ Classification: initial_question (NEW TOPIC: blockchain confirmation issue, even if User_6 asked something else earlier)
+→ question_text: "hey, I'm on an open negotiation since 7a.m. waiting on the first blockchain confirmation which already happened on mempool. Some good soul could give a hint on how to get unstuck?"
+
+**Example 5: Acknowledgment**
+Message: "[User_6] (replying to Msg #7): great! thank you guys"
+→ Classification: acknowledgment (thanking, no question)
+
+**Example 6: Consecutive messages from same user (extract BOTH as separate initial_questions)**
+[Msg #68] [User_3]: Hi can I have a mediator respond to me? I did a xmr to btc exchange the other person hasn't sent the coins
+[Msg #69] [User_3]: how do I message them
+→ Msg #68: initial_question (introduces XMR/BTC exchange problem)
+→ Msg #69: follow_up (clarifies HOW to message the mediator mentioned in Msg #68)
+→ Note: Don't skip Msg #68 even though Msg #69 follows it. Both messages should be extracted.
+
+**Example 7: Same user, multiple topics (BOTH are initial_questions)**
+[Msg #53] [User_5]: Is anyone comfortable direct messaging me regarding a specific issue I'm having?
+[Msg #56] [User_5]: Is evmsynchrony. Com known to be used by scammers to garner information and access wallet funds?
+→ Msg #53: initial_question (meta-question about getting private help)
+→ Msg #56: initial_question (SEPARATE TOPIC: scam website verification, does NOT reference Msg #53)
+→ Note: Same user asking about DIFFERENT PROBLEMS = multiple initial_questions
+
+**Example 8: Different users, similar timing (BOTH are initial_questions)**
+[Msg #64] [User_4]: Is it possible to get a mediator early? My bank is blocking the transaction.
+[Msg #68] [User_3]: Hi can I have a mediator respond to me? I did a xmr to btc exchange the other person hasn't sent the coins
+→ Msg #64: initial_question (User_4's bank blocking issue)
+→ Msg #68: initial_question (User_3's XMR/BTC exchange issue - DIFFERENT USER, DIFFERENT PROBLEM)
+→ Note: Both users have mediator-related issues but they are SEPARATE conversations
+
+### Topic Separation Test
+Before classifying a message as follow_up, ask:
+1. Does this question address the SAME SPECIFIC PROBLEM as a previous message from this user? → follow_up
+2. Does this question introduce a NEW PROBLEM/CONCERN? → initial_question
+
+Examples:
+- "My trade is stuck" + "How long does mediation take?" → Same problem (trade issue) → second is follow_up
+- "Is anyone comfortable DMing me?" + "Is evmsynchrony.com a scam?" → Different concerns → both are initial_question
+
+### Critical Rule for Consecutive Messages
+If a user sends Message A followed immediately by Message B:
+1. Check if Message B clarifies/continues Message A's topic → classify B as follow_up
+2. Check if Message B introduces a NEW topic → classify B as initial_question
+3. ALWAYS extract Message A if it contains a question (don't skip it because B follows)
 
 **Output Format** - JSON array of conversation objects:
 [
   {
     "conversation_id": "conv_1",
-    "related_message_ids": ["$event_id1", "$event_id2"],
+    "related_message_numbers": [3, 5, 8],
     "conversation_context": "Brief description of what this conversation is about",
     "questions": [
       {
-        "message_id": "$event_id",
+        "message_number": 3,
         "sender": "User_1",
         "question_text": "The exact question text",
         "question_type": "initial_question|follow_up|acknowledgment|not_question",
@@ -83,6 +224,8 @@ For each question, classify it as:
     ]
   }
 ]
+
+**CRITICAL**: Use message numbers (integers like 3, 5, 8) NOT event IDs. Message numbers are shown in [Msg #N] format.
 
 **Return empty array [] if no user questions found.**
 
@@ -156,6 +299,50 @@ class UnifiedBatchProcessor:
         )
 
         return real_to_anon, anon_to_real
+
+    def _strip_matrix_reply_fallback(self, body: str) -> str:
+        """
+        Strip Matrix reply fallback formatting from message body.
+
+        Matrix includes quoted text in replies using format:
+        > <@sender:server> quoted text
+        >
+        > more quoted text
+
+        actual reply text
+
+        This method removes the quoted section and returns only the actual reply.
+
+        Args:
+            body: Raw message body from Matrix
+
+        Returns:
+            Clean message text without quoted fallback
+        """
+        lines = body.split("\n")
+        clean_lines = []
+        in_quote = False
+
+        for line in lines:
+            # Lines starting with '>' are quoted text (Matrix reply fallback)
+            if line.startswith(">"):
+                in_quote = True
+                continue
+
+            # Blank line after quotes separates quote from actual message
+            if in_quote and line.strip() == "":
+                in_quote = False
+                continue
+
+            # After quotes end, collect the actual message
+            if not in_quote:
+                clean_lines.append(line)
+
+        # If no quotes were found, return original body
+        if not clean_lines and not in_quote:
+            return body
+
+        return "\n".join(clean_lines).strip()
 
     def _anonymize_messages(
         self, messages: List[Dict[str, Any]], real_to_anon: Dict[str, str]
@@ -274,6 +461,21 @@ class UnifiedBatchProcessor:
             response_text = response.choices[0].message.content
             logger.debug(f"LLM response (first 500 chars): {response_text[:500]}")
 
+            # Save full prompt and response for debugging
+            import os
+
+            debug_dir = "/tmp"
+            with open(os.path.join(debug_dir, "llm_extraction_debug.txt"), "w") as f:
+                f.write("===== SYSTEM PROMPT =====\n")
+                f.write(prompt_messages[0]["content"])
+                f.write("\n\n===== USER PROMPT =====\n")
+                f.write(prompt_messages[1]["content"])
+                f.write("\n\n===== LLM RESPONSE =====\n")
+                f.write(response_text)
+            logger.info(
+                f"Saved full LLM extraction debug info to {os.path.join(debug_dir, 'llm_extraction_debug.txt')}"
+            )
+
             if not response_text or not response_text.strip():
                 logger.error("LLM returned empty response")
                 return ExtractionResult(
@@ -296,21 +498,44 @@ class UnifiedBatchProcessor:
 
             conversations_data = json.loads(response_text)
 
-            # Step 7: Extract questions and map back to real usernames
+            # Step 7a: Build message_number → event_id mapping (Phase 2 of two-phase architecture)
+            # Sort messages same way as prompt formatting for consistent indexing
+            sorted_messages = sorted(messages, key=lambda m: m.get("timestamp", 0))
+            msg_number_to_event_id = {
+                idx + 1: msg["event_id"] for idx, msg in enumerate(sorted_messages)
+            }
+            logger.debug(
+                f"Built message_number → event_id mapping for {len(msg_number_to_event_id)} messages"
+            )
+
+            # Step 7b: Extract questions and map back to real usernames + event IDs
             all_questions = []
             seen_message_ids = set()
 
             for conv in conversations_data:
                 for q_data in conv.get("questions", []):
-                    msg_id = q_data["message_id"]
-                    if msg_id not in seen_message_ids:
+                    # Phase 2: Convert message_number (from LLM) to event_id (deterministic mapping)
+                    msg_number = q_data.get("message_number")
+                    if msg_number is None:
+                        logger.warning(f"Question missing message_number: {q_data}")
+                        continue
+
+                    # Deterministic Python mapping (100% reliable, no LLM copying errors)
+                    msg_event_id = msg_number_to_event_id.get(msg_number)
+                    if not msg_event_id:
+                        logger.warning(
+                            f"Invalid message_number {msg_number}, skipping question"
+                        )
+                        continue
+
+                    if msg_event_id not in seen_message_ids:
                         # Map anonymized sender back to real username
                         anon_sender = q_data.get("sender", "Unknown")
                         real_sender = anon_to_real.get(anon_sender, anon_sender)
 
-                        # Create ExtractedQuestion with real username restored
+                        # Create ExtractedQuestion with real username restored and event_id mapped
                         question = ExtractedQuestion(
-                            message_id=msg_id,
+                            message_id=msg_event_id,  # Mapped from message_number
                             question_text=q_data["question_text"],
                             question_type=q_data["question_type"],
                             confidence=q_data.get("confidence", 0.0),
@@ -318,11 +543,17 @@ class UnifiedBatchProcessor:
                         )
 
                         all_questions.append(question)
-                        seen_message_ids.add(msg_id)
+                        seen_message_ids.add(msg_event_id)
 
                         logger.debug(
                             f"Extracted question from {anon_sender} (real: {real_sender}): {q_data['question_text'][:50]}..."
                         )
+
+            # Count question types for debugging
+            type_counts: dict[str, int] = {}
+            for q in all_questions:
+                type_counts[q.question_type] = type_counts.get(q.question_type, 0) + 1
+            logger.info(f"Question type breakdown: {type_counts}")
 
             # Build result
             result = ExtractionResult(
@@ -429,11 +660,48 @@ class UnifiedBatchProcessor:
         # Add system prompt
         prompt_messages.append({"role": "system", "content": UNIFIED_SYSTEM_PROMPT})
 
-        # Format all messages in a single user message
-        messages_text = "\n".join(
-            f"[Event: {msg['event_id']}] [{msg['sender']}] ({msg['timestamp']}): {msg['body']}"
-            for msg in messages
-        )
+        # Sort messages chronologically (oldest first) for proper conversation flow
+        sorted_messages = sorted(messages, key=lambda m: m.get("timestamp", 0))
+
+        # Build message ID index for reply tracking
+        msg_id_to_index = {}
+        for idx, msg in enumerate(sorted_messages):
+            msg_id_to_index[msg.get("event_id", "")] = (
+                idx + 1
+            )  # 1-based for human readability
+
+        # Format all messages in a single user message with human-readable timestamps
+        formatted_messages = []
+        for idx, msg in enumerate(sorted_messages):
+            timestamp_ms = msg.get("timestamp", 0)
+            if timestamp_ms and timestamp_ms > 0:
+                # Convert milliseconds to datetime and format as human-readable
+                from datetime import datetime, timezone
+
+                dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                timestamp_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                timestamp_str = "unknown"
+
+            # Clean Matrix reply formatting (remove quoted fallback text)
+            message_body = self._strip_matrix_reply_fallback(msg["body"])
+
+            # Message number for reference (1-based)
+            msg_number = idx + 1
+
+            # If this is a reply, indicate which message it's replying to
+            reply_to_id = msg.get("reply_to")
+            if reply_to_id and reply_to_id in msg_id_to_index:
+                reply_to_number = msg_id_to_index[reply_to_id]
+                formatted_messages.append(
+                    f"[Msg #{msg_number}] [{timestamp_str}] [{msg['sender']}] (replying to Msg #{reply_to_number}): {message_body}"
+                )
+            else:
+                formatted_messages.append(
+                    f"[Msg #{msg_number}] [{timestamp_str}] [{msg['sender']}]: {message_body}"
+                )
+
+        messages_text = "\n".join(formatted_messages)
 
         # Include staff identifiers in the prompt
         staff_list = ", ".join(staff_identifiers) if staff_identifiers else "None"

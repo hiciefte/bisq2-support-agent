@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 if TYPE_CHECKING:
@@ -264,115 +263,12 @@ class MatrixShadowModeService:
         Returns:
             List of messages that appear to be support questions (with context attached)
         """
-        questions = []
-
-        # Build conversation context (last N messages before current)
-        # For follow-up detection, we only need a small window
-        CONTEXT_WINDOW = 5
-
-        # Fetch recent messages from database for cross-poll context
-        all_messages = []
-        if processor.repository and messages:
-            try:
-                # Get timestamp of first message in current poll
-                first_msg_timestamp = messages[0].get("timestamp", 0)
-                if first_msg_timestamp > 0:
-                    first_msg_ts = datetime.fromtimestamp(
-                        first_msg_timestamp / 1000, tz=timezone.utc
-                    ).isoformat()
-
-                    # Fetch recent messages from database (before this poll)
-                    recent_db_messages = await asyncio.create_task(
-                        asyncio.to_thread(
-                            processor.repository.get_recent_messages,
-                            channel_id=self.room_id,
-                            limit=10,
-                            before=first_msg_ts,
-                        )
-                    )
-
-                    # Convert database messages to same format as Matrix messages
-                    db_msgs_as_matrix = []
-                    for db_msg in recent_db_messages:
-                        # Database messages have format: {content, message_id, timestamp, ...}
-                        db_msgs_as_matrix.append(
-                            {
-                                "event_id": db_msg.get("message_id", "unknown"),
-                                "sender": db_msg.get("sender_id", ""),
-                                "body": db_msg.get("content", ""),
-                                "timestamp": (
-                                    int(
-                                        datetime.fromisoformat(
-                                            db_msg.get("timestamp", "")
-                                        ).timestamp()
-                                        * 1000
-                                    )
-                                    if db_msg.get("timestamp")
-                                    else 0
-                                ),
-                            }
-                        )
-
-                    # Combine database messages + current poll messages
-                    all_messages = db_msgs_as_matrix + messages
-                    logger.debug(
-                        f"Cross-poll context: fetched {len(db_msgs_as_matrix)} messages from database"
-                    )
-                else:
-                    all_messages = messages
-            except Exception as e:
-                logger.warning(f"Failed to fetch cross-poll context: {e}")
-                all_messages = messages
-        else:
-            all_messages = messages
-
-        for i, msg in enumerate(all_messages):
-            sender = msg.get("sender", "")
-            body = msg.get("body", "")
-
-            # Only process messages from current poll (not historical ones)
-            # Historical messages are only used for context
-            if msg not in messages:
-                continue
-
-            # Log each message for debugging
-            logger.debug(f"Evaluating message from {sender}: {body[:100]}...")
-
-            # Skip reply messages (Matrix replies start with "> <@user:server>")
-            # The classifier handles this, but we can skip early for efficiency
-            if body.strip().startswith(">"):
-                logger.debug("  → Skipped (reply message)")
-                continue
-
-            # Extract previous messages for conversation context
-            # Look back up to CONTEXT_WINDOW messages
-            prev_messages = []
-            for j in range(max(0, i - CONTEXT_WINDOW), i):
-                prev_body = all_messages[j].get("body", "")
-                if prev_body:  # Only include messages with content
-                    prev_messages.append(prev_body)
-
-            # Use multi-layer classifier with conversation context
-            if await processor.is_support_question(
-                body, sender=sender, prev_messages=prev_messages
-            ):
-                logger.info(f"  ✓ Identified as support question from {sender}")
-
-                # Attach context messages to question for storage
-                context_msgs = []
-                for j in range(max(0, i - CONTEXT_WINDOW), i):
-                    context_msgs.append(all_messages[j])
-
-                # Add context to message metadata
-                msg["_context_messages"] = context_msgs
-                questions.append(msg)
-            else:
-                logger.debug(f"  → Skipped (filtered by classifier): {body[:50]}")
-
+        # Old classification loop removed - now handled by extract_questions_with_llm()
+        # which uses UnifiedBatchProcessor for privacy-preserving extraction
         logger.info(
-            f"Filtered {len(questions)} support questions from {len(messages)} messages"
+            "Old classification system removed. Use extract_questions_with_llm() instead."
         )
-        return questions
+        return []
 
     def mark_as_processed(self, event_id: str) -> None:
         """
@@ -421,7 +317,7 @@ class MatrixShadowModeService:
         """
         try:
             # Import here to avoid circular dependencies
-            import aisuite as ai
+            import aisuite as ai  # type: ignore[import-untyped]
             from app.services.llm_extraction.unified_batch_processor import (
                 UnifiedBatchProcessor,
             )
@@ -439,8 +335,19 @@ class MatrixShadowModeService:
             )
 
             # Convert extracted questions back to message format
+            # ONLY include "initial_question" type for training (filter out follow-ups)
             questions = []
+            filtered_count = 0
+
             for extracted_q in result.questions:
+                # Skip non-initial questions (follow-ups, acknowledgments, not_question)
+                if extracted_q.question_type != "initial_question":
+                    filtered_count += 1
+                    logger.debug(
+                        f"Filtered {extracted_q.question_type}: {extracted_q.question_text[:50]}..."
+                    )
+                    continue
+
                 # Find original message by message_id
                 original_msg = next(
                     (m for m in messages if m["event_id"] == extracted_q.message_id),
@@ -448,20 +355,21 @@ class MatrixShadowModeService:
                 )
 
                 if original_msg:
-                    # Add extraction metadata to message (includes real username)
+                    # Add extraction metadata to message (anonymized sender)
                     enriched_msg = original_msg.copy()
                     enriched_msg["_llm_extraction"] = {
                         "question_text": extracted_q.question_text,
                         "question_type": extracted_q.question_type,
                         "confidence": extracted_q.confidence,
-                        "sender": extracted_q.sender,  # Real username (restored from anonymization)
+                        "sender": extracted_q.sender,  # Anonymized (User_1, User_2, etc.)
                         "extraction_method": "unified_batch",
                         "conversation_count": len(result.conversations),
                     }
                     questions.append(enriched_msg)
 
             logger.info(
-                f"Unified batch extraction: {len(result.questions)} user questions from {result.total_messages} messages "
+                f"Unified batch extraction: {len(questions)} initial questions from {result.total_messages} messages "
+                f"({filtered_count} follow-ups/acknowledgments filtered) "
                 f"in {len(result.conversations)} conversations (processing_time={result.processing_time_ms}ms)"
             )
 
@@ -576,6 +484,7 @@ class MatrixShadowModeService:
             for question in questions:
                 event_id = question["event_id"]
                 body = question["body"]
+                # Use Matrix sender (will be anonymized by shadow_mode_processor)
                 sender = question["sender"]
                 timestamp = question.get("timestamp", 0)
                 context_messages = question.get("_context_messages", [])

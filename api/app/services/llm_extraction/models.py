@@ -1,37 +1,11 @@
-"""Pydantic models for LLM question extraction (Phase 1.3).
+"""Pydantic models for LLM question extraction.
 
-Validated data models for input/output of question extraction pipeline.
+Validated data models for UnifiedBatchProcessor output.
 """
 
-import unicodedata
 from typing import Any, Dict, List, Literal
 
-from pydantic import BaseModel, Field, field_validator
-
-
-class MessageInput(BaseModel):
-    """Individual message for LLM extraction."""
-
-    event_id: str = Field(..., description="Matrix event ID")
-    sender: str = Field(..., description="Matrix user ID")
-    body: str = Field(..., min_length=1, max_length=5000, description="Message content")
-    timestamp: int = Field(..., description="Server timestamp in milliseconds")
-
-    @field_validator("body")
-    @classmethod
-    def normalize_unicode(cls, v: str) -> str:
-        """Normalize Unicode to canonical form (NFKC)."""
-        return unicodedata.normalize("NFKC", v)
-
-
-class ConversationInput(BaseModel):
-    """Conversation input for LLM extraction."""
-
-    conversation_id: str = Field(..., description="Unique conversation identifier")
-    messages: List[MessageInput] = Field(
-        ..., min_length=1, max_length=100, description="Messages in conversation"
-    )
-    room_id: str = Field(..., description="Matrix room ID")
+from pydantic import BaseModel, Field
 
 
 class ExtractedQuestion(BaseModel):

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 try:
     from nio import ErrorResponse, RoomMessagesError  # type: ignore[import-not-found]
@@ -205,7 +205,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.failure_threshold = failure_threshold
         self.timeout = timeout  # seconds
-        self.last_failure_time = None
+        self.last_failure_time: Optional[float] = None
         self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
 
     def should_allow_request(self) -> bool:

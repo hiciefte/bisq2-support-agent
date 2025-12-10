@@ -91,37 +91,30 @@ class Settings(BaseSettings):
     ENABLE_LLM_EXTRACTION: bool = Field(
         default=False,
         description="Enable full LLM extraction (replaces pattern-based)",
-        env="ENABLE_LLM_EXTRACTION",
     )
     LLM_EXTRACTION_MODEL: str = Field(
         default="openai:gpt-4o-mini",
         description="Model for extraction (format: 'provider:model')",
-        env="LLM_EXTRACTION_MODEL",
     )
     LLM_EXTRACTION_BATCH_SIZE: int = Field(
         default=2000,
         description="Maximum number of messages to process in a single LLM batch (gpt-4o-mini supports ~128K tokens)",
-        env="LLM_EXTRACTION_BATCH_SIZE",
     )
     LLM_EXTRACTION_CACHE_TTL: int = Field(
         default=3600,
         description="Cache time-to-live in seconds (1 hour)",
-        env="LLM_EXTRACTION_CACHE_TTL",
     )
     LLM_EXTRACTION_CACHE_SIZE: int = Field(
         default=100,
         description="Maximum cache entries",
-        env="LLM_EXTRACTION_CACHE_SIZE",
     )
     LLM_EXTRACTION_MAX_TOKENS: int = Field(
         default=4000,
         description="Max tokens per conversation (for truncation)",
-        env="LLM_EXTRACTION_MAX_TOKENS",
     )
     LLM_EXTRACTION_TEMPERATURE: float = Field(
         default=0.0,
         description="LLM temperature for extraction (deterministic)",
-        env="LLM_EXTRACTION_TEMPERATURE",
     )
 
     # Provider-specific API keys (separate from classification config)

@@ -178,7 +178,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s  # Extended to allow RAG service initialization (35-70s typical)
     logging:
       driver: "json-file"
       options:

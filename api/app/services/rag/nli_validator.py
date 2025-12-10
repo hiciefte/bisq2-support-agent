@@ -1,7 +1,7 @@
 """NLI Validator for answer entailment checking."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class NLIValidator:
 
     def __init__(self):
         """Initialize NLI pipeline with lightweight model."""
-        self.nli_pipeline: Optional[object] = None
+        self.nli_pipeline: Optional[Any] = None
         if HAS_TRANSFORMERS:
             try:
                 self.nli_pipeline = pipeline(
