@@ -46,7 +46,7 @@ class ShadowResponse:
     version_change_reason: Optional[str] = None
 
     # Unknown version enhancement fields
-    training_version: Optional[str] = None  # "Bisq 1" | "Bisq 2" | None
+    training_protocol: Optional[str] = None  # "multisig_v1" | "bisq_easy" | None
     requires_clarification: bool = False  # Pattern learning flag
     clarifying_question: Optional[str] = None  # Custom or auto-generated question
     source: str = "shadow_mode"  # "shadow_mode" | "rag_bot_clarification"
@@ -100,7 +100,7 @@ class ShadowResponse:
             "detection_signals": self.detection_signals,
             "confirmed_version": self.confirmed_version,
             "version_change_reason": self.version_change_reason,
-            "training_version": self.training_version,
+            "training_protocol": self.training_protocol,
             "requires_clarification": self.requires_clarification,
             "clarifying_question": self.clarifying_question,
             "source": self.source,
@@ -180,7 +180,7 @@ class ShadowResponse:
             detection_signals=data.get("detection_signals", {}),
             confirmed_version=data.get("confirmed_version"),
             version_change_reason=data.get("version_change_reason"),
-            training_version=data.get("training_version"),
+            training_protocol=data.get("training_protocol"),
             requires_clarification=data.get("requires_clarification", False),
             clarifying_question=data.get("clarifying_question"),
             source=data.get("source", "shadow_mode"),

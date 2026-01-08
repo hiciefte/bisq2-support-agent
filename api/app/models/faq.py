@@ -10,8 +10,8 @@ class FAQItem(BaseModel):
     category: Optional[str] = "General"
     source: Optional[str] = "Manual"  # Default for manually added/edited
     verified: Optional[bool] = False  # Whether FAQ has been verified by admin
-    bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = (
-        "Bisq 2"  # Bisq version applicability
+    protocol: Optional[Literal["multisig_v1", "bisq_easy", "musig", "all"]] = (
+        None  # Trade protocol - None means "all protocols"
     )
     created_at: Optional[datetime] = None  # When FAQ was created
     updated_at: Optional[datetime] = None  # When FAQ was last updated
@@ -30,7 +30,7 @@ class FAQUpdateRequest(BaseModel):
     category: Optional[str] = None
     source: Optional[str] = None
     verified: Optional[bool] = None
-    bisq_version: Optional[Literal["Bisq 1", "Bisq 2", "General"]] = None
+    protocol: Optional[Literal["multisig_v1", "bisq_easy", "musig", "all"]] = None
     created_at: Optional[datetime] = None  # Normally not updated, used for migrations
     updated_at: Optional[datetime] = None  # Auto-populated on updates
     verified_at: Optional[datetime] = None  # Auto-populated when verified=True

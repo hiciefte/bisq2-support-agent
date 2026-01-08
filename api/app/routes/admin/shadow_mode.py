@@ -11,7 +11,7 @@ from app.models.shadow_response import ShadowResponse, ShadowStatus
 from app.services.shadow_mode.repository import ShadowModeRepository
 from app.services.shadow_mode_processor import ShadowModeProcessor
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,21 @@ class ConfirmVersionRequest(BaseModel):
 
     confirmed_version: str
     version_change_reason: Optional[str] = None
-    training_version: Optional[str] = None  # Required when confirmed_version="Unknown"
+    training_protocol: Optional[str] = None  # Required when confirmed_version="Unknown"
     custom_clarifying_question: Optional[str] = None  # Optional custom question
 
     @model_validator(mode="after")
-    def validate_training_version_for_unknown(self):
-        """Require training_version when confirmed_version is Unknown."""
-        if self.confirmed_version == "Unknown" and not self.training_version:
+    def validate_training_protocol_for_unknown(self):
+        """Require training_protocol when confirmed_version is Unknown."""
+        if self.confirmed_version == "Unknown" and not self.training_protocol:
             raise ValueError(
-                "training_version required when confirmed_version is Unknown"
+                "training_protocol required when confirmed_version is Unknown"
             )
-        if self.training_version and self.training_version not in ["Bisq 1", "Bisq 2"]:
-            raise ValueError("training_version must be 'Bisq 1' or 'Bisq 2'")
+        if self.training_protocol and self.training_protocol not in [
+            "multisig_v1",
+            "bisq_easy",
+        ]:
+            raise ValueError("training_protocol must be 'multisig_v1' or 'bisq_easy'")
         return self
 
 
@@ -95,7 +98,7 @@ def _response_to_dict(resp: ShadowResponse) -> Dict[str, Any]:
         "detection_signals": resp.detection_signals,
         "confirmed_version": resp.confirmed_version,
         "version_change_reason": resp.version_change_reason,
-        "training_version": resp.training_version,
+        "training_protocol": resp.training_protocol,
         "requires_clarification": resp.requires_clarification,
         "clarifying_question": resp.clarifying_question,
         "source": resp.source,
@@ -170,7 +173,7 @@ async def confirm_version(
 
         # Determine which version to use for RAG generation
         rag_version = (
-            body.training_version
+            body.training_protocol
             if body.confirmed_version == "Unknown"
             else body.confirmed_version
         )
@@ -180,7 +183,7 @@ async def confirm_version(
             response_id,
             confirmed_version=body.confirmed_version,
             change_reason=body.version_change_reason,
-            training_version=body.training_version,
+            training_protocol=body.training_protocol,
             requires_clarification=(body.confirmed_version == "Unknown"),
             clarifying_question=body.custom_clarifying_question,
         )
@@ -197,7 +200,7 @@ async def confirm_version(
             rag_result = await rag_service.query(
                 question=response.synthesized_question,
                 chat_history=[],
-                override_version=rag_version,  # Use training_version for Unknown
+                override_version=rag_version,  # Use training_protocol for Unknown
             )
 
             # Extract sources from RAG result
@@ -209,7 +212,7 @@ async def confirm_version(
                             "title": source.get("title", "Unknown"),
                             "type": source.get("type", "unknown"),
                             "content": source.get("content", ""),
-                            "bisq_version": source.get("bisq_version", "General"),
+                            "protocol": source.get("protocol", "all"),
                             "relevance": source.get("relevance", 0.0),
                         }
                     )
@@ -337,12 +340,13 @@ async def retry_rag(response_id: str, request: Request) -> Dict[str, str]:
     rag_service = request.app.state.rag_service
 
     # Use confirmed version if available, otherwise use detected version
-    version = response.confirmed_version or response.detected_version
+    override_version = response.confirmed_version or response.detected_version
 
     try:
         rag_result = await rag_service.query(
             question=response.synthesized_question,
             chat_history=[],
+            override_version=override_version,
         )
 
         # Extract sources from RAG result

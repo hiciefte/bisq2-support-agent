@@ -57,7 +57,7 @@ class TestFAQSQLiteE2E:
             category="Trading",
             source="Manual",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         )
         integration_db.add_faq(new_faq)
 
@@ -149,15 +149,15 @@ class TestFAQSQLiteE2E:
         loaded_categories = {doc.metadata["category"] for doc in docs}
         assert loaded_categories == set(categories)
 
-    def test_bisq_version_metadata_consistency(self, integration_db, rag_loader_e2e):
-        """Test that bisq_version metadata is preserved from admin to RAG."""
-        # Setup: Add FAQs with different version tags
-        versions = ["Bisq 1", "Bisq 2", "General"]
-        for i, version in enumerate(versions):
+    def test_protocol_metadata_consistency(self, integration_db, rag_loader_e2e):
+        """Test that protocol metadata is preserved from admin to RAG."""
+        # Setup: Add FAQs with different protocol values
+        protocols = ["multisig_v1", "bisq_easy", "all"]
+        for i, protocol in enumerate(protocols):
             faq = FAQItem(
                 question=f"Question {i}",
                 answer=f"Answer {i}",
-                bisq_version=version,
+                protocol=protocol,
                 verified=True,
             )
             integration_db.add_faq(faq)
@@ -167,9 +167,9 @@ class TestFAQSQLiteE2E:
             repository=integration_db, only_verified=True
         )
 
-        # Assert: All versions preserved
-        loaded_versions = {doc.metadata["bisq_version"] for doc in docs}
-        assert loaded_versions == set(versions)
+        # Assert: All protocols preserved
+        loaded_protocols = {doc.metadata["protocol"] for doc in docs}
+        assert loaded_protocols == set(protocols)
 
     def test_source_weight_application(self, integration_db, rag_loader_e2e):
         """Test that source weights are correctly applied to FAQ documents."""
@@ -199,7 +199,7 @@ class TestFAQSQLiteE2E:
             category="Features",
             source="Manual",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         )
         integration_db.add_faq(faq)
 
@@ -225,7 +225,7 @@ class TestFAQSQLiteE2E:
         assert doc.metadata["type"] == "faq"
         assert doc.metadata["source_weight"] == 1.2
         assert doc.metadata["category"] == "Features"
-        assert doc.metadata["bisq_version"] == "Bisq 2"
+        assert doc.metadata["protocol"] == "bisq_easy"
         assert doc.metadata["verified"] is True
 
     def test_empty_database_handling(self, integration_db, rag_loader_e2e):

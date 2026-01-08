@@ -1,27 +1,24 @@
 """Tests for confirm_version API endpoint - Unknown Version Enhancement.
 
 CRITICAL: This test file verifies Pydantic validation for the Unknown version enhancement:
-- training_version REQUIRED when confirmed_version="Unknown" (400 error if missing)
-- training_version must be "Bisq 1" or "Bisq 2" (enum validation)
+- training_protocol REQUIRED when confirmed_version="Unknown" (400 error if missing)
+- training_protocol must be "multisig_v1" or "bisq_easy" (enum validation)
 - clarification endpoint saves with source="rag_bot_clarification"
 - clarification endpoint sets 1.5x source weight
 """
 
 import json
-import os
-import sqlite3
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from app.models.shadow_response import ShadowResponse, ShadowStatus
 from app.routes.admin.shadow_mode import router
 from app.services.shadow_mode.repository import ShadowModeRepository
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 
 @pytest.fixture
@@ -88,10 +85,10 @@ def client(app):
 class TestPydanticValidation:
     """Test suite for Pydantic validation of ConfirmVersionRequest."""
 
-    def test_confirm_version_unknown_without_training_version_returns_400(
+    def test_confirm_version_unknown_without_training_protocol_returns_400(
         self, client, sample_response
     ):
-        """Test that confirming 'Unknown' without training_version returns 422.
+        """Test that confirming 'Unknown' without training_protocol returns 422.
 
         FIXED: Changed @field_validator to mode='before' to trigger validation
         even when field is omitted from JSON.
@@ -101,7 +98,7 @@ class TestPydanticValidation:
             json={
                 "confirmed_version": "Unknown",
                 "version_change_reason": "Ambiguous question",
-                # Missing training_version - should trigger validation
+                # Missing training_protocol - should trigger validation
             },
         )
 
@@ -110,31 +107,31 @@ class TestPydanticValidation:
             f"Response: {response.json()}"
         )
 
-    def test_confirm_version_unknown_with_null_training_version_returns_400(
+    def test_confirm_version_unknown_with_null_training_protocol_returns_400(
         self, client, sample_response
     ):
-        """Test that confirming 'Unknown' with training_version=null returns 400."""
+        """Test that confirming 'Unknown' with training_protocol=null returns 400."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": None,  # Explicit null - should fail
+                "training_protocol": None,  # Explicit null - should fail
                 "version_change_reason": "Needs clarification",
             },
         )
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}"
 
-    def test_confirm_version_unknown_with_invalid_training_version_returns_400(
+    def test_confirm_version_unknown_with_invalid_training_protocol_returns_400(
         self, client, sample_response
     ):
-        """Test that invalid training_version enum returns 400."""
+        """Test that invalid training_protocol enum returns 400."""
         # Try invalid value
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": "Bisq 3",  # Invalid - not in enum
+                "training_protocol": "Bisq 3",  # Invalid - not in enum
                 "version_change_reason": "Ambiguous",
             },
         )
@@ -142,17 +139,17 @@ class TestPydanticValidation:
         assert response.status_code == 422, f"Expected 422, got {response.status_code}"
         error_detail = response.json()
         error_msg = json.dumps(error_detail).lower()
-        assert "bisq 1" in error_msg or "bisq 2" in error_msg
+        assert "multisig_v1" in error_msg or "bisq_easy" in error_msg
 
-    def test_confirm_version_unknown_with_valid_training_version_returns_200(
+    def test_confirm_version_unknown_with_valid_training_protocol_returns_200(
         self, client, sample_response
     ):
-        """Test that confirming 'Unknown' with valid training_version succeeds."""
+        """Test that confirming 'Unknown' with valid training_protocol succeeds."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": "Bisq 2",  # Valid enum value
+                "training_protocol": "bisq_easy",  # Valid enum value
                 "version_change_reason": "Generic question",
             },
         )
@@ -162,31 +159,31 @@ class TestPydanticValidation:
         assert "message" in data
         assert "confirmed" in data["message"].lower()
 
-    def test_confirm_version_bisq1_without_training_version_returns_200(
+    def test_confirm_version_bisq1_without_training_protocol_returns_200(
         self, client, sample_response
     ):
-        """Test that confirming 'Bisq 1' WITHOUT training_version succeeds."""
+        """Test that confirming 'Bisq 1' WITHOUT training_protocol succeeds."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Bisq 1",
                 "version_change_reason": "DAO keywords detected",
-                # NO training_version - should succeed for non-Unknown
+                # NO training_protocol - should succeed for non-Unknown
             },
         )
 
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
-    def test_confirm_version_bisq2_without_training_version_returns_200(
+    def test_confirm_version_bisq2_without_training_protocol_returns_200(
         self, client, sample_response
     ):
-        """Test that confirming 'Bisq 2' WITHOUT training_version succeeds."""
+        """Test that confirming 'Bisq 2' WITHOUT training_protocol succeeds."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Bisq 2",
                 "version_change_reason": "Reputation keywords",
-                # NO training_version - should succeed for non-Unknown
+                # NO training_protocol - should succeed for non-Unknown
             },
         )
 
@@ -292,7 +289,7 @@ class TestConfirmVersionStorageAndRAG:
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": "Bisq 1",
+                "training_protocol": "multisig_v1",
                 "custom_clarifying_question": custom_question,
             },
         )
@@ -304,26 +301,26 @@ class TestConfirmVersionStorageAndRAG:
         saved = repo.get_response(sample_response.id)
         assert saved.clarifying_question == custom_question
 
-    def test_confirm_version_uses_training_version_for_rag(
+    def test_confirm_version_uses_training_protocol_for_rag(
         self, client, sample_response, app
     ):
-        """Verify RAG uses training_version when confirmed_version='Unknown'."""
+        """Verify RAG uses training_protocol when confirmed_version='Unknown'."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": "Bisq 1",
+                "training_protocol": "multisig_v1",
                 "version_change_reason": "Ambiguous",
             },
         )
 
         assert response.status_code == 200
 
-        # Verify RAG was called with training_version
+        # Verify RAG was called with training_protocol
         mock_rag = app.state.rag_service
         mock_rag.query.assert_called_once()
         call_kwargs = mock_rag.query.call_args.kwargs
-        assert call_kwargs["override_version"] == "Bisq 1"
+        assert call_kwargs["override_version"] == "multisig_v1"
 
     def test_confirm_version_uses_confirmed_version_for_rag_bisq1(
         self, client, sample_response, app
@@ -352,7 +349,7 @@ class TestConfirmVersionStorageAndRAG:
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
                 "confirmed_version": "Unknown",
-                "training_version": "Bisq 2",
+                "training_protocol": "bisq_easy",
             },
         )
 

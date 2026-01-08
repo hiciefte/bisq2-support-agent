@@ -136,21 +136,21 @@ def sample_faq_data() -> list[dict]:
             "answer": "Bisq doesn't require account creation. Simply download and install the Bisq application.",
             "category": "account",
             "source": "Manual",
-            "bisq_version": "Bisq 2",
+            "protocol": "bisq_easy",
         },
         {
             "question": "What is the trading fee?",
             "answer": "The trading fee is 0.7% of the trade amount.",
             "category": "trading",
             "source": "Manual",
-            "bisq_version": "General",
+            "protocol": "all",
         },
         {
             "question": "How do I dispute a trade?",
             "answer": "Open the trade details and click the 'Open Dispute' button.",
             "category": "trading",
             "source": "Extracted",
-            "bisq_version": "Bisq 1",
+            "protocol": "multisig_v1",
         },
     ]
 

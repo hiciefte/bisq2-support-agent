@@ -32,7 +32,8 @@ import {
   AlertTriangle,
   SkipForward,
   ChevronDown,
-  Check
+  Check,
+  Info
 } from 'lucide-react';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { cn } from "@/lib/utils";
@@ -49,7 +50,7 @@ interface Source {
   title: string;
   type: string;
   content: string;
-  bisq_version: string;
+  protocol: string;
 }
 
 interface ShadowResponse {
@@ -109,6 +110,75 @@ const formatVersionLabel = (version: string | null): string => {
     default:
       return version;
   }
+};
+
+const renderVersionBadge = (response: ShadowResponse) => {
+  const confirmedVersion = response.confirmed_version;
+  const detectedVersion = response.detected_version;
+  const trainingVersion = response.training_version;
+
+  // Case 1: Version Override (Correction)
+  if (confirmedVersion && detectedVersion &&
+      confirmedVersion !== detectedVersion &&
+      detectedVersion !== 'unknown') {
+    return (
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className="line-through text-muted-foreground opacity-60">
+          {formatVersionLabel(detectedVersion)}
+        </span>
+        <span className="text-muted-foreground">→</span>
+        <Badge variant="outline" className="text-xs">
+          {formatVersionLabel(confirmedVersion)}
+        </Badge>
+      </div>
+    );
+  }
+
+  // Case 2: Unknown + Training Version (Simulation)
+  if (confirmedVersion === 'unknown' && trainingVersion) {
+    return (
+      <TooltipProvider>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="text-xs">
+            {formatVersionLabel(confirmedVersion)}*
+          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Training version information"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="left"
+              className="max-w-xs text-xs"
+              sideOffset={8}
+            >
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium opacity-70">Training Version:</span>
+                  <span>{formatVersionLabel(trainingVersion)}</span>
+                </div>
+                <p className="text-xs opacity-70 leading-relaxed">
+                  Response generated using {formatVersionLabel(trainingVersion)} knowledge base
+                  to simulate asking user which version they use.
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  // Case 3: Normal Display (Single Badge)
+  return (
+    <Badge variant="outline" className="text-xs">
+      {formatVersionLabel(confirmedVersion)}
+    </Badge>
+  );
 };
 
 const getConfidenceColor = (confidence: number) => {
@@ -224,6 +294,7 @@ export default function ShadowModePage() {
 
   // Generating state (per card) - tracks which responses are currently generating RAG
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
 
   // Inline response editing state
   const [editingResponseId, setEditingResponseId] = useState<string | null>(null);
@@ -553,8 +624,8 @@ export default function ShadowModePage() {
   };
 
   const handleApprove = async (responseId: string) => {
-    setIsSubmitting(true);
-    setResponses(prev => prev.filter(r => r.id !== responseId));
+    // Mark as approving (show loading state)
+    setApprovingIds(prev => new Set(prev).add(responseId));
     setShowResponseDialog(false);
     setEditingResponseId(null);
 
@@ -566,6 +637,8 @@ export default function ShadowModePage() {
 
       if (response.ok) {
         sonnerToast.success('✓ Response approved and ready for deployment');
+        // Remove from UI after successful approval
+        setResponses(prev => prev.filter(r => r.id !== responseId));
         fetchStats();
       } else {
         sonnerToast.error('⚠️ Failed to approve - please try again or contact support');
@@ -576,7 +649,12 @@ export default function ShadowModePage() {
       sonnerToast.error('⚠️ Failed to approve - please try again or contact support');
       fetchData();
     } finally {
-      setIsSubmitting(false);
+      // Remove from approving set
+      setApprovingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(responseId);
+        return newSet;
+      });
     }
   };
 
@@ -1099,10 +1177,16 @@ export default function ShadowModePage() {
                 </div>
 
                 {/* ALWAYS reserve space for reason input - use opacity transition */}
+                {/* Show reason when:
+                    1. Auto-detected Unknown → user selects Bisq 1/2 (correcting detection)
+                    2. Auto-detected Bisq 1/2 → user selects different version (correcting detection)
+                    Do NOT show when:
+                    - Auto-detected Unknown → user keeps Unknown and uses training dropdown (just training)
+                */}
                 <div
                   className={cn(
                     "transition-all duration-200",
-                    hasVersionChange ? "opacity-100 h-10" : "opacity-0 h-0 overflow-hidden"
+                    hasVersionChange && currentVersion !== 'unknown' ? "opacity-100 h-10" : "opacity-0 h-0 overflow-hidden"
                   )}
                 >
                   <Input
@@ -1303,11 +1387,36 @@ export default function ShadowModePage() {
 
   const renderResponseReviewCard = (response: ShadowResponse) => {
     const isEditing = editingResponseId === response.id;
+    const isApproving = approvingIds.has(response.id);
     const sourceTypes = [...new Set(response.sources?.map(s => {
       if (s.type === 'faq') return 'FAQs';
       if (s.type === 'wiki') return 'Wiki';
       return s.type;
     }) || [])];
+
+    // Show loading state while approving
+    if (isApproving) {
+      return (
+        <Card
+          key={response.id}
+          data-testid="response-review-card"
+          data-status="approving"
+          className="transition-all duration-200 hover:shadow-md"
+        >
+          <CardContent className="p-4">
+            <div className="flex items-center justify-center py-8">
+              <div className="text-center space-y-3">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto text-green-500" />
+                <p className="text-sm text-muted-foreground">Approving response...</p>
+                <p className="text-xs text-muted-foreground/70">
+                  {response.synthesized_question || response.messages[0]?.content.slice(0, 100)}...
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
 
     return (
       <Card
@@ -1328,9 +1437,8 @@ export default function ShadowModePage() {
               <div className={cn("w-2 h-2 rounded-full", getStatusDotColor(response.status))} />
               <h3 className="text-sm font-semibold">{getStatusLabel(response.status)}</h3>
             </div>
-            <Badge variant="outline" className="text-xs">
-              {formatVersionLabel(response.confirmed_version)}
-            </Badge>
+            {/* Version badge with training version indicator */}
+            {renderVersionBadge(response)}
           </div>
         </CardHeader>
         <CardContent className="p-4 pt-0">

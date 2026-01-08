@@ -68,7 +68,7 @@ async def get_pending_queue(
     except Exception as e:
         logger.error(f"Error getting pending queue: {e}", exc_info=True)
         raise HTTPException(
-            status_code=http_http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get pending queue",
         )
 

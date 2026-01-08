@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -7,6 +8,16 @@ import aiohttp
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _record_bisq2_api_health(is_healthy: bool, response_time: Optional[float] = None):
+    """Record Bisq2 API health metric (import lazily to avoid circular imports)."""
+    try:
+        from app.utils.task_metrics import record_bisq2_api_health
+
+        record_bisq2_api_health(is_healthy, response_time)
+    except Exception as e:
+        logger.debug(f"Could not record bisq2 API health metric: {e}")
 
 
 class Bisq2API:
@@ -72,6 +83,7 @@ class Bisq2API:
             await self.setup()
 
         for attempt in range(max_retries):
+            start_time = time.time()
             try:
                 url = f"{self.base_url}/api/v1/support/export"
                 params = {}
@@ -90,6 +102,7 @@ class Bisq2API:
                 async with self._session.get(
                     url, params=params, headers={"Accept": "application/json"}
                 ) as response:
+                    response_time = time.time() - start_time
                     if response.status != 200:
                         logger.warning(
                             f"Attempt {attempt + 1}/{max_retries}: Error {response.status} from Bisq API"
@@ -97,10 +110,15 @@ class Bisq2API:
                         if attempt < max_retries - 1:
                             await asyncio.sleep(retry_delay)
                             continue
+                        # Final attempt failed - record unhealthy
+                        _record_bisq2_api_health(False, response_time)
                         return {}
+                    # Success - record healthy with response time
+                    _record_bisq2_api_health(True, response_time)
                     return await response.json()
 
             except Exception as e:
+                response_time = time.time() - start_time
                 logger.warning(
                     f"Attempt {attempt + 1}/{max_retries}: Failed to export chat messages: {str(e)}"
                 )
@@ -111,6 +129,8 @@ class Bisq2API:
                     f"Failed to export chat messages after {max_retries} attempts: {str(e)}",
                     exc_info=True,
                 )
+                # Final attempt failed - record unhealthy
+                _record_bisq2_api_health(False, response_time)
                 return {}
 
         # Unreachable: loop always returns on success or terminal failure

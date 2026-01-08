@@ -1,13 +1,12 @@
 """Tests for Shadow Mode Repository - Unknown Version Enhancement.
 
 CRITICAL: This test file verifies the Unknown version enhancement database operations:
-- 5 new columns: training_version, requires_clarification, clarifying_question, source, clarification_answer
+- 5 new columns: training_protocol, requires_clarification, clarifying_question, source, clarification_answer
 - 3 new indexes: idx_shadow_responses_clarification, idx_shadow_responses_version_training, idx_shadow_responses_source
 - 29-column INSERT operations (was 24 columns)
 - Version confirmation with new parameters
 """
 
-import json
 import sqlite3
 import tempfile
 from datetime import datetime, timezone
@@ -64,7 +63,7 @@ class TestDatabaseSchema:
         conn.close()
 
         # Verify 5 new columns exist
-        assert "training_version" in columns, "training_version column missing"
+        assert "training_protocol" in columns, "training_protocol column missing"
         assert (
             "requires_clarification" in columns
         ), "requires_clarification column missing"
@@ -73,7 +72,7 @@ class TestDatabaseSchema:
         assert "clarification_answer" in columns, "clarification_answer column missing"
 
         # Verify column types
-        assert columns["training_version"] == "TEXT"
+        assert columns["training_protocol"] == "TEXT"
         assert (
             columns["requires_clarification"] == "BOOLEAN"
         )  # SQLite stores as INTEGER
@@ -161,10 +160,10 @@ class TestDatabaseSchema:
 class TestAddResponse:
     """Test suite for add_response() with new fields."""
 
-    def test_add_response_with_training_version(self, repository, sample_response):
-        """Add response with training_version='Bisq 2' - verify 29-column INSERT."""
+    def test_add_response_with_training_protocol(self, repository, sample_response):
+        """Add response with training_protocol='bisq_easy' - verify 29-column INSERT."""
         # Set new fields
-        sample_response.training_version = "Bisq 2"
+        sample_response.training_protocol = "bisq_easy"
         sample_response.requires_clarification = True
         sample_response.clarifying_question = "Which Bisq version?"
 
@@ -174,14 +173,14 @@ class TestAddResponse:
         # Retrieve and verify
         retrieved = repository.get_response(sample_response.id)
         assert retrieved is not None
-        assert retrieved.training_version == "Bisq 2"
+        assert retrieved.training_protocol == "bisq_easy"
         assert retrieved.requires_clarification  # SQLite stores as 1 (truthy)
         assert retrieved.clarifying_question == "Which Bisq version?"
 
     def test_add_response_with_all_new_fields(self, repository, sample_response):
         """Add response with all 5 new fields populated."""
         # Set ALL new fields
-        sample_response.training_version = "Bisq 1"
+        sample_response.training_protocol = "multisig_v1"
         sample_response.requires_clarification = True
         sample_response.clarifying_question = "Are you using Bisq 1 trading?"
         sample_response.source = "rag_bot_clarification"
@@ -192,7 +191,7 @@ class TestAddResponse:
 
         # Retrieve and verify ALL fields
         retrieved = repository.get_response(sample_response.id)
-        assert retrieved.training_version == "Bisq 1"
+        assert retrieved.training_protocol == "multisig_v1"
         assert retrieved.requires_clarification  # SQLite stores as 1 (truthy)
         assert retrieved.clarifying_question == "Are you using Bisq 1 trading?"
         assert retrieved.source == "rag_bot_clarification"
@@ -201,7 +200,7 @@ class TestAddResponse:
     def test_add_response_with_null_new_fields(self, repository, sample_response):
         """Add response with new fields = None - verify INSERT succeeds."""
         # Explicitly set new fields to None
-        sample_response.training_version = None
+        sample_response.training_protocol = None
         sample_response.requires_clarification = False
         sample_response.clarifying_question = None
         sample_response.source = "shadow_mode"  # Default
@@ -212,7 +211,7 @@ class TestAddResponse:
 
         # Retrieve and verify NULL handling
         retrieved = repository.get_response(sample_response.id)
-        assert retrieved.training_version is None
+        assert retrieved.training_protocol is None
         assert not retrieved.requires_clarification  # SQLite stores as 0 (falsy)
         assert retrieved.clarifying_question is None
         assert retrieved.source == "shadow_mode"
@@ -222,19 +221,19 @@ class TestAddResponse:
 class TestConfirmVersion:
     """Test suite for confirm_version() with new parameters."""
 
-    def test_confirm_version_unknown_with_training_version(
+    def test_confirm_version_unknown_with_training_protocol(
         self, repository, sample_response
     ):
-        """Confirm version as 'Unknown' with training_version='Bisq 2'."""
+        """Confirm version as 'Unknown' with training_protocol='bisq_easy'."""
         # Add initial response
         repository.add_response(sample_response)
 
-        # Confirm as Unknown with training_version
+        # Confirm as Unknown with training_protocol
         success = repository.confirm_version(
             response_id=sample_response.id,
             confirmed_version="Unknown",
             change_reason="Ambiguous question",
-            training_version="Bisq 2",
+            training_protocol="bisq_easy",
             requires_clarification=True,
             clarifying_question="Which Bisq version are you using?",
         )
@@ -244,7 +243,7 @@ class TestConfirmVersion:
         # Verify all new fields stored
         retrieved = repository.get_response(sample_response.id)
         assert retrieved.confirmed_version == "Unknown"
-        assert retrieved.training_version == "Bisq 2"
+        assert retrieved.training_protocol == "bisq_easy"
         assert retrieved.requires_clarification  # SQLite stores as 1 (truthy)
         assert retrieved.clarifying_question == "Which Bisq version are you using?"
         assert retrieved.status == ShadowStatus.PENDING_RESPONSE_REVIEW
@@ -259,7 +258,7 @@ class TestConfirmVersion:
         success = repository.confirm_version(
             response_id=sample_response.id,
             confirmed_version="Unknown",
-            training_version="Bisq 1",
+            training_protocol="multisig_v1",
             clarifying_question=custom_question,
         )
 
@@ -268,24 +267,24 @@ class TestConfirmVersion:
         retrieved = repository.get_response(sample_response.id)
         assert retrieved.clarifying_question == custom_question
 
-    def test_confirm_version_bisq1_without_training_version(
+    def test_confirm_version_bisq1_without_training_protocol(
         self, repository, sample_response
     ):
-        """Confirm as 'Bisq 1' WITHOUT training_version - should succeed."""
+        """Confirm as 'Bisq 1' WITHOUT training_protocol - should succeed."""
         repository.add_response(sample_response)
 
         success = repository.confirm_version(
             response_id=sample_response.id,
             confirmed_version="Bisq 1",
             change_reason="DAO keywords detected",
-            # NO training_version, requires_clarification, or clarifying_question
+            # NO training_protocol, requires_clarification, or clarifying_question
         )
 
         assert success is True
 
         retrieved = repository.get_response(sample_response.id)
         assert retrieved.confirmed_version == "Bisq 1"
-        assert retrieved.training_version is None  # Should remain NULL
+        assert retrieved.training_protocol is None  # Should remain NULL
         assert not retrieved.requires_clarification  # SQLite stores as 0 (falsy)
         assert retrieved.clarifying_question is None
 
@@ -315,7 +314,7 @@ class TestGetVersionChanges:
             response_id="test-change-1",
             confirmed_version="Unknown",
             change_reason="Needs clarification",
-            training_version="Bisq 1",
+            training_protocol="multisig_v1",
             requires_clarification=True,
             clarifying_question="Which version?",
         )
@@ -327,7 +326,7 @@ class TestGetVersionChanges:
         assert len(changes) == 1
         change = changes[0]
         assert change["confirmed_version"] == "Unknown"
-        assert change["training_version"] == "Bisq 1"
+        assert change["training_protocol"] == "multisig_v1"
         assert change["requires_clarification"]  # SQLite stores as 1 (truthy)
         assert change["clarifying_question"] == "Which version?"
         # Note: source and clarification_answer should also be included
@@ -381,7 +380,7 @@ class TestRowToResponse:
     def test_row_to_response_maps_all_new_fields(self, repository, sample_response):
         """Verify _row_to_response() maps all 5 new fields correctly."""
         # Set all new fields
-        sample_response.training_version = "Bisq 2"
+        sample_response.training_protocol = "bisq_easy"
         sample_response.requires_clarification = True
         sample_response.clarifying_question = "Which version?"
         sample_response.source = "rag_bot_clarification"
@@ -393,7 +392,7 @@ class TestRowToResponse:
 
         # Verify ShadowResponse object has correct values
         assert isinstance(retrieved, ShadowResponse)
-        assert retrieved.training_version == "Bisq 2"
+        assert retrieved.training_protocol == "bisq_easy"
         assert retrieved.requires_clarification  # SQLite stores as 1 (truthy)
         assert retrieved.clarifying_question == "Which version?"
         assert retrieved.source == "rag_bot_clarification"
@@ -408,7 +407,7 @@ class TestRowToResponse:
         retrieved = repository.get_response(sample_response.id)
 
         # Verify defaults
-        assert retrieved.training_version is None
+        assert retrieved.training_protocol is None
         assert not retrieved.requires_clarification  # SQLite stores as 0 (falsy)
         assert retrieved.clarifying_question is None
         assert retrieved.source == "shadow_mode"  # Default
@@ -439,7 +438,7 @@ class TestIntegrationScenarios:
     """Integration test scenarios combining multiple operations."""
 
     def test_admin_marks_unknown_full_workflow(self, repository):
-        """Full workflow: Admin marks Unknown → sets training_version → RAG generates."""
+        """Full workflow: Admin marks Unknown → sets training_protocol → RAG generates."""
         # 1. Initial response capture
         response = ShadowResponse(
             id="workflow-1",
@@ -455,12 +454,12 @@ class TestIntegrationScenarios:
         )
         repository.add_response(response)
 
-        # 2. Admin confirms as Unknown with training_version
+        # 2. Admin confirms as Unknown with training_protocol
         repository.confirm_version(
             response_id="workflow-1",
             confirmed_version="Unknown",
             change_reason="Generic question",
-            training_version="Bisq 2",
+            training_protocol="bisq_easy",
             requires_clarification=True,
             clarifying_question="Are you asking about Bisq 2 or Bisq 1 fees?",
         )
@@ -468,7 +467,7 @@ class TestIntegrationScenarios:
         # 3. Verify status progression
         retrieved = repository.get_response("workflow-1")
         assert retrieved.confirmed_version == "Unknown"
-        assert retrieved.training_version == "Bisq 2"
+        assert retrieved.training_protocol == "bisq_easy"
         assert retrieved.status == ShadowStatus.PENDING_RESPONSE_REVIEW
 
     def test_rag_bot_clarification_full_workflow(self, repository):

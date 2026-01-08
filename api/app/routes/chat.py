@@ -38,7 +38,7 @@ class Source(BaseModel):
     title: str
     type: str
     content: str
-    bisq_version: str = "General"
+    protocol: str = "all"
 
 
 class QueryRequest(BaseModel):
@@ -134,7 +134,7 @@ async def query(
                 title=source["title"],
                 type=source["type"],
                 content=source["content"],
-                bisq_version=source.get("bisq_version", "General"),
+                protocol=source.get("protocol", "all"),
             )
             for source in result["sources"]
         ]

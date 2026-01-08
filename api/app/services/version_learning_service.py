@@ -5,7 +5,7 @@ import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.services.shadow_mode.repository import ShadowModeRepository
 
@@ -71,7 +71,7 @@ class VersionLearningService:
             }
 
         # Extract keywords from questions
-        keyword_counter = Counter()
+        keyword_counter: Counter[str] = Counter()
         keyword_confidences = defaultdict(list)
 
         for entry in requires_clarification:
@@ -151,9 +151,9 @@ class VersionLearningService:
         # Get all version change events
         version_changes = self.repository.get_version_changes()
 
-        bisq1_keywords = Counter()
-        bisq2_keywords = Counter()
-        general_keywords = Counter()
+        bisq1_keywords: Counter[str] = Counter()
+        bisq2_keywords: Counter[str] = Counter()
+        general_keywords: Counter[str] = Counter()
 
         for change in version_changes:
             question = change.get("synthesized_question", "").lower()
@@ -208,7 +208,7 @@ class VersionLearningService:
 
         # Get all responses with clarifying questions
         all_responses = self.repository.get_responses(limit=10000)
-        questions_data = defaultdict(
+        questions_data: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {"count": 0, "contexts": [], "sources": []}
         )
 
@@ -310,7 +310,7 @@ class VersionLearningService:
                     "confidence": change.get("version_confidence", 0.0),
                     "source": source,
                     "source_weight": source_weight,
-                    "training_version": change.get("training_version"),
+                    "training_protocol": change.get("training_protocol"),
                 }
             )
 
@@ -431,8 +431,8 @@ class VersionLearningService:
             List of pattern dictionaries with counts and examples
         """
         # Simple bigram extraction for now
-        bigram_counter = Counter()
-        bigram_examples = defaultdict(list)
+        bigram_counter: Counter[str] = Counter()
+        bigram_examples: Dict[str, List[str]] = defaultdict(list)
 
         for entry in questions:
             question = entry.get("synthesized_question", "").lower()

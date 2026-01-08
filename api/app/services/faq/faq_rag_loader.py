@@ -93,7 +93,7 @@ class FAQRAGLoader:
                         "type": "faq",
                         "source_weight": self.source_weights.get("faq", 1.2),
                         "category": faq.category,
-                        "bisq_version": faq.bisq_version,
+                        "protocol": faq.protocol or "all",
                         "verified": faq.verified,
                     },
                 )

@@ -69,6 +69,34 @@ class FAQRepository:
         content = f"{faq_item.question.strip()}:{faq_item.answer.strip()}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def _migrate_bisq_version_to_protocol(self, data: dict) -> dict:
+        """Migrate bisq_version field to protocol field.
+
+        Mapping:
+        - Bisq 1 -> multisig_v1
+        - Bisq 2 -> bisq_easy
+        - General -> all (None)
+
+        Args:
+            data: Raw FAQ data dict
+
+        Returns:
+            Data dict with protocol field populated from bisq_version if needed
+        """
+        # If protocol already exists, don't override it
+        if data.get("protocol") is not None:
+            return data
+
+        bisq_version = data.get("bisq_version")
+        if bisq_version:
+            if bisq_version == "Bisq 1":
+                data["protocol"] = "multisig_v1"
+            elif bisq_version == "Bisq 2":
+                data["protocol"] = "bisq_easy"
+            elif bisq_version == "General":
+                data["protocol"] = None  # None means "all protocols"
+        return data
+
     def _read_all_faqs_with_ids(self) -> List[FAQIdentifiedItem]:
         """Reads all FAQs from the JSONL file and assigns stable IDs.
 
@@ -82,6 +110,8 @@ class FAQRepository:
                     if line.strip():
                         try:
                             data = json.loads(line)
+                            # Migrate bisq_version to protocol if needed
+                            data = self._migrate_bisq_version_to_protocol(data)
                             faq_item = FAQItem(**data)
                             faq_id = self._generate_stable_id(faq_item)
                             faqs.append(
@@ -132,7 +162,7 @@ class FAQRepository:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[datetime] = None,
         verified_to: Optional[datetime] = None,
     ) -> List[FAQIdentifiedItem]:
@@ -144,7 +174,7 @@ class FAQRepository:
             categories: List of categories to filter by
             source: Source type to filter by
             verified: Verification status to filter by
-            bisq_version: Bisq version to filter by
+            protocol: Protocol to filter by (multisig_v1, bisq_easy, musig, all)
             verified_from: Start date for verified_at filter (inclusive)
             verified_to: End date for verified_at filter (inclusive)
 
@@ -185,13 +215,13 @@ class FAQRepository:
         if verified is not None:
             filtered_faqs = [faq for faq in filtered_faqs if faq.verified == verified]
 
-        # Bisq version filter
-        if bisq_version and bisq_version.strip():
-            version_lower = bisq_version.strip().lower()
+        # Protocol filter
+        if protocol and protocol.strip():
+            protocol_lower = protocol.strip().lower()
             filtered_faqs = [
                 faq
                 for faq in filtered_faqs
-                if faq.bisq_version and faq.bisq_version.lower() == version_lower
+                if faq.protocol and faq.protocol.lower() == protocol_lower
             ]
 
         # Date range filter for verified_at
@@ -228,7 +258,7 @@ class FAQRepository:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[datetime] = None,
         verified_to: Optional[datetime] = None,
     ) -> List[FAQIdentifiedItem]:
@@ -242,7 +272,7 @@ class FAQRepository:
             categories: Optional category filter
             source: Optional source filter
             verified: Optional verification status filter
-            bisq_version: Optional Bisq version filter
+            protocol: Optional protocol filter (multisig_v1, bisq_easy, musig, all)
             verified_from: Optional start date for verified_at filter (inclusive)
             verified_to: Optional end date for verified_at filter (inclusive)
 
@@ -262,7 +292,7 @@ class FAQRepository:
             categories,
             source,
             verified,
-            bisq_version,
+            protocol,
             verified_from,
             verified_to,
         )
@@ -277,7 +307,7 @@ class FAQRepository:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[datetime] = None,
         verified_to: Optional[datetime] = None,
     ) -> FAQListResponse:
@@ -290,7 +320,7 @@ class FAQRepository:
             categories: Optional category filter
             source: Optional source filter
             verified: Optional verification status filter
-            bisq_version: Optional Bisq version filter
+            protocol: Optional protocol filter (multisig_v1, bisq_easy, musig, all)
             verified_from: Optional start date for verified_at filter (inclusive)
             verified_to: Optional end date for verified_at filter (inclusive)
 
@@ -312,7 +342,7 @@ class FAQRepository:
             categories,
             source,
             verified,
-            bisq_version,
+            protocol,
             verified_from,
             verified_to,
         )

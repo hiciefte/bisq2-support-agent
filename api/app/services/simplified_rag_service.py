@@ -213,16 +213,21 @@ class SimplifiedRAGService:
         self.llm = self.llm_provider.initialize_llm()
 
     @instrument_stage("retrieval")
-    def _retrieve_with_version_priority(self, query: str) -> List[Document]:
+    def _retrieve_with_version_priority(
+        self, query: str, detected_version: str | None = None
+    ) -> List[Document]:
         """Delegate to document retriever for version-aware retrieval.
 
         Args:
             query: The search query
+            detected_version: Optional explicitly detected version to pass through
 
         Returns:
             List of documents prioritized by version relevance
         """
-        return self.document_retriever.retrieve_with_version_priority(query)
+        return self.document_retriever.retrieve_with_version_priority(
+            query, detected_version
+        )
 
     def _format_docs(self, docs: List[Document]) -> str:
         """Delegate to document retriever for document formatting.
@@ -642,8 +647,13 @@ class SimplifiedRAGService:
             )
 
             # Get relevant documents with version priority
-            docs = self._retrieve_with_version_priority(preprocessed_question)
-            logger.info(f"Retrieved {len(docs)} relevant documents")
+            # Pass detected_version to ensure correct version-specific retrieval
+            docs = self._retrieve_with_version_priority(
+                preprocessed_question, detected_version
+            )
+            logger.info(
+                f"Retrieved {len(docs)} relevant documents (for version: {detected_version})"
+            )
 
             # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
@@ -735,7 +745,7 @@ class SimplifiedRAGService:
                                 if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
-                            "bisq_version": doc.metadata.get("bisq_version", "General"),
+                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
@@ -748,7 +758,7 @@ class SimplifiedRAGService:
                                 if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
-                            "bisq_version": doc.metadata.get("bisq_version", "General"),
+                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
 

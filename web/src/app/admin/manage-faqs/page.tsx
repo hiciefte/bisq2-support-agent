@@ -94,7 +94,7 @@ interface FAQ {
     category: string;
     source: string;
     verified: boolean;
-    bisq_version?: "Bisq 1" | "Bisq 2" | "General";
+    protocol: "multisig_v1" | "bisq_easy" | "musig" | "all";
     created_at?: string;
     updated_at?: string;
     verified_at?: string | null;
@@ -335,7 +335,7 @@ export default function ManageFaqsPage() {
         answer: "",
         category: "",
         source: "Manual",
-        bisq_version: "Bisq 2" as "Bisq 1" | "Bisq 2" | "General",
+        protocol: "bisq_easy" as "multisig_v1" | "bisq_easy" | "musig" | "all",
     });
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -348,7 +348,7 @@ export default function ManageFaqsPage() {
         categories: [] as string[],
         source: "",
         verified: "all" as "all" | "verified" | "unverified",
-        bisq_version: "",
+        protocol: "",
         verified_from: undefined as Date | undefined,
         verified_to: undefined as Date | undefined,
     });
@@ -490,13 +490,56 @@ export default function ManageFaqsPage() {
         [editingFaqId, displayFaqs]
     );
 
-    // Enter edit mode (e key)
+    // Set protocol to Bisq Easy (e key) - replaces old edit mode shortcut
     useHotkeys(
         "e",
         (e) => {
             e.preventDefault();
             if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
-                enterEditMode(displayFaqs.faqs[selectedIndex]);
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                handleSetProtocol(selectedFaq, "bisq_easy");
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, selectedIndex, displayFaqs]
+    );
+
+    // Set protocol to Multisig v1 (1 key) - US-003
+    useHotkeys(
+        "1",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                handleSetProtocol(selectedFaq, "multisig_v1");
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, selectedIndex, displayFaqs]
+    );
+
+    // Set protocol to MuSig (m key) - US-003
+    useHotkeys(
+        "m",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                handleSetProtocol(selectedFaq, "musig");
+            }
+        },
+        { enableOnFormTags: false },
+        [editingFaqId, selectedIndex, displayFaqs]
+    );
+
+    // Set protocol to All (0 key) - US-003
+    useHotkeys(
+        "0",
+        (e) => {
+            e.preventDefault();
+            if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+                const selectedFaq = displayFaqs.faqs[selectedIndex];
+                handleSetProtocol(selectedFaq, "all");
             }
         },
         { enableOnFormTags: false },
@@ -525,28 +568,17 @@ export default function ManageFaqsPage() {
         [editingFaqId, bulkSelectionMode, isFormOpen, selectedIndex, displayFaqs]
     );
 
-    // Toggle expand/collapse with Enter
+    // Enter edit mode (Enter key) - US-006
     useHotkeys(
         "enter",
         (e) => {
-            if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
+            if (!editingFaqId && selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
                 e.preventDefault();
-                const selectedFaq = displayFaqs.faqs[selectedIndex];
-                if (selectedFaq.verified) {
-                    setExpandedIds((prev) => {
-                        const newSet = new Set(prev);
-                        if (newSet.has(selectedFaq.id)) {
-                            newSet.delete(selectedFaq.id);
-                        } else {
-                            newSet.add(selectedFaq.id);
-                        }
-                        return newSet;
-                    });
-                }
+                enterEditMode(displayFaqs.faqs[selectedIndex]);
             }
         },
         { enableOnFormTags: false },
-        [selectedIndex, displayFaqs]
+        [editingFaqId, selectedIndex, displayFaqs]
     );
 
     // Delete FAQ (d key)
@@ -701,8 +733,8 @@ export default function ManageFaqsPage() {
                     params.append("verified", filters.verified === "verified" ? "true" : "false");
                 }
 
-                if (filters.bisq_version && filters.bisq_version.trim()) {
-                    params.append("bisq_version", filters.bisq_version.trim());
+                if (filters.protocol && filters.protocol.trim()) {
+                    params.append("protocol", filters.protocol.trim());
                 }
 
                 if (filters.verified_from) {
@@ -802,7 +834,7 @@ export default function ManageFaqsPage() {
                     answer: "",
                     category: "",
                     source: "Manual",
-                    bisq_version: "Bisq 2",
+                    protocol: "bisq_easy",
                 });
                 setError(null);
             } else {
@@ -1025,6 +1057,9 @@ export default function ManageFaqsPage() {
     };
 
     const handleVerifyFaq = async (faq: FAQ) => {
+        // Store current index for jump-to-next logic
+        const currentIndex = displayFaqs?.faqs.findIndex((f) => f.id === faq.id) ?? -1;
+
         // Optimistic UI update - instant feedback
         setFaqData((prev) => {
             if (!prev) return prev;
@@ -1046,6 +1081,30 @@ export default function ManageFaqsPage() {
                     title: "FAQ Verified",
                     description: "The FAQ has been successfully verified.",
                 });
+
+                // US-002: Jump to next unverified FAQ after verification
+                if (displayFaqs && currentIndex >= 0) {
+                    // Find next unverified FAQ after current position
+                    const nextUnverifiedIndex = displayFaqs.faqs.findIndex(
+                        (f, idx) => idx > currentIndex && !f.verified && f.id !== faq.id
+                    );
+
+                    if (nextUnverifiedIndex >= 0) {
+                        // Found next unverified - jump to it
+                        setSelectedIndex(nextUnverifiedIndex);
+                    } else {
+                        // No more unverified after current - check from beginning
+                        const firstUnverifiedIndex = displayFaqs.faqs.findIndex(
+                            (f) => !f.verified && f.id !== faq.id
+                        );
+
+                        if (firstUnverifiedIndex >= 0) {
+                            // Found unverified from beginning - jump to it
+                            setSelectedIndex(firstUnverifiedIndex);
+                        }
+                        // If no unverified anywhere, stay on current FAQ (now verified)
+                    }
+                }
             } else {
                 // Rollback on error
                 setFaqData((prev) => {
@@ -1081,6 +1140,84 @@ export default function ManageFaqsPage() {
             toast({
                 title: "Verification Failed",
                 description: errorText,
+                variant: "destructive",
+            });
+        }
+    };
+
+    // US-003: Handle protocol assignment
+    const handleSetProtocol = async (
+        faq: FAQ,
+        protocol: "multisig_v1" | "bisq_easy" | "musig" | "all"
+    ) => {
+        // Optimistic UI update
+        setFaqData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                faqs: prev.faqs.map((f) =>
+                    f.id === faq.id ? { ...f, protocol: protocol === "all" ? null : protocol } : f
+                ),
+            };
+        });
+
+        try {
+            const response = await makeAuthenticatedRequest(`/admin/faqs/${faq.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    question: faq.question,
+                    answer: faq.answer,
+                    category: faq.category,
+                    source: faq.source,
+                    protocol: protocol === "all" ? null : protocol,
+                }),
+            });
+
+            if (response.ok) {
+                const protocolDisplayName =
+                    protocol === "multisig_v1"
+                        ? "Multisig v1"
+                        : protocol === "bisq_easy"
+                          ? "Bisq Easy"
+                          : protocol === "musig"
+                            ? "MuSig"
+                            : "All";
+                toast({
+                    title: "Protocol Updated",
+                    description: `FAQ protocol set to ${protocolDisplayName}`,
+                });
+            } else {
+                // Rollback on error
+                setFaqData((prev) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        faqs: prev.faqs.map((f) =>
+                            f.id === faq.id ? { ...f, protocol: faq.protocol } : f
+                        ),
+                    };
+                });
+                toast({
+                    title: "Update Failed",
+                    description: "Failed to update protocol",
+                    variant: "destructive",
+                });
+            }
+        } catch {
+            // Rollback on error
+            setFaqData((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    faqs: prev.faqs.map((f) =>
+                        f.id === faq.id ? { ...f, protocol: faq.protocol } : f
+                    ),
+                };
+            });
+            toast({
+                title: "Update Failed",
+                description: "An error occurred while updating protocol",
                 variant: "destructive",
             });
         }
@@ -1325,7 +1462,7 @@ export default function ManageFaqsPage() {
             answer: "",
             category: "",
             source: "Manual",
-            bisq_version: "Bisq 2",
+            protocol: "bisq_easy",
         });
         setIsFormOpen(true);
         setError(null);
@@ -1455,12 +1592,12 @@ export default function ManageFaqsPage() {
                 return next;
             });
 
-            // Move to next FAQ
+            // US-001: Stay on current FAQ after save (don't move to next)
+            // Keep the selection on the current FAQ that was just saved
             const currentIdx =
                 displayFaqs?.faqs.findIndex((f) => f.id === updatedFaqFromApi.id) ?? -1;
-            if (currentIdx >= 0 && displayFaqs) {
-                const nextIndex = Math.min(currentIdx + 1, displayFaqs.faqs.length - 1);
-                setSelectedIndex(nextIndex);
+            if (currentIdx >= 0) {
+                setSelectedIndex(currentIdx);
             }
 
             sonnerToast.success("FAQ updated successfully");
@@ -1524,7 +1661,7 @@ export default function ManageFaqsPage() {
             categories: [],
             source: "",
             verified: "all",
-            bisq_version: "",
+            protocol: "",
             verified_from: undefined,
             verified_to: undefined,
         });
@@ -1539,7 +1676,7 @@ export default function ManageFaqsPage() {
         filters.categories.length > 0 ||
         filters.source ||
         filters.verified !== "all" ||
-        filters.bisq_version ||
+        filters.protocol ||
         filters.verified_from ||
         filters.verified_to;
 
@@ -1810,27 +1947,28 @@ export default function ManageFaqsPage() {
                                         </Select>
                                     </div>
 
-                                    {/* Bisq Version */}
+                                    {/* Protocol */}
                                     <div className="space-y-2">
-                                        <Label htmlFor="bisq-version-filter">Bisq Version</Label>
+                                        <Label htmlFor="protocol-filter">Protocol</Label>
                                         <Select
-                                            value={filters.bisq_version || "all"}
+                                            value={filters.protocol || "show_all"}
                                             onValueChange={(value) => {
                                                 setFilters({
                                                     ...filters,
-                                                    bisq_version: value === "all" ? "" : value,
+                                                    protocol: value === "show_all" ? "" : value,
                                                 });
                                                 setCurrentPage(1);
                                             }}
                                         >
-                                            <SelectTrigger id="bisq-version-filter">
-                                                <SelectValue placeholder="All Versions" />
+                                            <SelectTrigger id="protocol-filter">
+                                                <SelectValue placeholder="All Protocols" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="all">All Versions</SelectItem>
-                                                <SelectItem value="Bisq 1">Bisq 1</SelectItem>
-                                                <SelectItem value="Bisq 2">Bisq 2</SelectItem>
-                                                <SelectItem value="General">General</SelectItem>
+                                                <SelectItem value="show_all">All Protocols</SelectItem>
+                                                <SelectItem value="multisig_v1">Bisq 1 (Multisig)</SelectItem>
+                                                <SelectItem value="bisq_easy">Bisq Easy</SelectItem>
+                                                <SelectItem value="musig">MuSig</SelectItem>
+                                                <SelectItem value="all">General (All)</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -1940,12 +2078,12 @@ export default function ManageFaqsPage() {
                                                     }
 
                                                     if (
-                                                        filters.bisq_version &&
-                                                        filters.bisq_version.trim()
+                                                        filters.protocol &&
+                                                        filters.protocol.trim()
                                                     ) {
                                                         params.append(
-                                                            "bisq_version",
-                                                            filters.bisq_version.trim()
+                                                            "protocol",
+                                                            filters.protocol.trim()
                                                         );
                                                     }
 
@@ -2040,7 +2178,7 @@ export default function ManageFaqsPage() {
                                                     filters.source && "Source",
                                                     filters.verified !== "all" &&
                                                         "Verification status",
-                                                    filters.bisq_version && "Bisq version",
+                                                    filters.protocol && "Protocol",
                                                     (filters.verified_from ||
                                                         filters.verified_to) &&
                                                         "Date range",
@@ -2190,29 +2328,31 @@ export default function ManageFaqsPage() {
                                         </div>
                                     </div>
                                     <div className="space-y-2">
-                                        <Label htmlFor="bisq-version">Bisq Version</Label>
+                                        <Label htmlFor="protocol">Protocol</Label>
                                         <Select
-                                            value={formData.bisq_version}
+                                            value={formData.protocol}
                                             onValueChange={(value) =>
                                                 setFormData({
                                                     ...formData,
-                                                    bisq_version: value as
-                                                        | "Bisq 1"
-                                                        | "Bisq 2"
-                                                        | "General",
+                                                    protocol: value as
+                                                        | "multisig_v1"
+                                                        | "bisq_easy"
+                                                        | "musig"
+                                                        | "all",
                                                 })
                                             }
                                         >
-                                            <SelectTrigger id="bisq-version">
-                                                <SelectValue placeholder="Select version" />
+                                            <SelectTrigger id="protocol">
+                                                <SelectValue placeholder="Select protocol" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="Bisq 2">
-                                                    Bisq 2 (Default)
+                                                <SelectItem value="bisq_easy">
+                                                    Bisq Easy (Default)
                                                 </SelectItem>
-                                                <SelectItem value="Bisq 1">Bisq 1</SelectItem>
-                                                <SelectItem value="General">
-                                                    General (All Versions)
+                                                <SelectItem value="multisig_v1">Bisq 1 (Multisig)</SelectItem>
+                                                <SelectItem value="musig">MuSig</SelectItem>
+                                                <SelectItem value="all">
+                                                    General (All Protocols)
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
@@ -2578,27 +2718,34 @@ export default function ManageFaqsPage() {
                                                                                     Source:{" "}
                                                                                     {faq.source}
                                                                                 </span>
-                                                                                {faq.bisq_version && (
-                                                                                    <Badge
-                                                                                        variant="outline"
-                                                                                        className={`text-[11px] ${
-                                                                                            faq.bisq_version ===
-                                                                                            "Bisq 1"
-                                                                                                ? "bg-blue-50 text-blue-700 border-blue-300"
-                                                                                                : faq.bisq_version ===
-                                                                                                    "Bisq 2"
-                                                                                                  ? "bg-green-50 text-green-700 border-green-300"
-                                                                                                  : faq.bisq_version ===
-                                                                                                      "General"
-                                                                                                    ? "bg-purple-50 text-purple-700 border-purple-300"
-                                                                                                    : "bg-gray-50 text-gray-700 border-gray-300"
-                                                                                        }`}
-                                                                                    >
-                                                                                        {
-                                                                                            faq.bisq_version
-                                                                                        }
-                                                                                    </Badge>
-                                                                                )}
+                                                                                {/* Protocol badge - US-003 */}
+                                                                                <Badge
+                                                                                    variant="outline"
+                                                                                    data-testid="protocol-badge"
+                                                                                    className={`text-[11px] ${
+                                                                                        faq.protocol ===
+                                                                                        "multisig_v1"
+                                                                                            ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                            : faq.protocol ===
+                                                                                                "bisq_easy"
+                                                                                              ? "bg-green-50 text-green-700 border-green-300"
+                                                                                              : faq.protocol ===
+                                                                                                  "musig"
+                                                                                                ? "bg-orange-50 text-orange-700 border-orange-300"
+                                                                                                : "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                    }`}
+                                                                                >
+                                                                                    {faq.protocol ===
+                                                                                    "multisig_v1"
+                                                                                        ? "Multisig"
+                                                                                        : faq.protocol ===
+                                                                                            "bisq_easy"
+                                                                                          ? "Bisq Easy"
+                                                                                          : faq.protocol ===
+                                                                                              "musig"
+                                                                                            ? "MuSig"
+                                                                                            : "All"}
+                                                                                </Badge>
                                                                                 {faq.verified ? (
                                                                                     <Tooltip>
                                                                                         <TooltipTrigger
@@ -2737,24 +2884,34 @@ export default function ManageFaqsPage() {
                                                                             <span className="font-medium tracking-[0.3px]">
                                                                                 Source: {faq.source}
                                                                             </span>
-                                                                            {faq.bisq_version && (
-                                                                                <Badge
-                                                                                    variant="outline"
-                                                                                    className={`text-[11px] ${
-                                                                                        faq.bisq_version ===
-                                                                                        "Bisq 1"
-                                                                                            ? "bg-blue-50 text-blue-700 border-blue-300"
-                                                                                            : faq.bisq_version ===
-                                                                                                "Bisq 2"
-                                                                                              ? "bg-green-50 text-green-700 border-green-300"
-                                                                                              : "bg-gray-50 text-gray-700 border-gray-300"
-                                                                                    }`}
-                                                                                >
-                                                                                    {
-                                                                                        faq.bisq_version
-                                                                                    }
-                                                                                </Badge>
-                                                                            )}
+                                                                            {/* Protocol badge - US-003 */}
+                                                                            <Badge
+                                                                                variant="outline"
+                                                                                data-testid="protocol-badge"
+                                                                                className={`text-[11px] ${
+                                                                                    faq.protocol ===
+                                                                                    "multisig_v1"
+                                                                                        ? "bg-blue-50 text-blue-700 border-blue-300"
+                                                                                        : faq.protocol ===
+                                                                                            "bisq_easy"
+                                                                                          ? "bg-green-50 text-green-700 border-green-300"
+                                                                                          : faq.protocol ===
+                                                                                              "musig"
+                                                                                            ? "bg-orange-50 text-orange-700 border-orange-300"
+                                                                                            : "bg-purple-50 text-purple-700 border-purple-300"
+                                                                                }`}
+                                                                            >
+                                                                                {faq.protocol ===
+                                                                                "multisig_v1"
+                                                                                    ? "Multisig"
+                                                                                    : faq.protocol ===
+                                                                                        "bisq_easy"
+                                                                                      ? "Bisq Easy"
+                                                                                      : faq.protocol ===
+                                                                                          "musig"
+                                                                                        ? "MuSig"
+                                                                                        : "All"}
+                                                                            </Badge>
                                                                             <Tooltip>
                                                                                 <TooltipTrigger
                                                                                     asChild

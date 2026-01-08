@@ -59,7 +59,7 @@ class TestJSONLToSQLiteMigration:
             "category": "Trading",
             "source": "in-app",
             "verified": True,
-            "bisq_version": "Bisq 2",
+            "protocol": "bisq_easy",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "verified_at": now.isoformat(),
@@ -83,7 +83,7 @@ class TestJSONLToSQLiteMigration:
         assert migrated.category == faq_data["category"]
         assert migrated.source == faq_data["source"]
         assert migrated.verified == faq_data["verified"]
-        assert migrated.bisq_version == faq_data["bisq_version"]
+        assert migrated.protocol == faq_data["protocol"]
         assert migrated.created_at is not None
         assert migrated.updated_at is not None
         assert migrated.verified_at is not None
@@ -286,7 +286,7 @@ class TestSQLiteToJSONLRollback:
             category="Trading",
             source="in-app",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         )
         _ = sqlite_repo.add_faq(faq)
 

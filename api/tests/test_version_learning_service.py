@@ -8,7 +8,6 @@ CRITICAL: This test file verifies ML training data extraction from shadow mode:
 """
 
 import json
-import sqlite3
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,7 +56,7 @@ def sample_clarification_data(repository):
             detected_version="Unknown",
             version_confidence=0.25,
             confirmed_version="Unknown",
-            training_version="Bisq 2",
+            training_protocol="bisq_easy",
             requires_clarification=True,
             clarifying_question="Which Bisq version?",
             status=ShadowStatus.SKIPPED,
@@ -74,7 +73,7 @@ def sample_clarification_data(repository):
             detected_version="Unknown",
             version_confidence=0.30,
             confirmed_version="Unknown",
-            training_version="Bisq 1",
+            training_protocol="multisig_v1",
             requires_clarification=True,
             clarifying_question="Bisq 1 or Bisq 2 fees?",
             status=ShadowStatus.SKIPPED,
@@ -91,7 +90,7 @@ def sample_clarification_data(repository):
             detected_version="Unknown",
             version_confidence=0.20,
             confirmed_version="Unknown",
-            training_version="Bisq 2",
+            training_protocol="bisq_easy",
             requires_clarification=True,
             clarifying_question="Which version?",
             status=ShadowStatus.SKIPPED,
@@ -435,7 +434,7 @@ class TestExportMLTrainingDataset:
             assert "confidence" in q
             assert "source" in q
             assert "source_weight" in q
-            assert "training_version" in q
+            assert "training_protocol" in q
 
     def test_export_ml_training_dataset_applies_source_weights(
         self, learning_service, repository

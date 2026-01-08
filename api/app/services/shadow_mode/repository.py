@@ -21,7 +21,7 @@ class ShadowModeRepository:
         "user_id",
         "detected_version",
         "confirmed_version",
-        "training_version",
+        "training_protocol",
         "status",
         "source",
         "requires_clarification",
@@ -39,7 +39,7 @@ class ShadowModeRepository:
         "detection_signals",
         "confirmed_version",
         "version_change_reason",
-        "training_version",
+        "training_protocol",
         "requires_clarification",
         "clarifying_question",
         "source",
@@ -113,7 +113,7 @@ class ShadowModeRepository:
                 detection_signals TEXT,
                 confirmed_version TEXT,
                 version_change_reason TEXT,
-                training_version TEXT,
+                training_protocol TEXT,
                 requires_clarification BOOLEAN DEFAULT FALSE,
                 clarifying_question TEXT,
                 source TEXT DEFAULT 'shadow_mode',
@@ -160,14 +160,14 @@ class ShadowModeRepository:
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_shadow_responses_clarification
-            ON shadow_responses(requires_clarification, training_version)
+            ON shadow_responses(requires_clarification, training_protocol)
             WHERE requires_clarification = TRUE
         """
         )
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_shadow_responses_version_training
-            ON shadow_responses(confirmed_version, training_version)
+            ON shadow_responses(confirmed_version, training_protocol)
         """
         )
         cursor.execute(
@@ -389,7 +389,7 @@ class ShadowModeRepository:
         response_id: str,
         confirmed_version: str,
         change_reason: Optional[str] = None,
-        training_version: Optional[str] = None,
+        training_protocol: Optional[str] = None,
         requires_clarification: bool = False,
         clarifying_question: Optional[str] = None,
     ) -> bool:
@@ -399,7 +399,7 @@ class ShadowModeRepository:
             response_id: The response ID
             confirmed_version: The confirmed version (bisq1, bisq2, unknown)
             change_reason: Optional reason if version was changed
-            training_version: Optional training version for Unknown cases
+            training_protocol: Optional training version for Unknown cases
             requires_clarification: Flag if question needs clarification
             clarifying_question: Optional custom clarifying question
 
@@ -424,7 +424,7 @@ class ShadowModeRepository:
         updates = {
             "confirmed_version": confirmed_version,
             "version_change_reason": change_reason,
-            "training_version": training_version,
+            "training_protocol": training_protocol,
             "requires_clarification": requires_clarification,
             "clarifying_question": clarifying_question,
             "status": ShadowStatus.PENDING_RESPONSE_REVIEW.value,
@@ -512,7 +512,7 @@ class ShadowModeRepository:
             """
             SELECT id, messages, synthesized_question, detected_version,
                    version_confidence, detection_signals, confirmed_version,
-                   version_change_reason, training_version, requires_clarification,
+                   version_change_reason, training_protocol, requires_clarification,
                    clarifying_question, source, clarification_answer, version_confirmed_at
             FROM shadow_responses
             WHERE confirmed_version IS NOT NULL
@@ -542,7 +542,7 @@ class ShadowModeRepository:
                     ),
                     "confirmed_version": row["confirmed_version"],
                     "version_change_reason": row["version_change_reason"],
-                    "training_version": row["training_version"],
+                    "training_protocol": row["training_protocol"],
                     "requires_clarification": row["requires_clarification"],
                     "clarifying_question": row["clarifying_question"],
                     "source": row["source"],
@@ -672,7 +672,7 @@ class ShadowModeRepository:
                 INSERT INTO shadow_responses (
                     id, channel_id, user_id, messages, synthesized_question,
                     detected_version, version_confidence, detection_signals,
-                    confirmed_version, version_change_reason, training_version,
+                    confirmed_version, version_change_reason, training_protocol,
                     requires_clarification, clarifying_question, source, clarification_answer,
                     preprocessed, generated_response, sources, edited_response, confidence,
                     routing_action, status, rag_error, retry_count, skip_reason,
@@ -694,7 +694,7 @@ class ShadowModeRepository:
                     ),
                     response.confirmed_version,
                     response.version_change_reason,
-                    response.training_version,
+                    response.training_protocol,
                     response.requires_clarification,
                     response.clarifying_question,
                     response.source,
@@ -792,8 +792,8 @@ class ShadowModeRepository:
             detection_signals=detection_signals,
             confirmed_version=row["confirmed_version"],
             version_change_reason=row["version_change_reason"],
-            training_version=(
-                row["training_version"] if "training_version" in row.keys() else None
+            training_protocol=(
+                row["training_protocol"] if "training_protocol" in row.keys() else None
             ),
             requires_clarification=(
                 row["requires_clarification"]
