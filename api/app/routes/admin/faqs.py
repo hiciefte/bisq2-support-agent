@@ -14,9 +14,12 @@ from app.models.faq import (
     FAQIdentifiedItem,
     FAQItem,
     FAQListResponse,
+    SimilarFAQRequest,
+    SimilarFAQResponse,
 )
 from app.services.faq_service import FAQService
-from fastapi import APIRouter, Depends, status
+from app.services.simplified_rag_service import get_rag_service
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response, StreamingResponse
 
 # Setup logging
@@ -338,6 +341,59 @@ async def bulk_verify_faqs_route(request: BulkFAQRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="BULK_VERIFY_FAILED",
         ) from e
+
+
+@router.post("/faqs/check-similar", response_model=SimilarFAQResponse)
+async def check_similar_faqs_route(
+    request_body: SimilarFAQRequest,
+    request: Request,
+):
+    """Check for semantically similar FAQs using vector similarity.
+
+    This endpoint helps admins identify potential duplicate or related FAQs
+    before creating or editing an FAQ. It uses ChromaDB vector similarity
+    search to find FAQs with semantically similar questions.
+
+    Args:
+        request_body: SimilarFAQRequest containing:
+            - question: The question to check for similar FAQs (5-1000 chars)
+            - threshold: Minimum similarity score 0.0-1.0 (default: 0.65)
+            - limit: Maximum results to return 1-20 (default: 5)
+            - exclude_id: FAQ ID to exclude from results (for edit mode)
+
+    Returns:
+        SimilarFAQResponse with list of similar FAQs sorted by similarity (highest first)
+
+    Notes:
+        - Returns empty list on errors (graceful degradation)
+        - Uses 5 second timeout for vector search
+        - Only searches FAQ documents (excludes wiki content)
+    """
+    logger.info(
+        f"Similar FAQ check: question='{request_body.question[:50]}...', "
+        f"threshold={request_body.threshold}, limit={request_body.limit}, "
+        f"exclude_id={request_body.exclude_id}"
+    )
+
+    try:
+        # Get RAG service from app state
+        rag_service = request.app.state.rag_service
+
+        # Search for similar FAQs
+        similar_faqs = await rag_service.search_faq_similarity(
+            question=request_body.question,
+            threshold=request_body.threshold,
+            limit=request_body.limit,
+            exclude_id=request_body.exclude_id,
+        )
+
+        logger.info(f"Found {len(similar_faqs)} similar FAQs")
+        return SimilarFAQResponse(similar_faqs=similar_faqs)
+
+    except Exception as e:
+        # Graceful degradation - return empty list on errors
+        logger.exception("Error checking for similar FAQs")
+        return SimilarFAQResponse(similar_faqs=[])
 
 
 @router.get("/faqs/export")

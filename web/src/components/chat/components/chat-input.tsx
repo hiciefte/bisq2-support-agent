@@ -9,12 +9,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
-// Example questions that can be clicked
+// Example questions that can be clicked - showcasing Bisq 1, Bisq 2, and different protocols
 const exampleQuestions = [
     "What is Bisq Easy and how does it work?",
-    "How does the reputation system work in Bisq 2?",
+    "How does the multisig escrow work in Bisq 1?",
     "What are the main differences between Bisq 1 and Bisq 2?",
-    "How can I safely buy bitcoin on Bisq 2?"
+    "How does the reputation system protect buyers in Bisq 2?"
 ]
 
 interface ChatInputProps {

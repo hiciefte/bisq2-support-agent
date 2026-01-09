@@ -437,4 +437,99 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.keyboard.press("Escape");
         });
     });
+
+    test.describe("US-007: Protocol dropdown in Edit mode", () => {
+        test("should display Protocol dropdown in Edit FAQ form", async ({ page, request }) => {
+            const testQuestion = `Edit Protocol Dropdown Test - ${Date.now()}`;
+            await createFaqViaApi(request, testQuestion, "Test answer", { protocol: "bisq_easy" });
+
+            await loginAndNavigateToFaqs(page);
+            await page.reload();
+            await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
+
+            // Search for the test FAQ
+            const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
+            await searchInput.fill("Edit Protocol Dropdown Test");
+            await page.waitForTimeout(1000);
+
+            // Wait for FAQs to appear and blur the search input
+            await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
+            await page.locator('h1:has-text("FAQ Management")').click();
+            await page.waitForTimeout(200);
+
+            // Select and enter edit mode
+            await page.keyboard.press("j");
+            await page.keyboard.press("Enter");
+
+            // Wait for edit mode
+            const textarea = page.locator("textarea").first();
+            await expect(textarea).toBeVisible({ timeout: 5000 });
+
+            // Verify Protocol dropdown is visible in edit form
+            const protocolDropdown = page.locator('button[role="combobox"]:has-text("Bisq Easy")');
+            await expect(protocolDropdown).toBeVisible({ timeout: 5000 });
+
+            // Cancel edit
+            await page.keyboard.press("Escape");
+        });
+
+        test("should change protocol via dropdown and persist after save", async ({ page, request }) => {
+            const testQuestion = `Change Protocol via Dropdown - ${Date.now()}`;
+            await createFaqViaApi(request, testQuestion, "Test answer for protocol change", { protocol: "bisq_easy" });
+
+            await loginAndNavigateToFaqs(page);
+            await page.reload();
+            await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
+
+            // Search for the test FAQ
+            const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
+            await searchInput.fill("Change Protocol via Dropdown");
+            await page.waitForTimeout(1000);
+
+            await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
+            await page.locator('h1:has-text("FAQ Management")').click();
+            await page.waitForTimeout(200);
+
+            // Select and enter edit mode
+            await page.keyboard.press("j");
+            await page.keyboard.press("Enter");
+
+            // Wait for edit mode
+            const textarea = page.locator("textarea").first();
+            await expect(textarea).toBeVisible({ timeout: 5000 });
+
+            // Click on Protocol dropdown to open it
+            const protocolDropdown = page.locator('button[role="combobox"]:has-text("Bisq Easy")');
+            await protocolDropdown.click();
+
+            // Select "Bisq 1 (Multisig)" option
+            const multisigOption = page.locator('[role="option"]:has-text("Bisq 1 (Multisig)")');
+            await multisigOption.click();
+
+            // Save the changes
+            const saveButton = page.locator('button:has-text("Save")');
+            await saveButton.click();
+
+            // Wait for save to complete
+            await expect(saveButton).toBeHidden({ timeout: 15000 });
+
+            // Verify the protocol badge shows Multisig on the FAQ card
+            const faqCard = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`);
+            const protocolBadge = faqCard.locator('text=Multisig');
+            await expect(protocolBadge).toBeVisible({ timeout: 5000 });
+
+            // Reload page to verify persistence
+            await page.reload();
+            await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
+
+            // Search again
+            await searchInput.fill("Change Protocol via Dropdown");
+            await page.waitForTimeout(1000);
+
+            // Verify protocol is still Multisig after reload
+            const faqCardAfterReload = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`);
+            const protocolBadgeAfterReload = faqCardAfterReload.locator('text=Multisig');
+            await expect(protocolBadgeAfterReload).toBeVisible({ timeout: 5000 });
+        });
+    });
 });

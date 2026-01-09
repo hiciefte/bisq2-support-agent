@@ -209,6 +209,11 @@ class Settings(BaseSettings):
         return os.path.join(self.DATA_DIR, "faqs.db")
 
     @property
+    def SIMILAR_FAQ_DB_PATH(self) -> str:
+        """Complete path to the SQLite Similar FAQ Candidates database file"""
+        return os.path.join(self.DATA_DIR, "similar_faqs.db")
+
+    @property
     def ACTIVE_LLM_API_KEY(self) -> str:
         """Get API key for currently configured LLM provider.
 

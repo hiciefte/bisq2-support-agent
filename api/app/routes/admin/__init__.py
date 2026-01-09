@@ -10,6 +10,7 @@ This package organizes admin routes by domain:
 - queue: Moderator review queue (5 endpoints)
 - pending_responses: Simplified pending response endpoints (4 endpoints)
 - shadow_mode: Two-phase shadow mode workflow (11 endpoints)
+- similar_faqs: Similar FAQ review queue (4 endpoints)
 """
 
 from app.routes.admin import (
@@ -20,6 +21,7 @@ from app.routes.admin import (
     pending_responses,
     queue,
     shadow_mode,
+    similar_faqs,
     vectorstore,
 )
 from fastapi import FastAPI
@@ -42,6 +44,7 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(queue.router)
     app.include_router(pending_responses.router)
     app.include_router(shadow_mode.router)
+    app.include_router(similar_faqs.router)
 
 
 __all__ = [
@@ -53,5 +56,6 @@ __all__ = [
     "pending_responses",
     "queue",
     "shadow_mode",
+    "similar_faqs",
     "vectorstore",
 ]

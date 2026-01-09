@@ -246,7 +246,7 @@ The RAG system's knowledge base is built from two sources:
        - Processed documents are converted to embeddings
        - Stored in a Chroma vector database
        - Used alongside FAQ data for comprehensive responses
-       - Documents are prioritized based on version relevance (Bisq 2 > Bisq 1 > general)
+       - Documents are prioritized based on protocol relevance (bisq_easy > multisig_v1 > general)
 -   **Metadata Structure**:
     ```json
     {
@@ -256,9 +256,15 @@ The RAG system's knowledge base is built from two sources:
       "type": "wiki",
       "section": "Section Name",
       "source_weight": 1.1,
-      "bisq_version": "Bisq 2|Bisq 1|General"
+      "protocol": "bisq_easy|multisig_v1|musig|all"
     }
     ```
+
+    Protocol values map to display names:
+    - `bisq_easy` → Bisq Easy (Bisq 2)
+    - `multisig_v1` → Multisig v1 (Bisq 1)
+    - `musig` → MuSig (future protocol)
+    - `all` → General (cross-protocol content)
 
 ### 2. FAQ Data
 -   **Automatic Extraction**:

@@ -814,6 +814,115 @@ class SimplifiedRAGService:
                 "feedback_created": False,
             }
 
+    async def search_faq_similarity(
+        self,
+        question: str,
+        threshold: float = 0.65,
+        limit: int = 5,
+        exclude_id: Optional[int] = None,
+        timeout: float = 5.0,
+    ) -> List[Dict[str, Any]]:
+        """Search for similar FAQs using vector similarity.
+
+        Uses ChromaDB similarity_search_with_score to find FAQs semantically
+        similar to the given question. Only searches FAQ documents (excludes wiki).
+
+        Args:
+            question: The question to find similar FAQs for
+            threshold: Minimum similarity score (0.0-1.0). Default 0.65 (65%)
+            limit: Maximum number of results to return. Default 5
+            exclude_id: FAQ ID to exclude from results (for edit mode). Default None
+            timeout: Maximum time to wait for search in seconds. Default 5.0
+
+        Returns:
+            List of similar FAQs sorted by similarity (highest first), each with:
+            - id: FAQ ID
+            - question: FAQ question text
+            - answer: FAQ answer (truncated to 200 chars)
+            - similarity: Similarity score (0.0-1.0)
+            - category: FAQ category (or None)
+            - protocol: Trade protocol (or None)
+
+        Notes:
+            - Uses filter={"type": "faq"} to exclude wiki documents
+            - Converts ChromaDB distance to similarity: 1 - (distance / 2)
+            - Over-fetches by 2x to ensure enough results after filtering
+            - Returns empty list on errors (graceful degradation)
+        """
+        # Return empty list if vectorstore not initialized
+        if self.vectorstore is None:
+            logger.warning(
+                "Vector store not initialized, cannot search for similar FAQs"
+            )
+            return []
+
+        try:
+            # Over-fetch by 2x to ensure enough results after filtering
+            k = limit * 2
+
+            # Execute similarity search with timeout
+            try:
+                # Run the synchronous ChromaDB search in a thread pool with timeout
+                loop = asyncio.get_event_loop()
+                search_results = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.vectorstore.similarity_search_with_score(
+                            question,
+                            k=k,
+                            filter={"type": "faq"},
+                        ),
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"FAQ similarity search timed out after {timeout}s")
+                return []
+
+            # Process results
+            similar_faqs = []
+            for doc, distance in search_results:
+                # Convert ChromaDB L2 distance to similarity score
+                # ChromaDB uses L2 distance where lower = more similar
+                # Formula: similarity = 1 - (distance / 2)
+                # This maps distance 0 -> similarity 1.0, distance 2 -> similarity 0.0
+                similarity = 1 - (distance / 2)
+
+                # Skip if below threshold
+                if similarity < threshold:
+                    continue
+
+                # Get FAQ ID from metadata
+                faq_id = doc.metadata.get("id")
+
+                # Skip if this is the excluded ID
+                if exclude_id is not None and faq_id == exclude_id:
+                    continue
+
+                # Truncate answer to 200 characters
+                answer = doc.metadata.get("answer", "")
+                if len(answer) > 200:
+                    answer = answer[:200]
+
+                similar_faqs.append(
+                    {
+                        "id": faq_id,
+                        "question": doc.metadata.get("question", ""),
+                        "answer": answer,
+                        "similarity": similarity,
+                        "category": doc.metadata.get("category"),
+                        "protocol": doc.metadata.get("protocol"),
+                    }
+                )
+
+            # Sort by similarity (highest first) and limit results
+            similar_faqs.sort(key=lambda x: x["similarity"], reverse=True)
+            return similar_faqs[:limit]
+
+        except Exception as e:
+            logger.error(f"Error searching for similar FAQs: {e}", exc_info=True)
+            return []
+
     def _deduplicate_sources(
         self, sources: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:

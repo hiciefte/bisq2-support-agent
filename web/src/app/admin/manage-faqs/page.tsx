@@ -8,6 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { VectorStoreStatusBanner } from "@/components/admin/VectorStoreStatusBanner";
+import { SimilarFaqsPanel, SimilarFAQItem } from "@/components/admin/SimilarFaqsPanel";
+import {
+    SimilarFaqReviewQueue,
+    SimilarFaqCandidate,
+} from "@/components/admin/SimilarFaqReviewQueue";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -189,7 +194,7 @@ const InlineEditFAQ = memo(
                         rows={6}
                     />
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="space-y-2">
                             <Label>Category</Label>
                             <Popover
@@ -263,6 +268,38 @@ const InlineEditFAQ = memo(
                         <div className="space-y-2">
                             <Label>Source</Label>
                             <Input value={currentValues.source} disabled />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Protocol</Label>
+                            <Select
+                                value={currentValues.protocol || "bisq_easy"}
+                                onValueChange={(value) =>
+                                    updateDraft({
+                                        protocol: value as
+                                            | "multisig_v1"
+                                            | "bisq_easy"
+                                            | "musig"
+                                            | "all",
+                                    })
+                                }
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select protocol" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="bisq_easy">
+                                        Bisq Easy (Default)
+                                    </SelectItem>
+                                    <SelectItem value="multisig_v1">
+                                        Bisq 1 (Multisig)
+                                    </SelectItem>
+                                    <SelectItem value="musig">MuSig</SelectItem>
+                                    <SelectItem value="all">
+                                        General (All Protocols)
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
 
@@ -381,6 +418,14 @@ export default function ManageFaqsPage() {
     // Category combobox state
     const [categoryComboboxOpen, setCategoryComboboxOpen] = useState(false);
     const [editCategoryComboboxOpen, setEditCategoryComboboxOpen] = useState(false);
+
+    // Similar FAQ check state
+    const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([]);
+    const [isCheckingSimilar, setIsCheckingSimilar] = useState(false);
+
+    // Similar FAQ review queue state (Phase 7)
+    const [pendingReviewItems, setPendingReviewItems] = useState<SimilarFaqCandidate[]>([]);
+    const [isLoadingPendingReview, setIsLoadingPendingReview] = useState(true);
 
     // Inline editing state
     const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
@@ -811,6 +856,154 @@ export default function ManageFaqsPage() {
         return () => clearInterval(intervalId);
     }, [fetchFaqs]); // Include fetchFaqs so interval uses latest version with current filters
 
+    // Fetch pending similar FAQ review items (Phase 7)
+    const fetchPendingReviewItems = useCallback(async () => {
+        try {
+            const response = await makeAuthenticatedRequest("/admin/similar-faqs/pending");
+            if (response.ok) {
+                const data = await response.json();
+                setPendingReviewItems(data.items || []);
+            } else {
+                console.error("Failed to fetch pending review items:", response.status);
+            }
+        } catch (error) {
+            console.error("Error fetching pending review items:", error);
+        } finally {
+            setIsLoadingPendingReview(false);
+        }
+    }, []);
+
+    // Fetch pending review items on mount and poll every 30s
+    useEffect(() => {
+        fetchPendingReviewItems();
+        const intervalId = setInterval(fetchPendingReviewItems, 30000);
+        return () => clearInterval(intervalId);
+    }, [fetchPendingReviewItems]);
+
+    // Similar FAQ review queue action handlers (Phase 7)
+    const handleApproveReviewItem = useCallback(
+        async (id: string) => {
+            // Optimistic UI update
+            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
+            try {
+                const response = await makeAuthenticatedRequest(
+                    `/admin/similar-faqs/${id}/approve`,
+                    { method: "POST" }
+                );
+                if (response.ok) {
+                    toast({
+                        title: "FAQ approved",
+                        description: "The FAQ has been added to the knowledge base.",
+                    });
+                    // Refresh FAQ list to show the new FAQ
+                    await fetchFaqs(currentPage);
+                } else {
+                    // Rollback on error
+                    await fetchPendingReviewItems();
+                    toast({
+                        title: "Failed to approve",
+                        description: "An error occurred while approving the FAQ.",
+                        variant: "destructive",
+                    });
+                }
+            } catch {
+                // Rollback on error
+                await fetchPendingReviewItems();
+                toast({
+                    title: "Failed to approve",
+                    description: "An error occurred while approving the FAQ.",
+                    variant: "destructive",
+                });
+            }
+        },
+        [fetchFaqs, fetchPendingReviewItems, toast, currentPage]
+    );
+
+    const handleMergeReviewItem = useCallback(
+        async (id: string, mode: "replace" | "append") => {
+            // Optimistic UI update
+            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
+            try {
+                const response = await makeAuthenticatedRequest(
+                    `/admin/similar-faqs/${id}/merge`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ mode }),
+                    }
+                );
+                if (response.ok) {
+                    toast({
+                        title: "FAQ merged",
+                        description:
+                            mode === "replace"
+                                ? "The existing FAQ has been replaced."
+                                : "The content has been appended to the existing FAQ.",
+                    });
+                    // Refresh FAQ list to show the updated FAQ
+                    await fetchFaqs(currentPage);
+                } else {
+                    // Rollback on error
+                    await fetchPendingReviewItems();
+                    toast({
+                        title: "Failed to merge",
+                        description: "An error occurred while merging the FAQ.",
+                        variant: "destructive",
+                    });
+                }
+            } catch {
+                // Rollback on error
+                await fetchPendingReviewItems();
+                toast({
+                    title: "Failed to merge",
+                    description: "An error occurred while merging the FAQ.",
+                    variant: "destructive",
+                });
+            }
+        },
+        [fetchFaqs, fetchPendingReviewItems, toast, currentPage]
+    );
+
+    const handleDismissReviewItem = useCallback(
+        async (id: string, reason?: string) => {
+            // Optimistic UI update
+            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
+            try {
+                const response = await makeAuthenticatedRequest(
+                    `/admin/similar-faqs/${id}/dismiss`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ reason }),
+                    }
+                );
+                if (response.ok) {
+                    toast({
+                        title: "FAQ dismissed",
+                        description: "The candidate has been removed from the review queue.",
+                    });
+                } else {
+                    // Rollback on error
+                    await fetchPendingReviewItems();
+                    toast({
+                        title: "Failed to dismiss",
+                        description: "An error occurred while dismissing the FAQ.",
+                        variant: "destructive",
+                    });
+                }
+            } catch {
+                // Rollback on error
+                await fetchPendingReviewItems();
+                toast({
+                    title: "Failed to dismiss",
+                    description: "An error occurred while dismissing the FAQ.",
+                    variant: "destructive",
+                });
+            }
+        },
+        [fetchPendingReviewItems, toast]
+    );
+
     const handleFormSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
@@ -850,6 +1043,94 @@ export default function ManageFaqsPage() {
             setIsSubmitting(false);
         }
     };
+
+    /**
+     * Check for similar FAQs using semantic similarity.
+     * Debounced to avoid excessive API calls.
+     */
+    const checkSimilarFaqs = useCallback(
+        debounce(async (question: string, excludeId?: string) => {
+            // Skip if question is too short
+            if (!question || question.trim().length < 5) {
+                setSimilarFaqs([]);
+                return;
+            }
+
+            setIsCheckingSimilar(true);
+            try {
+                const response = await makeAuthenticatedRequest("/admin/faqs/check-similar", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        question: question.trim(),
+                        threshold: 0.65,
+                        limit: 5,
+                        exclude_id: excludeId ? parseInt(excludeId, 10) : null,
+                    }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    setSimilarFaqs(data.similar_faqs || []);
+                } else {
+                    // Graceful degradation - don't show error, just clear similar FAQs
+                    console.warn("Failed to check similar FAQs:", response.status);
+                    setSimilarFaqs([]);
+                }
+            } catch (error) {
+                // Graceful degradation
+                console.warn("Error checking similar FAQs:", error);
+                setSimilarFaqs([]);
+            } finally {
+                setIsCheckingSimilar(false);
+            }
+        }, 400),
+        []
+    );
+
+    /**
+     * Handle question input blur - triggers similar FAQ check.
+     */
+    const handleQuestionBlur = useCallback(() => {
+        checkSimilarFaqs(formData.question);
+    }, [formData.question, checkSimilarFaqs]);
+
+    /**
+     * Handle "View FAQ" click - scroll to the FAQ or open in new context.
+     */
+    const handleViewSimilarFaq = useCallback((faqId: number) => {
+        // Find the FAQ in current data and scroll to it
+        const faqIndex = displayFaqs?.faqs.findIndex((f) => f.id === String(faqId));
+        if (faqIndex !== undefined && faqIndex >= 0) {
+            // Close the form sheet to show the FAQ list
+            setIsFormOpen(false);
+            // Set selection to the found FAQ
+            setSelectedIndex(faqIndex);
+            // Expand it for visibility
+            setExpandedIds((prev) => new Set(prev).add(String(faqId)));
+            // Scroll to it after a brief delay for the sheet to close
+            setTimeout(() => {
+                const faqElement = faqRefs.current.get(String(faqId));
+                faqElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 300);
+        } else {
+            // FAQ not on current page - notify user
+            toast({
+                title: "FAQ Not On This Page",
+                description: `FAQ #${faqId} may be on a different page. Try searching for it.`,
+            });
+        }
+    }, [displayFaqs, toast]);
+
+    // Reset similar FAQs when form closes
+    useEffect(() => {
+        if (!isFormOpen) {
+            setSimilarFaqs([]);
+            setIsCheckingSimilar(false);
+        }
+    }, [isFormOpen]);
 
     const handleDelete = async (id: string) => {
         // Store original data for rollback
@@ -1560,6 +1841,7 @@ export default function ManageFaqsPage() {
                     answer: updatedFaq.answer,
                     category: updatedFaq.category,
                     source: updatedFaq.source,
+                    protocol: updatedFaq.protocol,
                 }),
             });
 
@@ -1685,6 +1967,20 @@ export default function ManageFaqsPage() {
             <div className="min-h-screen bg-background">
                 {/* Persistent banner at top */}
                 <VectorStoreStatusBanner />
+
+                {/* Similar FAQ Review Queue (Phase 7) */}
+                {(pendingReviewItems.length > 0 || isLoadingPendingReview) && (
+                    <div className="px-8 pt-4">
+                        <SimilarFaqReviewQueue
+                            items={pendingReviewItems}
+                            isLoading={isLoadingPendingReview}
+                            onApprove={handleApproveReviewItem}
+                            onMerge={handleMergeReviewItem}
+                            onDismiss={handleDismissReviewItem}
+                            onRefresh={fetchPendingReviewItems}
+                        />
+                    </div>
+                )}
 
                 <div className="p-8 space-y-8 pt-16 lg:pt-8">
                     {/* Header with persistent search */}
@@ -2217,9 +2513,18 @@ export default function ManageFaqsPage() {
                                                     question: e.target.value,
                                                 })
                                             }
+                                            onBlur={handleQuestionBlur}
                                             required
                                         />
                                     </div>
+
+                                    {/* Similar FAQs Panel */}
+                                    <SimilarFaqsPanel
+                                        similarFaqs={similarFaqs}
+                                        isLoading={isCheckingSimilar}
+                                        onViewFaq={handleViewSimilarFaq}
+                                    />
+
                                     <div className="space-y-2">
                                         <Label htmlFor="answer">Answer</Label>
                                         <Textarea
@@ -3441,21 +3746,176 @@ export default function ManageFaqsPage() {
                             </CommandGroup>
                             <CommandSeparator />
                             <CommandGroup heading="FAQ Actions">
-                                <CommandItem disabled>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            enterEditMode(displayFaqs.faqs[selectedIndex]);
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Pencil className="mr-2 h-4 w-4" />
                                     <span>Edit Selected FAQ</span>
-                                    <CommandShortcut>E</CommandShortcut>
+                                    <CommandShortcut>Enter</CommandShortcut>
                                 </CommandItem>
-                                <CommandItem disabled>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            const selectedFaq = displayFaqs.faqs[selectedIndex];
+                                            setFaqToDelete(selectedFaq);
+                                            setShowDeleteConfirmDialog(true);
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Trash2 className="mr-2 h-4 w-4" />
                                     <span>Delete Selected FAQ</span>
                                     <CommandShortcut>D</CommandShortcut>
                                 </CommandItem>
-                                <CommandItem disabled>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            const selectedFaq = displayFaqs.faqs[selectedIndex];
+                                            if (!selectedFaq.verified) {
+                                                if (skipVerifyConfirmation) {
+                                                    handleVerifyFaq(selectedFaq);
+                                                } else {
+                                                    const verifyButton = document.querySelector(
+                                                        `button[aria-label="Verify FAQ: ${selectedFaq.question}"]`
+                                                    ) as HTMLButtonElement;
+                                                    if (verifyButton) {
+                                                        verifyButton.click();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <BadgeCheck className="mr-2 h-4 w-4" />
                                     <span>Verify Selected FAQ</span>
                                     <CommandShortcut>V</CommandShortcut>
                                 </CommandItem>
-                                <CommandItem disabled>
+                                <CommandItem
+                                    onSelect={() => {
+                                        setSelectedIndex(-1);
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                >
+                                    <X className="mr-2 h-4 w-4" />
                                     <span>Clear Selection</span>
                                     <CommandShortcut>Esc</CommandShortcut>
+                                </CommandItem>
+                            </CommandGroup>
+                            <CommandSeparator />
+                            <CommandGroup heading="Set Protocol">
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            handleSetProtocol(
+                                                displayFaqs.faqs[selectedIndex],
+                                                "bisq_easy"
+                                            );
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Badge
+                                        variant="outline"
+                                        className="mr-2 h-4 border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-[10px] px-1"
+                                    >
+                                        Easy
+                                    </Badge>
+                                    <span>Bisq Easy</span>
+                                    <CommandShortcut>E</CommandShortcut>
+                                </CommandItem>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            handleSetProtocol(
+                                                displayFaqs.faqs[selectedIndex],
+                                                "multisig_v1"
+                                            );
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Badge
+                                        variant="outline"
+                                        className="mr-2 h-4 border-blue-500/50 bg-blue-500/10 text-blue-500 text-[10px] px-1"
+                                    >
+                                        Multisig
+                                    </Badge>
+                                    <span>Multisig</span>
+                                    <CommandShortcut>1</CommandShortcut>
+                                </CommandItem>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            handleSetProtocol(
+                                                displayFaqs.faqs[selectedIndex],
+                                                "musig"
+                                            );
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Badge
+                                        variant="outline"
+                                        className="mr-2 h-4 border-purple-500/50 bg-purple-500/10 text-purple-500 text-[10px] px-1"
+                                    >
+                                        MuSig
+                                    </Badge>
+                                    <span>MuSig</span>
+                                    <CommandShortcut>M</CommandShortcut>
+                                </CommandItem>
+                                <CommandItem
+                                    onSelect={() => {
+                                        if (
+                                            selectedIndex >= 0 &&
+                                            displayFaqs?.faqs[selectedIndex]
+                                        ) {
+                                            handleSetProtocol(
+                                                displayFaqs.faqs[selectedIndex],
+                                                "all"
+                                            );
+                                        }
+                                        setCommandPaletteOpen(false);
+                                    }}
+                                    disabled={selectedIndex < 0}
+                                >
+                                    <Badge
+                                        variant="outline"
+                                        className="mr-2 h-4 border-blue-500/50 bg-blue-500/10 text-blue-500 text-[10px] px-1"
+                                    >
+                                        All
+                                    </Badge>
+                                    <span>All Protocols</span>
+                                    <CommandShortcut>0</CommandShortcut>
                                 </CommandItem>
                             </CommandGroup>
                             <CommandSeparator />

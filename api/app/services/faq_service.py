@@ -23,6 +23,7 @@ from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
+from app.services.faq.similar_faq_repository import SimilarFaqRepository
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -104,6 +105,21 @@ class FAQService:
             self._update_callbacks: List[
                 Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None]
             ] = []
+
+            # Optional: Similar FAQ repository for review queue (Phase 7)
+            # Initialized lazily when needed or set externally for testing
+            self.similar_faq_repository: Optional[SimilarFaqRepository] = None
+            if (
+                hasattr(settings, "SIMILAR_FAQ_DB_PATH")
+                and settings.SIMILAR_FAQ_DB_PATH
+            ):
+                try:
+                    self.similar_faq_repository = SimilarFaqRepository(
+                        settings.SIMILAR_FAQ_DB_PATH
+                    )
+                    logger.info("Similar FAQ repository initialized for review queue")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Similar FAQ repository: {e}")
 
             self.initialized = True
             logger.info("FAQService initialized with SQLite storage backend.")
@@ -940,18 +956,25 @@ class FAQService:
         serialized["messages"] = messages
         return serialized
 
-    async def extract_and_save_faqs(self, bisq_api=None) -> List[Dict]:
+    async def extract_and_save_faqs(
+        self, bisq_api=None, rag_service=None
+    ) -> List[Dict]:
         """Run the complete FAQ extraction process.
 
         This method now uses message-level tracking instead of conversation-level tracking
         for more granular deduplication and privacy-preserving operation. It automatically
         handles backward compatibility with old conversation tracking.
 
+        Phase 6 Enhancement: Semantic duplicate detection using vector similarity.
+        FAQs that are semantically similar to existing FAQs (>85% similarity) are
+        logged for manual review but not automatically added to prevent duplicates.
+
         Args:
             bisq_api: Optional Bisq2API instance to fetch data
+            rag_service: Optional RAG service for semantic duplicate detection
 
         Returns:
-            List of extracted FAQ dictionaries
+            List of extracted FAQ dictionaries (only unique FAQs that were saved)
         """
         try:
             # Load the set of already processed message IDs
@@ -1013,7 +1036,70 @@ class FAQService:
             )
             new_faqs = self.extract_faqs_with_openai(new_conversations_to_process)
 
-            # If new FAQs were found, save them and mark messages as processed
+            # Phase 6: Semantic duplicate detection
+            # Check extracted FAQs against existing FAQs using vector similarity
+            similar_faqs: List[Dict] = []
+            if new_faqs and rag_service and hasattr(rag_service, "vectorstore"):
+                if rag_service.vectorstore:
+                    logger.info("Running semantic duplicate check on extracted FAQs...")
+                    new_faqs, similar_faqs = (
+                        await self.faq_extractor.check_semantic_duplicates(
+                            extracted_faqs=new_faqs,
+                            rag_service=rag_service,
+                            threshold=0.85,  # Higher threshold for auto-extraction
+                        )
+                    )
+
+                    # Persist similar FAQs to review queue (Phase 7)
+                    if similar_faqs:
+                        logger.warning(
+                            f"Found {len(similar_faqs)} extracted FAQs similar to existing ones. "
+                            "These were NOT saved to prevent duplicates:"
+                        )
+                        for faq in similar_faqs:
+                            similar_to = faq.get("similar_to", {})
+                            logger.info(
+                                f"  - '{faq['question'][:60]}...' "
+                                f"matches existing FAQ ID {similar_to.get('id')}: "
+                                f"'{similar_to.get('question', '')[:60]}...' "
+                                f"({similar_to.get('similarity', 0):.0%})"
+                            )
+
+                            # Persist to review queue if repository is available
+                            if self.similar_faq_repository:
+                                try:
+                                    self.similar_faq_repository.add_candidate(
+                                        extracted_question=faq.get("question", ""),
+                                        extracted_answer=faq.get("answer", ""),
+                                        matched_faq_id=similar_to.get("id"),
+                                        similarity=similar_to.get("similarity", 0.0),
+                                        extracted_category=faq.get("category"),
+                                        matched_question=similar_to.get("question"),
+                                        matched_answer=similar_to.get("answer"),
+                                        matched_category=similar_to.get("category"),
+                                    )
+                                    logger.debug(
+                                        f"Added similar FAQ to review queue: "
+                                        f"'{faq['question'][:40]}...'"
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to persist similar FAQ to review queue: {e}"
+                                    )
+                        if self.similar_faq_repository:
+                            logger.info(
+                                f"Added {len(similar_faqs)} similar FAQs to review queue"
+                            )
+                else:
+                    logger.debug(
+                        "Vector store not initialized - skipping semantic duplicate check"
+                    )
+            elif new_faqs and not rag_service:
+                logger.debug(
+                    "RAG service not provided - skipping semantic duplicate check"
+                )
+
+            # If new unique FAQs were found, save them and mark messages as processed
             if new_faqs:
                 self.save_faqs(new_faqs)
                 logger.info(
