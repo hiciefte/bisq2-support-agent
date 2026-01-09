@@ -145,6 +145,62 @@ const InlineEditFAQ = memo(
         const [isSubmitting, setIsSubmitting] = useState(false);
         const questionInputRef = useRef<HTMLInputElement>(null);
 
+        // Similarity check state
+        const [editSimilarFaqs, setEditSimilarFaqs] = useState<SimilarFAQItem[]>([]);
+        const [isCheckingEditSimilar, setIsCheckingEditSimilar] = useState(false);
+
+        // Check if question has changed from original
+        const questionChanged = currentValues.question !== faq.question;
+
+        // High similarity warning threshold (85%)
+        const hasHighSimilarity = editSimilarFaqs.some((item) => item.similarity >= 0.85);
+
+        // Debounced similarity check function
+        const checkSimilarFaqs = useMemo(
+            () =>
+                debounce(async (question: string) => {
+                    // Skip if question is too short or unchanged
+                    if (question.length < 10 || question === faq.question) {
+                        setEditSimilarFaqs([]);
+                        setIsCheckingEditSimilar(false);
+                        return;
+                    }
+
+                    setIsCheckingEditSimilar(true);
+                    try {
+                        const response = await makeAuthenticatedRequest(
+                            `${API_BASE_URL}/admin/faqs/check-similar`,
+                            {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    question,
+                                    threshold: 0.65,
+                                    limit: 5,
+                                    exclude_id: faq.id,
+                                }),
+                            }
+                        );
+                        if (response.ok) {
+                            const data = await response.json();
+                            setEditSimilarFaqs(data.similar_faqs || []);
+                        }
+                    } catch (error) {
+                        console.error("Failed to check similar FAQs:", error);
+                    } finally {
+                        setIsCheckingEditSimilar(false);
+                    }
+                }, 600),
+            [faq.id, faq.question]
+        );
+
+        // Cleanup debounce on unmount
+        useEffect(() => {
+            return () => {
+                checkSimilarFaqs.cancel();
+            };
+        }, [checkSimilarFaqs]);
+
         // Auto-focus question input when entering edit mode
         useEffect(() => {
             questionInputRef.current?.focus();
@@ -181,12 +237,29 @@ const InlineEditFAQ = memo(
                     <Input
                         ref={questionInputRef}
                         value={currentValues.question}
-                        onChange={(e) => updateDraft({ question: e.target.value })}
+                        onChange={(e) => {
+                            updateDraft({ question: e.target.value });
+                            checkSimilarFaqs(e.target.value);
+                        }}
+                        onBlur={() => {
+                            if (questionChanged) {
+                                checkSimilarFaqs(currentValues.question);
+                            }
+                        }}
                         placeholder="Question"
                         className="text-lg font-semibold"
                     />
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    {/* Similar FAQs panel - appears when similar FAQs are detected */}
+                    {(editSimilarFaqs.length > 0 || isCheckingEditSimilar) && (
+                        <SimilarFaqsPanel
+                            similarFaqs={editSimilarFaqs}
+                            isLoading={isCheckingEditSimilar}
+                            className="mb-2"
+                        />
+                    )}
+
                     <Textarea
                         value={currentValues.answer}
                         onChange={(e) => updateDraft({ answer: e.target.value })}
@@ -303,16 +376,25 @@ const InlineEditFAQ = memo(
                         </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
                         <Button
                             onClick={handleSubmit}
                             disabled={isSubmitting}
-                            className="min-w-[80px]"
+                            variant={hasHighSimilarity ? "destructive" : "default"}
+                            className={cn(
+                                "min-w-[80px]",
+                                hasHighSimilarity && "bg-amber-500 hover:bg-amber-600 text-white"
+                            )}
                         >
                             {isSubmitting ? (
                                 <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Saving
+                                </>
+                            ) : hasHighSimilarity ? (
+                                <>
+                                    <AlertCircle className="mr-2 h-4 w-4" />
+                                    Save Anyway
                                 </>
                             ) : (
                                 "Save"
@@ -325,6 +407,11 @@ const InlineEditFAQ = memo(
                         >
                             Cancel
                         </Button>
+                        {hasHighSimilarity && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400">
+                                Similar FAQ detected
+                            </span>
+                        )}
                     </div>
                 </CardContent>
             </Card>
