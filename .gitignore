@@ -96,6 +96,9 @@ api/data/processed_message_ids.jsonl
 api/data/*conversation*
 api/data/*chat*
 
+# Runtime state files (local only, not tracked)
+api/data/matrix_polling_state.json
+
 # Ignore user feedback data (contains conversation_id and message_id for user tracking)
 api/data/feedback/*
 !api/data/feedback/.gitkeep

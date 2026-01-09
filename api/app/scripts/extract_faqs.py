@@ -95,11 +95,11 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
 
             logger.info("Starting FAQ extraction process...")
 
-            # Handle force reprocessing by temporarily clearing the processed conversation IDs
+            # Handle force reprocessing by temporarily clearing the processed message IDs
             if force_reprocess:
-                logger.info("Force reprocessing all conversations")
-                faq_service.processed_conv_ids = set()
-                faq_service.save_processed_conv_ids()
+                logger.info("Force reprocessing all messages")
+                faq_service.processed_msg_ids = set()
+                faq_service.save_processed_msg_ids()
 
             # Track initial processed message count before extraction
             initial_processed_count = len(faq_service.load_processed_msg_ids())

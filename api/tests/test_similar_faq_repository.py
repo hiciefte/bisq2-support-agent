@@ -6,12 +6,9 @@ Following patterns from test_faq_repository_sqlite_security.py.
 """
 
 import os
-import sqlite3
 import tempfile
 import threading
-import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List
 
 import pytest
@@ -47,34 +44,24 @@ class TestSimilarFaqRepositoryBasicOperations:
         from app.services.faq.similar_faq_repository import SimilarFaqRepository
 
         repo = SimilarFaqRepository(temp_db_path)
-
-        # Insert sample FAQ for foreign key reference
-        repo._writer_conn.execute(
-            """
-            INSERT INTO faqs (id, question, answer, category)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                42,
-                "How can I purchase BTC?",
-                "Use Bisq Easy for safe purchases.",
-                "Trading",
-            ),
-        )
-        repo._writer_conn.commit()
-
         yield repo
         repo.close()
 
     @pytest.fixture
     def sample_candidate_data(self) -> Dict:
-        """Sample data for creating a similar FAQ candidate."""
+        """Sample data for creating a similar FAQ candidate.
+
+        Note: matched_* fields are denormalized (stored directly in candidates table).
+        """
         return {
             "extracted_question": "How do I buy bitcoin on Bisq?",
             "extracted_answer": "Use Bisq Easy to purchase bitcoin safely.",
             "extracted_category": "Trading",
             "matched_faq_id": 42,
             "similarity": 0.92,
+            "matched_question": "How can I purchase BTC?",
+            "matched_answer": "Use Bisq Easy for safe purchases.",
+            "matched_category": "Trading",
         }
 
     def test_add_candidate_creates_record(self, repository, sample_candidate_data):
@@ -186,6 +173,18 @@ class TestSimilarFaqRepositoryApproveAction:
 
         repo = SimilarFaqRepository(temp_db_path)
 
+        # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
+        repo._writer_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faqs (
+                id INTEGER PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                category TEXT
+            )
+            """
+        )
+
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(
             "INSERT INTO faqs (id, question, answer) VALUES (?, ?, ?)",
@@ -282,6 +281,18 @@ class TestSimilarFaqRepositoryMergeAction:
 
         repo = SimilarFaqRepository(temp_db_path)
 
+        # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
+        repo._writer_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faqs (
+                id INTEGER PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                category TEXT
+            )
+            """
+        )
+
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(
             "INSERT INTO faqs (id, question, answer) VALUES (?, ?, ?)",
@@ -354,6 +365,18 @@ class TestSimilarFaqRepositoryDismissAction:
         from app.services.faq.similar_faq_repository import SimilarFaqRepository
 
         repo = SimilarFaqRepository(temp_db_path)
+
+        # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
+        repo._writer_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faqs (
+                id INTEGER PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                category TEXT
+            )
+            """
+        )
 
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(
@@ -430,36 +453,24 @@ class TestSimilarFaqRepositoryMatchedFaqJoin:
 
     @pytest.fixture
     def repository_with_faqs(self, temp_db_path):
-        """Create repository and add sample FAQs for join testing."""
+        """Create repository for testing matched FAQ details."""
         from app.services.faq.similar_faq_repository import SimilarFaqRepository
 
         repo = SimilarFaqRepository(temp_db_path)
-
-        # Insert a sample FAQ directly for testing joins
-        repo._writer_conn.execute(
-            """
-            INSERT INTO faqs (id, question, answer, category)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                42,
-                "How can I purchase BTC?",
-                "Use Bisq Easy for safe purchases.",
-                "Trading",
-            ),
-        )
-        repo._writer_conn.commit()
-
         yield repo
         repo.close()
 
     def test_get_pending_includes_matched_faq_details(self, repository_with_faqs):
         """Test that get_pending_candidates includes matched FAQ details."""
-        candidate = repository_with_faqs.add_candidate(
+        # Note: matched FAQ details are denormalized (stored directly in candidates table)
+        repository_with_faqs.add_candidate(
             extracted_question="How do I buy bitcoin?",
             extracted_answer="Use Bisq Easy.",
             matched_faq_id=42,
             similarity=0.92,
+            matched_question="How can I purchase BTC?",
+            matched_answer="Use Bisq Easy for safe purchases.",
+            matched_category="Trading",
         )
 
         pending = repository_with_faqs.get_pending_candidates()
@@ -492,13 +503,8 @@ class TestSimilarFaqRepositoryConcurrency:
         """Test that concurrent operations are handled safely."""
         from app.services.faq.similar_faq_repository import SimilarFaqRepository
 
-        # First, create a repository and insert sample FAQ for foreign key reference
+        # First, create a repository to initialize the database
         setup_repo = SimilarFaqRepository(temp_db_path)
-        setup_repo._writer_conn.execute(
-            "INSERT INTO faqs (id, question, answer) VALUES (?, ?, ?)",
-            (1, "Existing FAQ", "Existing answer"),
-        )
-        setup_repo._writer_conn.commit()
         setup_repo.close()
 
         results: List[str] = []
@@ -512,6 +518,8 @@ class TestSimilarFaqRepositoryConcurrency:
                     extracted_answer="Answer",
                     matched_faq_id=1,
                     similarity=0.85,
+                    matched_question="Existing FAQ",
+                    matched_answer="Existing answer",
                 )
                 results.append(candidate.id)
                 repo.close()
@@ -563,14 +571,6 @@ class TestSimilarFaqRepositorySQLInjection:
         from app.services.faq.similar_faq_repository import SimilarFaqRepository
 
         repo = SimilarFaqRepository(temp_db_path)
-
-        # Insert sample FAQ for foreign key reference
-        repo._writer_conn.execute(
-            "INSERT INTO faqs (id, question, answer) VALUES (?, ?, ?)",
-            (1, "Existing FAQ", "Existing answer"),
-        )
-        repo._writer_conn.commit()
-
         yield repo
         repo.close()
 
@@ -582,6 +582,8 @@ class TestSimilarFaqRepositorySQLInjection:
             extracted_question=malicious_question,
             extracted_answer="Safe answer",
             matched_faq_id=1,
+            matched_question="Existing FAQ",
+            matched_answer="Existing answer",
             similarity=0.85,
         )
 

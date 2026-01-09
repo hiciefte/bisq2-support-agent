@@ -5,11 +5,8 @@ This test suite validates that similar FAQs detected during extraction
 are persisted to the review queue instead of just being logged.
 """
 
-import json
 import os
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,25 +72,10 @@ def faq_repository(temp_db_paths):
 def similar_faq_repository(temp_db_paths, faq_repository):
     """Create SimilarFaqRepository for testing.
 
-    Note: This depends on faq_repository to ensure the faqs table exists
-    in the same database. For testing, we use a separate database file.
+    Note: SimilarFaqRepository uses denormalized data (matched_* fields stored
+    directly in candidates table), so no faqs table is needed in this database.
     """
-    # Create SimilarFaqRepository - it will create its own faqs table
     repo = SimilarFaqRepository(temp_db_paths["similar_db_path"])
-    # Insert sample FAQ for foreign key reference
-    repo._writer_conn.execute(
-        """
-        INSERT INTO faqs (id, question, answer, category)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            1,
-            "How do I buy Bitcoin on Bisq?",
-            "Use Bisq Easy to buy Bitcoin safely.",
-            "Trading",
-        ),
-    )
-    repo._writer_conn.commit()
     yield repo
     repo.close()
 
@@ -177,7 +159,7 @@ class TestFAQServiceSimilarFaqIntegration:
             )
 
             # Execute extraction
-            result = await service.extract_and_save_faqs(
+            await service.extract_and_save_faqs(
                 bisq_api=None, rag_service=mock_rag_service
             )
 
