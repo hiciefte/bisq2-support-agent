@@ -5,8 +5,7 @@ TDD Phase 3: Tests for POST /admin/faqs/check-similar endpoint.
 """
 
 import os
-from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import status
@@ -26,8 +25,8 @@ class TestCheckSimilarEndpoint:
     @pytest.fixture
     def client(self, mock_rag_service):
         """Create test client with mocked dependencies."""
-        # Set test admin API key
-        os.environ["ADMIN_API_KEY"] = "test-admin-key"
+        # Set test admin API key (24+ chars to pass security validation)
+        os.environ["ADMIN_API_KEY"] = "test-admin-key-with-sufficient-length-24chars"
 
         from app.main import app
 
@@ -35,7 +34,12 @@ class TestCheckSimilarEndpoint:
         app.state.rag_service = mock_rag_service
 
         # Use Bearer token format for authentication
-        return TestClient(app, headers={"Authorization": "Bearer test-admin-key"})
+        return TestClient(
+            app,
+            headers={
+                "Authorization": "Bearer test-admin-key-with-sufficient-length-24chars"
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_returns_empty_list_when_no_similar_faqs(

@@ -8,16 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-try:
-    from nio import AsyncClient, LoginResponse
+# Skip entire module if matrix-nio is not installed
+nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-    NIO_AVAILABLE = True
-except ImportError:
-    NIO_AVAILABLE = False
-    pytestmark = pytest.mark.skip(reason="matrix-nio not installed")
+from app.integrations.matrix.session_manager import SessionManager  # noqa: E402
 
-if NIO_AVAILABLE:
-    from app.integrations.matrix.session_manager import SessionManager
+# Import nio classes after importorskip
+from nio import AsyncClient, LoginResponse  # noqa: E402
 
 
 @pytest.fixture

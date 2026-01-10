@@ -1,9 +1,7 @@
 """TDD Tests for PendingResponseService."""
 
-import json
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 from app.core.config import Settings
@@ -16,7 +14,7 @@ def test_settings():
     with tempfile.TemporaryDirectory() as tmpdir:
         settings = Settings(
             OPENAI_API_KEY="test-key",
-            ADMIN_API_KEY="test-admin-key",
+            ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
             DATA_DIR_PATH=tmpdir,
             FEEDBACK_DIR_PATH=os.path.join(tmpdir, "feedback"),
         )

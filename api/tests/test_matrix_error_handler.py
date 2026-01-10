@@ -1,21 +1,20 @@
 """Unit tests for Matrix ErrorHandler and CircuitBreaker."""
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-try:
-    from nio import ErrorResponse, RoomMessagesError
+# Skip entire module if matrix-nio is not installed
+nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-    NIO_AVAILABLE = True
-except ImportError:
-    NIO_AVAILABLE = False
-    pytestmark = pytest.mark.skip(reason="matrix-nio not installed")
+from app.integrations.matrix.error_handler import (  # noqa: E402
+    CircuitBreaker,
+    ErrorHandler,
+)
 
-if NIO_AVAILABLE:
-    from app.integrations.matrix.error_handler import CircuitBreaker, ErrorHandler
+# Import nio classes after importorskip (ErrorResponse used in tests)
+from nio import ErrorResponse  # noqa: E402
 
 
 @pytest.fixture

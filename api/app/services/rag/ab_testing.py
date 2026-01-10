@@ -2,13 +2,17 @@
 
 import hashlib
 import logging
+from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Deque, Dict, List, Literal, Optional
 
 import numpy as np
 from scipy import stats  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of metrics to retain in memory (prevents unbounded growth)
+MAX_METRICS_BUFFER_SIZE = 100_000
 
 
 class ABTestingService:
@@ -18,7 +22,8 @@ class ABTestingService:
         """Initialize A/B testing service."""
         self.variant_weights = {"control": 0.5, "treatment": 0.5}
         self.active_experiments: Dict[str, Dict[str, Any]] = {}
-        self._metrics: List[Dict[str, Any]] = []
+        # Bounded in-memory buffer to avoid unbounded growth in long-running processes
+        self._metrics: Deque[Dict[str, Any]] = deque(maxlen=MAX_METRICS_BUFFER_SIZE)
 
     def assign_variant(
         self, user_id: str, experiment_id: str
@@ -40,8 +45,8 @@ class ABTestingService:
         hash_input = f"{user_id}:{experiment_id}"
         hash_value = int(hashlib.sha256(hash_input.encode()).hexdigest(), 16)
 
-        # Assign based on hash value
-        threshold = self.variant_weights["control"] * 100
+        # Assign based on hash value (convert to integer for precise comparison)
+        threshold = int(self.variant_weights["control"] * 100)
         if hash_value % 100 < threshold:
             return "control"
         else:
@@ -109,6 +114,30 @@ class ABTestingService:
             user_id: Optional user identifier
             metadata: Optional additional metadata
         """
+        # Validate experiment exists and is active
+        exp = self.active_experiments.get(experiment_id)
+        if not exp or exp.get("status") != "active":
+            logger.warning(
+                f"Ignoring metric for inactive/unknown experiment {experiment_id}"
+            )
+            return
+
+        # Validate variant
+        if variant not in ("control", "treatment"):
+            logger.warning(
+                f"Ignoring metric with invalid variant {variant} "
+                f"for experiment {experiment_id}"
+            )
+            return
+
+        # Validate metric value is finite (reject NaN/Inf)
+        if not np.isfinite(value):
+            logger.warning(
+                f"Ignoring non-finite metric value for "
+                f"{experiment_id}/{variant}/{metric_name}: {value}"
+            )
+            return
+
         metric_record = {
             "experiment_id": experiment_id,
             "variant": variant,
@@ -173,8 +202,18 @@ class ABTestingService:
         control_std = float(np.std(control_values, ddof=1))
         treatment_std = float(np.std(treatment_values, ddof=1))
 
-        # T-test for statistical significance
-        t_stat, p_value = stats.ttest_ind(control_values, treatment_values)
+        # Welch's t-test for statistical significance (doesn't assume equal variances)
+        t_stat, p_value = stats.ttest_ind(
+            control_values, treatment_values, equal_var=False, nan_policy="omit"
+        )
+
+        # Handle degenerate distributions (constant values produce NaN p-value)
+        if np.isnan(p_value):
+            return {
+                "error": "Degenerate distribution (p-value is NaN)",
+                "control_samples": len(control_values),
+                "treatment_samples": len(treatment_values),
+            }
 
         # Calculate effect size (Cohen's d)
         pooled_std = np.sqrt(
