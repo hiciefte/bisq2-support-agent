@@ -259,32 +259,43 @@ class ShadowModeRepository:
         Raises:
             ValueError: If any update column is not in whitelist
         """
+        # Validate all update columns first (SQL injection prevention)
+        invalid_columns = set(updates.keys()) - self.ALLOWED_UPDATE_COLUMNS
+        if invalid_columns:
+            raise ValueError(
+                f"Invalid update columns: {', '.join(sorted(invalid_columns))}. "
+                f"Allowed columns: {', '.join(sorted(self.ALLOWED_UPDATE_COLUMNS))}"
+            )
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Build dynamic update query with SQL injection protection
+        # Build dynamic update query - iterate over ALLOWED_UPDATE_COLUMNS (constant)
+        # to ensure column names come from trusted source, not user input
         set_clauses = []
         values = []
 
-        for key, value in updates.items():
-            # Validate column name (SQL injection prevention)
-            if key not in self.ALLOWED_UPDATE_COLUMNS:
-                conn.close()
-                raise ValueError(
-                    f"Invalid update column: {key}. "
-                    f"Allowed columns: {', '.join(sorted(self.ALLOWED_UPDATE_COLUMNS))}"
-                )
+        # JSON serialization fields
+        json_fields = {"messages", "detection_signals", "preprocessed", "sources"}
+        timestamp_fields = {
+            "created_at",
+            "updated_at",
+            "version_confirmed_at",
+            "response_generated_at",
+        }
 
-            set_clauses.append(f"{key} = ?")
+        # Iterate over whitelist to build query - column names from constant
+        for column in self.ALLOWED_UPDATE_COLUMNS:
+            if column not in updates:
+                continue
+
+            value = updates[column]
+            set_clauses.append(f"{column} = ?")
+
             # Serialize JSON fields
-            if key in ["messages", "detection_signals", "preprocessed", "sources"]:
+            if column in json_fields:
                 values.append(json.dumps(value) if value else None)
-            elif key in [
-                "created_at",
-                "updated_at",
-                "version_confirmed_at",
-                "response_generated_at",
-            ]:
+            elif column in timestamp_fields:
                 if isinstance(value, datetime):
                     values.append(value.isoformat())
                 else:
