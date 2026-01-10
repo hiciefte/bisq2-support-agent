@@ -124,6 +124,7 @@ interface InlineEditFAQProps {
     editCategoryComboboxOpen: boolean;
     setEditCategoryComboboxOpen: (open: boolean) => void;
     availableCategories: string[];
+    onViewSimilarFaq?: (faqId: number) => void;
 }
 
 // Extracted InlineEditFAQ component to prevent re-creation on parent state updates
@@ -139,6 +140,7 @@ const InlineEditFAQ = memo(
         editCategoryComboboxOpen,
         setEditCategoryComboboxOpen,
         availableCategories,
+        onViewSimilarFaq,
     }: InlineEditFAQProps) => {
         const draft = draftEdits.get(faq.id);
         const currentValues = draft ? { ...faq, ...draft } : faq;
@@ -256,6 +258,7 @@ const InlineEditFAQ = memo(
                         <SimilarFaqsPanel
                             similarFaqs={editSimilarFaqs}
                             isLoading={isCheckingEditSimilar}
+                            onViewFaq={onViewSimilarFaq}
                             className="mb-2"
                         />
                     )}
@@ -1202,6 +1205,30 @@ export default function ManageFaqsPage() {
                 const faqElement = faqRefs.current.get(String(faqId));
                 faqElement?.scrollIntoView({ behavior: "smooth", block: "center" });
             }, 300);
+        } else {
+            // FAQ not on current page - notify user
+            toast({
+                title: "FAQ Not On This Page",
+                description: `FAQ #${faqId} may be on a different page. Try searching for it.`,
+            });
+        }
+    }, [displayFaqs, toast]);
+
+    /**
+     * Handle "View FAQ" click from inline edit - scroll to the FAQ without closing editor.
+     * This allows the user to see the similar FAQ while still editing.
+     */
+    const handleViewSimilarFaqFromEdit = useCallback((faqId: number) => {
+        // Find the FAQ in current data and scroll to it
+        const faqIndex = displayFaqs?.faqs.findIndex((f) => f.id === String(faqId));
+        if (faqIndex !== undefined && faqIndex >= 0) {
+            // Expand it for visibility if collapsed
+            setExpandedIds((prev) => new Set(prev).add(String(faqId)));
+            // Scroll to it smoothly
+            setTimeout(() => {
+                const faqElement = faqRefs.current.get(String(faqId));
+                faqElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 100);
         } else {
             // FAQ not on current page - notify user
             toast({
@@ -2955,6 +2982,7 @@ export default function ManageFaqsPage() {
                                                             setEditCategoryComboboxOpen
                                                         }
                                                         availableCategories={availableCategories}
+                                                        onViewSimilarFaq={handleViewSimilarFaqFromEdit}
                                                     />
                                                 </div>
                                             );

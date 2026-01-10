@@ -208,6 +208,7 @@ export function SimilarFaqsPanel({
 
                   <div className="mt-2 flex justify-end">
                     <button
+                      type="button"
                       data-testid="view-faq-link"
                       onClick={() => onViewFaq?.(faq.id)}
                       className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 hover:underline dark:text-amber-500 dark:hover:text-amber-400"
