@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
-from scipy import stats
+from scipy import stats  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,10 @@ class ABTestingService:
         Returns:
             'control' or 'treatment'
         """
-        # Create deterministic hash
+        # Create deterministic hash using SHA-256 for consistent variant assignment
+        # Note: This is for bucketing, not security, but we use SHA-256 anyway
         hash_input = f"{user_id}:{experiment_id}"
-        hash_value = int(hashlib.md5(hash_input.encode()).hexdigest(), 16)
+        hash_value = int(hashlib.sha256(hash_input.encode()).hexdigest(), 16)
 
         # Assign based on hash value
         threshold = self.variant_weights["control"] * 100
