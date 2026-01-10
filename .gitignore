@@ -144,3 +144,4 @@ web/tsconfig.tsbuildinfo
 /docs/monitoring/
 /claudedocs/
 /docs/implementation/
+api/data/matrix_session.json
