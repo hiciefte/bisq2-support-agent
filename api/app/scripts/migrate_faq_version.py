@@ -112,23 +112,32 @@ def migrate_faqs(
     updated_count = 0
 
     for faq in faqs:
-        # If protocol already exists and is valid, keep it
-        if "protocol" in faq and faq["protocol"] in valid_protocols:
-            continue
+        has_valid_protocol = "protocol" in faq and faq["protocol"] in valid_protocols
+        has_bisq_version = "bisq_version" in faq
 
-        # Convert old bisq_version to protocol
-        if "bisq_version" in faq:
+        # Always remove stale bisq_version field even if protocol exists
+        if has_bisq_version:
             old_version = faq["bisq_version"]
-            new_protocol = bisq_version_to_protocol.get(old_version, default_protocol)
-            faq["protocol"] = new_protocol
-            # Remove old bisq_version field
             del faq["bisq_version"]
             updated_count += 1
-            logger.debug(
-                f"Converted FAQ: bisq_version='{old_version}' -> protocol='{new_protocol}'"
-            )
-        else:
-            # No bisq_version or protocol, use default
+
+            # Only set protocol from bisq_version if not already valid
+            if not has_valid_protocol:
+                new_protocol = bisq_version_to_protocol.get(
+                    old_version, default_protocol
+                )
+                faq["protocol"] = new_protocol
+                logger.debug(
+                    f"Converted FAQ: bisq_version='{old_version}' -> "
+                    f"protocol='{new_protocol}'"
+                )
+            else:
+                logger.debug(
+                    f"Removed stale bisq_version='{old_version}', kept existing "
+                    f"protocol='{faq['protocol']}'"
+                )
+        elif not has_valid_protocol:
+            # No bisq_version and no valid protocol, use default
             faq["protocol"] = default_protocol
             updated_count += 1
 

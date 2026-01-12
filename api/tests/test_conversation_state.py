@@ -185,7 +185,7 @@ class TestConversationIdGeneration:
     def test_generate_id_from_history(self, manager):
         history = [{"role": "user", "content": "Hello there"}]
         conv_id = manager.generate_conversation_id(history)
-        assert len(conv_id) == 12
+        assert len(conv_id) == 16  # SHA-256 truncated to 16 hex chars
         assert conv_id.isalnum()
 
     def test_same_history_same_id(self, manager):
@@ -203,8 +203,8 @@ class TestConversationIdGeneration:
 
     def test_empty_history_unique_id(self, manager):
         conv_id = manager.generate_conversation_id([])
-        # Empty histories should generate unique IDs based on timestamp
-        assert len(conv_id) == 12
+        # Empty histories should generate unique IDs based on timestamp + random
+        assert len(conv_id) == 16  # SHA-256 truncated to 16 hex chars
 
 
 class TestStateCleanup:

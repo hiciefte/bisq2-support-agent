@@ -461,20 +461,23 @@ class UnifiedBatchProcessor:
             response_text = response.choices[0].message.content
             logger.debug(f"LLM response (first 500 chars): {response_text[:500]}")
 
-            # Save full prompt and response for debugging
-            import os
+            # Save debug info only when DEBUG mode is enabled (security: avoids PII exposure)
+            if self.settings.DEBUG:
+                import os
 
-            debug_dir = "/tmp"
-            with open(os.path.join(debug_dir, "llm_extraction_debug.txt"), "w") as f:
-                f.write("===== SYSTEM PROMPT =====\n")
-                f.write(prompt_messages[0]["content"])
-                f.write("\n\n===== USER PROMPT =====\n")
-                f.write(prompt_messages[1]["content"])
-                f.write("\n\n===== LLM RESPONSE =====\n")
-                f.write(response_text)
-            logger.info(
-                f"Saved full LLM extraction debug info to {os.path.join(debug_dir, 'llm_extraction_debug.txt')}"
-            )
+                # Use secure file in DATA_DIR with restricted permissions
+                debug_dir = os.path.join(self.settings.DATA_DIR, "debug")
+                os.makedirs(debug_dir, mode=0o700, exist_ok=True)
+                debug_file = os.path.join(debug_dir, "llm_extraction_debug.txt")
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    os.chmod(debug_file, 0o600)  # Restrict to owner only
+                    f.write("===== SYSTEM PROMPT =====\n")
+                    f.write(prompt_messages[0]["content"])
+                    f.write("\n\n===== USER PROMPT =====\n")
+                    f.write(prompt_messages[1]["content"])
+                    f.write("\n\n===== LLM RESPONSE =====\n")
+                    f.write(response_text)
+                logger.debug(f"Saved LLM extraction debug info to {debug_file}")
 
             if not response_text or not response_text.strip():
                 logger.error("LLM returned empty response")

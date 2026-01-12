@@ -90,21 +90,33 @@ class ConversationStateManager:
         return ". ".join(parts) if parts else ""
 
     def generate_conversation_id(self, chat_history: List) -> str:
-        """Generate consistent ID from chat history."""
-        if not chat_history:
-            return hashlib.md5(datetime.now().isoformat().encode()).hexdigest()[:12]
+        """Generate consistent ID from chat history.
 
-        # Use first message as seed - handle both dict and Pydantic objects
-        first_item = chat_history[0]
-        if hasattr(first_item, "content"):
-            # Pydantic ChatMessage object
-            first_msg = first_item.content
-        elif isinstance(first_item, dict):
-            # Dict format
-            first_msg = first_item.get("content", "")
-        else:
-            first_msg = str(first_item)
-        return hashlib.md5(first_msg.encode()).hexdigest()[:12]
+        Uses multiple messages (up to 3) and SHA-256 for better collision resistance.
+        For very short messages like "hi", multiple messages provide more entropy.
+        """
+        if not chat_history:
+            # Include random component for empty history to prevent collisions
+            import secrets
+
+            seed = f"{datetime.now().isoformat()}-{secrets.token_hex(4)}"
+            return hashlib.sha256(seed.encode()).hexdigest()[:16]
+
+        # Use first 3 messages as seed for better collision resistance
+        messages_to_hash = []
+        for item in chat_history[:3]:
+            if hasattr(item, "content"):
+                # Pydantic ChatMessage object
+                messages_to_hash.append(item.content)
+            elif isinstance(item, dict):
+                # Dict format
+                messages_to_hash.append(item.get("content", ""))
+            else:
+                messages_to_hash.append(str(item))
+
+        # Join messages with separator and hash
+        combined = "|||".join(messages_to_hash)
+        return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
     def cleanup_old_states(self, max_age_hours: int = 24):
         """Remove stale conversation states."""

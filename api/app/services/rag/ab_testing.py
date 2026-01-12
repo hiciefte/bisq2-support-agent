@@ -77,6 +77,13 @@ class ABTestingService:
         Returns:
             Experiment configuration
         """
+        # Check for duplicate experiment ID to prevent silent overwrites
+        if experiment_id in self.active_experiments:
+            raise ValueError(
+                f"Experiment '{experiment_id}' already exists. "
+                "Use a unique experiment_id or end the existing experiment first."
+            )
+
         experiment = {
             "id": experiment_id,
             "name": name,
@@ -94,7 +101,7 @@ class ABTestingService:
 
         return experiment
 
-    async def record_metric(
+    def record_metric(
         self,
         experiment_id: str,
         variant: str,
@@ -105,6 +112,9 @@ class ABTestingService:
     ) -> None:
         """
         Record a metric for analysis.
+
+        Note: This is a synchronous method. If called from async context,
+        use with appropriate executor if needed for high-volume scenarios.
 
         Args:
             experiment_id: Experiment identifier
@@ -166,7 +176,7 @@ class ABTestingService:
             and m["metric_name"] == metric_name
         ]
 
-    async def calculate_statistical_significance(
+    def calculate_statistical_significance(
         self, experiment_id: str, metric_name: str
     ) -> Dict[str, Any]:
         """
@@ -186,12 +196,12 @@ class ABTestingService:
             experiment_id, "treatment", metric_name
         )
 
-        if len(control_values) < 2 or len(treatment_values) < 2:
+        if len(control_values) < 30 or len(treatment_values) < 30:
             return {
-                "error": "Insufficient data",
+                "error": "Insufficient data for reliable t-test",
                 "control_samples": len(control_values),
                 "treatment_samples": len(treatment_values),
-                "minimum_required": 2,
+                "minimum_required": 30,
             }
 
         # Calculate means
@@ -287,7 +297,7 @@ class ABTestingService:
         else:
             return f"Strong negative result ({improvement:.1f}%) - do NOT roll out treatment"
 
-    async def get_experiment_summary(self, experiment_id: str) -> Dict[str, Any]:
+    def get_experiment_summary(self, experiment_id: str) -> Dict[str, Any]:
         """
         Get summary of experiment results.
 
@@ -313,7 +323,7 @@ class ABTestingService:
         # Calculate significance for each metric
         results = {}
         for metric_name in metric_names:
-            results[metric_name] = await self.calculate_statistical_significance(
+            results[metric_name] = self.calculate_statistical_significance(
                 experiment_id, metric_name
             )
 

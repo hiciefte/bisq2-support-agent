@@ -129,12 +129,13 @@ async def query(
         )
 
         # Convert sources to the expected format
+        # Use `or "all"` to handle None values (not just missing keys)
         formatted_sources = [
             Source(
                 title=source["title"],
                 type=source["type"],
                 content=source["content"],
-                protocol=source.get("protocol", "all"),
+                protocol=source.get("protocol") or "all",
             )
             for source in result["sources"]
         ]

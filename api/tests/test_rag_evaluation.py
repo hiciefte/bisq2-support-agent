@@ -24,7 +24,8 @@ def mock_rag_service():
 def mock_version_detector():
     """Create a mock version detector."""
     mock = MagicMock()
-    mock.detect_version = AsyncMock(return_value=("Bisq 2", 0.8))
+    # detect_version returns (version, confidence, clarifying_question)
+    mock.detect_version = AsyncMock(return_value=("Bisq 2", 0.8, None))
     return mock
 
 
@@ -58,14 +59,14 @@ class TestVersionDetectionEvaluation:
 
     @pytest.mark.asyncio
     async def test_version_detection_accuracy(self, evaluator, mock_version_detector):
-        # Setup detector to return correct versions
+        # Setup detector to return correct versions (version, confidence, clarifying_question)
         async def mock_detect(question, history):
             if "dao" in question.lower() or "bsq" in question.lower():
-                return ("Bisq 1", 0.9)
+                return ("Bisq 1", 0.9, None)
             elif "bisq easy" in question.lower() or "reputation" in question.lower():
-                return ("Bisq 2", 0.9)
+                return ("Bisq 2", 0.9, None)
             else:
-                return ("Bisq 2", 0.5)
+                return ("Bisq 2", 0.5, None)
 
         mock_version_detector.detect_version = mock_detect
 
@@ -80,7 +81,9 @@ class TestVersionDetectionEvaluation:
         self, evaluator, mock_version_detector
     ):
         # For "Unknown" expected, should pass if confidence < 0.6
-        mock_version_detector.detect_version = AsyncMock(return_value=("Bisq 2", 0.4))
+        mock_version_detector.detect_version = AsyncMock(
+            return_value=("Bisq 2", 0.4, None)
+        )
 
         test_data = [
             {"question": "How do I buy Bitcoin?", "expected_version": "Unknown"}
@@ -292,10 +295,10 @@ class TestIntegrationWithTestDataset:
         async def smart_detect(question, history):
             call_count[0] += 1
             if "dao" in question.lower():
-                return ("Bisq 1", 0.9)
+                return ("Bisq 1", 0.9, None)
             elif "bisq easy" in question.lower():
-                return ("Bisq 2", 0.9)
-            return ("Bisq 2", 0.5)
+                return ("Bisq 2", 0.9, None)
+            return ("Bisq 2", 0.5, None)
 
         mock_version_detector.detect_version = smart_detect
 

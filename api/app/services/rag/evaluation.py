@@ -50,8 +50,8 @@ class RAGEvaluator:
             expected = test["expected_version"]
 
             start = time.time()
-            detected, confidence = await self.version_detector.detect_version(
-                question, history
+            detected, confidence, _clarifying_question = (
+                await self.version_detector.detect_version(question, history)
             )
             latency = (time.time() - start) * 1000
             latencies.append(latency)

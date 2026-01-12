@@ -30,17 +30,17 @@ def validate_message(message: str) -> None:
     if not isinstance(message, str):
         raise ValidationError(f"Message must be a string, got {type(message)}")
 
-    # Check length
-    if len(message) > MAX_MESSAGE_LENGTH:
-        raise ValidationError(
-            f"Message too long: {len(message)} > {MAX_MESSAGE_LENGTH}"
-        )
-
-    # Check UTF-8 encoding
+    # Check byte length (not character length) for proper size limiting
+    # UTF-8 multi-byte characters (emojis, Asian chars) need byte-level check
     try:
-        message.encode("utf-8")
+        message_bytes = message.encode("utf-8")
     except UnicodeEncodeError as e:
         raise ValidationError(f"Invalid UTF-8 encoding in message: {e}")
+
+    if len(message_bytes) > MAX_MESSAGE_LENGTH:
+        raise ValidationError(
+            f"Message too long: {len(message_bytes)} bytes > {MAX_MESSAGE_LENGTH}"
+        )
 
 
 def validate_sender(sender: str) -> None:
