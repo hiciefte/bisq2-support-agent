@@ -256,6 +256,126 @@ class ShadowModeProcessor:
                 return True
         return False
 
+    @staticmethod
+    def is_support_question(body: str, sender: str = "") -> bool:
+        """
+        Check if a message is a support question that should be processed.
+
+        A message is considered a support question if:
+        1. The sender is NOT a support staff member
+        2. The message content looks like a question/help request
+
+        Args:
+            body: Message body text
+            sender: Matrix user ID (e.g., @username:server.com)
+
+        Returns:
+            True if message should be treated as a support question
+        """
+        # Filter out staff messages
+        if sender and ShadowModeProcessor.is_support_staff(sender):
+            return False
+
+        # Skip empty messages
+        if not body or not body.strip():
+            return False
+
+        body_lower = body.lower().strip()
+
+        # Filter out URL-only messages
+        if body_lower.startswith("http://") or body_lower.startswith("https://"):
+            # Check if message is mostly just a URL
+            words = body_lower.split()
+            if len(words) <= 3:
+                return False
+
+        # Patterns indicating a question/help request
+        question_indicators = [
+            # Direct question markers
+            "?",
+            # Help-seeking phrases
+            "how do i",
+            "how can i",
+            "how to",
+            "can i",
+            "can someone",
+            "is there a way",
+            "i'm getting",
+            "i am getting",
+            "i'm having",
+            "i am having",
+            "i can't",
+            "i cannot",
+            "i don't see",
+            "i don't have",
+            "doesn't work",
+            "not working",
+            "help me",
+            "need help",
+            "having trouble",
+            "having issue",
+            "having problem",
+            "is it possible",
+            "what should i",
+            "what do i",
+            "why is",
+            "why does",
+            "why can't",
+            "where is",
+            "where can",
+            # Bisq-specific question patterns
+            "wallet is",
+            "bsq wallet",
+            "my offer",
+            "my trade",
+            "error with",
+            "issue with",
+            "problem with",
+            "i performed",
+            "i moved",
+            "resyncing",
+            "restarting",
+        ]
+
+        # Patterns indicating NOT a question (statements, responses, advice)
+        non_question_indicators = [
+            # Staff-like response patterns
+            "you can",
+            "you should",
+            "you need to",
+            "try to",
+            "make sure",
+            "if there is an issue",
+            "if the",
+            "sometimes",
+            "are seeing no",  # Staff asking clarifying question
+            "scammers set up",  # Warning message
+            "lesson learned",
+            "no problem",
+            "alrighty",
+            "indeed",
+            "it's ok",
+            "was a small",
+            "i don't have that problem",
+            "check your logs",
+            "can also check",
+            "can prevent",
+            "can appear",
+        ]
+
+        # Check for non-question patterns first
+        for pattern in non_question_indicators:
+            if pattern in body_lower:
+                return False
+
+        # Check for question indicators
+        for pattern in question_indicators:
+            if pattern in body_lower:
+                return True
+
+        # Default: not a question
+        return False
+
     def _scrub_pii(self, text: str) -> str:
         """
         Remove personally identifiable information from text.

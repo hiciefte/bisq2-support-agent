@@ -258,7 +258,9 @@ class UnifiedBatchProcessor:
         # Uses FIFO eviction when cache exceeds max size
         self._cache: Dict[str, tuple[ExtractionResult, float]] = {}
         self._cache_ttl = settings.LLM_EXTRACTION_CACHE_TTL
-        self._cache_max_size = 100  # Maximum cache entries before eviction
+        # Use configured cache size with validation (must be positive int)
+        cache_size = getattr(settings, "LLM_EXTRACTION_CACHE_SIZE", 100)
+        self._cache_max_size = max(1, int(cache_size)) if cache_size else 100
 
     def _create_anonymization_mapping(
         self, messages: List[Dict[str, Any]]
@@ -484,14 +486,32 @@ class UnifiedBatchProcessor:
                 debug_dir = os.path.join(self.settings.DATA_DIR, "debug")
                 os.makedirs(debug_dir, mode=0o700, exist_ok=True)
                 debug_file = os.path.join(debug_dir, "llm_extraction_debug.txt")
-                with open(debug_file, "w", encoding="utf-8") as f:
-                    os.chmod(debug_file, 0o600)  # Restrict to owner only
-                    f.write("===== SYSTEM PROMPT =====\n")
-                    f.write(prompt_messages[0]["content"])
-                    f.write("\n\n===== USER PROMPT =====\n")
-                    f.write(prompt_messages[1]["content"])
-                    f.write("\n\n===== LLM RESPONSE =====\n")
-                    f.write(response_text)
+
+                # Build debug content
+                debug_content = "===== SYSTEM PROMPT =====\n"
+                debug_content += prompt_messages[0]["content"]
+                debug_content += "\n\n===== USER PROMPT =====\n"
+                debug_content += prompt_messages[1]["content"]
+                debug_content += "\n\n===== LLM RESPONSE =====\n"
+                debug_content += response_text
+
+                # Atomically create file with secure permissions (no TOCTOU race)
+                # Use os.open to create file with 0o600 permissions from the start
+                fd = os.open(
+                    debug_file,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                    0o600,
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(debug_content)
+                except Exception:
+                    # Ensure fd is closed on error (fdopen takes ownership on success)
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
                 logger.debug(f"Saved LLM extraction debug info to {debug_file}")
 
             if not response_text or not response_text.strip():

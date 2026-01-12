@@ -204,7 +204,7 @@ def test_classification():
         print("❌ TEST FAILED - Classifier needs tuning")
     print("=" * 80 + "\n")
 
-    return accuracy >= 70
+    return accuracy >= 70 and precision >= 70
 
 
 if __name__ == "__main__":
