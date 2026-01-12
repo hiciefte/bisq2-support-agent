@@ -12,9 +12,11 @@ langchain-chroma
 chromadb
 langchain-text-splitters
 
-# NLI and ML models
+# NLI and ML models (for confidence scoring via DeBERTa)
+# NOTE: torch is installed separately as CPU-only in Dockerfile/CI
+# to avoid ~5GB of unnecessary NVIDIA CUDA libraries
 transformers>=4.35.0
-torch>=2.0.0
+# torch - installed from https://download.pytorch.org/whl/cpu index
 
 # Matrix integration
 matrix-nio>=0.21.0
