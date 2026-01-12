@@ -12,12 +12,11 @@ WORKDIR /app
 # Copy dependency files
 COPY api/requirements.in api/requirements.txt /app/
 
-# Install CPU-only PyTorch first (avoids ~5GB of CUDA libraries)
+# Install CPU-only PyTorch (avoids ~5GB of CUDA libraries) then remaining deps
 # This is a CPU-only server (DigitalOcean droplet), no GPU available
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 
 # --- Development Stage ---
@@ -39,11 +38,10 @@ RUN pip install --no-cache-dir pip-tools==7.5.1
 COPY api/requirements.in /app/api/
 COPY api/requirements.txt /app/api/
 
-# Install CPU-only PyTorch first (avoids ~5GB of CUDA libraries)
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining dependencies in development mode
-RUN pip install --no-cache-dir -r api/requirements.txt
+# Install CPU-only PyTorch (avoids ~5GB of CUDA libraries) then remaining deps
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r api/requirements.txt
 
 # Set environment variables
 ENV PYTHONPATH=/app
