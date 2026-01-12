@@ -18,7 +18,6 @@ from app.models.faq import (
     SimilarFAQResponse,
 )
 from app.services.faq_service import FAQService
-from app.services.simplified_rag_service import get_rag_service
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response, StreamingResponse
 
@@ -390,7 +389,7 @@ async def check_similar_faqs_route(
         logger.info(f"Found {len(similar_faqs)} similar FAQs")
         return SimilarFAQResponse(similar_faqs=similar_faqs)
 
-    except Exception as e:
+    except Exception:
         # Graceful degradation - return empty list on errors
         logger.exception("Error checking for similar FAQs")
         return SimilarFAQResponse(similar_faqs=[])

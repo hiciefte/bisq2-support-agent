@@ -8,11 +8,8 @@ Tests cover:
 - Polling automation
 """
 
-import asyncio
 import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -299,10 +296,6 @@ class TestPollingAutomation:
 
     def test_polling_script_exists(self):
         """Test polling script exists at expected location."""
-        script_path = Path(
-            "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/docker/scripts/poll-matrix.sh"
-        )
-
         # Note: Script will be created in implementation phase
         # This test defines expected location
         expected_location = "docker/scripts/poll-matrix.sh"
@@ -351,7 +344,7 @@ class TestPrometheusMetrics:
         from prometheus_client import REGISTRY
 
         # Check if metrics exist (will be created in implementation)
-        metric_names = [m.name for m in REGISTRY.collect()]
+        _metric_names = [m.name for m in REGISTRY.collect()]  # noqa: F841
 
         expected_metrics = [
             "matrix_polls_total",

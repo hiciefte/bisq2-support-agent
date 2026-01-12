@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 try:
     from nio import AsyncClient, LoginResponse  # type: ignore[import-not-found]

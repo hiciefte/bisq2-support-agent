@@ -5,8 +5,8 @@ Phase 6: Auto-extraction Integration - Tests for check_semantic_duplicates()
 method that prevents semantically similar FAQs from being auto-extracted.
 """
 
-from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Dict, List
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.services.faq.faq_extractor import FAQExtractor
@@ -297,4 +297,3 @@ class TestExtractAndSaveFaqsIntegration:
         # This is a higher-level integration test that verifies the full flow
         # It requires more complex setup - implementing as a placeholder for now
         # The actual integration will be tested after implementing the method
-        pass

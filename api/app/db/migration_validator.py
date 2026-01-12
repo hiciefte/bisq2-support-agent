@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 class MigrationValidationError(Exception):
     """Raised when migration validation fails."""
 
-    pass
-
 
 def validate_migration_sql(sql: str, conn: sqlite3.Connection) -> None:
     """

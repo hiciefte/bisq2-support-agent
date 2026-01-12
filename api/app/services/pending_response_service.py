@@ -6,7 +6,6 @@ before being sent to users, based on confidence thresholds.
 
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path

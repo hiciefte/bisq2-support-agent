@@ -6,14 +6,9 @@ TDD: Write tests first, then implement endpoints to pass these tests.
 
 import os
 import tempfile
-from typing import Dict
 
 import pytest
 from app.core.security import verify_admin_access
-from app.models.similar_faq_candidate import (
-    SimilarFaqCandidate,
-    SimilarFaqCandidateListResponse,
-)
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

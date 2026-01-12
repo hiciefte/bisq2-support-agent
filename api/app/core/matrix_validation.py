@@ -15,8 +15,6 @@ MAX_EVENT_ID_LENGTH = 255  # Standard Matrix event ID length
 class ValidationError(Exception):
     """Raised when validation fails."""
 
-    pass
-
 
 def validate_message(message: str) -> None:
     """Validate message content.

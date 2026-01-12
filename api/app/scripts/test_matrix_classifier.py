@@ -8,8 +8,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.services.shadow_mode.repository import ShadowModeRepository
-from app.services.shadow_mode_processor import ShadowModeProcessor
+from app.services.shadow_mode_processor import ShadowModeProcessor  # noqa: E402
 
 # Sample Matrix messages from previous production data
 SAMPLE_MESSAGES = [
@@ -76,9 +75,6 @@ async def test_classification():
     print("MATRIX MESSAGE CLASSIFICATION TEST")
     print("=" * 80)
     print(f"\nTesting {len(SAMPLE_MESSAGES)} sample messages from production data\n")
-
-    # Initialize processor
-    processor = ShadowModeProcessor()
 
     # Statistics
     accepted_count = 0
@@ -154,13 +150,13 @@ async def test_classification():
     else:
         f1_score = 0
 
-    print(f"\nConfusion Matrix:")
+    print("\nConfusion Matrix:")
     print(f"  True Positives (Correct questions):     {true_positives:2d}")
     print(f"  True Negatives (Correct filtering):     {true_negatives:2d}")
     print(f"  False Positives (Incorrectly accepted): {false_positives:2d}")
     print(f"  False Negatives (Incorrectly filtered): {false_negatives:2d}")
 
-    print(f"\nPerformance Metrics:")
+    print("\nPerformance Metrics:")
     print(
         f"  Accuracy:  {accuracy:.1f}% ({true_positives + true_negatives}/{total} correct)"
     )
@@ -172,7 +168,7 @@ async def test_classification():
     )
     print(f"  F1 Score:  {f1_score:.1f}%")
 
-    print(f"\nMessage Flow:")
+    print("\nMessage Flow:")
     print(f"  Total messages:     {total}")
     print(
         f"  Accepted (questions): {accepted_count} ({(accepted_count/total)*100:.1f}%)"
@@ -181,7 +177,7 @@ async def test_classification():
         f"  Filtered (non-questions): {filtered_count} ({(filtered_count/total)*100:.1f}%)"
     )
 
-    print(f"\nExpected vs Actual:")
+    print("\nExpected vs Actual:")
     print(f"  Expected questions: {expected_questions}")
     print(f"  Actual questions:   {accepted_count}")
     print(f"  Expected filtered:  {expected_filtered}")
@@ -194,7 +190,7 @@ async def test_classification():
     )
     improvement = baseline_fp_rate - current_fp_rate
 
-    print(f"\nImprovement vs Baseline:")
+    print("\nImprovement vs Baseline:")
     print(f"  Baseline FP rate: {baseline_fp_rate:.1f}%")
     print(f"  Current FP rate:  {current_fp_rate:.1f}%")
     print(f"  Improvement:      {improvement:.1f}% reduction")
