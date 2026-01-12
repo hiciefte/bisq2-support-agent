@@ -387,10 +387,8 @@ class TestDocumentRetrieverVersionPriority:
             if call[1].get("filter", {}).get("protocol") == "multisig_v1"
         ]
 
-        if multisig_calls:
-            assert (
-                multisig_calls[0][1]["k"] == 4
-            )  # Explicit Bisq 1 request should use k=4
+        assert multisig_calls, "Expected a multisig_v1 retrieval call"
+        assert multisig_calls[0][1]["k"] == 4  # Explicit Bisq 1 request should use k=4
 
     def test_bisq2_priority_maintained(self, test_settings):
         """Test that Bisq 2 priority is maintained for ambiguous queries.
@@ -403,7 +401,10 @@ class TestDocumentRetrieverVersionPriority:
         mock_vectorstore = Mock()
         mock_vectorstore.similarity_search = Mock(return_value=[])
 
-        retriever = DocumentRetriever(mock_vectorstore, test_settings)
+        # Create mock retriever that implements minimal interface
+        mock_retriever = Mock()
+
+        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
 
         # Act
         query = "How do I start a trade?"

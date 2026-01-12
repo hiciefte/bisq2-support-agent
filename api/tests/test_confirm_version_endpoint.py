@@ -85,7 +85,7 @@ def client(app):
 class TestPydanticValidation:
     """Test suite for Pydantic validation of ConfirmVersionRequest."""
 
-    def test_confirm_version_unknown_without_training_protocol_returns_400(
+    def test_confirm_version_unknown_without_training_protocol_returns_422(
         self, client, sample_response
     ):
         """Test that confirming 'Unknown' without training_protocol returns 422.
@@ -107,10 +107,10 @@ class TestPydanticValidation:
             f"Response: {response.json()}"
         )
 
-    def test_confirm_version_unknown_with_null_training_protocol_returns_400(
+    def test_confirm_version_unknown_with_null_training_protocol_returns_422(
         self, client, sample_response
     ):
-        """Test that confirming 'Unknown' with training_protocol=null returns 400."""
+        """Test that confirming 'Unknown' with training_protocol=null returns 422."""
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
             json={
@@ -122,10 +122,10 @@ class TestPydanticValidation:
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}"
 
-    def test_confirm_version_unknown_with_invalid_training_protocol_returns_400(
+    def test_confirm_version_unknown_with_invalid_training_protocol_returns_422(
         self, client, sample_response
     ):
-        """Test that invalid training_protocol enum returns 400."""
+        """Test that invalid training_protocol enum returns 422."""
         # Try invalid value
         response = client.post(
             f"/admin/shadow-mode/responses/{sample_response.id}/confirm-version",
