@@ -17,6 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free disk space
+        run: |
+          # Remove pre-installed software to free up space for Python packages
+          # PyTorch + CUDA libraries require significant disk space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -34,7 +44,7 @@ jobs:
           git diff --exit-code --quiet api/requirements.txt || (echo "ERROR: requirements.txt is not up to date. Please run 'pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras' and commit the changes." && exit 1)
 
       - name: Install dependencies
-        run: pip-sync api/requirements.txt
+        run: pip-sync api/requirements.txt --pip-args "--no-cache-dir"
 
       - name: Check formatting with black
         run: black --check api/
