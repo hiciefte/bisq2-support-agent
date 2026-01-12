@@ -60,7 +60,7 @@ class TestVersionDetectionEvaluation:
     @pytest.mark.asyncio
     async def test_version_detection_accuracy(self, evaluator, mock_version_detector):
         # Setup detector to return correct versions (version, confidence, clarifying_question)
-        async def mock_detect(question, history):
+        async def mock_detect(question, _history):
             if "dao" in question.lower() or "bsq" in question.lower():
                 return ("Bisq 1", 0.9, None)
             elif "bisq easy" in question.lower() or "reputation" in question.lower():
@@ -292,7 +292,7 @@ class TestIntegrationWithTestDataset:
         # Setup detector to be mostly correct
         call_count = [0]
 
-        async def smart_detect(question, history):
+        async def smart_detect(question, _history):
             call_count[0] += 1
             if "dao" in question.lower():
                 return ("Bisq 1", 0.9, None)

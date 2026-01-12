@@ -251,9 +251,11 @@ class UnifiedBatchProcessor:
         self.ai_client = ai_client
         self.settings = settings
 
-        # Simple in-memory cache (message_set_hash -> ExtractionResult)
+        # Bounded in-memory cache (message_set_hash -> ExtractionResult)
+        # Uses LRU eviction when cache exceeds max size
         self._cache: Dict[str, tuple[ExtractionResult, float]] = {}
         self._cache_ttl = settings.LLM_EXTRACTION_CACHE_TTL
+        self._cache_max_size = 100  # Maximum cache entries before eviction
 
     def _create_anonymization_mapping(
         self, messages: List[Dict[str, Any]]
@@ -319,6 +321,10 @@ class UnifiedBatchProcessor:
         Returns:
             Clean message text without quoted fallback
         """
+        # Handle empty strings early
+        if not body:
+            return body
+
         lines = body.split("\n")
         clean_lines = []
         in_quote = False
@@ -455,6 +461,7 @@ class UnifiedBatchProcessor:
                 model=self.settings.LLM_EXTRACTION_MODEL,
                 messages=prompt_messages,
                 temperature=self.settings.LLM_EXTRACTION_TEMPERATURE,
+                max_tokens=self.settings.LLM_EXTRACTION_MAX_TOKENS,
             )
 
             # Step 6: Parse JSON response
@@ -763,10 +770,17 @@ Extract user questions only (ignore messages from staff identifiers above).""",
 
     def _add_to_cache(self, cache_key: str, result: ExtractionResult) -> None:
         """
-        Add result to cache.
+        Add result to cache with LRU eviction when cache exceeds max size.
 
         Args:
             cache_key: Cache key
             result: Extraction result
         """
+        # Evict oldest entries if cache is full
+        while len(self._cache) >= self._cache_max_size:
+            # Find oldest entry by cached_time
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
+            del self._cache[oldest_key]
+            logger.debug(f"Cache eviction: removed {oldest_key[:16]}...")
+
         self._cache[cache_key] = (result, time.time())

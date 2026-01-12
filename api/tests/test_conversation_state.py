@@ -206,6 +206,10 @@ class TestConversationIdGeneration:
         # Empty histories should generate unique IDs based on timestamp + random
         assert len(conv_id) == 16  # SHA-256 truncated to 16 hex chars
 
+        # Verify two empty history calls generate different IDs
+        conv_id2 = manager.generate_conversation_id([])
+        assert conv_id != conv_id2, "Empty history should generate unique IDs each time"
+
 
 class TestStateCleanup:
     """Test stale state cleanup."""

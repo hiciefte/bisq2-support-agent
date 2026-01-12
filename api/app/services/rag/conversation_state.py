@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -22,16 +23,21 @@ class ConversationState:
 
 
 class ConversationStateManager:
-    """Manage conversation state for multi-turn coherence."""
+    """Manage conversation state for multi-turn coherence.
+
+    Thread-safe implementation using RLock for concurrent access protection.
+    """
 
     def __init__(self):
         self._states: Dict[str, ConversationState] = {}
+        self._lock = threading.RLock()
 
     def get_or_create_state(self, conversation_id: str) -> ConversationState:
         """Get existing state or create new one."""
-        if conversation_id not in self._states:
-            self._states[conversation_id] = ConversationState()
-        return self._states[conversation_id]
+        with self._lock:
+            if conversation_id not in self._states:
+                self._states[conversation_id] = ConversationState()
+            return self._states[conversation_id]
 
     def update_state(
         self,
@@ -42,31 +48,32 @@ class ConversationStateManager:
         entities: Optional[Dict[str, str]] = None,
     ) -> ConversationState:
         """Update conversation state with new information."""
-        state = self.get_or_create_state(conversation_id)
+        with self._lock:
+            state = self.get_or_create_state(conversation_id)
 
-        # Update version if higher confidence
-        if detected_version and version_confidence > state.version_confidence:
-            state.detected_version = detected_version
-            state.version_confidence = version_confidence
-            logger.debug(
-                f"Updated version to {detected_version} "
-                f"(confidence={version_confidence:.2f})"
-            )
+            # Update version if higher confidence
+            if detected_version and version_confidence > state.version_confidence:
+                state.detected_version = detected_version
+                state.version_confidence = version_confidence
+                logger.debug(
+                    f"Updated version to {detected_version} "
+                    f"(confidence={version_confidence:.2f})"
+                )
 
-        # Add new topics
-        if topics:
-            for topic in topics:
-                if topic not in state.topics_discussed:
-                    state.topics_discussed.append(topic)
+            # Add new topics
+            if topics:
+                for topic in topics:
+                    if topic not in state.topics_discussed:
+                        state.topics_discussed.append(topic)
 
-        # Update entities
-        if entities:
-            state.entities_mentioned.update(entities)
+            # Update entities
+            if entities:
+                state.entities_mentioned.update(entities)
 
-        state.turn_count += 1
-        state.last_updated = datetime.now()
+            state.turn_count += 1
+            state.last_updated = datetime.now()
 
-        return state
+            return state
 
     def get_context_summary(self, conversation_id: str) -> str:
         """Generate context summary for LLM prompt."""
@@ -103,14 +110,18 @@ class ConversationStateManager:
             return hashlib.sha256(seed.encode()).hexdigest()[:16]
 
         # Use first 3 messages as seed for better collision resistance
+        # Include role in hash for collision resistance when same content has different roles
         messages_to_hash = []
         for item in chat_history[:3]:
-            if hasattr(item, "content"):
-                # Pydantic ChatMessage object
-                messages_to_hash.append(item.content)
+            if hasattr(item, "content") and hasattr(item, "role"):
+                # Pydantic ChatMessage object - normalize with role
+                normalized = f"{item.role}:{item.content}"
+                messages_to_hash.append(normalized)
             elif isinstance(item, dict):
-                # Dict format
-                messages_to_hash.append(item.get("content", ""))
+                # Dict format - normalize with role
+                role = item.get("role", "unknown")
+                content = item.get("content", "")
+                messages_to_hash.append(f"{role}:{content}")
             else:
                 messages_to_hash.append(str(item))
 
@@ -120,15 +131,16 @@ class ConversationStateManager:
 
     def cleanup_old_states(self, max_age_hours: int = 24):
         """Remove stale conversation states."""
-        now = datetime.now()
-        stale_ids = [
-            cid
-            for cid, state in self._states.items()
-            if (now - state.last_updated).total_seconds() > max_age_hours * 3600
-        ]
+        with self._lock:
+            now = datetime.now()
+            stale_ids = [
+                cid
+                for cid, state in self._states.items()
+                if (now - state.last_updated).total_seconds() > max_age_hours * 3600
+            ]
 
-        for cid in stale_ids:
-            del self._states[cid]
+            for cid in stale_ids:
+                del self._states[cid]
 
-        if stale_ids:
-            logger.info(f"Cleaned up {len(stale_ids)} stale conversation states")
+            if stale_ids:
+                logger.info(f"Cleaned up {len(stale_ids)} stale conversation states")

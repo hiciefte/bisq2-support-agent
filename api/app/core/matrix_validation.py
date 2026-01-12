@@ -35,7 +35,7 @@ def validate_message(message: str) -> None:
     try:
         message_bytes = message.encode("utf-8")
     except UnicodeEncodeError as e:
-        raise ValidationError(f"Invalid UTF-8 encoding in message: {e}")
+        raise ValidationError(f"Invalid UTF-8 encoding in message: {e}") from e
 
     if len(message_bytes) > MAX_MESSAGE_LENGTH:
         raise ValidationError(
@@ -142,5 +142,5 @@ def validate_matrix_message(
     validate_message(message)
     validate_sender(sender)
     validate_event_id(event_id)
-    if room_id:
+    if room_id is not None:
         validate_room_id(room_id)
