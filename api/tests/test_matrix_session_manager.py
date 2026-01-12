@@ -265,7 +265,7 @@ class TestTokenRedaction:
         """Test redaction of long token."""
         token = "MDAxOGxvY2F0aW9uIG1hdHJpeC5vcmc"
         redacted = session_manager._redact_token(token)
-        assert redacted == "MDAxOGxvY2F..."
+        assert redacted == "MDAxOGxvY2..."  # First 10 chars + "..."
         assert len(redacted) == 13  # 10 chars + "..."
 
     def test_redact_token_short(self, session_manager):
