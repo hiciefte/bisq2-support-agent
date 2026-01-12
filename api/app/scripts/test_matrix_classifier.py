@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Test script to verify Matrix message classification improvements."""
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -69,7 +68,7 @@ SAMPLE_MESSAGES = [
 ]
 
 
-async def test_classification():
+def test_classification():
     """Test message classification with sample data."""
     print("\n" + "=" * 80)
     print("MATRIX MESSAGE CLASSIFICATION TEST")
@@ -209,5 +208,5 @@ async def test_classification():
 
 
 if __name__ == "__main__":
-    result = asyncio.run(test_classification())
+    result = test_classification()
     sys.exit(0 if result else 1)

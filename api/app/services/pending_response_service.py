@@ -4,8 +4,10 @@ This service manages responses that are queued for moderator review
 before being sent to users, based on confidence thresholds.
 """
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -219,8 +221,8 @@ class PendingResponseService:
         if not self.pending_file.exists():
             return False
 
-        try:
-            # Read all entries
+        def _sync_update() -> bool:
+            """Synchronous update with atomic write pattern."""
             entries = []
             updated = False
 
@@ -249,13 +251,25 @@ class PendingResponseService:
             if not updated:
                 return False
 
-            # Write back all entries
-            with open(self.pending_file, "w") as f:
+            # Atomic write: write to temp file then rename
+            temp_file = self.pending_file.with_suffix(".tmp")
+            with open(temp_file, "w") as f:
                 for entry in entries:
                     f.write(json.dumps(entry) + "\n")
 
-            logger.info(f"Updated response {response_id} to status={status}")
+            # Set restrictive permissions before rename
+            os.chmod(temp_file, 0o600)
+            os.replace(temp_file, self.pending_file)
             return True
+
+        try:
+            # Run synchronous file I/O in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _sync_update)
+
+            if result:
+                logger.info(f"Updated response {response_id} to status={status}")
+            return result
 
         except Exception as e:
             logger.error(f"Failed to update response {response_id}: {e}", exc_info=True)
@@ -330,7 +344,8 @@ class PendingResponseService:
         if not self.pending_file.exists():
             return False
 
-        try:
+        def _sync_delete() -> bool:
+            """Synchronous delete with atomic write pattern."""
             entries = []
             deleted = False
 
@@ -348,12 +363,25 @@ class PendingResponseService:
             if not deleted:
                 return False
 
-            with open(self.pending_file, "w") as f:
+            # Atomic write: write to temp file then rename
+            temp_file = self.pending_file.with_suffix(".tmp")
+            with open(temp_file, "w") as f:
                 for entry in entries:
                     f.write(json.dumps(entry) + "\n")
 
-            logger.info(f"Deleted response {response_id}")
+            # Set restrictive permissions before rename
+            os.chmod(temp_file, 0o600)
+            os.replace(temp_file, self.pending_file)
             return True
+
+        try:
+            # Run synchronous file I/O in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _sync_delete)
+
+            if result:
+                logger.info(f"Deleted response {response_id}")
+            return result
 
         except Exception as e:
             logger.error(f"Failed to delete response {response_id}: {e}", exc_info=True)

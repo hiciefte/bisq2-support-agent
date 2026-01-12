@@ -23,6 +23,12 @@ from app.services.matrix_metrics import (
 logger = logging.getLogger(__name__)
 
 
+class MatrixAuthenticationError(Exception):
+    """Raised when Matrix authentication fails."""
+
+    pass
+
+
 class SessionManager:
     """Manages Matrix authentication and session file persistence.
 
@@ -94,7 +100,7 @@ class SessionManager:
             logger.error(error_msg)
             matrix_auth_total.labels(result="failure").inc()
             matrix_fresh_logins_total.labels(result="failure").inc()
-            raise Exception(error_msg)
+            raise MatrixAuthenticationError(error_msg)
 
     def _load_session(self) -> bool:
         """Load session from disk if exists and valid.
@@ -135,8 +141,8 @@ class SessionManager:
 
             return True
 
-        except (IOError, json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Failed to restore session from {self.session_file}: {e}")
+        except (IOError, json.JSONDecodeError):
+            logger.exception(f"Failed to restore session from {self.session_file}")
             matrix_session_restores_total.labels(result="failure").inc()
             return False
 
@@ -167,19 +173,19 @@ class SessionManager:
             with open(temp_file, "w") as f:
                 json.dump(session_data, f, indent=2)
 
+            # Set restrictive permissions before rename for defense-in-depth
+            os.chmod(temp_file, 0o600)
+
             # Atomic rename (prevents corruption if crash during write)
             temp_file.replace(self.session_file)
-
-            # Set restrictive permissions (600 = read/write owner only)
-            os.chmod(self.session_file, 0o600)
 
             logger.info(
                 f"Session saved to {self.session_file} for {resp.user_id} "
                 f"(device: {resp.device_id})"
             )
 
-        except Exception as e:
-            logger.error(f"Failed to save session to {self.session_file}: {e}")
+        except Exception:
+            logger.exception(f"Failed to save session to {self.session_file}")
             if temp_file.exists():
                 temp_file.unlink()
             raise

@@ -218,7 +218,7 @@ class TestCheckSemanticDuplicates:
             side_effect=[[similar_match], [], []]
         )
 
-        unique_faqs, similar_faqs = await faq_extractor.check_semantic_duplicates(
+        _unique_faqs, similar_faqs = await faq_extractor.check_semantic_duplicates(
             extracted_faqs=sample_extracted_faqs,
             rag_service=mock_rag_service,
             threshold=0.85,
@@ -290,6 +290,7 @@ class TestExtractAndSaveFaqsIntegration:
         return faq_service
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Integration test not yet implemented")
     async def test_skips_semantically_similar_faqs_during_extraction(
         self, faq_service, test_settings
     ):
@@ -297,3 +298,4 @@ class TestExtractAndSaveFaqsIntegration:
         # This is a higher-level integration test that verifies the full flow
         # It requires more complex setup - implementing as a placeholder for now
         # The actual integration will be tested after implementing the method
+        pass

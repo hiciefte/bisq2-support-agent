@@ -11,7 +11,10 @@ import pytest
 # Skip entire module if matrix-nio is not installed
 nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-from app.integrations.matrix.session_manager import SessionManager  # noqa: E402
+from app.integrations.matrix.session_manager import (  # noqa: E402
+    MatrixAuthenticationError,
+    SessionManager,
+)
 
 # Import nio classes after importorskip
 from nio import AsyncClient, LoginResponse  # noqa: E402
@@ -144,7 +147,7 @@ class TestSessionManagerLogin:
         mock_client.login = AsyncMock(return_value=error_response)
 
         # Execute & Verify
-        with pytest.raises(Exception, match="Login failed"):
+        with pytest.raises(MatrixAuthenticationError, match="Login failed"):
             await session_manager.login()
 
 

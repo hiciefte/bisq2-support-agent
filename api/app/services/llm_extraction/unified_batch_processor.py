@@ -15,10 +15,13 @@ Privacy:
 - Username mapping preserved for shadow mode queue display
 """
 
+import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import Settings
@@ -252,7 +255,7 @@ class UnifiedBatchProcessor:
         self.settings = settings
 
         # Bounded in-memory cache (message_set_hash -> ExtractionResult)
-        # Uses LRU eviction when cache exceeds max size
+        # Uses FIFO eviction when cache exceeds max size
         self._cache: Dict[str, tuple[ExtractionResult, float]] = {}
         self._cache_ttl = settings.LLM_EXTRACTION_CACHE_TTL
         self._cache_max_size = 100  # Maximum cache entries before eviction
@@ -280,10 +283,15 @@ class UnifiedBatchProcessor:
         for msg in messages:
             sender = msg.get("sender", "")
             if sender and sender not in real_to_anon:
-                # Check if sender is known staff
-                is_staff = any(
-                    staff.lower() in sender.lower() for staff in KNOWN_SUPPORT_STAFF
-                )
+                # Check if sender is known staff using exact localpart matching
+                # Extract localpart from Matrix ID (e.g., "@luis3672:matrix.org" -> "luis3672")
+                localpart = sender.lower()
+                if localpart.startswith("@"):
+                    localpart = localpart[1:]  # Remove leading @
+                if ":" in localpart:
+                    localpart = localpart.split(":")[0]  # Remove server part
+
+                is_staff = localpart in [s.lower() for s in KNOWN_SUPPORT_STAFF]
 
                 if is_staff:
                     anon_id = f"Staff_{staff_counter}"
@@ -328,11 +336,13 @@ class UnifiedBatchProcessor:
         lines = body.split("\n")
         clean_lines = []
         in_quote = False
+        saw_quote = False
 
         for line in lines:
             # Lines starting with '>' are quoted text (Matrix reply fallback)
             if line.startswith(">"):
                 in_quote = True
+                saw_quote = True
                 continue
 
             # Blank line after quotes separates quote from actual message
@@ -345,7 +355,7 @@ class UnifiedBatchProcessor:
                 clean_lines.append(line)
 
         # If no quotes were found, return original body
-        if not clean_lines and not in_quote:
+        if not saw_quote:
             return body
 
         return "\n".join(clean_lines).strip()
@@ -383,7 +393,7 @@ class UnifiedBatchProcessor:
             List of staff identifiers (e.g., ["Staff_1", "Staff_2"])
         """
         staff_ids = []
-        for real_username, anon_id in real_to_anon.items():
+        for _, anon_id in real_to_anon.items():
             if anon_id.startswith("Staff_"):
                 staff_ids.append(anon_id)
 
@@ -454,8 +464,6 @@ class UnifiedBatchProcessor:
             )
 
             # Step 5: Call LLM (AISuite is synchronous, run in thread pool)
-            import asyncio
-
             response = await asyncio.to_thread(
                 self.ai_client.chat.completions.create,
                 model=self.settings.LLM_EXTRACTION_MODEL,
@@ -465,13 +473,13 @@ class UnifiedBatchProcessor:
             )
 
             # Step 6: Parse JSON response
-            response_text = response.choices[0].message.content
-            logger.debug(f"LLM response (first 500 chars): {response_text[:500]}")
+            response_text = response.choices[0].message.content or ""
+            logger.debug(
+                f"LLM response (first 500 chars): {response_text[:500] if response_text else '(empty)'}"
+            )
 
             # Save debug info only when DEBUG mode is enabled (security: avoids PII exposure)
             if self.settings.DEBUG:
-                import os
-
                 # Use secure file in DATA_DIR with restricted permissions
                 debug_dir = os.path.join(self.settings.DATA_DIR, "debug")
                 os.makedirs(debug_dir, mode=0o700, exist_ok=True)
@@ -556,7 +564,8 @@ class UnifiedBatchProcessor:
                         seen_message_ids.add(msg_event_id)
 
                         logger.debug(
-                            f"Extracted question from {anon_sender} (real: {real_sender}): {q_data['question_text'][:50]}..."
+                            f"Extracted question from {anon_sender}: "
+                            f"{q_data['question_text'][:50]}..."
                         )
 
             # Count question types for debugging
@@ -586,7 +595,11 @@ class UnifiedBatchProcessor:
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Response text: {response_text[:500]}")
+            # response_text is guaranteed to be defined here since JSONDecodeError
+            # can only occur after json.loads(response_text) is called
+            logger.error(
+                f"Response text: {response_text[:500] if response_text else '(empty)'}"
+            )
             return ExtractionResult(
                 conversation_id=f"{room_id}_error",
                 questions=[],
@@ -686,15 +699,13 @@ class UnifiedBatchProcessor:
             timestamp_ms = msg.get("timestamp", 0)
             if timestamp_ms and timestamp_ms > 0:
                 # Convert milliseconds to datetime and format as human-readable
-                from datetime import datetime, timezone
-
                 dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
                 timestamp_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
             else:
                 timestamp_str = "unknown"
 
             # Clean Matrix reply formatting (remove quoted fallback text)
-            message_body = self._strip_matrix_reply_fallback(msg["body"])
+            message_body = self._strip_matrix_reply_fallback(msg.get("body", ""))
 
             # Message number for reference (1-based)
             msg_number = idx + 1
@@ -742,9 +753,12 @@ Extract user questions only (ignore messages from staff identifiers above).""",
         Returns:
             SHA-256 hash of message content
         """
-        # Create deterministic string from messages
+        # Create deterministic string from messages with defensive access
         content = json.dumps(
-            [{"event_id": m["event_id"], "body": m["body"]} for m in messages],
+            [
+                {"event_id": m.get("event_id", ""), "body": m.get("body", "")}
+                for m in messages
+            ],
             sort_keys=True,
         )
         return hashlib.sha256(content.encode()).hexdigest()
@@ -770,13 +784,16 @@ Extract user questions only (ignore messages from staff identifiers above).""",
 
     def _add_to_cache(self, cache_key: str, result: ExtractionResult) -> None:
         """
-        Add result to cache with LRU eviction when cache exceeds max size.
+        Add result to cache with FIFO eviction when cache exceeds max size.
+
+        Note: This uses insertion-time-based eviction (FIFO), not true LRU.
+        For a cache with TTL-based expiration, FIFO is sufficient.
 
         Args:
             cache_key: Cache key
             result: Extraction result
         """
-        # Evict oldest entries if cache is full
+        # Evict oldest entries (by insertion time) if cache is full
         while len(self._cache) >= self._cache_max_size:
             # Find oldest entry by cached_time
             oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])

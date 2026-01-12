@@ -50,6 +50,8 @@ class RAGEvaluator:
             expected = test["expected_version"]
 
             start = time.perf_counter()
+            detected = None
+            confidence = 0.0
             try:
                 detected, confidence, _clarifying_question = (
                     await self.version_detector.detect_version(question, history)
@@ -58,8 +60,10 @@ class RAGEvaluator:
                 failed += 1
                 failures.append({"question": question, "error": str(e)})
                 continue
-            latency = (time.perf_counter() - start) * 1000
-            latencies.append(latency)
+            finally:
+                # Always capture latency, even on exception
+                latency = (time.perf_counter() - start) * 1000
+                latencies.append(latency)
 
             # Handle "Unknown" expected as either version with low confidence
             if expected == "Unknown":
@@ -118,8 +122,6 @@ class RAGEvaluator:
             start = time.perf_counter()
             try:
                 response = await self.rag.query(question=question, chat_history=history)
-                latency = (time.perf_counter() - start) * 1000
-                latencies.append(latency)
 
                 # Check for hallucination indicators
                 answer = response.get("answer", "")
@@ -143,6 +145,10 @@ class RAGEvaluator:
             except Exception as e:
                 failed += 1
                 failures.append({"question": question, "error": str(e)})
+            finally:
+                # Always capture latency, even on exception
+                latency = (time.perf_counter() - start) * 1000
+                latencies.append(latency)
 
         total = passed + failed
         return EvaluationResult(

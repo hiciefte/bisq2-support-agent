@@ -105,7 +105,7 @@ class TestRAGEvaluation:
     """Test RAG response quality evaluation."""
 
     @pytest.mark.asyncio
-    async def test_rag_test_success(self, evaluator, mock_rag_service):
+    async def test_rag_test_success(self, evaluator):
         test_data = [{"question": "Test question", "expected_success": True}]
 
         results = await evaluator.run_rag_tests(test_data)
@@ -274,6 +274,10 @@ class TestReportGeneration:
 
         # Should contain "FAILURES:" section
         assert "FAILURES:" in report
+
+        # Should only show first 10 failures (q0-q9), not q10-q19
+        assert "q9" in report  # Last of first 10
+        assert "q10" not in report  # First that should be excluded
 
 
 class TestIntegrationWithTestDataset:
