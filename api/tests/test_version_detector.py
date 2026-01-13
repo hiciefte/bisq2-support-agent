@@ -364,3 +364,34 @@ class TestClarifyingQuestionGeneration:
         assert (
             clarifying_question is None
         ), "High confidence should NOT generate clarifying question"
+
+
+class TestNoneChatHistory:
+    """Test handling of None chat_history to prevent regression of NoneType error."""
+
+    @pytest.mark.asyncio
+    async def test_none_chat_history_does_not_crash(self, detector):
+        """Verify detect_version() handles None chat_history without crashing.
+
+        This test prevents regression of the bug where _check_chat_history
+        tried to slice None: chat_history[-5:] when chat_history was None.
+        """
+        # This should NOT raise TypeError: 'NoneType' object is not subscriptable
+        version, confidence, clarifying_question = await detector.detect_version(
+            "How do I buy Bitcoin?", None  # type: ignore - intentionally passing None
+        )
+
+        # Behavior should be same as empty list - return Unknown with clarification
+        assert version == "Unknown", "None chat_history should return Unknown"
+        assert confidence == 0.30, "Low confidence for ambiguous question"
+        assert clarifying_question is not None, "Should provide clarifying question"
+
+    @pytest.mark.asyncio
+    async def test_none_chat_history_with_explicit_version(self, detector):
+        """Verify explicit version in question works even with None chat_history."""
+        version, confidence, _ = await detector.detect_version(
+            "How do I vote in Bisq 1 DAO?", None  # type: ignore
+        )
+
+        assert version == "Bisq 1"
+        assert confidence >= 0.95
