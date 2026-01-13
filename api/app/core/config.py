@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     MATRIX_TOKEN: str = ""  # DEPRECATED: Access token (use MATRIX_PASSWORD instead)
     MATRIX_ROOMS: str | list[str] = ""  # Room IDs to monitor (comma-separated or list)
     MATRIX_SESSION_FILE: str = (
-        "/data/matrix_session.json"  # Session persistence file path
+        "matrix_session.json"  # Session filename (relative to DATA_DIR)
     )
 
     # Tor hidden service settings
@@ -219,17 +219,26 @@ class Settings(BaseSettings):
         return os.path.join(self.DATA_DIR, "similar_faqs.db")
 
     @property
-    def ACTIVE_LLM_API_KEY(self) -> str:
-        """Get API key for currently configured LLM provider.
+    def MATRIX_SESSION_PATH(self) -> str:
+        """Complete path to the Matrix session persistence file"""
+        # Support both absolute paths (backward compat) and relative paths
+        if os.path.isabs(self.MATRIX_SESSION_FILE):
+            return self.MATRIX_SESSION_FILE
+        return os.path.join(self.DATA_DIR, self.MATRIX_SESSION_FILE)
 
-        Derives the correct API key based on the provider prefix in
+    @property
+    def ACTIVE_LLM_CREDENTIAL(self) -> str:
+        """Get credential (API key or URL) for currently configured LLM provider.
+
+        Derives the correct credential based on the provider prefix in
         LLM_CLASSIFICATION_MODEL (e.g., "openai:gpt-4o-mini" → OPENAI_API_KEY).
+        For Ollama, returns the base URL instead of an API key.
 
         Returns:
-            API key string for the active provider
+            API key string or URL for the active provider
 
         Raises:
-            ValueError: If provider is not supported or API key is missing
+            ValueError: If provider is not supported or credential is missing
         """
         if not self.LLM_CLASSIFICATION_MODEL:
             raise ValueError("LLM_CLASSIFICATION_MODEL is not configured")
@@ -237,27 +246,27 @@ class Settings(BaseSettings):
         # Extract provider from model string (format: "provider:model")
         provider = self.LLM_CLASSIFICATION_MODEL.split(":")[0].lower()
 
-        # Map provider to corresponding API key
-        provider_keys = {
+        # Map provider to corresponding credential (API key or URL)
+        provider_credentials = {
             "openai": self.OPENAI_API_KEY,
             "anthropic": self.ANTHROPIC_API_KEY,
             "ollama": self.OLLAMA_API_URL,  # Ollama uses URL instead of API key
         }
 
-        if provider not in provider_keys:
+        if provider not in provider_credentials:
             raise ValueError(
                 f"Unsupported LLM provider: {provider}. "
-                f"Supported providers: {', '.join(provider_keys.keys())}"
+                f"Supported providers: {', '.join(provider_credentials.keys())}"
             )
 
-        api_key = provider_keys[provider]
-        if not api_key and provider != "ollama":
+        credential = provider_credentials[provider]
+        if not credential and provider != "ollama":
             raise ValueError(
                 f"{provider.upper()}_API_KEY is required but not set. "
                 f"Please configure the API key for {provider} provider."
             )
 
-        return api_key
+        return credential
 
     def get_data_path(self, *path_parts) -> str:
         """Utility method to construct paths within DATA_DIR

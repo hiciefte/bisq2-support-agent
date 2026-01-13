@@ -620,11 +620,9 @@ class UnifiedBatchProcessor:
 
             return result
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            # response_text is guaranteed to be defined here since JSONDecodeError
-            # can only occur after json.loads(response_text) is called
-            logger.error(
+        except json.JSONDecodeError:
+            logger.exception(
+                "Failed to parse LLM response as JSON. "
                 f"Response text: {response_text[:500] if response_text else '(empty)'}"
             )
             return ExtractionResult(

@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
             user_id=settings.MATRIX_USER,
             password=settings.MATRIX_PASSWORD or None,  # Recommended
             access_token=settings.MATRIX_TOKEN or None,  # DEPRECATED fallback
-            session_file=settings.MATRIX_SESSION_FILE,
+            session_file=settings.MATRIX_SESSION_PATH,
             room_id=room_id,
         )
 

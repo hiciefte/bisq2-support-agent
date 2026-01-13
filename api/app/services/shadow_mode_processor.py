@@ -461,8 +461,8 @@ class ShadowModeProcessor:
 
             return text
 
-        except Exception as e:
-            logger.error(f"PII scrubbing failed: {e}")
+        except Exception:
+            logger.exception("PII scrubbing failed")
             return "[REDACTED_DUE_TO_ERROR]"
 
     def _anonymize_sender(self, sender: str) -> str:
