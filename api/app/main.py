@@ -124,9 +124,10 @@ async def lifespan(app: FastAPI):
     logger.info("Tor monitoring service started")
 
     # Initialize Matrix shadow mode service if configured
+    # Accept either MATRIX_PASSWORD (recommended) or MATRIX_TOKEN (deprecated) for auth
     if (
         settings.MATRIX_HOMESERVER_URL
-        and settings.MATRIX_TOKEN
+        and (settings.MATRIX_PASSWORD or settings.MATRIX_TOKEN)
         and settings.MATRIX_ROOMS
     ):
         logger.info("Initializing Matrix shadow mode service...")

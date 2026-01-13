@@ -281,15 +281,13 @@ class ShadowModeProcessor:
         """
         Mark a response as processed.
 
-        Updates both in-memory cache and persists to repository if configured.
+        Persists to repository first (if configured), then updates in-memory cache.
+        This ensures memory and persistent state remain consistent.
 
         Args:
             question_id: The question ID to mark
         """
-        if question_id in self._responses:
-            self._responses[question_id].status = ShadowStatus.APPROVED
-
-        # Persist status change to repository if configured
+        # Persist status change to repository first if configured
         if self.repository is not None:
             try:
                 self.repository.update_response(
@@ -297,6 +295,12 @@ class ShadowModeProcessor:
                 )
             except Exception:
                 logger.exception(f"Failed to persist APPROVED status for {question_id}")
+                # Don't update in-memory cache if persistence failed
+                return
+
+        # Update in-memory cache only after successful persistence (or if no repo)
+        if question_id in self._responses:
+            self._responses[question_id].status = ShadowStatus.APPROVED
 
     @classmethod
     def is_support_staff(cls, sender: str, staff_list: list[str] | None = None) -> bool:

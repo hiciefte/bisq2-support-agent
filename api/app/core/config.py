@@ -260,11 +260,17 @@ class Settings(BaseSettings):
             )
 
         credential = provider_credentials[provider]
-        if not credential and provider != "ollama":
-            raise ValueError(
-                f"{provider.upper()}_API_KEY is required but not set. "
-                f"Please configure the API key for {provider} provider."
-            )
+        if not credential:
+            if provider == "ollama":
+                raise ValueError(
+                    "OLLAMA_API_URL is required but not set when using Ollama provider. "
+                    "Please configure the Ollama server URL."
+                )
+            else:
+                raise ValueError(
+                    f"{provider.upper()}_API_KEY is required but not set. "
+                    f"Please configure the API key for {provider} provider."
+                )
 
         return credential
 
