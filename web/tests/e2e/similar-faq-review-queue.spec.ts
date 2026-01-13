@@ -91,10 +91,22 @@ test.describe("Similar FAQ Review Queue", () => {
     });
 
     test.beforeEach(async ({ page }) => {
-        // Navigate to the FAQ management page
-        await page.goto(`${WEB_BASE_URL}/admin/manage-faqs`);
-        // Wait for the page to be fully loaded
-        await page.waitForSelector("h1:has-text('FAQ Management')");
+        // Navigate to admin page
+        await page.goto(`${WEB_BASE_URL}/admin`);
+
+        // Wait for login form
+        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+
+        // Login with admin API key
+        await page.fill('input[type="password"]', ADMIN_API_KEY);
+        await page.click('button:has-text("Login")');
+
+        // Wait for authenticated UI
+        await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
+
+        // Navigate to FAQ management
+        await page.click('a[href="/admin/manage-faqs"]');
+        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
     });
 
     test("review queue is hidden when no pending items", async ({ page }) => {

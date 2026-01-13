@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from app.core.config import Settings
 from app.models.shadow_response import ShadowResponse, ShadowStatus
@@ -21,8 +21,9 @@ class ShadowModeProcessor:
     This class focuses on storing and managing shadow responses.
     """
 
-    # Official support staff from https://bisq.wiki/Support_Agent
-    SUPPORT_STAFF = [
+    # Default support staff from https://bisq.wiki/Support_Agent
+    # Can be overridden via KNOWN_SUPPORT_STAFF env var
+    DEFAULT_SUPPORT_STAFF: ClassVar[list[str]] = [
         "darawhelan",  # @darawhelan:matrix.org
         "luis3672",  # @luis3672:matrix.org
         "mwithm",  # @mwithm:matrix.org (MnM)
@@ -165,6 +166,8 @@ class ShadowModeProcessor:
                 synthesized_question=sanitized_question,
                 detected_version=normalized_version,
                 version_confidence=version_confidence,
+                clarifying_question=clarifying_question,  # Preserve version uncertainty
+                requires_clarification=clarifying_question is not None,
                 generated_response=None,  # RAG deferred until version confirmation
                 sources=[],  # Empty until RAG is called
                 status=ShadowStatus.PENDING_VERSION_REVIEW,
@@ -200,8 +203,8 @@ class ShadowModeProcessor:
 
             return response
 
-        except Exception as e:
-            logger.error(f"Error processing question {question_id}: {e}")
+        except Exception:
+            logger.exception(f"Error processing question {question_id}")
             return None
 
     def get_response(self, question_id: str) -> Optional[ShadowResponse]:
@@ -239,25 +242,36 @@ class ShadowModeProcessor:
         if question_id in self._responses:
             self._responses[question_id].status = ShadowStatus.APPROVED
 
-    @staticmethod
-    def is_support_staff(sender: str) -> bool:
+    @classmethod
+    def is_support_staff(cls, sender: str, staff_list: list[str] | None = None) -> bool:
         """
-        Check if sender is a support staff member.
+        Check if sender is a support staff member using exact localpart matching.
 
         Args:
             sender: Matrix user ID (e.g., @username:server.com)
+            staff_list: Optional list of staff usernames to check against.
+                       If None, uses DEFAULT_SUPPORT_STAFF.
 
         Returns:
             True if sender is support staff
         """
-        sender_lower = sender.lower()
-        for staff in ShadowModeProcessor.SUPPORT_STAFF:
-            if staff.lower() in sender_lower:
-                return True
-        return False
+        if staff_list is None:
+            staff_list = cls.DEFAULT_SUPPORT_STAFF
 
-    @staticmethod
-    def is_support_question(body: str, sender: str = "") -> bool:
+        # Extract localpart from Matrix ID (e.g., "@luis3672:matrix.org" -> "luis3672")
+        localpart = sender.lower()
+        if localpart.startswith("@"):
+            localpart = localpart[1:]  # Remove leading @
+        if ":" in localpart:
+            localpart = localpart.split(":")[0]  # Remove server part
+
+        # Exact match against staff list (no substring matching)
+        return localpart in [s.lower() for s in staff_list]
+
+    @classmethod
+    def is_support_question(
+        cls, body: str, sender: str = "", staff_list: list[str] | None = None
+    ) -> bool:
         """
         Check if a message is a support question that should be processed.
 
@@ -268,12 +282,13 @@ class ShadowModeProcessor:
         Args:
             body: Message body text
             sender: Matrix user ID (e.g., @username:server.com)
+            staff_list: Optional list of staff usernames to check against.
 
         Returns:
             True if message should be treated as a support question
         """
         # Filter out staff messages
-        if sender and ShadowModeProcessor.is_support_staff(sender):
+        if sender and cls.is_support_staff(sender, staff_list):
             return False
 
         # Skip empty messages

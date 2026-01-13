@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,8 +30,8 @@ from app.services.llm_extraction.models import ExtractedQuestion, ExtractionResu
 
 logger = logging.getLogger(__name__)
 
-# Known support staff identifiers
-KNOWN_SUPPORT_STAFF = [
+# Default support staff identifiers (fallback if settings not configured)
+DEFAULT_SUPPORT_STAFF = [
     "darawhelan",
     "luis3672",
     "mwithm",
@@ -255,8 +256,8 @@ class UnifiedBatchProcessor:
         self.settings = settings
 
         # Bounded in-memory cache (message_set_hash -> ExtractionResult)
-        # Uses FIFO eviction when cache exceeds max size
-        self._cache: Dict[str, tuple[ExtractionResult, float]] = {}
+        # Uses OrderedDict for O(1) FIFO eviction when cache exceeds max size
+        self._cache: OrderedDict[str, tuple[ExtractionResult, float]] = OrderedDict()
         self._cache_ttl = settings.LLM_EXTRACTION_CACHE_TTL
         # Use configured cache size with validation (must be positive int)
         cache_size = getattr(settings, "LLM_EXTRACTION_CACHE_SIZE", 100)
@@ -293,7 +294,11 @@ class UnifiedBatchProcessor:
                 if ":" in localpart:
                     localpart = localpart.split(":")[0]  # Remove server part
 
-                is_staff = localpart in [s.lower() for s in KNOWN_SUPPORT_STAFF]
+                # Use settings for staff list (falls back to DEFAULT_SUPPORT_STAFF)
+                staff_list = getattr(
+                    self.settings, "KNOWN_SUPPORT_STAFF", DEFAULT_SUPPORT_STAFF
+                )
+                is_staff = localpart in [s.lower() for s in staff_list]
 
                 if is_staff:
                     anon_id = f"Staff_{staff_counter}"
@@ -804,8 +809,9 @@ Extract user questions only (ignore messages from staff identifiers above).""",
 
     def _add_to_cache(self, cache_key: str, result: ExtractionResult) -> None:
         """
-        Add result to cache with FIFO eviction when cache exceeds max size.
+        Add result to cache with O(1) FIFO eviction when cache exceeds max size.
 
+        Uses OrderedDict.popitem(last=False) for O(1) removal of oldest entry.
         Note: This uses insertion-time-based eviction (FIFO), not true LRU.
         For a cache with TTL-based expiration, FIFO is sufficient.
 
@@ -813,11 +819,9 @@ Extract user questions only (ignore messages from staff identifiers above).""",
             cache_key: Cache key
             result: Extraction result
         """
-        # Evict oldest entries (by insertion time) if cache is full
+        # O(1) eviction: remove oldest entries using OrderedDict.popitem(last=False)
         while len(self._cache) >= self._cache_max_size:
-            # Find oldest entry by cached_time
-            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
-            del self._cache[oldest_key]
+            oldest_key, _ = self._cache.popitem(last=False)
             logger.debug(f"Cache eviction: removed {oldest_key[:16]}...")
 
         self._cache[cache_key] = (result, time.time())

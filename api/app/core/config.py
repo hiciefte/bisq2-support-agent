@@ -152,6 +152,11 @@ class Settings(BaseSettings):
 
     # Support agent configuration
     SUPPORT_AGENT_NICKNAMES: str | list[str] = ""  # Comma-separated or list (required)
+    # Known support staff usernames for message filtering (Matrix localparts without @ or :server)
+    KNOWN_SUPPORT_STAFF: str | list[str] = Field(
+        default="darawhelan,luis3672,mwithm,pazza83,strayorigin,suddenwhipvapor",
+        description="Comma-separated list of support staff Matrix usernames (localparts only)",
+    )
 
     # Environment settings
     ENVIRONMENT: str = "development"
@@ -475,6 +480,40 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             # Split by comma, trim whitespace, filter empty entries
             return [nickname.strip() for nickname in v.split(",") if nickname.strip()]
+
+        # Fallback for unexpected types
+        return []
+
+    @field_validator("KNOWN_SUPPORT_STAFF", mode="before")
+    @classmethod
+    def parse_known_support_staff(cls, v: str | list[str]) -> list[str]:
+        """Normalize KNOWN_SUPPORT_STAFF to list of usernames.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles trimming whitespace and ignores empty entries.
+        Converts to lowercase for case-insensitive matching.
+
+        Args:
+            v: Support staff usernames as string (comma-separated) or list of strings
+
+        Returns:
+            List of support staff usernames (lowercase, trimmed)
+        """
+        # Handle list input
+        if isinstance(v, list):
+            return [
+                username.strip().lower()
+                for username in v
+                if isinstance(username, str) and username.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            return [
+                username.strip().lower()
+                for username in v.split(",")
+                if username.strip()
+            ]
 
         # Fallback for unexpected types
         return []
