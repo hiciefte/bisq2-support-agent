@@ -23,14 +23,17 @@ class ShadowModeProcessor:
 
     # Default support staff from https://bisq.wiki/Support_Agent
     # Can be overridden via KNOWN_SUPPORT_STAFF env var
-    DEFAULT_SUPPORT_STAFF: ClassVar[list[str]] = [
-        "darawhelan",  # @darawhelan:matrix.org
-        "luis3672",  # @luis3672:matrix.org
-        "mwithm",  # @mwithm:matrix.org (MnM)
-        "pazza83",  # @pazza83:matrix.org
-        "strayorigin",  # @strayorigin:matrix.org
-        "suddenwhipvapor",  # @suddenwhipvapor:matrix.org
-    ]
+    # Pre-lowercased frozenset for O(1) lookups without repeated list creation
+    DEFAULT_SUPPORT_STAFF: ClassVar[frozenset[str]] = frozenset(
+        {
+            "darawhelan",  # @darawhelan:matrix.org
+            "luis3672",  # @luis3672:matrix.org
+            "mwithm",  # @mwithm:matrix.org (MnM)
+            "pazza83",  # @pazza83:matrix.org
+            "strayorigin",  # @strayorigin:matrix.org
+            "suddenwhipvapor",  # @suddenwhipvapor:matrix.org
+        }
+    )
 
     def __init__(
         self,
@@ -107,13 +110,13 @@ class ShadowModeProcessor:
             if context_messages:
                 # Filter to same-user messages only (GDPR compliance)
                 filtered_context = []
+                # Pre-compute sender's anonymized ID outside loop for efficiency
+                sender_anon_id = self._anonymize_sender(sender or "")
                 for ctx_msg in context_messages:
                     ctx_sender = ctx_msg.get("sender", "")
 
                     # Skip bystander messages (not from the current sender)
-                    if self._anonymize_sender(ctx_sender) != self._anonymize_sender(
-                        sender
-                    ):
+                    if self._anonymize_sender(ctx_sender) != sender_anon_id:
                         logger.debug(
                             f"Skipping bystander context: message_id={ctx_msg.get('event_id', 'unknown')}"
                         )
@@ -195,8 +198,8 @@ class ShadowModeProcessor:
             # Track question hash for duplicate detection (with size limit)
             question_hash = self._hash_question(sanitized_question)
             if len(self._question_hashes) >= self._max_question_hashes:
-                # Remove oldest entries (clear half to avoid frequent clearing)
-                # Note: set doesn't preserve order, so we clear entirely
+                # Clear entire set - Python sets don't preserve insertion order
+                # so selective removal isn't possible without additional tracking
                 logger.warning(
                     f"Question hash cache reached limit ({self._max_question_hashes}), clearing"
                 )
@@ -219,36 +222,81 @@ class ShadowModeProcessor:
         """
         Get a stored response by ID.
 
+        Checks in-memory cache first, then falls back to repository if configured.
+        This ensures responses are retrievable even after a process restart.
+
         Args:
             question_id: The question ID to retrieve
 
         Returns:
             ShadowResponse if found, None otherwise
         """
-        return self._responses.get(question_id)
+        # Check in-memory cache first
+        response = self._responses.get(question_id)
+        if response is not None:
+            return response
+
+        # Fall back to repository if configured
+        if self.repository is not None:
+            response = self.repository.get_response(question_id)
+            if response is not None:
+                # Cache in memory for future lookups
+                self._responses[question_id] = response
+            return response
+
+        return None
 
     def get_pending_responses(self) -> List[ShadowResponse]:
         """
         Get all unprocessed responses awaiting review.
 
+        Queries both in-memory cache and repository if configured.
+        Merges results to ensure admin review queue is complete after restarts.
+
         Returns:
             List of unprocessed ShadowResponses
         """
-        return [
-            r
+        # Get in-memory pending responses
+        pending = {
+            r.id: r
             for r in self._responses.values()
             if r.status == ShadowStatus.PENDING_VERSION_REVIEW
-        ]
+        }
+
+        # Merge with repository responses if configured
+        if self.repository is not None:
+            # Query repository for pending responses
+            repo_pending = self.repository.get_responses(
+                status=ShadowStatus.PENDING_VERSION_REVIEW.value, limit=1000
+            )
+            for response in repo_pending:
+                if response.id not in pending:
+                    pending[response.id] = response
+                    # Also cache in memory for future lookups
+                    self._responses[response.id] = response
+
+        return list(pending.values())
 
     def mark_as_processed(self, question_id: str) -> None:
         """
         Mark a response as processed.
+
+        Updates both in-memory cache and persists to repository if configured.
 
         Args:
             question_id: The question ID to mark
         """
         if question_id in self._responses:
             self._responses[question_id].status = ShadowStatus.APPROVED
+
+        # Persist status change to repository if configured
+        if self.repository is not None:
+            try:
+                self.repository.update_response(
+                    question_id, {"status": ShadowStatus.APPROVED.value}
+                )
+            except Exception:
+                logger.exception(f"Failed to persist APPROVED status for {question_id}")
 
     @classmethod
     def is_support_staff(cls, sender: str, staff_list: list[str] | None = None) -> bool:
@@ -263,8 +311,11 @@ class ShadowModeProcessor:
         Returns:
             True if sender is support staff
         """
+        # Use pre-lowercased default or convert provided list to set for O(1) lookup
         if staff_list is None:
-            staff_list = cls.DEFAULT_SUPPORT_STAFF
+            staff_set = cls.DEFAULT_SUPPORT_STAFF
+        else:
+            staff_set = frozenset(s.lower() for s in staff_list)
 
         # Extract localpart from Matrix ID (e.g., "@luis3672:matrix.org" -> "luis3672")
         localpart = sender.lower()
@@ -273,8 +324,8 @@ class ShadowModeProcessor:
         if ":" in localpart:
             localpart = localpart.split(":")[0]  # Remove server part
 
-        # Exact match against staff list (no substring matching)
-        return localpart in [s.lower() for s in staff_list]
+        # Exact match against staff set (O(1) lookup)
+        return localpart in staff_set
 
     @classmethod
     def is_support_question(
@@ -433,11 +484,20 @@ class ShadowModeProcessor:
                 text,
             )
 
-            # Remove potential Bitcoin addresses
+            # Remove potential Bitcoin addresses (legacy P2PKH/P2SH and SegWit/Taproot)
+            # Legacy addresses: start with 1 or 3, base58 charset, 25-34 chars
             text = re.sub(
                 r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
                 "[BTC_ADDRESS]",
                 text,
+            )
+            # Native SegWit (bc1q) and Taproot (bc1p) addresses: bech32/bech32m
+            # bc1q: 42-62 chars total, bc1p: 62 chars total
+            text = re.sub(
+                r"\bbc1[qp][a-z0-9]{38,58}\b",
+                "[BTC_ADDRESS]",
+                text,
+                flags=re.IGNORECASE,
             )
 
             # Bisq-specific PII patterns
@@ -452,10 +512,10 @@ class ShadowModeProcessor:
             # Offer IDs (numeric with # prefix: #98590482)
             text = re.sub(r"#\d{8,}", "[OFFER_ID]", text)
 
-            # Matrix user mentions (@username:matrix.org)
+            # Matrix user mentions (@username:homeserver) - generic pattern for any homeserver
             text = re.sub(
-                r"@[^:]+:matrix\.org",
-                "@[USER]:matrix.org",
+                r"@[^:\s]+:[^\s]+",
+                "@[USER]:[HOMESERVER]",
                 text,
             )
 

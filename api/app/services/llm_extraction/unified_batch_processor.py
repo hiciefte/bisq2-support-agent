@@ -482,6 +482,16 @@ class UnifiedBatchProcessor:
             )
 
             # Step 6: Parse JSON response
+            # Defensive check for empty choices (LLM API may return empty list)
+            if not response.choices:
+                logger.error("LLM returned response with no choices")
+                return ExtractionResult(
+                    conversation_id=f"{room_id}_no_choices",
+                    questions=[],
+                    conversations=[],
+                    total_messages=len(messages),
+                    processing_time_ms=int((time.time() - start_time) * 1000),
+                )
             response_text = response.choices[0].message.content or ""
             logger.debug(
                 f"LLM response (first 500 chars): {response_text[:500] if response_text else '(empty)'}"
@@ -578,11 +588,23 @@ class UnifiedBatchProcessor:
                         anon_sender = q_data.get("sender", "Unknown")
                         real_sender = anon_to_real.get(anon_sender, anon_sender)
 
+                        # Safely extract question fields with validation
+                        question_text = q_data.get("question_text")
+                        question_type = q_data.get("question_type")
+
+                        # Skip malformed entries missing required fields
+                        if not question_text or not question_type:
+                            logger.warning(
+                                f"Skipping malformed question entry (missing required fields): "
+                                f"event_id={msg_event_id}, sender={anon_sender}"
+                            )
+                            continue
+
                         # Create ExtractedQuestion with real username restored and event_id mapped
                         question = ExtractedQuestion(
                             message_id=msg_event_id,  # Mapped from message_number
-                            question_text=q_data["question_text"],
-                            question_type=q_data["question_type"],
+                            question_text=question_text,
+                            question_type=question_type,
                             confidence=q_data.get("confidence", 0.0),
                             sender=real_sender,  # Real username for shadow mode queue
                         )
@@ -592,7 +614,7 @@ class UnifiedBatchProcessor:
 
                         logger.debug(
                             f"Extracted question from {anon_sender}: "
-                            f"{q_data['question_text'][:50]}..."
+                            f"{question_text[:50]}..."
                         )
 
             # Count question types for debugging
