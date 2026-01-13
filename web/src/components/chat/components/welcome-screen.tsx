@@ -27,8 +27,8 @@ export const WelcomeScreen = ({ formattedAvgTime }: WelcomeScreenProps) => {
             <p className="text-sm text-muted-foreground text-center max-w-sm mb-8">
                 Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes
                 about {formattedAvgTime} to answer, but the wait&#39;s worth it. Picture a
-                caffeinated gremlin strapped to spare toaster parts, here to solve your Bisq 2
-                questions!
+                caffeinated gremlin strapped to spare toaster parts, here to tackle your Bisq
+                questions across both versions and all trade protocols!
             </p>
         </div>
     )

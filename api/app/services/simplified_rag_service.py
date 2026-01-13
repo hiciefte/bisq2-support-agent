@@ -21,12 +21,18 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.rag.auto_send_router import AutoSendRouter
+from app.services.rag.confidence_scorer import ConfidenceScorer
+from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.llm_provider import LLMProvider
+from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
+from app.services.rag.version_detector import VersionDetector
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -110,6 +116,16 @@ class SimplifiedRAGService:
 
         # Initialize lock for rebuild serialization to prevent concurrent rebuilds
         self._setup_lock = asyncio.Lock()
+
+        # Initialize confidence scoring components
+        self.nli_validator = NLIValidator()
+        self.confidence_scorer = ConfidenceScorer(self.nli_validator)
+        self.auto_send_router = AutoSendRouter()
+
+        # Initialize Phase 1 components
+        self.version_detector = VersionDetector()
+        self.empathy_detector = EmpathyDetector()
+        self.conversation_state_manager = ConversationStateManager()
 
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
@@ -197,16 +213,21 @@ class SimplifiedRAGService:
         self.llm = self.llm_provider.initialize_llm()
 
     @instrument_stage("retrieval")
-    def _retrieve_with_version_priority(self, query: str) -> List[Document]:
+    def _retrieve_with_version_priority(
+        self, query: str, detected_version: str | None = None
+    ) -> List[Document]:
         """Delegate to document retriever for version-aware retrieval.
 
         Args:
             query: The search query
+            detected_version: Optional explicitly detected version to pass through
 
         Returns:
             List of documents prioritized by version relevance
         """
-        return self.document_retriever.retrieve_with_version_priority(query)
+        return self.document_retriever.retrieve_with_version_priority(
+            query, detected_version
+        )
 
     def _format_docs(self, docs: List[Document]) -> str:
         """Delegate to document retriever for document formatting.
@@ -527,7 +548,10 @@ class SimplifiedRAGService:
             }
 
     async def query(
-        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+        self,
+        question: str,
+        chat_history: List[Union[Dict[str, str], Any]],
+        override_version: Optional[str] = None,
     ) -> dict:
         """Process a query and return a response with metadata.
 
@@ -535,6 +559,7 @@ class SimplifiedRAGService:
             question: The query to process
             chat_history: List of either dictionaries containing chat messages with 'role' and 'content' keys,
                         or objects with role and content attributes
+            override_version: Optional version to use instead of auto-detection (for Shadow Mode)
 
         Returns:
             Dict containing:
@@ -564,9 +589,71 @@ class SimplifiedRAGService:
             # Preprocess the question
             preprocessed_question = question.strip()
 
+            # Detect version from question and chat history (unless overridden)
+            if override_version:
+                detected_version = override_version
+                version_confidence = 1.0  # Override has 100% confidence
+                clarifying_question = None
+                logger.info(
+                    f"Using override version: {detected_version} (Shadow Mode confirmed)"
+                )
+            else:
+                detected_version, version_confidence, clarifying_question = (
+                    await self.version_detector.detect_version(
+                        preprocessed_question, chat_history
+                    )
+                )
+                logger.info(
+                    f"Detected version: {detected_version} (confidence: {version_confidence:.2f})"
+                )
+
+                # If clarifying question needed and confidence is low, return it immediately
+                if clarifying_question and version_confidence < 0.5:
+                    logger.info(
+                        f"Requesting clarification from user: {clarifying_question[:50]}..."
+                    )
+                    return {
+                        "answer": clarifying_question,
+                        "sources": [],
+                        "response_time": time.time() - start_time,
+                        "needs_clarification": True,
+                        "detected_version": detected_version,
+                        "version_confidence": version_confidence,
+                        "routing_action": "needs_clarification",
+                        "forwarded_to_human": False,
+                        "feedback_created": False,
+                    }
+
+            # Detect emotional state for empathetic response
+            emotion, emotion_intensity = await self.empathy_detector.detect_emotion(
+                preprocessed_question
+            )
+            response_modifier = self.empathy_detector.get_response_modifier(
+                emotion, emotion_intensity
+            )
+            if response_modifier:
+                logger.info(
+                    f"Detected emotion: {emotion} (intensity: {emotion_intensity:.2f})"
+                )
+
+            # Update conversation state
+            conv_id = self.conversation_state_manager.generate_conversation_id(
+                chat_history
+            )
+            self.conversation_state_manager.update_state(
+                conv_id,
+                detected_version=detected_version,
+                version_confidence=version_confidence,
+            )
+
             # Get relevant documents with version priority
-            docs = self._retrieve_with_version_priority(preprocessed_question)
-            logger.info(f"Retrieved {len(docs)} relevant documents")
+            # Pass detected_version to ensure correct version-specific retrieval
+            docs = self._retrieve_with_version_priority(
+                preprocessed_question, detected_version
+            )
+            logger.info(
+                f"Retrieved {len(docs)} relevant documents (for version: {detected_version})"
+            )
 
             # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
@@ -654,10 +741,11 @@ class SimplifiedRAGService:
                             "title": doc.metadata.get("title", "Unknown"),
                             "type": "wiki",
                             "content": (
-                                doc.page_content[:200] + "..."
-                                if len(doc.page_content) > 200
+                                doc.page_content[:500] + "..."
+                                if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
+                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
@@ -666,15 +754,31 @@ class SimplifiedRAGService:
                             "title": doc.metadata.get("title", "Unknown"),
                             "type": "faq",
                             "content": (
-                                doc.page_content[:200] + "..."
-                                if len(doc.page_content) > 200
+                                doc.page_content[:500] + "..."
+                                if len(doc.page_content) > 500
                                 else doc.page_content
                             ),
+                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
 
             # Deduplicate sources
             sources = self._deduplicate_sources(sources)
+
+            # Calculate confidence score
+            confidence = await self.confidence_scorer.calculate_confidence(
+                answer=response_text,
+                sources=docs,
+                question=preprocessed_question,
+            )
+
+            # Get routing decision based on confidence
+            routing_action = await self.auto_send_router.route_response(
+                confidence=confidence,
+                question=preprocessed_question,
+                answer=response_text,
+                sources=docs,
+            )
 
             # Update error rate (success)
             update_error_rate(is_error=False)
@@ -684,8 +788,14 @@ class SimplifiedRAGService:
                 "sources": sources,
                 "response_time": response_time,
                 "answered_from": "documents",  # Metadata flag
-                "forwarded_to_human": False,
+                "forwarded_to_human": routing_action.queue_for_review,
                 "feedback_created": False,
+                "confidence": confidence,
+                "routing_action": routing_action.action,
+                "detected_version": detected_version,
+                "version_confidence": version_confidence,
+                "emotion": emotion,
+                "emotion_intensity": emotion_intensity,
             }
 
         except Exception as e:
@@ -703,6 +813,115 @@ class SimplifiedRAGService:
                 "forwarded_to_human": False,
                 "feedback_created": False,
             }
+
+    async def search_faq_similarity(
+        self,
+        question: str,
+        threshold: float = 0.65,
+        limit: int = 5,
+        exclude_id: Optional[int] = None,
+        timeout: float = 5.0,
+    ) -> List[Dict[str, Any]]:
+        """Search for similar FAQs using vector similarity.
+
+        Uses ChromaDB similarity_search_with_score to find FAQs semantically
+        similar to the given question. Only searches FAQ documents (excludes wiki).
+
+        Args:
+            question: The question to find similar FAQs for
+            threshold: Minimum similarity score (0.0-1.0). Default 0.65 (65%)
+            limit: Maximum number of results to return. Default 5
+            exclude_id: FAQ ID to exclude from results (for edit mode). Default None
+            timeout: Maximum time to wait for search in seconds. Default 5.0
+
+        Returns:
+            List of similar FAQs sorted by similarity (highest first), each with:
+            - id: FAQ ID
+            - question: FAQ question text
+            - answer: FAQ answer (truncated to 200 chars)
+            - similarity: Similarity score (0.0-1.0)
+            - category: FAQ category (or None)
+            - protocol: Trade protocol (or None)
+
+        Notes:
+            - Uses filter={"type": "faq"} to exclude wiki documents
+            - Converts ChromaDB distance to similarity: 1 - (distance / 2)
+            - Over-fetches by 2x to ensure enough results after filtering
+            - Returns empty list on errors (graceful degradation)
+        """
+        # Return empty list if vectorstore not initialized
+        if self.vectorstore is None:
+            logger.warning(
+                "Vector store not initialized, cannot search for similar FAQs"
+            )
+            return []
+
+        try:
+            # Over-fetch by 2x to ensure enough results after filtering
+            k = limit * 2
+
+            # Execute similarity search with timeout
+            try:
+                # Run the synchronous ChromaDB search in a thread pool with timeout
+                loop = asyncio.get_event_loop()
+                search_results = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.vectorstore.similarity_search_with_score(
+                            question,
+                            k=k,
+                            filter={"type": "faq"},
+                        ),
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"FAQ similarity search timed out after {timeout}s")
+                return []
+
+            # Process results
+            similar_faqs = []
+            for doc, distance in search_results:
+                # Convert ChromaDB L2 distance to similarity score
+                # ChromaDB uses L2 distance where lower = more similar
+                # Formula: similarity = 1 - (distance / 2)
+                # This maps distance 0 -> similarity 1.0, distance 2 -> similarity 0.0
+                similarity = 1 - (distance / 2)
+
+                # Skip if below threshold
+                if similarity < threshold:
+                    continue
+
+                # Get FAQ ID from metadata
+                faq_id = doc.metadata.get("id")
+
+                # Skip if this is the excluded ID
+                if exclude_id is not None and faq_id == exclude_id:
+                    continue
+
+                # Truncate answer to 200 characters
+                answer = doc.metadata.get("answer", "")
+                if len(answer) > 200:
+                    answer = answer[:200]
+
+                similar_faqs.append(
+                    {
+                        "id": faq_id,
+                        "question": doc.metadata.get("question", ""),
+                        "answer": answer,
+                        "similarity": similarity,
+                        "category": doc.metadata.get("category"),
+                        "protocol": doc.metadata.get("protocol"),
+                    }
+                )
+
+            # Sort by similarity (highest first) and limit results
+            similar_faqs.sort(key=lambda x: x["similarity"], reverse=True)
+            return similar_faqs[:limit]
+
+        except Exception as e:
+            logger.error(f"Error searching for similar FAQs: {e}", exc_info=True)
+            return []
 
     def _deduplicate_sources(
         self, sources: List[Dict[str, Any]]

@@ -20,11 +20,11 @@ def mock_bisq1_documents():
     return [
         Document(
             page_content="In Bisq 1, you can request mediation by clicking the 'Request Mediation' button in the dispute section.",
-            metadata={"bisq_version": "Bisq 1", "source": "wiki"},
+            metadata={"protocol": "multisig_v1", "source": "wiki"},
         ),
         Document(
             page_content="Bisq 1 uses a different mediation process than Bisq 2.",
-            metadata={"bisq_version": "Bisq 1", "source": "wiki"},
+            metadata={"protocol": "multisig_v1", "source": "wiki"},
         ),
     ]
 
@@ -35,11 +35,11 @@ def mock_bisq2_documents():
     return [
         Document(
             page_content="In Bisq 2, you can request mediation by selecting the 'request mediation' link on the trade screen.",
-            metadata={"bisq_version": "Bisq 2", "source": "wiki"},
+            metadata={"protocol": "bisq_easy", "source": "wiki"},
         ),
         Document(
             page_content="Bisq 2 has an improved mediation system with faster resolution times.",
-            metadata={"bisq_version": "Bisq 2", "source": "wiki"},
+            metadata={"protocol": "bisq_easy", "source": "wiki"},
         ),
     ]
 
@@ -50,7 +50,7 @@ def mock_general_documents():
     return [
         Document(
             page_content="Mediation is a process where a third party helps resolve disputes between traders.",
-            metadata={"bisq_version": "General", "source": "wiki"},
+            metadata={"protocol": "all", "source": "wiki"},
         )
     ]
 
@@ -379,16 +379,16 @@ class TestDocumentRetrieverVersionPriority:
         retriever.retrieve_with_version_priority(query)
 
         # Assert
-        # Check that Bisq 1 was searched with k=4 (explicit request) not k=2 (fallback)
+        # Check that multisig_v1 was searched with k=4 (explicit request) not k=2 (fallback)
         calls = mock_vectorstore.similarity_search.call_args_list
-        bisq1_calls = [
+        multisig_calls = [
             call
             for call in calls
-            if call[1].get("filter", {}).get("bisq_version") == "Bisq 1"
+            if call[1].get("filter", {}).get("protocol") == "multisig_v1"
         ]
 
-        if bisq1_calls:
-            assert bisq1_calls[0][1]["k"] == 4  # Explicit Bisq 1 request should use k=4
+        assert multisig_calls, "Expected a multisig_v1 retrieval call"
+        assert multisig_calls[0][1]["k"] == 4  # Explicit Bisq 1 request should use k=4
 
     def test_bisq2_priority_maintained(self, test_settings):
         """Test that Bisq 2 priority is maintained for ambiguous queries.
@@ -401,16 +401,19 @@ class TestDocumentRetrieverVersionPriority:
         mock_vectorstore = Mock()
         mock_vectorstore.similarity_search = Mock(return_value=[])
 
-        retriever = DocumentRetriever(mock_vectorstore, test_settings)
+        # Create mock retriever that implements minimal interface
+        mock_retriever = Mock()
+
+        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
 
         # Act
         query = "How do I start a trade?"
         retriever.retrieve_with_version_priority(query)
 
         # Assert
-        # First call should be for Bisq 2 (Stage 1)
+        # First call should be for bisq_easy (Stage 1)
         first_call = mock_vectorstore.similarity_search.call_args_list[0]
-        assert first_call[1].get("filter", {}).get("bisq_version") == "Bisq 2"
+        assert first_call[1].get("filter", {}).get("protocol") == "bisq_easy"
 
     def test_bisq1_only_query_skips_bisq2_stage(self, test_settings):
         """Test that pure Bisq 1 queries can skip Bisq 2 retrieval.
@@ -422,27 +425,27 @@ class TestDocumentRetrieverVersionPriority:
         # Arrange
         mock_vectorstore = Mock()
 
-        # Create different documents for each version
-        bisq2_docs = [
-            Document(page_content="Bisq 2 content", metadata={"bisq_version": "Bisq 2"})
+        # Create different documents for each protocol
+        bisq_easy_docs = [
+            Document(page_content="Bisq 2 content", metadata={"protocol": "bisq_easy"})
         ]
-        general_docs = [
+        all_docs = [
+            Document(page_content="General content", metadata={"protocol": "all"})
+        ]
+        multisig_docs = [
             Document(
-                page_content="General content", metadata={"bisq_version": "General"}
+                page_content="Bisq 1 content", metadata={"protocol": "multisig_v1"}
             )
-        ]
-        bisq1_docs = [
-            Document(page_content="Bisq 1 content", metadata={"bisq_version": "Bisq 1"})
         ]
 
         def mock_similarity_search(_query, k, filter):
-            version = filter.get("bisq_version")
-            if version == "Bisq 2":
-                return bisq2_docs[:k]
-            elif version == "General":
-                return general_docs[:k]
-            elif version == "Bisq 1":
-                return bisq1_docs[:k]
+            protocol = filter.get("protocol")
+            if protocol == "bisq_easy":
+                return bisq_easy_docs[:k]
+            elif protocol == "all":
+                return all_docs[:k]
+            elif protocol == "multisig_v1":
+                return multisig_docs[:k]
             return []
 
         mock_vectorstore.similarity_search = Mock(side_effect=mock_similarity_search)
@@ -457,18 +460,18 @@ class TestDocumentRetrieverVersionPriority:
         docs = retriever.retrieve_with_version_priority(query)
 
         # Assert
-        # The retrieval should include Bisq 1 documents
-        assert any(doc.metadata.get("bisq_version") == "Bisq 1" for doc in docs)
+        # The retrieval should include multisig_v1 (Bisq 1) documents
+        assert any(doc.metadata.get("protocol") == "multisig_v1" for doc in docs)
 
-        # Ensure no Bisq 2 retrieval occurred for pure Bisq 1 query
-        bisq2_calls = [
+        # Ensure no bisq_easy retrieval occurred for pure Bisq 1 query
+        bisq_easy_calls = [
             c
             for c in mock_vectorstore.similarity_search.call_args_list
-            if c.kwargs.get("filter", {}).get("bisq_version") == "Bisq 2"
+            if c.kwargs.get("filter", {}).get("protocol") == "bisq_easy"
         ]
         assert (
-            len(bisq2_calls) == 0
-        ), "Bisq 2 stage should be skipped for pure Bisq 1 queries"
+            len(bisq_easy_calls) == 0
+        ), "Bisq Easy stage should be skipped for pure Bisq 1 queries"
 
 
 class TestEdgeCases:

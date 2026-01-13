@@ -148,25 +148,40 @@ class PromptManager:
                 )
                 logger.info(f"Added prompt guidance: {guidance_text}")
 
-        # Custom system template with version-aware conditional logic
-        system_template = f"""You are a support assistant primarily focused on Bisq 2, but with knowledge of Bisq 1 when relevant.
+        # Custom system template with protocol-aware conditional logic
+        system_template = f"""You are a support assistant for Bisq, covering both Bisq Easy (the current Bisq 2 protocol) and Multisig v1 (the legacy Bisq 1 protocol).
 
-VERSION HANDLING INSTRUCTIONS:
-Your PRIMARY focus is Bisq 2. When the user doesn't specify a version, assume they're asking about Bisq 2.
+PROTOCOL HANDLING INSTRUCTIONS:
+The question below has been analyzed and categorized. The Context section contains protocol-tagged documents.
+Pay CLOSE ATTENTION to the protocol tags in the context: [Bisq Easy], [Multisig v1], [MuSig], or [General].
 
-1. If the user asks about Bisq 2 (default) or doesn't specify a version:
-   - Prioritize content marked with [VERSION: Bisq 2]
-   - Use content marked with [VERSION: Both] or [VERSION: General] as secondary sources
-   - IGNORE content marked with [VERSION: Bisq 1] unless it provides essential context
+Protocol mapping:
+- [Bisq Easy] = Bisq 2's current trading protocol (reputation-based, no security deposits)
+- [Multisig v1] = Bisq 1's legacy protocol (2-of-2 multisig with security deposits)
+- [MuSig] = Future Bisq 2 protocol (not yet released)
+- [General] = Applies to all protocols
 
-2. If the user explicitly asks about Bisq 1 (mentions "Bisq 1" or "Bisq1"):
-   - First check if you have [VERSION: Bisq 1] or [VERSION: Both] content in the context below
-   - IF YES: Provide the information and add this note: "Note: This information is for Bisq 1. For Bisq 2 support, please ask specifically about Bisq 2."
-   - IF NO: Respond: "I don't have specific information about that for Bisq 1 in my knowledge base. However, I can help you with Bisq 2 questions. Would you like information about Bisq 2 instead, or do you need help finding Bisq 1 resources?"
+1. If MOST documents in the Context are tagged [Multisig v1]:
+   - The user is asking about Bisq 1's multisig protocol
+   - ONLY use [Multisig v1] and [General] content
+   - IGNORE [Bisq Easy] content completely
+   - Add this note: "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2."
 
-3. If the user asks to compare versions or wants information about both:
-   - Use all available content and clearly label which version each piece of information applies to
+2. If MOST documents in the Context are tagged [Bisq Easy]:
+   - The user is asking about Bisq 2's Bisq Easy protocol
+   - ONLY use [Bisq Easy] and [General] content
+   - IGNORE [Multisig v1] content completely
+   - No special note needed (Bisq Easy is current version)
+
+3. If Context contains BOTH [Multisig v1] AND [Bisq Easy] documents:
+   - This is a comparison query
+   - Use all available content and clearly label which protocol each piece applies to
    - Highlight key differences when available
+
+4. If NO relevant documents found:
+   - Say: "I don't have information about that in my knowledge base."
+
+CRITICAL: The protocol tags in Context below are the SOURCE OF TRUTH. Use them to determine which protocol to discuss.
 
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
@@ -200,12 +215,16 @@ Answer:"""
         Returns:
             Prompt string for context-only answering
         """
-        # Detect version from question
+        # Detect protocol from question (Bisq 1 = Multisig v1 protocol)
         question_lower = question.lower()
-        is_bisq1_query = "bisq 1" in question_lower or "bisq1" in question_lower
+        is_multisig_query = (
+            "bisq 1" in question_lower
+            or "bisq1" in question_lower
+            or "multisig" in question_lower
+        )
 
-        if is_bisq1_query:
-            context_only_prompt = f"""You are a support assistant for Bisq. A user has asked a question about Bisq 1, but no relevant documents were found in the knowledge base.
+        if is_multisig_query:
+            context_only_prompt = f"""You are a support assistant for Bisq. A user has asked a question about Bisq 1 (Multisig v1 protocol), but no relevant documents were found in the knowledge base.
 
 IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST inform them appropriately.
 
@@ -215,15 +234,15 @@ Previous Conversation:
 Current Question: {question}
 
 Instructions:
-- If the answer is clearly in the conversation above, provide it with a note: "Note: This information is for Bisq 1."
+- If the answer is clearly in the conversation above, provide it with a note: "Note: This information is for Bisq 1 (Multisig protocol)."
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
-- If this is a NEW topic about Bisq 1 not in the conversation, respond: "I don't have specific information about that for Bisq 1 in my knowledge base. However, I can help you with Bisq 2 questions. Would you like information about Bisq 2 instead, or do you need help finding Bisq 1 resources?"
+- If this is a NEW topic about Bisq 1/Multisig not in the conversation, respond: "I don't have specific information about that for Bisq 1 (Multisig protocol) in my knowledge base. However, I can help you with Bisq 2/Bisq Easy questions. Would you like information about Bisq Easy instead, or do you need help finding Bisq 1 resources?"
 - Keep your answer to 2-3 sentences maximum
 - Use PLAIN TEXT ONLY - do not use markdown formatting
 
 Answer:"""
         else:
-            context_only_prompt = f"""You are a Bisq 2 support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
+            context_only_prompt = f"""You are a Bisq Easy (Bisq 2) support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
 
 IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
 

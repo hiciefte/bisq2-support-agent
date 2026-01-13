@@ -53,7 +53,7 @@ class TestRAGQueryProcessing:
         mock_docs = [
             MagicMock(
                 page_content="Bisq is a decentralized exchange.",
-                metadata={"source": "wiki", "bisq_version": "General"},
+                metadata={"source": "wiki", "protocol": "all"},
             )
         ]
         rag_service.document_retriever.retrieve_with_version_priority.return_value = (
@@ -97,7 +97,7 @@ class TestRAGQueryProcessing:
         mock_docs = [
             MagicMock(
                 page_content="Bisq trading information",
-                metadata={"source": "faq", "bisq_version": "Bisq 2"},
+                metadata={"source": "faq", "protocol": "bisq_easy"},
             )
         ]
         rag_service.document_retriever.retrieve_with_version_priority.return_value = (
@@ -162,9 +162,9 @@ class TestDocumentRetrieval:
         """Test that document retriever handles versioned documents."""
         # Configure mock with versioned documents
         mock_docs = [
-            MagicMock(page_content="Bisq 1", metadata={"bisq_version": "Bisq 1"}),
-            MagicMock(page_content="General", metadata={"bisq_version": "General"}),
-            MagicMock(page_content="Bisq 2", metadata={"bisq_version": "Bisq 2"}),
+            MagicMock(page_content="Bisq 1", metadata={"protocol": "multisig_v1"}),
+            MagicMock(page_content="General", metadata={"protocol": "all"}),
+            MagicMock(page_content="Bisq 2", metadata={"protocol": "bisq_easy"}),
         ]
         rag_service.document_retriever.retrieve_with_version_priority.return_value = (
             mock_docs
@@ -175,7 +175,7 @@ class TestDocumentRetrieval:
             "test query"
         )
         assert len(docs) == 3
-        assert all("bisq_version" in doc.metadata for doc in docs)
+        assert all("protocol" in doc.metadata for doc in docs)
 
     def test_source_type_weighting(self, rag_service):
         """Test that document retriever handles different source types."""
@@ -284,7 +284,7 @@ class TestErrorHandling:
         mock_docs = [
             MagicMock(
                 page_content="Test content",
-                metadata={"source": "wiki", "bisq_version": "General"},
+                metadata={"source": "wiki", "protocol": "all"},
             )
         ]
         rag_service.document_retriever.retrieve_with_version_priority.return_value = (
@@ -373,7 +373,7 @@ class TestDocumentProcessing:
                 metadata={
                     "source": "wiki",
                     "title": "Long Doc",
-                    "bisq_version": "General",
+                    "protocol": "all",
                 },
             )
         ]

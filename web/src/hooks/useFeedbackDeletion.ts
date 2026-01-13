@@ -3,6 +3,7 @@ import { makeAuthenticatedRequest } from '@/lib/auth';
 
 export interface FeedbackItem {
   message_id: string;
+  question: string;
   // Additional dynamic properties from feedback data (requires type checking before use)
   [key: string]: unknown;
 }

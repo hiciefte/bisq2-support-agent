@@ -30,6 +30,8 @@ from typing import Any, Dict, Optional
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API
 from app.services.faq_service import FAQService
+from app.services.simplified_rag_service import SimplifiedRAGService
+from app.services.wiki_service import WikiService
 from app.utils.task_metrics import instrument_faq_extraction
 
 # Configure logging
@@ -76,22 +78,33 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
             # Initialize the FAQ Service
             faq_service = FAQService(settings)
 
+            # Initialize RAG service for semantic duplicate detection (Phase 6)
+            logger.info("Initializing RAG service for semantic duplicate detection...")
+            wiki_service = WikiService(settings)
+            rag_service = SimplifiedRAGService(
+                settings=settings,
+                wiki_service=wiki_service,
+                faq_service=faq_service,  # Needed to load FAQs into vector store
+            )
+            # Initialize vector store for semantic duplicate checking
+            await rag_service.setup()
+
             # Run the extraction process using the service
             if retry_count > 0:
                 logger.info(f"Retry attempt {retry_count}/{MAX_RETRIES}...")
 
             logger.info("Starting FAQ extraction process...")
 
-            # Handle force reprocessing by temporarily clearing the processed conversation IDs
+            # Handle force reprocessing by temporarily clearing the processed message IDs
             if force_reprocess:
-                logger.info("Force reprocessing all conversations")
-                faq_service.processed_conv_ids = set()
-                faq_service.save_processed_conv_ids()
+                logger.info("Force reprocessing all messages")
+                faq_service.processed_msg_ids = set()
+                faq_service.save_processed_msg_ids()
 
             # Track initial processed message count before extraction
             initial_processed_count = len(faq_service.load_processed_msg_ids())
 
-            new_faqs = await faq_service.extract_and_save_faqs(bisq_api)
+            new_faqs = await faq_service.extract_and_save_faqs(bisq_api, rag_service)
 
             count = len(new_faqs) if new_faqs is not None else 0
             logger.info(f"FAQ extraction completed. Generated {count} new FAQ entries.")

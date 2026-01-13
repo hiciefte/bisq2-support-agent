@@ -1,8 +1,10 @@
 """
-Migration script to add bisq_version field to existing FAQs.
+Migration script to convert bisq_version to protocol field in existing FAQs.
 
-This script adds the bisq_version field to all existing FAQ entries that don't have it.
-Default version is "Bisq 2" as it's the primary platform going forward.
+This script converts old bisq_version values to the new protocol field:
+- "Bisq 1" -> "multisig_v1"
+- "Bisq 2" -> "bisq_easy"
+- "General" -> None (all protocols)
 
 Usage:
     # Dry run (preview changes without modifying file)
@@ -11,8 +13,8 @@ Usage:
     # Execute migration
     python -m app.scripts.migrate_faq_version
 
-    # Use custom default version
-    python -m app.scripts.migrate_faq_version --default-version "General"
+    # Use custom default protocol
+    python -m app.scripts.migrate_faq_version --default-protocol "bisq_easy"
 """
 
 import argparse
@@ -80,35 +82,63 @@ def load_faqs(faq_file_path: Path) -> List[Dict]:
 
 
 def migrate_faqs(
-    faqs: List[Dict], default_version: str = "Bisq 2"
+    faqs: List[Dict], default_protocol: str = "bisq_easy"
 ) -> tuple[List[Dict], int]:
-    """Add bisq_version field to FAQs that don't have it.
+    """Convert bisq_version to protocol field in FAQs.
 
     Args:
         faqs: List of FAQ dictionaries
-        default_version: Default version to assign (default: "Bisq 2")
+        default_protocol: Default protocol to assign (default: "bisq_easy")
 
     Returns:
         Tuple of (updated_faqs, count_updated)
     """
-    valid_versions = {"Bisq 1", "Bisq 2", "Both", "General"}
+    valid_protocols = {"multisig_v1", "bisq_easy", "musig", "all", None}
 
-    if default_version not in valid_versions:
-        logger.warning(f"Invalid default_version '{default_version}', using 'Bisq 2'")
-        default_version = "Bisq 2"
+    # Mapping from old bisq_version to new protocol
+    bisq_version_to_protocol = {
+        "Bisq 1": "multisig_v1",
+        "Bisq 2": "bisq_easy",
+        "General": None,
+        "Both": None,  # "Both" maps to None (all protocols)
+    }
+
+    if default_protocol not in valid_protocols:
+        logger.warning(
+            f"Invalid default_protocol '{default_protocol}', using 'bisq_easy'"
+        )
+        default_protocol = "bisq_easy"
 
     updated_count = 0
 
     for faq in faqs:
-        if "bisq_version" not in faq:
-            faq["bisq_version"] = default_version
+        has_valid_protocol = "protocol" in faq and faq["protocol"] in valid_protocols
+        has_bisq_version = "bisq_version" in faq
+
+        # Always remove stale bisq_version field even if protocol exists
+        if has_bisq_version:
+            old_version = faq["bisq_version"]
+            del faq["bisq_version"]
             updated_count += 1
-        elif faq["bisq_version"] not in valid_versions:
-            logger.warning(
-                f"Invalid bisq_version '{faq['bisq_version']}' for FAQ "
-                f"(question: {faq.get('question', 'N/A')[:50]}...), correcting to '{default_version}'"
-            )
-            faq["bisq_version"] = default_version
+
+            # Only set protocol from bisq_version if not already valid
+            if not has_valid_protocol:
+                new_protocol = bisq_version_to_protocol.get(
+                    old_version, default_protocol
+                )
+                faq["protocol"] = new_protocol
+                logger.debug(
+                    f"Converted FAQ: bisq_version='{old_version}' -> "
+                    f"protocol='{new_protocol}'"
+                )
+            else:
+                logger.debug(
+                    f"Removed stale bisq_version='{old_version}', kept existing "
+                    f"protocol='{faq['protocol']}'"
+                )
+        elif not has_valid_protocol:
+            # No bisq_version and no valid protocol, use default
+            faq["protocol"] = default_protocol
             updated_count += 1
 
     return faqs, updated_count
@@ -131,7 +161,7 @@ def save_faqs(faq_file_path: Path, faqs: List[Dict]) -> None:
 def main():
     """Main migration function."""
     parser = argparse.ArgumentParser(
-        description="Migrate FAQ entries to include bisq_version field"
+        description="Migrate FAQ entries from bisq_version to protocol field"
     )
     parser.add_argument(
         "--dry-run",
@@ -139,11 +169,11 @@ def main():
         help="Preview changes without modifying the file",
     )
     parser.add_argument(
-        "--default-version",
+        "--default-protocol",
         type=str,
-        default="Bisq 2",
-        choices=["Bisq 1", "Bisq 2", "Both", "General"],
-        help="Default version to assign (default: Bisq 2)",
+        default="bisq_easy",
+        choices=["multisig_v1", "bisq_easy", "musig", "all"],
+        help="Default protocol to assign (default: bisq_easy)",
     )
     parser.add_argument(
         "--faq-file", type=str, help="Path to FAQ file (default: from settings)"
@@ -170,11 +200,9 @@ def main():
         return
 
     # Migrate FAQs
-    updated_faqs, updated_count = migrate_faqs(faqs, args.default_version)
+    updated_faqs, updated_count = migrate_faqs(faqs, args.default_protocol)
 
-    logger.info(
-        f"Migration summary: {updated_count} FAQs updated with default version '{args.default_version}'"
-    )
+    logger.info(f"Migration summary: {updated_count} FAQs converted to protocol field")
 
     # Show sample of changes
     if updated_count > 0:
@@ -184,10 +212,9 @@ def main():
         for faq in updated_faqs:
             if sample_count >= sample_size:
                 break
-            # Show only newly updated FAQs (this is imperfect but good enough)
-            if faq.get("bisq_version") == args.default_version:
+            if "protocol" in faq:
                 logger.info(f"  - Question: {faq.get('question', 'N/A')[:60]}...")
-                logger.info(f"    Version: {faq['bisq_version']}")
+                logger.info(f"    Protocol: {faq.get('protocol')}")
                 sample_count += 1
 
     # Dry run mode - don't save

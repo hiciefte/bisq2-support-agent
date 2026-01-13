@@ -17,6 +17,9 @@ export interface Message {
         response_time: number
         token_count: number
     }
+    confidence?: number
+    detected_version?: string
+    version_confidence?: number
     isThankYouMessage?: boolean
 }
 

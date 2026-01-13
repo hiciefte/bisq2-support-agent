@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     # External URLs
     BISQ_API_URL: str = "http://localhost:8090"
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
+
+    # Matrix integration settings for shadow mode
+    MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
+    MATRIX_USER: str = ""  # Bot user ID, e.g., "@bisq-bot:matrix.org"
+    MATRIX_PASSWORD: str = (
+        ""  # Bot password for automatic session management (recommended)
+    )
+    MATRIX_TOKEN: str = ""  # DEPRECATED: Access token (use MATRIX_PASSWORD instead)
+    MATRIX_ROOMS: str | list[str] = ""  # Room IDs to monitor (comma-separated or list)
+    MATRIX_SESSION_FILE: str = (
+        "matrix_session.json"  # Session filename (relative to DATA_DIR)
+    )
 
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
@@ -46,6 +58,68 @@ class Settings(BaseSettings):
     )
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
+
+    # LLM Message Classification Settings (Provider-Agnostic)
+    # Supports multiple LLM providers via AISuite: openai, anthropic, ollama
+    ENABLE_LLM_CLASSIFICATION: bool = False  # Enable LLM-based message classification
+    LLM_CLASSIFICATION_MODEL: str = (
+        "openai:gpt-4o-mini"  # Model for classification (format: "provider:model")
+    )
+    LLM_PATTERN_CONFIDENCE_THRESHOLD: float = (
+        0.85  # Min pattern confidence to skip LLM (0.0-1.0)
+    )
+    LLM_CLASSIFICATION_THRESHOLD: float = (
+        0.75  # Min LLM confidence to use result (0.0-1.0)
+    )
+    LLM_CLASSIFICATION_CACHE_SIZE: int = (
+        1000  # LRU cache size for classifications (reduced for privacy)
+    )
+    LLM_CLASSIFICATION_CACHE_TTL_HOURS: int = (
+        1  # Cache time-to-live in hours (GDPR-friendly)
+    )
+    LLM_CLASSIFICATION_MAX_CONCURRENT: int = (
+        2  # Max concurrent LLM API calls (cost control)
+    )
+    LLM_CLASSIFICATION_TEMPERATURE: float = (
+        0.2  # LLM temperature for classification (0.0-2.0)
+    )
+    LLM_CLASSIFICATION_RATE_LIMIT_REQUESTS: int = 10  # Max requests per user per window
+    LLM_CLASSIFICATION_RATE_LIMIT_WINDOW: int = 60  # Rate limit window in seconds
+
+    # Full LLM Extraction Settings (Phase 2: Question Extraction with LLM)
+    # Enables complete LLM-based question extraction from conversations
+    ENABLE_LLM_EXTRACTION: bool = Field(
+        default=False,
+        description="Enable full LLM extraction (replaces pattern-based)",
+    )
+    LLM_EXTRACTION_MODEL: str = Field(
+        default="openai:gpt-4o-mini",
+        description="Model for extraction (format: 'provider:model')",
+    )
+    LLM_EXTRACTION_BATCH_SIZE: int = Field(
+        default=2000,
+        description="Maximum number of messages to process in a single LLM batch (gpt-4o-mini supports ~128K tokens)",
+    )
+    LLM_EXTRACTION_CACHE_TTL: int = Field(
+        default=3600,
+        description="Cache time-to-live in seconds (1 hour)",
+    )
+    LLM_EXTRACTION_CACHE_SIZE: int = Field(
+        default=100,
+        description="Maximum cache entries",
+    )
+    LLM_EXTRACTION_MAX_TOKENS: int = Field(
+        default=4000,
+        description="Max tokens per conversation (for truncation)",
+    )
+    LLM_EXTRACTION_TEMPERATURE: float = Field(
+        default=0.0,
+        description="LLM temperature for extraction (deterministic)",
+    )
+
+    # Provider-specific API keys (separate from classification config)
+    ANTHROPIC_API_KEY: str = ""  # For Anthropic Claude models
+    OLLAMA_API_URL: str = "http://localhost:11434"  # For local Ollama deployment
 
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
@@ -78,6 +152,11 @@ class Settings(BaseSettings):
 
     # Support agent configuration
     SUPPORT_AGENT_NICKNAMES: str | list[str] = ""  # Comma-separated or list (required)
+    # Known support staff usernames for message filtering (Matrix localparts without @ or :server)
+    KNOWN_SUPPORT_STAFF: str | list[str] = Field(
+        default="darawhelan,luis3672,mwithm,pazza83,strayorigin,suddenwhipvapor",
+        description="Comma-separated list of support staff Matrix usernames (localparts only)",
+    )
 
     # Environment settings
     ENVIRONMENT: str = "development"
@@ -134,6 +213,67 @@ class Settings(BaseSettings):
         """Complete path to the SQLite FAQ database file"""
         return os.path.join(self.DATA_DIR, "faqs.db")
 
+    @property
+    def SIMILAR_FAQ_DB_PATH(self) -> str:
+        """Complete path to the SQLite Similar FAQ Candidates database file"""
+        return os.path.join(self.DATA_DIR, "similar_faqs.db")
+
+    @property
+    def MATRIX_SESSION_PATH(self) -> str:
+        """Complete path to the Matrix session persistence file"""
+        # Support both absolute paths (backward compat) and relative paths
+        if os.path.isabs(self.MATRIX_SESSION_FILE):
+            return self.MATRIX_SESSION_FILE
+        return os.path.join(self.DATA_DIR, self.MATRIX_SESSION_FILE)
+
+    @property
+    def ACTIVE_LLM_CREDENTIAL(self) -> str:
+        """Get credential (API key or URL) for currently configured LLM provider.
+
+        Derives the correct credential based on the provider prefix in
+        LLM_CLASSIFICATION_MODEL (e.g., "openai:gpt-4o-mini" → OPENAI_API_KEY).
+        For Ollama, returns the base URL instead of an API key.
+
+        Returns:
+            API key string or URL for the active provider
+
+        Raises:
+            ValueError: If provider is not supported or credential is missing
+        """
+        if not self.LLM_CLASSIFICATION_MODEL:
+            raise ValueError("LLM_CLASSIFICATION_MODEL is not configured")
+
+        # Extract provider from model string (format: "provider:model")
+        provider = self.LLM_CLASSIFICATION_MODEL.split(":")[0].lower()
+
+        # Map provider to corresponding credential (API key or URL)
+        provider_credentials = {
+            "openai": self.OPENAI_API_KEY,
+            "anthropic": self.ANTHROPIC_API_KEY,
+            "ollama": self.OLLAMA_API_URL,  # Ollama uses URL instead of API key
+        }
+
+        if provider not in provider_credentials:
+            raise ValueError(
+                f"Unsupported LLM provider: {provider}. "
+                f"Supported providers: {', '.join(provider_credentials.keys())}"
+            )
+
+        credential = provider_credentials[provider]
+        if not credential:
+            if provider == "ollama":
+                raise ValueError(
+                    "OLLAMA_API_URL is required but not set when using Ollama provider. "
+                    "Please configure the Ollama server URL."
+                )
+            else:
+                raise ValueError(
+                    f"{provider.upper()}_API_KEY is required but not set. "
+                    f"Please configure the API key for {provider} provider."
+                )
+
+        return credential
+
     def get_data_path(self, *path_parts) -> str:
         """Utility method to construct paths within DATA_DIR
 
@@ -188,6 +328,99 @@ class Settings(BaseSettings):
             raise ValueError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {v}")
         return v
 
+    @field_validator("LLM_CLASSIFICATION_TEMPERATURE")
+    @classmethod
+    def validate_classification_temperature(cls, v: float) -> float:
+        """Validate LLM classification temperature is within acceptable range.
+
+        Args:
+            v: Temperature value
+
+        Returns:
+            Validated temperature value
+
+        Raises:
+            ValueError: If temperature is outside acceptable range
+        """
+        if not 0.0 <= v <= 2.0:
+            raise ValueError(
+                f"LLM_CLASSIFICATION_TEMPERATURE must be between 0.0 and 2.0, got {v}"
+            )
+        return v
+
+    @field_validator("LLM_PATTERN_CONFIDENCE_THRESHOLD")
+    @classmethod
+    def validate_pattern_threshold(cls, v: float) -> float:
+        """Validate pattern confidence threshold is within valid range.
+
+        Args:
+            v: Threshold value
+
+        Returns:
+            Validated threshold value
+
+        Raises:
+            ValueError: If threshold is outside valid range
+        """
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"LLM_PATTERN_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, got {v}"
+            )
+        return v
+
+    @field_validator("LLM_CLASSIFICATION_THRESHOLD")
+    @classmethod
+    def validate_classification_threshold(cls, v: float) -> float:
+        """Validate LLM classification threshold is within valid range.
+
+        Args:
+            v: Threshold value
+
+        Returns:
+            Validated threshold value
+
+        Raises:
+            ValueError: If threshold is outside valid range
+        """
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"LLM_CLASSIFICATION_THRESHOLD must be between 0.0 and 1.0, got {v}"
+            )
+        return v
+
+    @field_validator("LLM_CLASSIFICATION_MODEL")
+    @classmethod
+    def validate_classification_model(cls, v: str) -> str:
+        """Validate LLM classification model format.
+
+        Args:
+            v: Model string
+
+        Returns:
+            Validated model string
+
+        Raises:
+            ValueError: If model format is invalid
+        """
+        if not v:
+            return v  # Allow empty (feature disabled)
+
+        if ":" not in v:
+            raise ValueError(
+                f"LLM_CLASSIFICATION_MODEL must be in format 'provider:model', got '{v}'"
+            )
+
+        provider, _ = v.split(":", 1)
+        supported_providers = ["openai", "anthropic", "ollama"]
+
+        if provider.lower() not in supported_providers:
+            raise ValueError(
+                f"Unsupported provider '{provider}'. "
+                f"Supported providers: {', '.join(supported_providers)}"
+            )
+
+        return v
+
     @field_validator("ADMIN_SESSION_MAX_AGE")
     @classmethod
     def validate_admin_session_max_age(cls, v: int) -> int:
@@ -207,6 +440,33 @@ class Settings(BaseSettings):
         if v > 30 * 24 * 3600:  # 30 days
             raise ValueError("ADMIN_SESSION_MAX_AGE must be ≤ 30 days")
         return v
+
+    @field_validator("MATRIX_ROOMS", mode="before")
+    @classmethod
+    def parse_matrix_rooms(cls, v: str | list[str]) -> list[str]:
+        """Normalize MATRIX_ROOMS to list of room IDs.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles trimming whitespace and ignores empty entries.
+
+        Args:
+            v: Matrix room IDs as string (comma-separated) or list of strings
+
+        Returns:
+            List of Matrix room IDs with whitespace trimmed and empty entries removed
+        """
+        # Handle list input
+        if isinstance(v, list):
+            return [
+                room.strip() for room in v if isinstance(room, str) and room.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            return [room.strip() for room in v.split(",") if room.strip()]
+
+        # Fallback for unexpected types
+        return []
 
     @field_validator("SUPPORT_AGENT_NICKNAMES", mode="before")
     @classmethod
@@ -235,6 +495,40 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             # Split by comma, trim whitespace, filter empty entries
             return [nickname.strip() for nickname in v.split(",") if nickname.strip()]
+
+        # Fallback for unexpected types
+        return []
+
+    @field_validator("KNOWN_SUPPORT_STAFF", mode="before")
+    @classmethod
+    def parse_known_support_staff(cls, v: str | list[str]) -> list[str]:
+        """Normalize KNOWN_SUPPORT_STAFF to list of usernames.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles trimming whitespace and ignores empty entries.
+        Converts to lowercase for case-insensitive matching.
+
+        Args:
+            v: Support staff usernames as string (comma-separated) or list of strings
+
+        Returns:
+            List of support staff usernames (lowercase, trimmed)
+        """
+        # Handle list input
+        if isinstance(v, list):
+            return [
+                username.strip().lower()
+                for username in v
+                if isinstance(username, str) and username.strip()
+            ]
+
+        # Handle string input
+        if isinstance(v, str):
+            return [
+                username.strip().lower()
+                for username in v.split(",")
+                if username.strip()
+            ]
 
         # Fallback for unexpected types
         return []
@@ -329,6 +623,67 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_API_KEY required in production")
 
         return v.strip()
+
+    @field_validator("MATRIX_HOMESERVER_URL")
+    @classmethod
+    def validate_matrix_homeserver_url(cls, v: str) -> str:
+        """Enforce HTTPS for Matrix homeserver URLs (except localhost for dev).
+
+        Args:
+            v: Matrix homeserver URL
+
+        Returns:
+            Validated URL with HTTPS scheme (or HTTP for localhost)
+
+        Raises:
+            ValueError: If URL doesn't use HTTPS protocol (except localhost)
+        """
+        v = v.strip()
+        if not v:
+            return v
+        # Allow HTTP for localhost/127.0.0.1 for local development
+        is_localhost = any(
+            v.startswith(prefix) for prefix in ["http://localhost", "http://127.0.0.1"]
+        )
+        if not v.startswith("https://") and not is_localhost:
+            raise ValueError(
+                "MATRIX_HOMESERVER_URL must use HTTPS protocol for security "
+                "(HTTP allowed only for localhost). "
+                f"Got: {v}"
+            )
+        return v
+
+    @field_validator("MATRIX_PASSWORD")
+    @classmethod
+    def validate_matrix_auth_in_production(cls, v: str, info) -> str:
+        """Ensure Matrix authentication is configured when Matrix is enabled.
+
+        Args:
+            v: The MATRIX_PASSWORD value
+            info: Validation info containing other field values
+
+        Returns:
+            The validated and stripped MATRIX_PASSWORD
+
+        Raises:
+            ValueError: If Matrix is enabled but neither password nor token is set
+        """
+        v = v.strip()
+
+        # Only validate if Matrix integration is enabled
+        homeserver = str(info.data.get("MATRIX_HOMESERVER_URL", "")).strip()
+        if not homeserver:
+            return v  # Matrix not enabled, skip validation
+
+        # Check if either password or token is provided
+        token = str(info.data.get("MATRIX_TOKEN", "")).strip()
+        if not v and not token:
+            raise ValueError(
+                "MATRIX_PASSWORD or MATRIX_TOKEN required when MATRIX_HOMESERVER_URL is set. "
+                "MATRIX_PASSWORD is recommended for automatic session management."
+            )
+
+        return v
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

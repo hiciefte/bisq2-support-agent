@@ -329,3 +329,78 @@ Output each FAQ as a single-line JSON object. No additional text or commentary."
             f"Extracted {len(all_faqs)} FAQ entries from {len(conversations_to_process)} conversations"
         )
         return all_faqs
+
+    async def check_semantic_duplicates(
+        self,
+        extracted_faqs: List[Dict],
+        rag_service: Any,
+        threshold: float = 0.85,
+    ) -> tuple[List[Dict], List[Dict]]:
+        """Check extracted FAQs for semantic duplicates against existing FAQs.
+
+        This method checks each extracted FAQ against the vector store to find
+        semantically similar existing FAQs. FAQs with similarity above the threshold
+        are marked as potential duplicates.
+
+        Args:
+            extracted_faqs: List of FAQ dictionaries to check
+            rag_service: RAG service with search_faq_similarity method
+            threshold: Similarity threshold (default 0.85 for auto-extraction)
+
+        Returns:
+            Tuple of (unique_faqs, similar_faqs) where:
+            - unique_faqs: FAQs with no similar matches above threshold
+            - similar_faqs: FAQs with similar matches, including 'similar_to' field
+        """
+        # Handle edge cases
+        if not extracted_faqs:
+            return [], []
+
+        if rag_service is None:
+            logger.warning("RAG service not available - returning all FAQs as unique")
+            return extracted_faqs.copy(), []
+
+        unique_faqs: List[Dict] = []
+        similar_faqs: List[Dict] = []
+
+        for faq in extracted_faqs:
+            try:
+                # Search for similar existing FAQs
+                similar_results = await rag_service.search_faq_similarity(
+                    question=faq["question"],
+                    threshold=threshold,
+                    limit=1,  # Only need to know if ANY similar exists
+                )
+
+                # Filter results that are actually above threshold
+                # (defensive check in case RAG service doesn't filter)
+                above_threshold = [
+                    r for r in similar_results if r.get("similarity", 0) >= threshold
+                ]
+
+                if above_threshold:
+                    # Mark as similar with the matching FAQ
+                    similar_faq = faq.copy()
+                    similar_faq["similar_to"] = above_threshold[0]
+                    similar_faqs.append(similar_faq)
+                    logger.info(
+                        f"Similar FAQ detected: '{faq['question'][:50]}...' "
+                        f"matches '{above_threshold[0]['question'][:50]}...' "
+                        f"({above_threshold[0]['similarity']:.0%})"
+                    )
+                else:
+                    unique_faqs.append(faq)
+
+            except Exception as e:
+                # On error, treat FAQ as unique (graceful degradation)
+                logger.warning(
+                    f"Error checking similarity for FAQ: {e!s}. " "Treating as unique."
+                )
+                unique_faqs.append(faq)
+
+        logger.info(
+            f"Semantic duplicate check: {len(unique_faqs)} unique, "
+            f"{len(similar_faqs)} similar to existing FAQs"
+        )
+
+        return unique_faqs, similar_faqs

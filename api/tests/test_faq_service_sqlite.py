@@ -43,7 +43,7 @@ def sample_faq_data():
             category="Trading",
             source="Manual",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="What is the minimum trade amount?",
@@ -51,7 +51,7 @@ def sample_faq_data():
             category="Trading",
             source="Extracted",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="How to install Bisq?",
@@ -59,7 +59,7 @@ def sample_faq_data():
             category="Installation",
             source="Manual",
             verified=False,  # Unverified
-            bisq_version="General",
+            protocol="all",
         ),
     ]
 
@@ -143,7 +143,7 @@ class TestFAQServiceSQLiteIntegration:
         assert doc.metadata["type"] == "faq"
         assert "source_weight" in doc.metadata
         assert "category" in doc.metadata
-        assert "bisq_version" in doc.metadata
+        assert "protocol" in doc.metadata
         assert "verified" in doc.metadata
 
         # Check content format

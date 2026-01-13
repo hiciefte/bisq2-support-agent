@@ -208,7 +208,10 @@ export const useChatMessages = () => {
                     metadata: {
                         response_time: data.response_time,
                         token_count: data.token_count || 0
-                    }
+                    },
+                    confidence: data.confidence,
+                    detected_version: data.detected_version,
+                    version_confidence: data.version_confidence
                 }
 
                 const updatedWithResponse = [...updatedMessages, assistantMessage]

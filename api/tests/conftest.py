@@ -64,7 +64,7 @@ def test_settings(test_data_dir: str) -> Settings:
         DEBUG=True,
         DATA_DIR=test_data_dir,
         OPENAI_API_KEY="test-api-key",
-        ADMIN_API_KEY="test-admin-key",
+        ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
         ENVIRONMENT="testing",
         COOKIE_SECURE=False,
         # Use minimal model configuration for faster tests
@@ -111,10 +111,16 @@ def test_client(test_settings: Settings) -> TestClient:
     from app.core.config import get_settings
     from app.main import app
 
+    # Clear LRU cache to ensure test settings override takes effect
+    get_settings.cache_clear()
+
     app.dependency_overrides[get_settings] = lambda: test_settings
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+    # Clear cache after test to prevent state pollution
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -130,21 +136,21 @@ def sample_faq_data() -> list[dict]:
             "answer": "Bisq doesn't require account creation. Simply download and install the Bisq application.",
             "category": "account",
             "source": "Manual",
-            "bisq_version": "Bisq 2",
+            "protocol": "bisq_easy",
         },
         {
             "question": "What is the trading fee?",
             "answer": "The trading fee is 0.7% of the trade amount.",
             "category": "trading",
             "source": "Manual",
-            "bisq_version": "General",
+            "protocol": "all",
         },
         {
             "question": "How do I dispute a trade?",
             "answer": "Open the trade details and click the 'Open Dispute' button.",
             "category": "trading",
             "source": "Extracted",
-            "bisq_version": "Bisq 1",
+            "protocol": "multisig_v1",
         },
     ]
 

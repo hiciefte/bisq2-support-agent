@@ -119,6 +119,7 @@ services:
       - ../api/data:/data # Mount the data directory
       # Named volume disabled: causes permission issues in local dev (root:root ownership)
       # - feedback-data:/data/feedback # Named volume for persistent feedback storage
+      - matrix-session:/data/matrix_session # Matrix session persistence across restarts
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
@@ -141,6 +142,32 @@ services:
       - ENABLE_PRIVACY_MODE=${ENABLE_PRIVACY_MODE:-true}
       - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Matrix shadow mode configuration
+      - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL:-}
+      - MATRIX_USER=${MATRIX_USER:-}
+      - MATRIX_PASSWORD=${MATRIX_PASSWORD:-}
+      - MATRIX_TOKEN=${MATRIX_TOKEN:-}
+      - MATRIX_ROOMS=${MATRIX_ROOMS:-}
+      - MATRIX_SESSION_FILE=${MATRIX_SESSION_FILE:-/data/matrix_session.json}
+      # LLM classification configuration (Shadow Mode)
+      - ENABLE_LLM_CLASSIFICATION=${ENABLE_LLM_CLASSIFICATION:-false}
+      - LLM_CLASSIFICATION_MODEL=${LLM_CLASSIFICATION_MODEL:-openai:gpt-4o-mini}
+      - LLM_PATTERN_CONFIDENCE_THRESHOLD=${LLM_PATTERN_CONFIDENCE_THRESHOLD:-0.85}
+      - LLM_CLASSIFICATION_THRESHOLD=${LLM_CLASSIFICATION_THRESHOLD:-0.75}
+      - LLM_CLASSIFICATION_CACHE_SIZE=${LLM_CLASSIFICATION_CACHE_SIZE:-1000}
+      - LLM_CLASSIFICATION_CACHE_TTL_HOURS=${LLM_CLASSIFICATION_CACHE_TTL_HOURS:-1}
+      - LLM_CLASSIFICATION_MAX_CONCURRENT=${LLM_CLASSIFICATION_MAX_CONCURRENT:-2}
+      - LLM_CLASSIFICATION_TEMPERATURE=${LLM_CLASSIFICATION_TEMPERATURE:-0.2}
+      - LLM_CLASSIFICATION_RATE_LIMIT_REQUESTS=${LLM_CLASSIFICATION_RATE_LIMIT_REQUESTS:-10}
+      - LLM_CLASSIFICATION_RATE_LIMIT_WINDOW=${LLM_CLASSIFICATION_RATE_LIMIT_WINDOW:-60}
+      # LLM question extraction configuration (Phase 1.5 - Full LLM Solution)
+      - ENABLE_LLM_EXTRACTION=${ENABLE_LLM_EXTRACTION:-false}
+      - LLM_EXTRACTION_MODEL=${LLM_EXTRACTION_MODEL:-openai:gpt-4o-mini}
+      - LLM_EXTRACTION_TEMPERATURE=${LLM_EXTRACTION_TEMPERATURE:-0.0}
+      - LLM_EXTRACTION_MAX_TOKENS=${LLM_EXTRACTION_MAX_TOKENS:-4000}
+      - LLM_EXTRACTION_BATCH_SIZE=${LLM_EXTRACTION_BATCH_SIZE:-10}
+      - LLM_EXTRACTION_CACHE_TTL=${LLM_EXTRACTION_CACHE_TTL:-3600}
+      - LLM_EXTRACTION_CACHE_SIZE=${LLM_EXTRACTION_CACHE_SIZE:-100}
     expose:
       - "8000"
     networks:
@@ -151,7 +178,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s  # Extended to allow RAG service initialization (35-70s typical)
     logging:
       driver: "json-file"
       options:
@@ -435,6 +462,7 @@ services:
         echo '0 0 * * * /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
+        echo '*/30 * * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
         crond -f -l 8 -d 8
       "
@@ -463,6 +491,9 @@ volumes:
     name: bisq2-data
   feedback-data:
     name: bisq2-feedback-data
+    driver: local
+  matrix-session:
+    name: bisq2-matrix-session
     driver: local
 
 networks:

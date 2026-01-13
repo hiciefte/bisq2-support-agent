@@ -11,8 +11,8 @@ import logging
 import secrets
 import time
 
-from app.core.config import get_settings
-from fastapi import HTTPException, Request, Response, status
+from app.core.config import Settings, get_settings
+from fastapi import Depends, HTTPException, Request, Response, status
 
 # Minimum length for secure API keys
 MIN_API_KEY_LENGTH = 24
@@ -76,11 +76,12 @@ async def verify_admin_key_with_delay(provided_key: str, request: Request) -> bo
     return is_valid
 
 
-def verify_admin_key(provided_key: str) -> bool:
+def verify_admin_key(provided_key: str, settings: Settings) -> bool:
     """Verify that the provided API key is valid (synchronous version).
 
     Args:
         provided_key: The API key to verify
+        settings: Application settings instance
 
     Returns:
         bool: True if the key is valid
@@ -88,7 +89,6 @@ def verify_admin_key(provided_key: str) -> bool:
     Raises:
         HTTPException: If admin access is not configured
     """
-    settings = get_settings()
     admin_api_key = settings.ADMIN_API_KEY
 
     if not admin_api_key:
@@ -182,7 +182,11 @@ def verify_admin_session_token(token: str) -> bool:
         return False
 
 
-def verify_admin_access(request: Request, response: Response) -> bool:
+def verify_admin_access(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+) -> bool:
     """Verify that the request has admin access via cookie or header.
 
     Implements sliding session window by refreshing the authentication cookie
@@ -192,6 +196,7 @@ def verify_admin_access(request: Request, response: Response) -> bool:
     Args:
         request: The FastAPI request object
         response: The FastAPI response object (for refreshing cookie)
+        settings: Application settings (injected via dependency)
 
     Returns:
         bool: True if access is granted
@@ -221,7 +226,7 @@ def verify_admin_access(request: Request, response: Response) -> bool:
     )
 
     if provided_key:
-        if verify_admin_key(provided_key):
+        if verify_admin_key(provided_key, settings):
             if len(provided_key) < MIN_API_KEY_LENGTH:
                 logger.warning(
                     f"Successful login with insecure admin key length: {len(provided_key)} chars"

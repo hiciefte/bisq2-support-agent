@@ -81,6 +81,7 @@ class FAQRAGLoader:
                     continue
 
                 # Create Document with formatted content and metadata
+                # Include full question/answer/id in metadata for similar FAQ search
                 doc = Document(
                     page_content=f"Question: {faq.question}\nAnswer: {faq.answer}",
                     metadata={
@@ -93,8 +94,12 @@ class FAQRAGLoader:
                         "type": "faq",
                         "source_weight": self.source_weights.get("faq", 1.2),
                         "category": faq.category,
-                        "bisq_version": faq.bisq_version,
+                        "protocol": faq.protocol or "all",
                         "verified": faq.verified,
+                        # Additional fields for similar FAQ search
+                        "id": faq.id,
+                        "question": faq.question,
+                        "answer": faq.answer,
                     },
                 )
                 documents.append(doc)

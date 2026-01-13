@@ -43,16 +43,49 @@ class FAQRepositorySQLite:
     3. File Permissions: Database created with mode 600
     4. Input Validation: Pydantic models + length constraints
     5. Concurrent Access: WAL mode + persistent connection
+
+    Protocol values:
+    - multisig_v1: Bisq 1 multisig protocol
+    - bisq_easy: Bisq Easy protocol (default)
+    - musig: MuSig protocol (future)
+    - all: Applies to all protocols
     """
 
-    # Schema version for future migrations
-    SCHEMA_VERSION = 1
+    # Schema version for migrations (2 = added protocol column)
+    SCHEMA_VERSION = 2
+
+    # Legacy bisq_version to protocol mapping for migration
+    BISQ_VERSION_TO_PROTOCOL = {
+        "Bisq 1": "multisig_v1",
+        "Bisq 2": "bisq_easy",
+        "General": "all",
+    }
+
+    # Valid protocol values
+    VALID_PROTOCOLS = {"multisig_v1", "bisq_easy", "musig", "all"}
 
     # Field length constraints (prevent DoS via huge inputs)
     MAX_QUESTION_LENGTH = 2000
     MAX_ANSWER_LENGTH = 10000
     MAX_CATEGORY_LENGTH = 100
     MAX_SOURCE_LENGTH = 100
+
+    def _normalize_protocol(self, protocol: Optional[str]) -> str:
+        """Normalize protocol value to database format.
+
+        Args:
+            protocol: Protocol value (multisig_v1, bisq_easy, musig, all, None)
+
+        Returns:
+            Normalized protocol string for database (default: "bisq_easy")
+        """
+        if protocol is None or protocol == "":
+            return "bisq_easy"  # Default to Bisq Easy
+        if protocol in self.VALID_PROTOCOLS:
+            return protocol
+        # Unknown protocol, default to bisq_easy
+        logger.warning(f"Unknown protocol value: {protocol}, defaulting to bisq_easy")
+        return "bisq_easy"
 
     def __init__(self, db_path: str):
         """
@@ -145,7 +178,7 @@ class FAQRepositorySQLite:
         - Schema version tracking
         """
         with self._writer_conn:
-            # Create FAQs table
+            # Create FAQs table with protocol column (v2 schema)
             self._writer_conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS faqs (
@@ -155,7 +188,7 @@ class FAQRepositorySQLite:
                     category TEXT DEFAULT 'General',
                     source TEXT DEFAULT 'Manual',
                     verified INTEGER DEFAULT 0,
-                    bisq_version TEXT DEFAULT 'Bisq 2',
+                    protocol TEXT DEFAULT 'bisq_easy',
                     created_at TEXT,
                     updated_at TEXT,
                     verified_at TEXT,
@@ -167,7 +200,11 @@ class FAQRepositorySQLite:
             """
             )
 
-            # Create indexes for performance
+            # Run migration FIRST if needed (upgrade from v1 with bisq_version to v2 with protocol)
+            # This must happen before creating protocol index on existing databases
+            self._migrate_to_protocol()
+
+            # Create indexes for performance (after migration ensures protocol column exists)
             self._writer_conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_faqs_category
@@ -184,8 +221,8 @@ class FAQRepositorySQLite:
 
             self._writer_conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_faqs_bisq_version
-                ON faqs(bisq_version)
+                CREATE INDEX IF NOT EXISTS idx_faqs_protocol
+                ON faqs(protocol)
             """
             )
 
@@ -245,6 +282,101 @@ class FAQRepositorySQLite:
             """,
                 (self.SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
             )
+
+    def _migrate_to_protocol(self):
+        """
+        Migrate database from v1 (bisq_version) to v2 (protocol) schema.
+
+        This method handles existing databases that have the old bisq_version column:
+        1. Checks if bisq_version column exists
+        2. If so, adds protocol column (if missing)
+        3. Migrates data from bisq_version to protocol
+        4. Drops old bisq_version column (via table recreation)
+        """
+        # Check if migration is needed by looking for bisq_version column
+        cursor = self._writer_conn.execute("PRAGMA table_info(faqs)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if "bisq_version" not in columns:
+            # No migration needed - database already uses protocol or is new
+            return
+
+        logger.info("Migrating FAQs database from bisq_version to protocol...")
+
+        # Check if protocol column already exists (partial migration)
+        has_protocol = "protocol" in columns
+
+        if not has_protocol:
+            # Add protocol column
+            self._writer_conn.execute(
+                "ALTER TABLE faqs ADD COLUMN protocol TEXT DEFAULT 'bisq_easy'"
+            )
+
+        # Migrate data from bisq_version to protocol
+        for old_value, new_value in self.BISQ_VERSION_TO_PROTOCOL.items():
+            self._writer_conn.execute(
+                "UPDATE faqs SET protocol = ? WHERE bisq_version = ?",
+                (new_value, old_value),
+            )
+
+        # Set default for any remaining NULL or unmapped values
+        self._writer_conn.execute(
+            "UPDATE faqs SET protocol = 'bisq_easy' WHERE protocol IS NULL"
+        )
+
+        # Now recreate the table without bisq_version column
+        # SQLite doesn't support DROP COLUMN, so we need to recreate
+        self._writer_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faqs_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL UNIQUE,
+                answer TEXT NOT NULL,
+                category TEXT DEFAULT 'General',
+                source TEXT DEFAULT 'Manual',
+                verified INTEGER DEFAULT 0,
+                protocol TEXT DEFAULT 'bisq_easy',
+                created_at TEXT,
+                updated_at TEXT,
+                verified_at TEXT,
+                CHECK(LENGTH(question) <= 2000),
+                CHECK(LENGTH(answer) <= 10000),
+                CHECK(LENGTH(category) <= 100),
+                CHECK(LENGTH(source) <= 100)
+            )
+        """
+        )
+
+        # Copy data to new table
+        self._writer_conn.execute(
+            """
+            INSERT INTO faqs_new (
+                id, question, answer, category, source, verified,
+                protocol, created_at, updated_at, verified_at
+            )
+            SELECT
+                id, question, answer, category, source, verified,
+                protocol, created_at, updated_at, verified_at
+            FROM faqs
+        """
+        )
+
+        # Drop old table and rename new one
+        self._writer_conn.execute("DROP TABLE faqs")
+        self._writer_conn.execute("ALTER TABLE faqs_new RENAME TO faqs")
+
+        # Recreate indexes on the new table
+        self._writer_conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faqs_category ON faqs(category)"
+        )
+        self._writer_conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faqs_verified ON faqs(verified)"
+        )
+        self._writer_conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faqs_protocol ON faqs(protocol)"
+        )
+
+        logger.info("FAQs database migration to protocol column complete")
 
     def _execute_with_retry(self, operation, *args, **kwargs):
         """
@@ -349,7 +481,7 @@ class FAQRepositorySQLite:
                         """
                         INSERT INTO faqs (
                             question, answer, category, source, verified,
-                            bisq_version, created_at, updated_at, verified_at
+                            protocol, created_at, updated_at, verified_at
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(question) DO UPDATE SET
@@ -357,7 +489,7 @@ class FAQRepositorySQLite:
                             category = excluded.category,
                             source = excluded.source,
                             verified = excluded.verified,
-                            bisq_version = excluded.bisq_version,
+                            protocol = excluded.protocol,
                             updated_at = excluded.updated_at,
                             verified_at = excluded.verified_at
                         RETURNING id
@@ -368,7 +500,7 @@ class FAQRepositorySQLite:
                             faq_item.category or "General",
                             faq_item.source or "Manual",
                             1 if faq_item.verified else 0,
-                            faq_item.bisq_version or "Bisq 2",
+                            self._normalize_protocol(faq_item.protocol),
                             created_at,
                             updated_at,
                             verified_at,
@@ -387,7 +519,7 @@ class FAQRepositorySQLite:
             category=faq_item.category or "General",
             source=faq_item.source or "Manual",
             verified=faq_item.verified or False,
-            bisq_version=faq_item.bisq_version or "Bisq 2",
+            protocol=faq_item.protocol,
             created_at=created_at_dt,
             updated_at=updated_at_dt,
             verified_at=verified_at_dt,
@@ -401,7 +533,7 @@ class FAQRepositorySQLite:
         verified: Optional[bool] = None,
         source: Optional[str] = None,
         search_text: Optional[str] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[datetime] = None,
         verified_to: Optional[datetime] = None,
     ) -> Dict:
@@ -420,7 +552,7 @@ class FAQRepositorySQLite:
             verified: Filter by verification status
             source: Filter by source
             search_text: Full-text search query
-            bisq_version: Filter by Bisq version
+            protocol: Filter by protocol (multisig_v1, bisq_easy, musig, all)
 
         Returns:
             Dict with paginated results and metadata
@@ -450,9 +582,9 @@ class FAQRepositorySQLite:
             where_clauses.append("source = ?")
             params.append(source)
 
-        if bisq_version is not None:
-            where_clauses.append("bisq_version = ?")
-            params.append(bisq_version)
+        if protocol is not None:
+            where_clauses.append("protocol = ?")
+            params.append(self._normalize_protocol(protocol))
 
         # Date range filters for verified_at timestamp
         if verified_from is not None:
@@ -555,7 +687,7 @@ class FAQRepositorySQLite:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[datetime] = None,
         verified_to: Optional[datetime] = None,
     ) -> List[FAQIdentifiedItem]:
@@ -574,7 +706,7 @@ class FAQRepositorySQLite:
             categories: Optional list of categories to filter by
             source: Optional source filter
             verified: Optional verification status filter
-            bisq_version: Optional Bisq version filter
+            protocol: Optional protocol filter (multisig_v1, bisq_easy, musig, all)
             verified_from: Optional start date for verified_at filter (inclusive)
             verified_to: Optional end date for verified_at filter (inclusive)
 
@@ -596,7 +728,7 @@ class FAQRepositorySQLite:
                     verified=verified,
                     source=source,
                     search_text=search_text,
-                    bisq_version=bisq_version,
+                    protocol=protocol,
                     verified_from=verified_from,
                     verified_to=verified_to,
                 )
@@ -611,7 +743,7 @@ class FAQRepositorySQLite:
                 verified=verified,
                 source=source,
                 search_text=search_text,
-                bisq_version=bisq_version,
+                protocol=protocol,
                 verified_from=verified_from,
                 verified_to=verified_to,
             )
@@ -624,7 +756,7 @@ class FAQRepositorySQLite:
         category: Optional[str] = None,
         verified: Optional[bool] = None,
         source: Optional[str] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
     ) -> List[FAQIdentifiedItem]:
         """
         Get all FAQs using pagination internally.
@@ -636,7 +768,7 @@ class FAQRepositorySQLite:
             category: Optional category filter
             verified: Optional verification status filter
             source: Optional source filter
-            bisq_version: Optional Bisq version filter
+            protocol: Optional protocol filter (multisig_v1, bisq_easy, musig, all)
 
         Returns:
             List of all FAQs matching the filters
@@ -652,7 +784,7 @@ class FAQRepositorySQLite:
                 category=category,
                 verified=verified,
                 source=source,
-                bisq_version=bisq_version,
+                protocol=protocol,
             )
             all_faqs.extend(result["items"])
 
@@ -737,7 +869,7 @@ class FAQRepositorySQLite:
                         """
                         UPDATE faqs
                         SET question = ?, answer = ?, category = ?, source = ?,
-                            verified = ?, bisq_version = ?, updated_at = ?, verified_at = ?
+                            verified = ?, protocol = ?, updated_at = ?, verified_at = ?
                         WHERE id = ?
                         """,
                         (
@@ -746,7 +878,7 @@ class FAQRepositorySQLite:
                             faq_item.category or "General",
                             faq_item.source or "Manual",
                             1 if faq_item.verified else 0,
-                            faq_item.bisq_version or "Bisq 2",
+                            self._normalize_protocol(faq_item.protocol),
                             updated_at,
                             verified_at,
                             faq_id_int,
@@ -852,6 +984,15 @@ class FAQRepositorySQLite:
                     updated_at = self._parse_datetime(data.get("updated_at"))
                     verified_at = self._parse_datetime(data.get("verified_at"))
 
+                    # Handle protocol migration from bisq_version if needed
+                    # Check for protocol first (new format), then bisq_version (old format)
+                    protocol = data.get("protocol")
+                    if protocol is None and "bisq_version" in data:
+                        # Convert old bisq_version to protocol using mapping
+                        protocol = self.BISQ_VERSION_TO_PROTOCOL.get(
+                            data["bisq_version"], "bisq_easy"
+                        )
+
                     # Create FAQItem with validated data
                     faq_item = FAQItem(
                         question=data["question"],
@@ -859,7 +1000,7 @@ class FAQRepositorySQLite:
                         category=data.get("category", "General"),
                         source=data.get("source", "Manual"),
                         verified=data.get("verified", False),
-                        bisq_version=data.get("bisq_version", "Bisq 2"),
+                        protocol=protocol,
                         created_at=created_at,
                         updated_at=updated_at,
                         verified_at=verified_at,
@@ -940,7 +1081,7 @@ class FAQRepositorySQLite:
             category=row["category"] or "General",
             source=row["source"] or "Manual",
             verified=bool(row["verified"]),
-            bisq_version=row["bisq_version"] or "Bisq 2",
+            protocol=row["protocol"] or "bisq_easy",
             created_at=self._parse_datetime(row["created_at"]),
             updated_at=self._parse_datetime(row["updated_at"]),
             verified_at=self._parse_datetime(row["verified_at"]),

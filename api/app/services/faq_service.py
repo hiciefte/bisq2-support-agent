@@ -9,7 +9,6 @@ Note: JSONL format is maintained for RAG/extraction workflows.
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -24,6 +23,7 @@ from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
+from app.services.faq.similar_faq_repository import SimilarFaqRepository
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -106,6 +106,21 @@ class FAQService:
                 Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None]
             ] = []
 
+            # Optional: Similar FAQ repository for review queue (Phase 7)
+            # Initialized lazily when needed or set externally for testing
+            self.similar_faq_repository: Optional[SimilarFaqRepository] = None
+            if (
+                hasattr(settings, "SIMILAR_FAQ_DB_PATH")
+                and settings.SIMILAR_FAQ_DB_PATH
+            ):
+                try:
+                    self.similar_faq_repository = SimilarFaqRepository(
+                        settings.SIMILAR_FAQ_DB_PATH
+                    )
+                    logger.info("Similar FAQ repository initialized for review queue")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Similar FAQ repository: {e}")
+
             self.initialized = True
             logger.info("FAQService initialized with SQLite storage backend.")
 
@@ -178,7 +193,7 @@ class FAQService:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[str] = None,
         verified_to: Optional[str] = None,
     ) -> List[FAQIdentifiedItem]:
@@ -192,7 +207,7 @@ class FAQService:
             categories: Optional category filter
             source: Optional source filter
             verified: Optional verification status filter
-            bisq_version: Optional Bisq version filter
+            protocol: Optional protocol filter (multisig_v1, bisq_easy, musig, all)
             verified_from: ISO 8601 date string for start of verified_at range
             verified_to: ISO 8601 date string for end of verified_at range
 
@@ -229,7 +244,7 @@ class FAQService:
             categories=categories,
             source=source,
             verified=verified,
-            bisq_version=bisq_version,
+            protocol=protocol,
             verified_from=verified_from_dt,
             verified_to=verified_to_dt,
         )
@@ -242,7 +257,7 @@ class FAQService:
         categories: Optional[List[str]] = None,
         source: Optional[str] = None,
         verified: Optional[bool] = None,
-        bisq_version: Optional[str] = None,
+        protocol: Optional[str] = None,
         verified_from: Optional[str] = None,
         verified_to: Optional[str] = None,
     ) -> FAQListResponse:
@@ -265,7 +280,7 @@ class FAQService:
             categories: Category filters (ONLY first category used if multiple provided)
             source: Source filter (e.g., "Manual", "Extracted")
             verified: Verification status filter
-            bisq_version: Bisq version filter
+            protocol: Protocol filter (multisig_v1, bisq_easy, musig, all)
             verified_from: ISO 8601 date string for start of verified_at range
             verified_to: ISO 8601 date string for end of verified_at range
 
@@ -324,7 +339,7 @@ class FAQService:
             verified=verified,
             source=source,
             search_text=search_text,
-            bisq_version=bisq_version,
+            protocol=protocol,
             verified_from=verified_from_dt,
             verified_to=verified_to_dt,
         )
@@ -845,88 +860,87 @@ class FAQService:
         return self.faq_extractor.extract_faqs_with_openai(conversations_to_process)
 
     def load_existing_faqs(self) -> List[Dict]:
-        """Load existing FAQs from the JSONL file for processing or extraction tasks.
+        """Load existing FAQs from SQLite database for processing or extraction tasks.
         Returns a list of dictionaries.
-        """
-        faqs: List[Dict] = []
-        if not hasattr(self, "_faq_file_path") or not self._faq_file_path.exists():
-            logger.warning(
-                f"FAQ file not found at {getattr(self, '_faq_file_path', 'Not set')}, cannot load existing FAQs."
-            )
-            return faqs
 
+        Note: JSONL storage is deprecated. FAQs are now loaded from SQLite only.
+        """
         try:
-            # No need for aggressive locking here if this is mostly for internal RAG loading
-            # which might happen at startup or less frequently than admin edits.
-            # If admin edits become frequent and overlap with RAG reloads, locking here might be needed too.
-            with open(self._faq_file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        faqs.append(json.loads(line.strip()))
-                    except json.JSONDecodeError:
-                        logger.error(
-                            f"Error parsing JSON line in load_existing_faqs: {line.strip()}"
-                        )
-            logger.info(f"Loaded {len(faqs)} existing FAQs from {self._faq_file_path}")
+            # Load from SQLite repository
+            faq_items = self.repository.get_all_faqs()
+            faqs = [
+                {
+                    "question": faq.question,
+                    "answer": faq.answer,
+                    "category": faq.category,
+                    "source": faq.source,
+                    "verified": faq.verified,
+                    "protocol": faq.protocol,
+                }
+                for faq in faq_items
+            ]
+            logger.info(f"Loaded {len(faqs)} existing FAQs from SQLite database")
+            return faqs
         except Exception as e:
             logger.error(f"Error in load_existing_faqs: {e!s}", exc_info=True)
-        return faqs
+            return []
 
     def save_faqs(self, faqs: List[Dict]) -> None:
         """
-        Saves a list of FAQ dictionaries to the faq_file_path.
+        Saves a list of FAQ dictionaries to SQLite database.
         This method is typically used by the FAQ extraction process.
-        It now uses portalocker for safe concurrent writes.
+
+        Note: JSONL storage is deprecated. FAQs are now stored in SQLite only.
         """
+        if not faqs:
+            logger.info("No FAQs to save.")
+            return
+
         try:
-            # Re-use the class-level lock for this operation
-            with self._file_lock, open(
-                self._faq_file_path, "r+", encoding="utf-8"
-            ) as f:
-                # Load existing FAQs to check for duplicates with error handling
-                existing_faqs = []
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            existing_faqs.append(json.loads(line))
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Skipping malformed JSON line: {e}")
-                            continue
+            # Get existing FAQs from SQLite to check for duplicates
+            existing_faqs = self.repository.get_all_faqs()
+            normalized_faq_keys = {
+                self.faq_extractor.get_normalized_faq_key(
+                    {"question": faq.question, "answer": faq.answer}
+                )
+                for faq in existing_faqs
+            }
 
-                # Create a set of normalized keys for existing FAQs using the extractor
-                normalized_faq_keys = {
-                    self.faq_extractor.get_normalized_faq_key(faq)
-                    for faq in existing_faqs
-                }
+            # Filter out duplicates from the new faqs
+            new_unique_faqs = []
+            for faq in faqs:
+                faq_key = self.faq_extractor.get_normalized_faq_key(faq)
+                if faq_key not in normalized_faq_keys:
+                    new_unique_faqs.append(faq)
+                    normalized_faq_keys.add(faq_key)
 
-                # Filter out duplicates from the new faqs, updating set during iteration
-                new_unique_faqs = []
-                for faq in faqs:
-                    faq_key = self.faq_extractor.get_normalized_faq_key(faq)
-                    if faq_key not in normalized_faq_keys:
-                        new_unique_faqs.append(faq)
-                        normalized_faq_keys.add(
-                            faq_key
-                        )  # Update set to catch intra-list duplicates
+            if not new_unique_faqs:
+                logger.info("No new non-duplicate FAQs to save.")
+                return
 
-                if new_unique_faqs:
-                    # Move to the end of the file to append new content
-                    f.seek(0, os.SEEK_END)
-                    # Ensure file ends with a newline if not empty
-                    if f.tell() > 0:
-                        f.seek(f.tell() - 1)
-                        if f.read(1) != "\n":
-                            f.write("\n")
+            # Save to SQLite database
+            success_count = 0
+            for faq_dict in new_unique_faqs:
+                try:
+                    # Convert dictionary to FAQItem model
+                    faq_item = FAQItem(
+                        question=faq_dict.get("question", ""),
+                        answer=faq_dict.get("answer", ""),
+                        category=faq_dict.get("category", "General"),
+                        source=faq_dict.get("source", "Extracted"),
+                        verified=faq_dict.get("verified", False),
+                        protocol=faq_dict.get("protocol", "bisq_easy"),
+                    )
+                    self.repository.add_faq(faq_item)
+                    success_count += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to save FAQ to SQLite: {e}. "
+                        f"Question: {faq_dict.get('question', '')[:50]}..."
+                    )
 
-                    for faq in new_unique_faqs:
-                        f.write(json.dumps(faq) + "\n")
-                    logger.info(f"Saved {len(new_unique_faqs)} new FAQs.")
-                else:
-                    logger.info("No new non-duplicate FAQs to save.")
+            logger.info(f"Saved {success_count}/{len(new_unique_faqs)} new FAQs.")
 
-        except portalocker.exceptions.LockException as e:
-            logger.error(f"Could not acquire lock on FAQ file: {e}")
         except Exception as e:
             logger.error(f"Error saving new FAQs: {e}", exc_info=True)
 
@@ -942,18 +956,25 @@ class FAQService:
         serialized["messages"] = messages
         return serialized
 
-    async def extract_and_save_faqs(self, bisq_api=None) -> List[Dict]:
+    async def extract_and_save_faqs(
+        self, bisq_api=None, rag_service=None
+    ) -> List[Dict]:
         """Run the complete FAQ extraction process.
 
         This method now uses message-level tracking instead of conversation-level tracking
         for more granular deduplication and privacy-preserving operation. It automatically
         handles backward compatibility with old conversation tracking.
 
+        Phase 6 Enhancement: Semantic duplicate detection using vector similarity.
+        FAQs that are semantically similar to existing FAQs (>85% similarity) are
+        logged for manual review but not automatically added to prevent duplicates.
+
         Args:
             bisq_api: Optional Bisq2API instance to fetch data
+            rag_service: Optional RAG service for semantic duplicate detection
 
         Returns:
-            List of extracted FAQ dictionaries
+            List of extracted FAQ dictionaries (only unique FAQs that were saved)
         """
         try:
             # Load the set of already processed message IDs
@@ -1015,7 +1036,70 @@ class FAQService:
             )
             new_faqs = self.extract_faqs_with_openai(new_conversations_to_process)
 
-            # If new FAQs were found, save them and mark messages as processed
+            # Phase 6: Semantic duplicate detection
+            # Check extracted FAQs against existing FAQs using vector similarity
+            similar_faqs: List[Dict] = []
+            if new_faqs and rag_service and hasattr(rag_service, "vectorstore"):
+                if rag_service.vectorstore:
+                    logger.info("Running semantic duplicate check on extracted FAQs...")
+                    new_faqs, similar_faqs = (
+                        await self.faq_extractor.check_semantic_duplicates(
+                            extracted_faqs=new_faqs,
+                            rag_service=rag_service,
+                            threshold=0.85,  # Higher threshold for auto-extraction
+                        )
+                    )
+
+                    # Persist similar FAQs to review queue (Phase 7)
+                    if similar_faqs:
+                        logger.warning(
+                            f"Found {len(similar_faqs)} extracted FAQs similar to existing ones. "
+                            "These were NOT saved to prevent duplicates:"
+                        )
+                        for faq in similar_faqs:
+                            similar_to = faq.get("similar_to", {})
+                            logger.info(
+                                f"  - '{faq['question'][:60]}...' "
+                                f"matches existing FAQ ID {similar_to.get('id')}: "
+                                f"'{similar_to.get('question', '')[:60]}...' "
+                                f"({similar_to.get('similarity', 0):.0%})"
+                            )
+
+                            # Persist to review queue if repository is available
+                            if self.similar_faq_repository:
+                                try:
+                                    self.similar_faq_repository.add_candidate(
+                                        extracted_question=faq.get("question", ""),
+                                        extracted_answer=faq.get("answer", ""),
+                                        matched_faq_id=similar_to.get("id"),
+                                        similarity=similar_to.get("similarity", 0.0),
+                                        extracted_category=faq.get("category"),
+                                        matched_question=similar_to.get("question"),
+                                        matched_answer=similar_to.get("answer"),
+                                        matched_category=similar_to.get("category"),
+                                    )
+                                    logger.debug(
+                                        f"Added similar FAQ to review queue: "
+                                        f"'{faq['question'][:40]}...'"
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to persist similar FAQ to review queue: {e}"
+                                    )
+                        if self.similar_faq_repository:
+                            logger.info(
+                                f"Added {len(similar_faqs)} similar FAQs to review queue"
+                            )
+                else:
+                    logger.debug(
+                        "Vector store not initialized - skipping semantic duplicate check"
+                    )
+            elif new_faqs and not rag_service:
+                logger.debug(
+                    "RAG service not provided - skipping semantic duplicate check"
+                )
+
+            # If new unique FAQs were found, save them and mark messages as processed
             if new_faqs:
                 self.save_faqs(new_faqs)
                 logger.info(

@@ -53,7 +53,7 @@ export const WEB_BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 /**
  * Admin API key for authentication
  */
-export const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
+export const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key_with_sufficient_length';
 
 /**
  * Test timeout for container restart operations (in milliseconds)

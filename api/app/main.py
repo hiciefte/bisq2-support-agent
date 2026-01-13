@@ -18,12 +18,15 @@ from app.core.tor_metrics import (
     update_tor_service_configured,
 )
 from app.db.run_migrations import run_migrations
+from app.integrations.matrix_shadow_mode import MatrixShadowModeService
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import chat, feedback_routes, health, metrics_update, onion_verify
 from app.routes.admin import include_admin_routers
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.shadow_mode.repository import ShadowModeRepository
+from app.services.shadow_mode_processor import ShadowModeProcessor
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.wiki_service import WikiService
@@ -120,11 +123,64 @@ async def lifespan(app: FastAPI):
     await tor_monitoring_service.start()
     logger.info("Tor monitoring service started")
 
+    # Initialize Matrix shadow mode service if configured
+    # Accept either MATRIX_PASSWORD (recommended) or MATRIX_TOKEN (deprecated) for auth
+    if (
+        settings.MATRIX_HOMESERVER_URL
+        and (settings.MATRIX_PASSWORD or settings.MATRIX_TOKEN)
+        and settings.MATRIX_ROOMS
+    ):
+        logger.info("Initializing Matrix shadow mode service...")
+
+        # Initialize shadow mode repository for persistent storage
+        shadow_db_path = os.path.join(settings.DATA_DIR, "shadow_mode.db")
+        shadow_repository = ShadowModeRepository(shadow_db_path)
+
+        # Initialize shadow mode processor with repository and settings (for LLM classification)
+        shadow_processor = ShadowModeProcessor(
+            repository=shadow_repository, settings=settings
+        )
+
+        # Initialize Matrix service (uses first room for now)
+        room_id = settings.MATRIX_ROOMS[0] if settings.MATRIX_ROOMS else ""
+        matrix_service = MatrixShadowModeService(
+            homeserver=settings.MATRIX_HOMESERVER_URL,
+            user_id=settings.MATRIX_USER,
+            password=settings.MATRIX_PASSWORD or None,  # Recommended
+            access_token=settings.MATRIX_TOKEN or None,  # DEPRECATED fallback
+            session_file=settings.MATRIX_SESSION_PATH,
+            room_id=room_id,
+        )
+
+        # Store in app state
+        app.state.matrix_service = matrix_service
+        app.state.shadow_repository = shadow_repository
+        app.state.shadow_processor = shadow_processor
+
+        # Connect to Matrix (doesn't start polling automatically)
+        await matrix_service.connect()
+        logger.info(f"Matrix shadow mode service connected - monitoring room {room_id}")
+    else:
+        logger.info(
+            "Matrix shadow mode service not configured - skipping initialization"
+        )
+        app.state.matrix_service = None
+        app.state.shadow_repository = None
+        app.state.shadow_processor = None
+
     # Yield control to the application
     yield
 
     # Shutdown
     logger.info("Application shutdown...")
+
+    # Disconnect Matrix shadow mode service
+    if hasattr(app.state, "matrix_service") and app.state.matrix_service:
+        logger.info("Disconnecting Matrix shadow mode service...")
+        await app.state.matrix_service.disconnect()
+
+    # Shadow mode repository uses per-operation SQLite connections that auto-close.
+    # No explicit cleanup needed - connections are closed after each query.
 
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):

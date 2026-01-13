@@ -60,6 +60,25 @@ FAQ_EXTRACTION_LAST_RUN_STATUS = Gauge(
 )
 
 # =============================================================================
+# Bisq2 API Health Metrics
+# =============================================================================
+
+BISQ2_API_HEALTH_STATUS = Gauge(
+    "bisq2_api_health_status",
+    "Health status of Bisq2 API endpoint (1=healthy, 0=unhealthy)",
+)
+
+BISQ2_API_LAST_CHECK_TIMESTAMP = Gauge(
+    "bisq2_api_last_check_timestamp",
+    "Unix timestamp of last Bisq2 API health check",
+)
+
+BISQ2_API_RESPONSE_TIME = Gauge(
+    "bisq2_api_response_time_seconds",
+    "Response time of Bisq2 API health check in seconds",
+)
+
+# =============================================================================
 # Wiki Update Metrics
 # =============================================================================
 
@@ -435,6 +454,30 @@ def record_feedback_processing_failure(duration: Optional[float] = None) -> None
     _persist_feedback_metrics()
 
 
+def record_bisq2_api_health(
+    is_healthy: bool,
+    response_time: Optional[float] = None,
+) -> None:
+    """
+    Record Bisq2 API health check result.
+
+    This should be called during FAQ extraction to track whether
+    the Bisq2 API endpoint is reachable.
+
+    Args:
+        is_healthy: True if API responded successfully, False otherwise
+        response_time: API response time in seconds (optional)
+    """
+    BISQ2_API_HEALTH_STATUS.set(1 if is_healthy else 0)
+    BISQ2_API_LAST_CHECK_TIMESTAMP.set(time.time())
+
+    if response_time is not None:
+        BISQ2_API_RESPONSE_TIME.set(response_time)
+
+    # Persist to database
+    _persist_bisq2_api_metrics()
+
+
 # =============================================================================
 # Persistence Helper Functions
 # =============================================================================
@@ -545,6 +588,33 @@ def _persist_feedback_metrics() -> None:
         persistence.save_metrics(valid_metrics)
 
 
+@_safe_persist
+def _persist_bisq2_api_metrics() -> None:
+    """Persist Bisq2 API health Gauge metrics to database."""
+    from app.utils.task_metrics_persistence import get_persistence
+
+    persistence = get_persistence()
+
+    # Collect metrics, filtering out None values
+    metrics = {
+        "bisq2_api_health_status": REGISTRY.get_sample_value("bisq2_api_health_status"),
+        "bisq2_api_last_check_timestamp": REGISTRY.get_sample_value(
+            "bisq2_api_last_check_timestamp"
+        ),
+        "bisq2_api_response_time_seconds": REGISTRY.get_sample_value(
+            "bisq2_api_response_time_seconds"
+        ),
+    }
+
+    # Filter out None values and ensure float type
+    valid_metrics = {
+        name: float(value) for name, value in metrics.items() if value is not None
+    }
+
+    if valid_metrics:
+        persistence.save_metrics(valid_metrics)
+
+
 def restore_metrics_from_database() -> None:
     """
     Restore Prometheus Gauge metrics from database on application startup.
@@ -597,6 +667,16 @@ def restore_metrics_from_database() -> None:
             FEEDBACK_PROCESSING_ENTRIES.set(
                 metrics["feedback_processing_entries_processed"]
             )
+
+        # Restore Bisq2 API health metrics
+        if "bisq2_api_health_status" in metrics:
+            BISQ2_API_HEALTH_STATUS.set(metrics["bisq2_api_health_status"])
+        if "bisq2_api_last_check_timestamp" in metrics:
+            BISQ2_API_LAST_CHECK_TIMESTAMP.set(
+                metrics["bisq2_api_last_check_timestamp"]
+            )
+        if "bisq2_api_response_time_seconds" in metrics:
+            BISQ2_API_RESPONSE_TIME.set(metrics["bisq2_api_response_time_seconds"])
 
         logger.info(f"Restored {len(metrics)} metrics from database")
 

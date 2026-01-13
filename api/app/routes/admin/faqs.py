@@ -14,9 +14,11 @@ from app.models.faq import (
     FAQIdentifiedItem,
     FAQItem,
     FAQListResponse,
+    SimilarFAQRequest,
+    SimilarFAQResponse,
 )
 from app.services.faq_service import FAQService
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response, StreamingResponse
 
 # Setup logging
@@ -46,7 +48,7 @@ async def get_all_faqs_for_admin_route(
     categories: Optional[str] = None,  # Comma-separated list
     source: Optional[str] = None,
     verified: Optional[bool] = None,  # Filter by verification status
-    bisq_version: Optional[str] = None,  # Filter by Bisq version
+    protocol: Optional[str] = None,  # Filter by Bisq version
     verified_from: Optional[
         str
     ] = None,  # ISO 8601 date string for start of verified_at range
@@ -61,7 +63,7 @@ async def get_all_faqs_for_admin_route(
     - verified_to=2024-12-31T23:59:59Z
     """
     logger.info(
-        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, bisq_version={bisq_version}, verified_from={verified_from}, verified_to={verified_to}"
+        f"Admin request to fetch FAQs: page={page}, page_size={page_size}, search_text={search_text}, categories={categories}, source={source}, verified={verified}, protocol={protocol}, verified_from={verified_from}, verified_to={verified_to}"
     )
 
     try:
@@ -77,7 +79,7 @@ async def get_all_faqs_for_admin_route(
             categories=categories_list,
             source=source,
             verified=verified,
-            bisq_version=bisq_version,
+            protocol=protocol,
             verified_from=verified_from,
             verified_to=verified_to,
         )
@@ -222,7 +224,7 @@ async def get_faq_stats(
     verified_to: Optional[str] = None,  # ISO 8601 date string
     categories: Optional[str] = None,  # Comma-separated list
     source: Optional[str] = None,
-    bisq_version: Optional[str] = None,
+    protocol: Optional[str] = None,
 ):
     """Get FAQ statistics including counts by verification date range.
 
@@ -235,7 +237,7 @@ async def get_faq_stats(
     - /admin/faqs/stats?verified_from=2024-01-01T00:00:00Z&categories=Trading,Mediation
     """
     logger.info(
-        f"Admin request for FAQ stats: verified_from={verified_from}, verified_to={verified_to}, categories={categories}, source={source}, bisq_version={bisq_version}"
+        f"Admin request for FAQ stats: verified_from={verified_from}, verified_to={verified_to}, categories={categories}, source={source}, protocol={protocol}"
     )
 
     try:
@@ -250,7 +252,7 @@ async def get_faq_stats(
             categories=categories_list,
             source=source,
             verified=True,  # Only count verified FAQs
-            bisq_version=bisq_version,
+            protocol=protocol,
             verified_from=verified_from,
             verified_to=verified_to,
         )
@@ -279,7 +281,7 @@ async def get_faq_stats(
             "filters": {
                 "categories": categories_list,
                 "source": source,
-                "bisq_version": bisq_version,
+                "protocol": protocol,
             },
             "breakdown_by_category": category_breakdown,
             "breakdown_by_source": source_breakdown,
@@ -340,13 +342,66 @@ async def bulk_verify_faqs_route(request: BulkFAQRequest):
         ) from e
 
 
+@router.post("/faqs/check-similar", response_model=SimilarFAQResponse)
+async def check_similar_faqs_route(
+    request_body: SimilarFAQRequest,
+    request: Request,
+):
+    """Check for semantically similar FAQs using vector similarity.
+
+    This endpoint helps admins identify potential duplicate or related FAQs
+    before creating or editing an FAQ. It uses ChromaDB vector similarity
+    search to find FAQs with semantically similar questions.
+
+    Args:
+        request_body: SimilarFAQRequest containing:
+            - question: The question to check for similar FAQs (5-1000 chars)
+            - threshold: Minimum similarity score 0.0-1.0 (default: 0.65)
+            - limit: Maximum results to return 1-20 (default: 5)
+            - exclude_id: FAQ ID to exclude from results (for edit mode)
+
+    Returns:
+        SimilarFAQResponse with list of similar FAQs sorted by similarity (highest first)
+
+    Notes:
+        - Returns empty list on errors (graceful degradation)
+        - Uses 5 second timeout for vector search
+        - Only searches FAQ documents (excludes wiki content)
+    """
+    logger.info(
+        f"Similar FAQ check: question='{request_body.question[:50]}...', "
+        f"threshold={request_body.threshold}, limit={request_body.limit}, "
+        f"exclude_id={request_body.exclude_id}"
+    )
+
+    try:
+        # Get RAG service from app state
+        rag_service = request.app.state.rag_service
+
+        # Search for similar FAQs
+        similar_faqs = await rag_service.search_faq_similarity(
+            question=request_body.question,
+            threshold=request_body.threshold,
+            limit=request_body.limit,
+            exclude_id=request_body.exclude_id,
+        )
+
+        logger.info(f"Found {len(similar_faqs)} similar FAQs")
+        return SimilarFAQResponse(similar_faqs=similar_faqs)
+
+    except Exception:
+        # Graceful degradation - return empty list on errors
+        logger.exception("Error checking for similar FAQs")
+        return SimilarFAQResponse(similar_faqs=[])
+
+
 @router.get("/faqs/export")
 async def export_faqs_to_csv(
     search_text: Optional[str] = None,
     categories: Optional[str] = None,
     source: Optional[str] = None,
     verified: Optional[bool] = None,
-    bisq_version: Optional[str] = None,
+    protocol: Optional[str] = None,
     verified_from: Optional[str] = None,
     verified_to: Optional[str] = None,
 ):
@@ -361,7 +416,7 @@ async def export_faqs_to_csv(
     """
     logger.info(
         f"CSV export request: search_text={search_text}, categories={categories}, "
-        f"source={source}, verified={verified}, bisq_version={bisq_version}, "
+        f"source={source}, verified={verified}, protocol={protocol}, "
         f"verified_from={verified_from}, verified_to={verified_to}"
     )
 
@@ -415,7 +470,7 @@ async def export_faqs_to_csv(
         try:
             # Write CSV header
             header = (
-                "Question,Answer,Category,Source,Verified,Bisq Version,"
+                "Question,Answer,Category,Source,Verified,Protocol,"
                 "Created At,Updated At,Verified At\n"
             )
             yield header.encode("utf-8")
@@ -426,7 +481,7 @@ async def export_faqs_to_csv(
                 categories=categories_list,
                 source=source,
                 verified=verified,
-                bisq_version=bisq_version,
+                protocol=protocol,
                 verified_from=verified_from,
                 verified_to=verified_to,
             )
@@ -441,7 +496,7 @@ async def export_faqs_to_csv(
                             sanitize_csv_field(faq.category),
                             sanitize_csv_field(faq.source),
                             sanitize_csv_field("Yes" if faq.verified else "No"),
-                            sanitize_csv_field(faq.bisq_version),
+                            sanitize_csv_field(faq.protocol),
                             sanitize_csv_field(format_timestamp(faq.created_at)),
                             sanitize_csv_field(format_timestamp(faq.updated_at)),
                             sanitize_csv_field(format_timestamp(faq.verified_at)),

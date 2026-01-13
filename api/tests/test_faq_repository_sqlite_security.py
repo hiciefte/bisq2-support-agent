@@ -460,7 +460,7 @@ def sample_faqs() -> List[FAQItem]:
             category="Installation",
             source="Manual",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="How to trade BTC?",
@@ -468,7 +468,7 @@ def sample_faqs() -> List[FAQItem]:
             category="Trading",
             source="in-app",
             verified=False,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="What is reputation?",
@@ -476,6 +476,6 @@ def sample_faqs() -> List[FAQItem]:
             category="General",
             source="Manual",
             verified=True,
-            bisq_version="General",
+            protocol="all",
         ),
     ]

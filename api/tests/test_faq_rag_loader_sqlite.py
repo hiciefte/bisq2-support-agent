@@ -36,7 +36,7 @@ def sample_faq_data():
             category="Trading",
             source="Manual",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="What is the minimum trade amount?",
@@ -44,7 +44,7 @@ def sample_faq_data():
             category="Trading",
             source="Extracted",
             verified=True,
-            bisq_version="Bisq 2",
+            protocol="bisq_easy",
         ),
         FAQItem(
             question="How to install Bisq?",
@@ -52,7 +52,7 @@ def sample_faq_data():
             category="Installation",
             source="Manual",
             verified=False,  # Unverified
-            bisq_version="General",
+            protocol="all",
         ),
     ]
 
@@ -145,7 +145,7 @@ class TestFAQRAGLoaderSQLite:
         assert meta["type"] == "faq", "Type must be 'faq'"
         assert meta["source_weight"] == 1.2, "Default FAQ source weight is 1.2"
         assert meta["category"] == "Trading", "Category must be preserved"
-        assert meta["bisq_version"] == "Bisq 2", "Version must be preserved"
+        assert meta["protocol"] == "bisq_easy", "Protocol must be preserved"
         assert meta["verified"] is True, "Verified status must be preserved"
 
         # Verify title truncation
@@ -223,29 +223,29 @@ class TestFAQRAGLoaderSQLite:
             "Security",
         }, "All categories should be preserved"
 
-    def test_bisq_version_handling(self, sqlite_repo, rag_loader):
-        """Test that bisq_version metadata is correctly handled."""
-        # Setup: Add FAQs with different version tags
-        versions = ["Bisq 1", "Bisq 2", "General"]
-        for idx, version in enumerate(versions):
+    def test_protocol_handling(self, sqlite_repo, rag_loader):
+        """Test that protocol metadata is correctly handled."""
+        # Setup: Add FAQs with different protocol values
+        protocols = ["multisig_v1", "bisq_easy", "all"]
+        for idx, protocol in enumerate(protocols):
             faq = FAQItem(
                 question=f"Q{idx}",
                 answer=f"A{idx}",
                 verified=True,
-                bisq_version=version,
+                protocol=protocol,
             )
             sqlite_repo.add_faq(faq)
 
         # Action: Load FAQs
         docs = rag_loader.load_faq_data(repository=sqlite_repo)
 
-        # Assert: All versions should be preserved
-        loaded_versions = {doc.metadata["bisq_version"] for doc in docs}
-        assert loaded_versions == {
-            "Bisq 1",
-            "Bisq 2",
-            "General",
-        }, "All version tags should be preserved"
+        # Assert: All protocols should be preserved
+        loaded_protocols = {doc.metadata["protocol"] for doc in docs}
+        assert loaded_protocols == {
+            "multisig_v1",
+            "bisq_easy",
+            "all",
+        }, "All protocol values should be preserved"
 
     def test_source_metadata_format(self, sqlite_repo, rag_loader, sample_faq_data):
         """Test that source metadata indicates SQLite origin."""
