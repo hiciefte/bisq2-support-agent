@@ -43,6 +43,7 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(vectorstore.router)
     app.include_router(queue.router)
     app.include_router(pending_responses.router)
+    app.include_router(pending_responses.test_router)  # Test endpoints (no auth)
     app.include_router(shadow_mode.router)
     app.include_router(similar_faqs.router)
 

@@ -5,12 +5,12 @@ review queue, matching the expected API contract.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.core.config import Settings, get_settings
 from app.core.security import verify_admin_access
 from app.services.pending_response_service import PendingResponseService
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from starlette import status as http_status
 
@@ -23,6 +23,13 @@ router = APIRouter(
         403: {"description": "Forbidden - Insufficient permissions"},
     },
 )
+
+# Separate router for test endpoints (no auth required)
+test_router = APIRouter(
+    prefix="/admin/pending",
+    tags=["Admin Pending Responses - Testing"],
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,4 +247,122 @@ async def edit_and_approve_response(
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to edit response",
+        )
+
+
+@test_router.post("/test/create-response")
+async def create_test_response(
+    question: str = Query(default="How do I make my first trade on Bisq?"),
+    answer: str = Query(default="To make your first trade, open the app and..."),
+    confidence: float = Query(default=0.75, ge=0.0, le=1.0),
+    detected_version: Optional[str] = Query(default="Bisq 2"),
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, str]:
+    """Create a test pending response (for E2E testing only).
+
+    This endpoint creates a pending response entry for testing the
+    moderator review queue. Only available in non-production environments.
+
+    Args:
+        question: Test question text
+        answer: Test answer text
+        confidence: Confidence score (0-1)
+        detected_version: Version string (Bisq 1, Bisq 2, General)
+
+    Returns:
+        Success message with response ID
+    """
+    # Only allow in non-production environments
+    if settings.ENVIRONMENT.lower() == "production":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Test endpoint not available in production",
+        )
+
+    try:
+        pending_service = PendingResponseService(settings)
+
+        # Determine routing action based on confidence
+        if confidence >= 0.7:
+            routing_action = "queue_medium"
+        else:
+            routing_action = "queue_low"
+
+        # Queue the test response
+        response_id = await pending_service.queue_response(
+            question=question,
+            answer=answer,
+            confidence=confidence,
+            routing_action=routing_action,
+            sources=[
+                {
+                    "title": "Test Source",
+                    "type": "wiki",
+                    "content": "Test source content for E2E testing",
+                    "relevance": 0.85,
+                }
+            ],
+            metadata={
+                "detected_version": detected_version,
+                "source": "e2e_test",
+            },
+            channel="web",
+        )
+
+        logger.info(f"Created test pending response {response_id}")
+        return {
+            "message": "Test response created",
+            "response_id": response_id,
+        }
+
+    except Exception as e:
+        logger.error(f"Error creating test response: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create test response: {str(e)}",
+        )
+
+
+@test_router.delete("/test/{response_id}")
+async def delete_test_response(
+    response_id: str,
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, str]:
+    """Delete a test pending response (for E2E testing cleanup).
+
+    Only available in non-production environments.
+
+    Args:
+        response_id: The response ID to delete
+
+    Returns:
+        Success message
+    """
+    # Only allow in non-production environments
+    if settings.ENVIRONMENT.lower() == "production":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Test endpoint not available in production",
+        )
+
+    try:
+        pending_service = PendingResponseService(settings)
+        success = await pending_service.delete_response(response_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Response {response_id} not found",
+            )
+
+        logger.info(f"Deleted test pending response {response_id}")
+        return {"message": f"Response {response_id} deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting test response: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete test response: {str(e)}",
         )
