@@ -395,7 +395,7 @@ class Settings(BaseSettings):
                 f"LLM_CLASSIFICATION_MODEL must be in format 'provider:model', got '{v}'"
             )
 
-        provider, model = v.split(":", 1)
+        provider, _ = v.split(":", 1)
         supported_providers = ["openai", "anthropic", "ollama"]
 
         if provider.lower() not in supported_providers:
@@ -612,21 +612,28 @@ class Settings(BaseSettings):
     @field_validator("MATRIX_HOMESERVER_URL")
     @classmethod
     def validate_matrix_homeserver_url(cls, v: str) -> str:
-        """Enforce HTTPS for Matrix homeserver URLs.
+        """Enforce HTTPS for Matrix homeserver URLs (except localhost for dev).
 
         Args:
             v: Matrix homeserver URL
 
         Returns:
-            Validated URL with HTTPS scheme
+            Validated URL with HTTPS scheme (or HTTP for localhost)
 
         Raises:
-            ValueError: If URL doesn't use HTTPS protocol
+            ValueError: If URL doesn't use HTTPS protocol (except localhost)
         """
         v = v.strip()
-        if v and not v.startswith("https://"):
+        if not v:
+            return v
+        # Allow HTTP for localhost/127.0.0.1 for local development
+        is_localhost = any(
+            v.startswith(prefix) for prefix in ["http://localhost", "http://127.0.0.1"]
+        )
+        if not v.startswith("https://") and not is_localhost:
             raise ValueError(
-                "MATRIX_HOMESERVER_URL must use HTTPS protocol for security. "
+                "MATRIX_HOMESERVER_URL must use HTTPS protocol for security "
+                "(HTTP allowed only for localhost). "
                 f"Got: {v}"
             )
         return v

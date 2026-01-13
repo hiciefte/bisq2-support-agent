@@ -50,6 +50,7 @@ class ShadowModeProcessor:
 
         self._responses: Dict[str, ShadowResponse] = {}
         self._question_hashes: set = set()
+        self._max_question_hashes: int = 10000  # Prevent unbounded memory growth
 
     async def process_question(
         self,
@@ -191,8 +192,15 @@ class ShadowModeProcessor:
                 # No repository - store in memory only
                 self._responses[question_id] = response
 
-            # Track question hash for duplicate detection
+            # Track question hash for duplicate detection (with size limit)
             question_hash = self._hash_question(sanitized_question)
+            if len(self._question_hashes) >= self._max_question_hashes:
+                # Remove oldest entries (clear half to avoid frequent clearing)
+                # Note: set doesn't preserve order, so we clear entirely
+                logger.warning(
+                    f"Question hash cache reached limit ({self._max_question_hashes}), clearing"
+                )
+                self._question_hashes.clear()
             self._question_hashes.add(question_hash)
 
             logger.info(

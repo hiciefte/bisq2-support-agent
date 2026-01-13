@@ -283,6 +283,12 @@ class UnifiedBatchProcessor:
         user_counter = 1
         staff_counter = 1
 
+        # Pre-compute lowercased staff list once outside the loop
+        staff_list = getattr(
+            self.settings, "KNOWN_SUPPORT_STAFF", DEFAULT_SUPPORT_STAFF
+        )
+        staff_list_lower = {s.lower() for s in staff_list}
+
         for msg in messages:
             sender = msg.get("sender", "")
             if sender and sender not in real_to_anon:
@@ -294,11 +300,7 @@ class UnifiedBatchProcessor:
                 if ":" in localpart:
                     localpart = localpart.split(":")[0]  # Remove server part
 
-                # Use settings for staff list (falls back to DEFAULT_SUPPORT_STAFF)
-                staff_list = getattr(
-                    self.settings, "KNOWN_SUPPORT_STAFF", DEFAULT_SUPPORT_STAFF
-                )
-                is_staff = localpart in [s.lower() for s in staff_list]
+                is_staff = localpart in staff_list_lower
 
                 if is_staff:
                     anon_id = f"Staff_{staff_counter}"
