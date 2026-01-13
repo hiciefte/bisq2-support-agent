@@ -165,6 +165,8 @@ async def lifespan(app: FastAPI):
             "Matrix shadow mode service not configured - skipping initialization"
         )
         app.state.matrix_service = None
+        app.state.shadow_repository = None
+        app.state.shadow_processor = None
 
     # Yield control to the application
     yield
@@ -177,10 +179,8 @@ async def lifespan(app: FastAPI):
         logger.info("Disconnecting Matrix shadow mode service...")
         await app.state.matrix_service.disconnect()
 
-    # Close shadow mode repository
-    if hasattr(app.state, "shadow_repository") and app.state.shadow_repository:
-        logger.info("Closing shadow mode repository...")
-        app.state.shadow_repository.close()
+    # Shadow mode repository uses per-operation SQLite connections that auto-close.
+    # No explicit cleanup needed - connections are closed after each query.
 
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):

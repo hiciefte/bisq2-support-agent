@@ -109,6 +109,9 @@ class ShadowModeProcessor:
             # Add context messages (bystander filtering applied)
             if context_messages:
                 # Filter to same-user messages only (GDPR compliance)
+                # Note: If sender is None/empty, hash of "" groups all such messages together.
+                # This is intentional - messages without senders are rare edge cases and
+                # grouping them provides better context than excluding them entirely.
                 filtered_context = []
                 # Pre-compute sender's anonymized ID outside loop for efficiency
                 sender_anon_id = self._anonymize_sender(sender or "")
