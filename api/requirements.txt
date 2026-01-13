@@ -140,7 +140,7 @@ humanfriendly==10.0
     # via coloredlogs
 hyperframe==6.1.0
     # via h2
-identify==2.6.15
+identify==2.6.16
     # via pre-commit
 idna==3.11
     # via
@@ -317,7 +317,7 @@ posthog==5.4.0
     # via chromadb
 pre-commit==4.5.1
     # via -r api/requirements.in
-prometheus-client==0.23.1
+prometheus-client==0.24.0
     # via
     #   -r api/requirements.in
     #   prometheus-fastapi-instrumentator
@@ -327,7 +327,7 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-protobuf==6.33.3
+protobuf==6.33.4
     # via
     #   googleapis-common-protos
     #   onnxruntime
