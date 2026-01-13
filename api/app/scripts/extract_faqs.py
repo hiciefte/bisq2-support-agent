@@ -68,14 +68,14 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
     new_faqs = None
     last_error: Optional[Exception] = None
 
+    # Get application settings once before retries (settings don't change between retries)
+    settings = get_settings()
+
+    # Initialize metrics persistence once (idempotent but more efficient outside loop)
+    init_persistence(settings)
+
     while retry_count < MAX_RETRIES:
         try:
-            # Get application settings
-            settings = get_settings()
-
-            # Initialize metrics persistence so bisq2_api health metrics are persisted
-            init_persistence(settings)
-
             # Initialize Bisq API for data fetching
             bisq_api = Bisq2API(settings)
 
