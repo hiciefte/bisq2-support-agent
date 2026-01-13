@@ -33,6 +33,7 @@ from app.services.faq_service import FAQService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.wiki_service import WikiService
 from app.utils.task_metrics import instrument_faq_extraction
+from app.utils.task_metrics_persistence import init_persistence
 
 # Configure logging
 logging.basicConfig(
@@ -71,6 +72,9 @@ async def main(force_reprocess=False) -> Optional[Dict[str, Any]]:
         try:
             # Get application settings
             settings = get_settings()
+
+            # Initialize metrics persistence so bisq2_api health metrics are persisted
+            init_persistence(settings)
 
             # Initialize Bisq API for data fetching
             bisq_api = Bisq2API(settings)
