@@ -98,6 +98,8 @@ class VersionDetector:
 
     def _check_chat_history(self, chat_history: List) -> Optional[Tuple[str, float]]:
         """Check recent chat history for version context."""
+        if not chat_history:
+            return None
         for msg in reversed(chat_history[-5:]):  # Last 5 messages
             # Handle both dict and Pydantic ChatMessage objects
             if hasattr(msg, "content"):

@@ -9,6 +9,9 @@ from unittest.mock import patch
 import pytest
 from app.core.config import Settings
 from app.utils.task_metrics import (
+    BISQ2_API_HEALTH_STATUS,
+    BISQ2_API_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_RESPONSE_TIME,
     FAQ_EXTRACTION_FAQS_GENERATED,
     FAQ_EXTRACTION_LAST_RUN_STATUS,
     FAQ_EXTRACTION_MESSAGES_PROCESSED,
@@ -16,6 +19,7 @@ from app.utils.task_metrics import (
     FEEDBACK_PROCESSING_LAST_RUN_STATUS,
     WIKI_UPDATE_LAST_RUN_STATUS,
     WIKI_UPDATE_PAGES_PROCESSED,
+    record_bisq2_api_health,
     record_faq_extraction_failure,
     record_faq_extraction_success,
     record_feedback_processing_failure,
@@ -74,6 +78,9 @@ def reset_metrics():
     WIKI_UPDATE_PAGES_PROCESSED.set(0)
     FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(0)
     FEEDBACK_PROCESSING_ENTRIES.set(0)
+    BISQ2_API_HEALTH_STATUS.set(0)
+    BISQ2_API_LAST_CHECK_TIMESTAMP.set(0)
+    BISQ2_API_RESPONSE_TIME.set(0)
 
 
 class TestFAQExtractionSuccess:
@@ -388,3 +395,123 @@ class TestContainerRestartScenario:
         assert FAQ_EXTRACTION_FAQS_GENERATED._value.get() == 5
         assert WIKI_UPDATE_LAST_RUN_STATUS._value.get() == 1
         assert WIKI_UPDATE_PAGES_PROCESSED._value.get() == 150
+
+
+class TestBisq2APIHealthMetrics:
+    """Test bisq2 API health recording with persistence.
+
+    This test class ensures that bisq2_api health metrics are properly
+    persisted when the persistence layer is initialized. This addresses
+    the bug where extract_faqs.py didn't initialize persistence, causing
+    bisq2_api metrics to silently fail to persist.
+    """
+
+    def test_records_healthy_status(self):
+        """Should set healthy status (1) and persist to database."""
+        record_bisq2_api_health(is_healthy=True, response_time=0.5)
+
+        # Check Prometheus gauge
+        assert BISQ2_API_HEALTH_STATUS._value.get() == 1
+
+        # Check database persistence
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        assert persistence.load_metric("bisq2_api_health_status") == 1.0
+
+    def test_records_unhealthy_status(self):
+        """Should set unhealthy status (0) and persist to database."""
+        record_bisq2_api_health(is_healthy=False)
+
+        # Check Prometheus gauge
+        assert BISQ2_API_HEALTH_STATUS._value.get() == 0
+
+        # Check database persistence
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        assert persistence.load_metric("bisq2_api_health_status") == 0.0
+
+    def test_records_response_time(self):
+        """Should set response time gauge and persist."""
+        record_bisq2_api_health(is_healthy=True, response_time=0.123)
+
+        assert BISQ2_API_RESPONSE_TIME._value.get() == 0.123
+
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        # Metric name includes _seconds suffix in database
+        assert persistence.load_metric("bisq2_api_response_time_seconds") == 0.123
+
+    def test_records_timestamp(self):
+        """Should set timestamp gauge and persist."""
+        import time
+
+        before_time = time.time()
+        record_bisq2_api_health(is_healthy=True, response_time=0.5)
+        after_time = time.time()
+
+        # Timestamp should be between before and after
+        timestamp = BISQ2_API_LAST_CHECK_TIMESTAMP._value.get()
+        assert before_time <= timestamp <= after_time
+
+        # Check persistence
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        persisted_timestamp = persistence.load_metric("bisq2_api_last_check_timestamp")
+        assert before_time <= persisted_timestamp <= after_time
+
+    def test_persists_all_metrics_atomically(self):
+        """Should persist all bisq2_api metrics together."""
+        record_bisq2_api_health(is_healthy=True, response_time=0.25)
+
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        metrics = persistence.load_all_metrics()
+
+        assert "bisq2_api_health_status" in metrics
+        # Metric name includes _seconds suffix in database
+        assert "bisq2_api_response_time_seconds" in metrics
+        assert "bisq2_api_last_check_timestamp" in metrics
+
+    def test_handles_none_response_time(self):
+        """Should handle None response time gracefully."""
+        record_bisq2_api_health(is_healthy=False, response_time=None)
+
+        # Status should be set
+        assert BISQ2_API_HEALTH_STATUS._value.get() == 0
+
+        # Response time should remain at 0 (not updated)
+        # Note: The function only updates response_time if it's not None
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        assert persistence.load_metric("bisq2_api_health_status") == 0.0
+
+    def test_health_metrics_survive_restart(self):
+        """Should preserve bisq2_api metrics across simulated container restart."""
+        # Step 1: Record healthy status
+        record_bisq2_api_health(is_healthy=True, response_time=0.5)
+
+        # Verify persisted
+        from app.utils.task_metrics_persistence import get_persistence
+
+        persistence = get_persistence()
+        assert persistence.load_metric("bisq2_api_health_status") == 1.0
+
+        # Step 2: Simulate container restart - reset gauges
+        BISQ2_API_HEALTH_STATUS.set(0)
+        BISQ2_API_RESPONSE_TIME.set(0)
+        BISQ2_API_LAST_CHECK_TIMESTAMP.set(0)
+
+        assert BISQ2_API_HEALTH_STATUS._value.get() == 0
+
+        # Step 3: Restore from database
+        restore_metrics_from_database()
+
+        # Step 4: Verify metrics restored
+        assert BISQ2_API_HEALTH_STATUS._value.get() == 1
+        assert BISQ2_API_RESPONSE_TIME._value.get() == 0.5
