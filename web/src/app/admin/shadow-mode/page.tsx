@@ -911,7 +911,7 @@ export default function ShadowModePage() {
       // Add Unknown version fields
       if (finalVersion === 'unknown') {
         if (trainingVersion) {
-          body.training_version = trainingVersion;
+          body.training_protocol = trainingVersion;
         }
         if (customQuestion) {
           body.custom_clarifying_question = customQuestion;

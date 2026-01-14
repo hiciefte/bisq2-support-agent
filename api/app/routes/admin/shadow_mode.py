@@ -532,12 +532,12 @@ async def create_test_response(
     # Parse status
     try:
         shadow_status = ShadowStatus(status)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid status: {status}. Must be one of: "
             f"{[s.value for s in ShadowStatus]}",
-        )
+        ) from e
 
     # For pending_response_review, require generated_response
     response_text = generated_response

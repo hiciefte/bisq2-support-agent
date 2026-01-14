@@ -319,8 +319,8 @@ async def create_test_response(
         logger.error(f"Error creating test response: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create test response: {str(e)}",
-        )
+            detail=f"Failed to create test response: {e!s}",
+        ) from e
 
 
 @test_router.delete("/test/{response_id}")
@@ -364,5 +364,5 @@ async def delete_test_response(
         logger.error(f"Error deleting test response: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete test response: {str(e)}",
-        )
+            detail=f"Failed to delete test response: {e!s}",
+        ) from e
