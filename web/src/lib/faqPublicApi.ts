@@ -1,0 +1,118 @@
+import { API_BASE_URL } from './config';
+
+/**
+ * Public FAQ types - sanitized version of FAQs for public consumption
+ */
+export interface PublicFAQ {
+  id: string;
+  slug: string;
+  question: string;
+  answer: string;
+  category: string;
+  updated_at?: string;
+}
+
+export interface PublicFAQCategory {
+  name: string;
+  slug: string;
+  count: number;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total_items: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
+export interface PublicFAQListResponse {
+  data: PublicFAQ[];
+  pagination: Pagination;
+}
+
+export interface PublicFAQCategoriesResponse {
+  categories: PublicFAQCategory[];
+}
+
+/**
+ * Fetch paginated list of public FAQs
+ */
+export async function fetchPublicFAQs(options?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+}): Promise<PublicFAQListResponse> {
+  const params = new URLSearchParams();
+  if (options?.page) params.set('page', String(options.page));
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.search) params.set('search', options.search);
+  if (options?.category) params.set('category', options.category);
+
+  const queryString = params.toString();
+  const url = `${API_BASE_URL}/api/public/faqs${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+    // Allow caching for public FAQ data
+    next: { revalidate: 900 }, // 15 minutes (matches backend Cache-Control)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch FAQs: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch a single FAQ by its slug
+ */
+export async function fetchPublicFAQBySlug(slug: string): Promise<PublicFAQ | null> {
+  const url = `${API_BASE_URL}/api/public/faqs/${encodeURIComponent(slug)}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+    next: { revalidate: 900 }, // 15 minutes
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch FAQ: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch all FAQ categories with counts
+ */
+export async function fetchPublicFAQCategories(): Promise<PublicFAQCategory[]> {
+  const url = `${API_BASE_URL}/api/public/faqs/categories`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+    next: { revalidate: 1800 }, // 30 minutes (categories change less frequently)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch categories: ${response.statusText}`);
+  }
+
+  const data: PublicFAQCategoriesResponse = await response.json();
+  return data.categories;
+}

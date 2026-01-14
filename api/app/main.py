@@ -21,10 +21,18 @@ from app.db.run_migrations import run_migrations
 from app.integrations.matrix_shadow_mode import MatrixShadowModeService
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
-from app.routes import chat, feedback_routes, health, metrics_update, onion_verify
+from app.routes import (
+    chat,
+    feedback_routes,
+    health,
+    metrics_update,
+    onion_verify,
+    public_faqs,
+)
 from app.routes.admin import include_admin_routers
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.public_faq_service import PublicFAQService
 from app.services.shadow_mode.repository import ShadowModeRepository
 from app.services.shadow_mode_processor import ShadowModeProcessor
 from app.services.simplified_rag_service import SimplifiedRAGService
@@ -90,6 +98,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing FAQService...")
     faq_service = FAQService(settings=settings)
 
+    logger.info("Initializing PublicFAQService...")
+    public_faq_service = PublicFAQService(faq_service=faq_service)
+
     logger.info("Initializing SimplifiedRAGService...")
     rag_service = SimplifiedRAGService(
         settings=settings,
@@ -104,6 +115,7 @@ async def lifespan(app: FastAPI):
     # Assign services to app state
     app.state.feedback_service = feedback_service
     app.state.faq_service = faq_service
+    app.state.public_faq_service = public_faq_service
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
@@ -389,6 +401,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback_routes.router, tags=["Feedback"])
 app.include_router(metrics_update.router, tags=["Metrics"])
+app.include_router(public_faqs.router)  # Public FAQ endpoints (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 
