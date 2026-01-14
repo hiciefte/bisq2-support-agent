@@ -2,17 +2,29 @@
  * Chat interface type definitions
  */
 
+/**
+ * Source document metadata with wiki URL support
+ */
+export interface Source {
+    title: string
+    type: "wiki" | "faq"
+    content: string
+    protocol?: "bisq_easy" | "multisig_v1" | "all"
+    /** Wiki URL (e.g., "https://bisq.wiki/Article#Section") */
+    url?: string
+    /** Section within article */
+    section?: string
+    /** 0.0-1.0 relevance score from vector search */
+    similarity_score?: number
+}
+
 export interface Message {
     id: string
     content: string
     role: "user" | "assistant"
     timestamp: Date
     rating?: number
-    sources?: Array<{
-        title: string
-        type: string
-        content: string
-    }>
+    sources?: Source[]
     metadata?: {
         response_time: number
         token_count: number
