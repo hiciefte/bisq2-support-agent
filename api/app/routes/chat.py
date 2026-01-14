@@ -35,10 +35,16 @@ class ChatMessage(BaseModel):
 
 
 class Source(BaseModel):
+    """Source document metadata with wiki URL support."""
+
     title: str
     type: str
     content: str
     protocol: str = "all"
+    # Wiki source link fields (optional for backward compatibility)
+    url: Optional[str] = None
+    section: Optional[str] = None
+    similarity_score: Optional[float] = None
 
 
 class QueryRequest(BaseModel):
@@ -136,6 +142,10 @@ async def query(
                 type=source["type"],
                 content=source["content"],
                 protocol=source.get("protocol") or "all",
+                # Wiki source link fields
+                url=source.get("url"),
+                section=source.get("section"),
+                similarity_score=source.get("similarity_score"),
             )
             for source in result["sources"]
         ]

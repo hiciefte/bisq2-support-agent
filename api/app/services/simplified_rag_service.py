@@ -40,6 +40,7 @@ from app.utils.instrumentation import (
     update_error_rate,
 )
 from app.utils.logging import redact_pii
+from app.utils.wiki_url_generator import generate_wiki_url
 from fastapi import Request
 
 # Vector store and embeddings
@@ -646,9 +647,9 @@ class SimplifiedRAGService:
                 version_confidence=version_confidence,
             )
 
-            # Get relevant documents with version priority
+            # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
-            docs = self._retrieve_with_version_priority(
+            docs, doc_scores = self.document_retriever.retrieve_with_scores(
                 preprocessed_question, detected_version
             )
             logger.info(
@@ -732,33 +733,56 @@ class SimplifiedRAGService:
                 )
                 logger.info(f"Content sample: {redact_pii(sample)}")
 
-            # Extract sources for the response
+            # Extract sources for the response with wiki URLs and similarity scores
             sources = []
-            for doc in docs:
+            for i, doc in enumerate(docs):
+                # Get similarity score for this document
+                similarity_score = doc_scores[i] if i < len(doc_scores) else None
+
+                # Truncate content
+                content = (
+                    doc.page_content[:500] + "..."
+                    if len(doc.page_content) > 500
+                    else doc.page_content
+                )
+
+                title = doc.metadata.get("title", "Unknown")
+                section = doc.metadata.get("section")
+                protocol = doc.metadata.get("protocol", "all")
+
                 if doc.metadata.get("type") == "wiki":
+                    # Generate wiki URL for wiki sources
+                    wiki_url = generate_wiki_url(title=title, section=section)
+
                     sources.append(
                         {
-                            "title": doc.metadata.get("title", "Unknown"),
+                            "title": title,
                             "type": "wiki",
-                            "content": (
-                                doc.page_content[:500] + "..."
-                                if len(doc.page_content) > 500
-                                else doc.page_content
+                            "content": content,
+                            "protocol": protocol,
+                            "url": wiki_url,
+                            "section": section,
+                            "similarity_score": (
+                                round(similarity_score, 4)
+                                if similarity_score is not None
+                                else None
                             ),
-                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
                     sources.append(
                         {
-                            "title": doc.metadata.get("title", "Unknown"),
+                            "title": title,
                             "type": "faq",
-                            "content": (
-                                doc.page_content[:500] + "..."
-                                if len(doc.page_content) > 500
-                                else doc.page_content
+                            "content": content,
+                            "protocol": protocol,
+                            "url": None,  # FAQs don't have external URLs yet
+                            "section": section,
+                            "similarity_score": (
+                                round(similarity_score, 4)
+                                if similarity_score is not None
+                                else None
                             ),
-                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
 
