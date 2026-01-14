@@ -17,12 +17,24 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.db.run_migrations import run_migrations
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def clear_settings_cache():
+    """Clear settings cache before and after each test.
+
+    This prevents test pollution when tests modify environment variables
+    or when different tests expect different settings configurations.
+    """
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")

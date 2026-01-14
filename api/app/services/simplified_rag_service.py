@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.conversation_state import ConversationStateManager
@@ -40,6 +41,7 @@ from app.utils.instrumentation import (
     update_error_rate,
 )
 from app.utils.logging import redact_pii
+from app.utils.wiki_url_generator import generate_wiki_url
 from fastapi import Request
 
 # Vector store and embeddings
@@ -646,9 +648,9 @@ class SimplifiedRAGService:
                 version_confidence=version_confidence,
             )
 
-            # Get relevant documents with version priority
+            # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
-            docs = self._retrieve_with_version_priority(
+            docs, doc_scores = self.document_retriever.retrieve_with_scores(
                 preprocessed_question, detected_version
             )
             logger.info(
@@ -732,33 +734,67 @@ class SimplifiedRAGService:
                 )
                 logger.info(f"Content sample: {redact_pii(sample)}")
 
-            # Extract sources for the response
+            # Extract sources for the response with wiki URLs and similarity scores
             sources = []
-            for doc in docs:
+            slug_manager = SlugManager()  # Initialize once for all FAQ slugs
+            for i, doc in enumerate(docs):
+                # Get similarity score for this document
+                similarity_score = doc_scores[i] if i < len(doc_scores) else None
+
+                # Truncate content
+                content = (
+                    doc.page_content[:500] + "..."
+                    if len(doc.page_content) > 500
+                    else doc.page_content
+                )
+
+                title = doc.metadata.get("title", "Unknown")
+                section = doc.metadata.get("section")
+                protocol = doc.metadata.get("protocol", "all")
+
                 if doc.metadata.get("type") == "wiki":
+                    # Generate wiki URL for wiki sources
+                    wiki_url = generate_wiki_url(title=title, section=section)
+
                     sources.append(
                         {
-                            "title": doc.metadata.get("title", "Unknown"),
+                            "title": title,
                             "type": "wiki",
-                            "content": (
-                                doc.page_content[:500] + "..."
-                                if len(doc.page_content) > 500
-                                else doc.page_content
+                            "content": content,
+                            "protocol": protocol,
+                            "url": wiki_url,
+                            "section": section,
+                            "similarity_score": (
+                                round(similarity_score, 4)
+                                if similarity_score is not None
+                                else None
                             ),
-                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
+                    # Generate FAQ URL using slug from document ID and full question
+                    faq_url = None
+                    faq_id = doc.metadata.get("id")
+                    # Use full question from metadata if available, otherwise use title
+                    faq_question = doc.metadata.get("question") or title
+                    if faq_id and faq_question:
+                        # Generate slug from question and ID
+                        slug = slug_manager.generate_slug(faq_question, faq_id)
+                        faq_url = f"/faq/{slug}"
+
                     sources.append(
                         {
-                            "title": doc.metadata.get("title", "Unknown"),
+                            "title": title,
                             "type": "faq",
-                            "content": (
-                                doc.page_content[:500] + "..."
-                                if len(doc.page_content) > 500
-                                else doc.page_content
+                            "content": content,
+                            "protocol": protocol,
+                            "url": faq_url,
+                            "section": section,
+                            "similarity_score": (
+                                round(similarity_score, 4)
+                                if similarity_score is not None
+                                else None
                             ),
-                            "protocol": doc.metadata.get("protocol", "all"),
                         }
                     )
 

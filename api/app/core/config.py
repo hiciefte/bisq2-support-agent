@@ -117,6 +117,46 @@ class Settings(BaseSettings):
         description="LLM temperature for extraction (deterministic)",
     )
 
+    # LLM Extraction Filtering Settings (Question Extraction Optimization)
+    LLM_EXTRACTION_MIN_CONFIDENCE: float = Field(
+        default=0.80,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold for initial_question classification",
+    )
+    ENABLE_PRE_LLM_FILTERING: bool = Field(
+        default=True,
+        description="Enable pre-LLM message filtering to remove obvious noise",
+    )
+    ENABLE_POST_LLM_VALIDATION: bool = Field(
+        default=True,
+        description="Enable post-LLM question validation",
+    )
+    LLM_EXTRACTION_MIN_QUESTION_LENGTH: int = Field(
+        default=10,
+        ge=1,
+        le=1000,
+        description="Minimum character length for valid questions",
+    )
+    ENABLE_MESSAGE_NORMALIZATION: bool = Field(
+        default=True,
+        description="Enable message normalization before LLM processing",
+    )
+
+    # Security Settings for Regex Processing
+    REGEX_TIMEOUT_SECONDS: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=5.0,
+        description="Maximum seconds for regex pattern matching",
+    )
+    MAX_MESSAGE_LENGTH: int = Field(
+        default=10000,
+        ge=100,
+        le=100000,
+        description="Maximum message length in characters before truncation",
+    )
+
     # Provider-specific API keys (separate from classification config)
     ANTHROPIC_API_KEY: str = ""  # For Anthropic Claude models
     OLLAMA_API_URL: str = "http://localhost:11434"  # For local Ollama deployment

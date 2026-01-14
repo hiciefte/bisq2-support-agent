@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import Settings
 from app.services.llm_extraction.models import ExtractedQuestion, ExtractionResult
+from app.services.llm_extraction.pre_filters import MessageNormalizer, MessagePreFilter
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,60 @@ If a user sends Message A followed immediately by Message B:
 1. Check if Message B clarifies/continues Message A's topic → classify B as follow_up
 2. Check if Message B introduces a NEW topic → classify B as initial_question
 3. ALWAYS extract Message A if it contains a question (don't skip it because B follows)
+
+-----------------------------
+## NEGATIVE EXAMPLES (NOT initial_question)
+
+These examples show messages that should NOT be classified as initial_question:
+
+**Example N1: Greeting without question**
+Message: "[User_7]: Hello everyone"
+→ Classification: not_question
+→ Reason: Greeting only, no problem or question stated
+→ Confidence: 0.95
+
+**Example N2: Success announcement**
+Message: "[User_8]: My trade just completed successfully, the BTC arrived!"
+→ Classification: not_question
+→ Reason: Success statement, user does not need help
+→ Confidence: 0.95
+
+**Example N3: Casual appreciation**
+Message: "[User_9]: Thanks for the help yesterday, really appreciate this community"
+→ Classification: acknowledgment
+→ Reason: Gratitude for past help, no current question
+→ Confidence: 0.90
+
+**Example N4: URL share without context**
+Message: "[User_10]: https://bisq.network/blog/new-release"
+→ Classification: not_question
+→ Reason: URL share only, no question or problem described
+→ Confidence: 0.90
+
+**Example N5: Single emoji reaction**
+Message: "[User_11]: 👍"
+→ Classification: not_question
+→ Reason: Emoji reaction, not a question
+→ Confidence: 0.98
+
+**Example N6: Celebratory message**
+Message: "[User_12]: Congrats on the successful trade!"
+→ Classification: not_question
+→ Reason: Community celebration, no help needed
+→ Confidence: 0.95
+
+-----------------------------
+## ALWAYS CLASSIFY AS not_question
+
+The following types of messages should ALWAYS be classified as not_question:
+- Standalone greetings: "Hello", "Hi everyone", "Good morning", "Hey", "GM"
+- Success announcements: "Trade completed", "It worked", "Problem resolved"
+- Gratitude without question: "Thanks for the help", "Appreciate it", "Cheers"
+- Community chat: "Congrats!", "Welcome!", "Good luck", "Nice!"
+- URL shares without question context
+- Single emoji messages or reactions
+- Messages with ONLY punctuation (e.g., "!", "...")
+- Join/leave system notifications
 
 **Output Format** - JSON array of conversation objects:
 [
@@ -458,6 +513,30 @@ class UnifiedBatchProcessor:
 
         # Process single batch with unified LLM call
         try:
+            # Step 0: Pre-LLM filtering and normalization (Phase 1/2 optimization)
+            if self.settings.ENABLE_PRE_LLM_FILTERING:
+                pre_filter = MessagePreFilter()
+                messages, filtered = pre_filter.filter_messages(messages)
+                if filtered:
+                    logger.info(
+                        f"Pre-filtered {len(filtered)} messages before LLM "
+                        f"(reasons: {set(r for _, r in filtered)})"
+                    )
+                # Check if all messages were filtered
+                if not messages:
+                    return ExtractionResult(
+                        conversation_id=f"{room_id}_all_filtered",
+                        questions=[],
+                        conversations=[],
+                        total_messages=0,
+                        processing_time_ms=int((time.time() - start_time) * 1000),
+                    )
+
+            if self.settings.ENABLE_MESSAGE_NORMALIZATION:
+                normalizer = MessageNormalizer()
+                messages = normalizer.normalize_batch(messages)
+                logger.debug(f"Normalized {len(messages)} messages for LLM processing")
+
             # Step 1: Create anonymization mapping
             real_to_anon, anon_to_real = self._create_anonymization_mapping(messages)
 
