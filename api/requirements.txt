@@ -191,7 +191,7 @@ langchain-text-splitters==1.1.0
     # via -r api/requirements.in
 langsmith==0.6.2
     # via langchain-core
-librt==0.7.7
+librt==0.7.8
     # via mypy
 markdown-it-py==4.0.0
     # via rich
@@ -368,7 +368,7 @@ pygments==2.19.2
     #   rich
 pyparsing==3.3.1
     # via matplotlib
-pypika==0.48.9
+pypika==0.50.0
     # via chromadb
 pyproject-hooks==1.2.0
     # via
