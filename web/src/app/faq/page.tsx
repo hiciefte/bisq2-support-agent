@@ -3,10 +3,17 @@
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X, RotateCcw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { FaqCard, FaqCardSkeleton } from '@/components/faq/FaqCard';
 import {
   fetchPublicFAQs,
@@ -116,15 +123,6 @@ function FaqBrowseContent() {
     return () => clearTimeout(timer);
   }, [searchInput, currentSearch, updateParams]);
 
-  // Handle category click
-  const handleCategoryClick = (categoryName: string) => {
-    if (currentCategory === categoryName) {
-      updateParams({ category: '' });
-    } else {
-      updateParams({ category: categoryName });
-    }
-  };
-
   // Clear all filters
   const clearFilters = () => {
     setSearchInput('');
@@ -136,68 +134,106 @@ function FaqBrowseContent() {
   return (
     <>
       {/* Search and Filters */}
-      <div className="mb-6 space-y-4">
-        {/* Search Input */}
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search FAQs..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-10"
-          />
+      <div className="mb-6 space-y-3">
+        {/* Search and Category Filter Row */}
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          {/* Enhanced Search Input */}
+          <div className="relative w-full sm:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70 pointer-events-none z-10" />
+            <Input
+              type="text"
+              placeholder="Search FAQs..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-9 pr-9 h-10 bg-background/60 backdrop-blur-sm border-border/40 focus:border-primary focus:bg-background transition-all"
+            />
+            {searchInput && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0 hover:bg-muted"
+                onClick={() => {
+                  setSearchInput('');
+                  updateParams({ search: '' });
+                }}
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+
+          {/* Category Filter Dropdown */}
+          {categories.length > 0 && (
+            <Select
+              value={currentCategory || 'all'}
+              onValueChange={(value) => {
+                updateParams({ category: value === 'all' ? '' : value });
+              }}
+            >
+              <SelectTrigger className="h-10 w-full sm:w-48 bg-background/60 backdrop-blur-sm border-border/40 focus:border-primary transition-all">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {categories.map((category) => (
+                  <SelectItem key={category.slug} value={category.name}>
+                    {category.name} ({category.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Active Filters Indicator and Reset */}
+          {hasActiveFilters && (
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="h-7 px-2.5 gap-1.5 text-xs font-normal">
+                <span className="text-muted-foreground">Filters:</span>
+                <span className="font-medium">
+                  {(currentSearch ? 1 : 0) + (currentCategory ? 1 : 0)}
+                </span>
+              </Badge>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="h-7 px-2 text-muted-foreground hover:text-foreground gap-1"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span className="text-xs">Reset</span>
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Category Filters */}
-        {categories.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {categories.map((category) => (
-              <Badge
-                key={category.slug}
-                variant={currentCategory === category.name ? 'default' : 'outline'}
-                className="cursor-pointer hover:bg-primary/10 transition-colors"
-                onClick={() => handleCategoryClick(category.name)}
-              >
-                {category.name} ({category.count})
-              </Badge>
-            ))}
-          </div>
-        )}
-
-        {/* Active Filters / Clear */}
+        {/* Active Filter Tags (shown when filters are active) */}
         {hasActiveFilters && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Showing results for:</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground">Showing:</span>
             {currentSearch && (
-              <Badge variant="secondary" className="gap-1">
+              <Badge
+                variant="outline"
+                className="h-6 gap-1 px-2 text-xs font-normal cursor-pointer hover:bg-muted transition-colors"
+                onClick={() => {
+                  setSearchInput('');
+                  updateParams({ search: '' });
+                }}
+              >
                 &quot;{currentSearch}&quot;
-                <X
-                  className="h-3 w-3 cursor-pointer"
-                  onClick={() => {
-                    setSearchInput('');
-                    updateParams({ search: '' });
-                  }}
-                />
+                <X className="h-3 w-3 ml-0.5" />
               </Badge>
             )}
             {currentCategory && (
-              <Badge variant="secondary" className="gap-1">
+              <Badge
+                variant="outline"
+                className="h-6 gap-1 px-2 text-xs font-normal cursor-pointer hover:bg-muted transition-colors"
+                onClick={() => updateParams({ category: '' })}
+              >
                 {currentCategory}
-                <X
-                  className="h-3 w-3 cursor-pointer"
-                  onClick={() => updateParams({ category: '' })}
-                />
+                <X className="h-3 w-3 ml-0.5" />
               </Badge>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearFilters}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              Clear all
-            </Button>
           </div>
         )}
       </div>

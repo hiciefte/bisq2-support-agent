@@ -16,7 +16,7 @@ class VersionDetector:
         "burning man",
         "arbitration",
         "arbitrator",
-        "mediator",
+        # Note: "mediator" removed - mediators exist in both Bisq 1 and Bisq Easy (Bisq 2)
         "altcoin",
         "security deposit",
         "multisig",

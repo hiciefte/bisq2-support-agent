@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.conversation_state import ConversationStateManager
@@ -770,13 +771,24 @@ class SimplifiedRAGService:
                         }
                     )
                 elif doc.metadata.get("type") == "faq":
+                    # Generate FAQ URL using slug from document ID and full question
+                    faq_url = None
+                    faq_id = doc.metadata.get("id")
+                    # Use full question from metadata if available, otherwise use title
+                    faq_question = doc.metadata.get("question") or title
+                    if faq_id and faq_question:
+                        # Generate slug from question and ID
+                        slug_manager = SlugManager()
+                        slug = slug_manager.generate_slug(faq_question, faq_id, set())
+                        faq_url = f"/faq/{slug}"
+
                     sources.append(
                         {
                             "title": title,
                             "type": "faq",
                             "content": content,
                             "protocol": protocol,
-                            "url": None,  # FAQs don't have external URLs yet
+                            "url": faq_url,
                             "section": section,
                             "similarity_score": (
                                 round(similarity_score, 4)

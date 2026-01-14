@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './config';
+import { getApiBaseUrl } from './config';
 
 /**
  * Public FAQ types - sanitized version of FAQs for public consumption
@@ -52,7 +52,8 @@ export async function fetchPublicFAQs(options?: {
   if (options?.category) params.set('category', options.category);
 
   const queryString = params.toString();
-  const url = `${API_BASE_URL}/api/public/faqs${queryString ? `?${queryString}` : ''}`;
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/public/faqs${queryString ? `?${queryString}` : ''}`;
 
   const response = await fetch(url, {
     method: 'GET',
@@ -74,7 +75,8 @@ export async function fetchPublicFAQs(options?: {
  * Fetch a single FAQ by its slug
  */
 export async function fetchPublicFAQBySlug(slug: string): Promise<PublicFAQ | null> {
-  const url = `${API_BASE_URL}/api/public/faqs/${encodeURIComponent(slug)}`;
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/public/faqs/${encodeURIComponent(slug)}`;
 
   const response = await fetch(url, {
     method: 'GET',
@@ -99,7 +101,8 @@ export async function fetchPublicFAQBySlug(slug: string): Promise<PublicFAQ | nu
  * Fetch all FAQ categories with counts
  */
 export async function fetchPublicFAQCategories(): Promise<PublicFAQCategory[]> {
-  const url = `${API_BASE_URL}/api/public/faqs/categories`;
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/api/public/faqs/categories`;
 
   const response = await fetch(url, {
     method: 'GET',

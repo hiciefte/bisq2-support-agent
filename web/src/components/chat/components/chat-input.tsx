@@ -111,6 +111,13 @@ export const ChatInput = ({
                     >
                         Privacy Policy
                     </Link>
+                    <span className="text-xs text-muted-foreground/40">|</span>
+                    <Link
+                        href="/faq"
+                        className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
+                    >
+                        Browse FAQs
+                    </Link>
                 </div>
             </div>
         </form>
