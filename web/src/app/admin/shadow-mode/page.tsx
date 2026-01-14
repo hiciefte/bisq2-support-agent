@@ -98,17 +98,22 @@ interface ShadowStats {
 }
 
 // Helper functions
-const formatVersionLabel = (version: string | null): string => {
-  if (!version) return 'Unknown';
-  switch (version.toLowerCase()) {
+const formatProtocolLabel = (protocol: string | null): string => {
+  if (!protocol) return 'Unknown';
+  switch (protocol.toLowerCase()) {
     case 'bisq2':
-      return 'Bisq 2';
+    case 'bisq_easy':
+      return 'Bisq Easy';
     case 'bisq1':
-      return 'Bisq 1';
+    case 'multisig_v1':
+      return 'Multisig v1';
+    case 'musig':
+      return 'MuSig';
     case 'unknown':
+    case 'all':
       return 'Unknown';
     default:
-      return version;
+      return protocol;
   }
 };
 
@@ -124,11 +129,11 @@ const renderVersionBadge = (response: ShadowResponse) => {
     return (
       <div className="flex items-center gap-1.5 text-xs">
         <span className="line-through text-muted-foreground opacity-60">
-          {formatVersionLabel(detectedVersion)}
+          {formatProtocolLabel(detectedVersion)}
         </span>
         <span className="text-muted-foreground">→</span>
         <Badge variant="outline" className="text-xs">
-          {formatVersionLabel(confirmedVersion)}
+          {formatProtocolLabel(confirmedVersion)}
         </Badge>
       </div>
     );
@@ -140,13 +145,13 @@ const renderVersionBadge = (response: ShadowResponse) => {
       <TooltipProvider>
         <div className="flex items-center gap-1.5">
           <Badge variant="outline" className="text-xs">
-            {formatVersionLabel(confirmedVersion)}*
+            {formatProtocolLabel(confirmedVersion)}*
           </Badge>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 className="text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Training version information"
+                aria-label="Training protocol information"
               >
                 <Info className="h-3.5 w-3.5" />
               </button>
@@ -158,12 +163,12 @@ const renderVersionBadge = (response: ShadowResponse) => {
             >
               <div className="space-y-1">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium opacity-70">Training Version:</span>
-                  <span>{formatVersionLabel(trainingVersion)}</span>
+                  <span className="font-medium opacity-70">Training Protocol:</span>
+                  <span>{formatProtocolLabel(trainingVersion)}</span>
                 </div>
                 <p className="text-xs opacity-70 leading-relaxed">
-                  Response generated using {formatVersionLabel(trainingVersion)} knowledge base
-                  to simulate asking user which version they use.
+                  Response generated using {formatProtocolLabel(trainingVersion)} knowledge base
+                  to simulate asking user which protocol they use.
                 </p>
               </div>
             </TooltipContent>
@@ -176,7 +181,7 @@ const renderVersionBadge = (response: ShadowResponse) => {
   // Case 3: Normal Display (Single Badge)
   return (
     <Badge variant="outline" className="text-xs">
-      {formatVersionLabel(confirmedVersion)}
+      {formatProtocolLabel(confirmedVersion)}
     </Badge>
   );
 };
@@ -249,7 +254,7 @@ const getStatusDotColor = (status: string) => {
 const getStatusLabel = (status: string) => {
   switch (status) {
     case 'pending_version_review':
-      return 'Version Review';
+      return 'Protocol Review';
     case 'pending_response_review':
       return 'Response Review';
     case 'rag_failed':
@@ -1123,10 +1128,10 @@ export default function ShadowModePage() {
                 {/* Version Selection - Clean Radio Style */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Bisq Version</Label>
+                    <Label className="text-sm font-medium">Trade Protocol</Label>
                     {response.detected_version && (
                       <span className="text-xs text-muted-foreground">
-                        Auto-detected: <Badge variant="outline" className="ml-1">{formatVersionLabel(response.detected_version)}</Badge>
+                        Auto-detected: <Badge variant="outline" className="ml-1">{formatProtocolLabel(response.detected_version)}</Badge>
                       </span>
                     )}
                   </div>
@@ -1163,7 +1168,7 @@ export default function ShadowModePage() {
                             "text-sm font-medium",
                             currentVersion === version ? "text-foreground" : "text-muted-foreground"
                           )}>
-                            {formatVersionLabel(version)}
+                            {formatProtocolLabel(version)}
                           </span>
                         </div>
 
@@ -1179,7 +1184,7 @@ export default function ShadowModePage() {
                 {/* ALWAYS reserve space for reason input - use opacity transition */}
                 {/* Show reason when:
                     1. Auto-detected Unknown → user selects Bisq 1/2 (correcting detection)
-                    2. Auto-detected Bisq 1/2 → user selects different version (correcting detection)
+                    2. Auto-detected protocol → user selects different protocol (correcting detection)
                     Do NOT show when:
                     - Auto-detected Unknown → user keeps Unknown and uses training dropdown (just training)
                 */}
@@ -1192,7 +1197,7 @@ export default function ShadowModePage() {
                   <Input
                     value={inlineChange?.reason || ''}
                     onChange={(e) => handleInlineReasonChange(response.id, e.target.value)}
-                    placeholder="Why is the detected version incorrect? (for ML training)"
+                    placeholder="Why is the detected protocol incorrect? (for ML training)"
                     className="text-sm"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !generatingIds.has(response.id)) {
@@ -1203,7 +1208,7 @@ export default function ShadowModePage() {
                   />
                 </div>
 
-                {/* Unknown Version - Training Version Selection */}
+                {/* Unknown Protocol - Training Protocol Selection */}
                 {/* P0: Reserve space for stable layout (no button jumping) */}
                 <div
                   className={cn(
@@ -1216,10 +1221,10 @@ export default function ShadowModePage() {
                   <div className="space-y-4 border-t pt-4">
                     <div>
                       <Label className="text-sm font-medium mb-2 block">
-                        Training version <span className="text-destructive">*</span>
+                        Training protocol <span className="text-destructive">*</span>
                       </Label>
                       <p className="text-xs text-muted-foreground mb-3">
-                        Generate version-specific response (simulates asking user their version)
+                        Generate protocol-specific response (simulates asking user which protocol they use)
                       </p>
                       <Select
                         value={inlineChange?.trainingVersion || ''}
@@ -1231,26 +1236,26 @@ export default function ShadowModePage() {
                         }}
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select training version..." />
+                          <SelectValue placeholder="Select training protocol..." />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Bisq 1">Bisq 1</SelectItem>
-                          <SelectItem value="Bisq 2">Bisq 2</SelectItem>
+                          <SelectItem value="multisig_v1">Multisig v1 (Bisq 1)</SelectItem>
+                          <SelectItem value="bisq_easy">Bisq Easy (Bisq 2)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
-                    {/* P1: Progressive disclosure - show custom question only after training version selected */}
+                    {/* P1: Progressive disclosure - show custom question only after training protocol selected */}
                     {inlineChange?.trainingVersion && (
                       <div className="animate-in fade-in duration-200">
                         <Label className="text-sm font-medium mb-2 block">
                           Custom clarifying question <span className="text-muted-foreground text-xs">(optional)</span>
                         </Label>
                         <p className="text-xs text-muted-foreground mb-2">
-                          Override default question for {inlineChange.trainingVersion}
+                          Override default question for {formatProtocolLabel(inlineChange.trainingVersion)}
                         </p>
                         <Input
-                          placeholder={`e.g., Are you asking about ${inlineChange.trainingVersion} trading or Bisq Easy?`}
+                          placeholder={`e.g., Are you asking about ${formatProtocolLabel(inlineChange.trainingVersion)} trading?`}
                           value={inlineChange?.customQuestion || ''}
                           onChange={(e) => {
                             setInlineVersionChanges(prev => ({
@@ -1356,7 +1361,7 @@ export default function ShadowModePage() {
                       </div>
                       {response.version_confirmed_at && (
                         <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium opacity-70">Version Confirmed:</span>
+                          <span className="font-medium opacity-70">Protocol Confirmed:</span>
                           <span>{formatTimestamp(response.version_confirmed_at)}</span>
                         </div>
                       )}
@@ -1696,7 +1701,7 @@ export default function ShadowModePage() {
                       </div>
                       {response.version_confirmed_at && (
                         <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium opacity-70">Version Confirmed:</span>
+                          <span className="font-medium opacity-70">Protocol Confirmed:</span>
                           <span>{formatTimestamp(response.version_confirmed_at)}</span>
                         </div>
                       )}
@@ -1942,7 +1947,7 @@ export default function ShadowModePage() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Version</p>
+                  <p className="text-sm text-muted-foreground">Protocol</p>
                   <p className="text-2xl font-bold" data-testid="stat-version-review">{stats.pending_version_review}</p>
                 </div>
                 <Clock className="h-6 w-6 text-yellow-500" />
@@ -2027,7 +2032,7 @@ export default function ShadowModePage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Items</SelectItem>
-            <SelectItem value="pending_version_review">Version Review</SelectItem>
+            <SelectItem value="pending_version_review">Protocol Review</SelectItem>
             <SelectItem value="pending_response_review">Response Review</SelectItem>
             <SelectItem value="rag_failed">Failed</SelectItem>
             <SelectItem value="approved">Approved</SelectItem>
@@ -2091,7 +2096,7 @@ export default function ShadowModePage() {
               <h3 className="text-xl font-semibold mb-2">No Responses to Review</h3>
               <p className="text-muted-foreground mb-6 max-w-md">
                 {statusFilter === 'pending_version_review'
-                  ? "All version detections have been reviewed. New questions will appear here automatically."
+                  ? "All protocol detections have been reviewed. New questions will appear here automatically."
                   : statusFilter === 'pending_response_review'
                   ? "All responses have been reviewed. Great work!"
                   : statusFilter === 'rag_failed'
@@ -2113,19 +2118,19 @@ export default function ShadowModePage() {
         </CardContent>
       </Card>
 
-      {/* Version Confirmation Dialog */}
+      {/* Protocol Confirmation Dialog */}
       <Dialog open={showVersionDialog} onOpenChange={setShowVersionDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm Version</DialogTitle>
+            <DialogTitle>Confirm Trade Protocol</DialogTitle>
             <DialogDescription>
-              Confirm the Bisq version to generate a response
+              Confirm the trade protocol to generate a response
             </DialogDescription>
           </DialogHeader>
           {selectedResponse && (
             <div className="space-y-4">
               <div>
-                <Label>Select Version</Label>
+                <Label>Select Protocol</Label>
                 <ToggleGroup
                   type="single"
                   value={selectedVersion}
@@ -2136,13 +2141,13 @@ export default function ShadowModePage() {
                     "h-8",
                     selectedVersion === 'bisq1' && "bg-blue-100 dark:bg-blue-900/30"
                   )}>
-                    Bisq 1
+                    Multisig v1
                   </ToggleGroupItem>
                   <ToggleGroupItem value="bisq2" className={cn(
                     "h-8",
                     selectedVersion === 'bisq2' && "bg-emerald-100 dark:bg-emerald-900/30"
                   )}>
-                    Bisq 2
+                    Bisq Easy
                   </ToggleGroupItem>
                   <ToggleGroupItem value="unknown" className={cn(
                     "h-8",
@@ -2159,7 +2164,7 @@ export default function ShadowModePage() {
                   <Input
                     value={versionChangeReason}
                     onChange={(e) => setVersionChangeReason(e.target.value)}
-                    placeholder="Why is the detected version incorrect?"
+                    placeholder="Why is the detected protocol incorrect?"
                     className="mt-1"
                   />
                 </div>
