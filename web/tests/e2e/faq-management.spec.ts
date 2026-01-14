@@ -19,7 +19,8 @@ declare global {
 
 test.describe("FAQ Management", () => {
     // FAQ card selector constant - used throughout tests
-    const FAQ_CARD_SELECTOR = ".bg-card.border.border-border.rounded-lg";
+    // Note: Use base classes only (no border-border) as it's conditionally applied
+    const FAQ_CARD_SELECTOR = ".bg-card.border.rounded-lg";
 
     // Track created FAQs for cleanup
     const createdFaqQuestions: string[] = [];
@@ -153,7 +154,7 @@ test.describe("FAQ Management", () => {
 
         // Find the newly created FAQ card
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -180,8 +181,13 @@ test.describe("FAQ Management", () => {
         // The API reindexes the vector store which can take several seconds
         await expect(saveButton).toBeHidden({ timeout: 15000 });
 
+        // Re-query for the FAQ card after save (the list may refresh and locator becomes stale)
+        const updatedFaqCard = page.locator(
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        );
+
         // Wait for the updated content to appear in the FAQ card
-        await expect(faqCard).toContainText("Updated answer", { timeout: 10000 });
+        await expect(updatedFaqCard).toContainText("Updated answer", { timeout: 10000 });
     });
 
     test("should delete a FAQ (CRITICAL: Tests permission issue)", async ({ page }) => {
@@ -197,7 +203,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for FAQ card to appear in the list
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -217,7 +223,7 @@ test.describe("FAQ Management", () => {
 
         // Verify FAQ is removed from list
         const deletedFaq = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await expect(deletedFaq).toHaveCount(0, { timeout: 10000 });
 
@@ -283,7 +289,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for the created FAQ to appear in the list
         const createdFaq = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await createdFaq.waitFor({ state: "visible", timeout: 10000 });
 
@@ -321,7 +327,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for FAQ card to appear in the list
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -342,7 +348,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for FAQ to be removed from DOM
         const deletedFaqCheck = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await expect(deletedFaqCheck).toHaveCount(0, { timeout: 10000 });
 
@@ -360,7 +366,7 @@ test.describe("FAQ Management", () => {
 
         // Verify FAQ is still gone (tests that deletion was persisted to disk)
         const deletedFaq = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await expect(deletedFaq).toHaveCount(0);
     });
@@ -389,7 +395,7 @@ test.describe("FAQ Management", () => {
 
         // Wait for FAQ to appear in the first page
         const newFaqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await newFaqCard.waitFor({ state: "visible", timeout: 15000 });
 
@@ -397,7 +403,7 @@ test.describe("FAQ Management", () => {
         await page2.reload();
         await page2.waitForSelector(FAQ_CARD_SELECTOR);
         const faqOnPage2 = page2.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await expect(faqOnPage2).toBeVisible();
 
@@ -431,7 +437,7 @@ test.describe("FAQ Management", () => {
 
         // Find the newly created FAQ card - wait for it to exist
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -495,7 +501,7 @@ test.describe("FAQ Management", () => {
             timeout: 10000,
         });
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -524,7 +530,7 @@ test.describe("FAQ Management", () => {
 
         // Find FAQ card again after reload
         const faqCardAfterReload = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
 
         // Verify badge still shows "Verified" (tests persistence to disk)
@@ -562,7 +568,7 @@ test.describe("FAQ Management", () => {
 
         // Find the unverified FAQ card
         const unverifiedFaqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await unverifiedFaqCard.waitFor({ state: "visible", timeout: 10000 });
 
@@ -621,7 +627,7 @@ test.describe("FAQ Management", () => {
 
         // Find the FAQ card
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
         );
         await faqCard.waitFor({ state: "visible", timeout: 10000 });
 

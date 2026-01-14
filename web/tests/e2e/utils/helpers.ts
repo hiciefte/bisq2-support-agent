@@ -146,3 +146,17 @@ export function hasPermissionErrors(logs: string): boolean {
     logs.includes('[Errno 13]')
   );
 }
+
+/**
+ * Navigate to feedback management page (assumes already logged in as admin)
+ *
+ * @param page - Playwright page instance
+ */
+export async function navigateToFeedbackManagement(page: Page): Promise<void> {
+  const feedbackLink = page.locator('a[href="/admin/manage-feedback"]').first();
+  await feedbackLink.waitFor({ state: 'visible', timeout: 15000 });
+  await feedbackLink.click();
+  await page.waitForURL('**/admin/manage-feedback');
+  // Wait for feedback cards or empty state
+  await page.waitForSelector('[class*="border-l-4"]', { timeout: 10000 });
+}

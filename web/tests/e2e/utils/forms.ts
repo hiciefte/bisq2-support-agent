@@ -23,19 +23,29 @@ import { type Page } from "@playwright/test";
  * ```
  */
 export async function selectCategory(page: Page, category: string) {
-    // 1. Open the combobox popover
-    await page.click('button[role="combobox"]:has-text("Select category")');
+    // 1. Open the combobox popover - match button text with or without dots
+    // The Sheet/Add form uses "Select category..." while edit mode might use different text
+    const comboboxButton = page.locator('button[role="combobox"]').filter({
+        hasText: /Select category/,
+    });
+    await comboboxButton.click();
 
     // 2. Wait for command input to be visible (replaces arbitrary 300ms timeout)
     const commandInput = page.locator("[cmdk-input]");
-    await commandInput.waitFor({ state: "visible" });
+    await commandInput.waitFor({ state: "visible", timeout: 5000 });
 
     // 3. Type the category name
     await commandInput.fill(category);
 
     // 4. Wait for filtered list to update (client-side operation, no network needed)
-    // Wait for cmdk items to be visible (more robust than fixed delay)
-    await page.waitForSelector("[cmdk-item]", { state: "visible", timeout: 1000 });
+    // Wait for cmdk items OR empty state to be visible (more robust than fixed delay)
+    // The list might be empty if the typed category doesn't match any existing categories
+    await Promise.race([
+        page.waitForSelector("[cmdk-item]", { state: "visible", timeout: 3000 }),
+        page.waitForSelector("[cmdk-empty]", { state: "visible", timeout: 3000 }),
+    ]).catch(() => {
+        // Ignore timeout - we'll still try to select or create
+    });
 
     // 5. Check if the category exists in the list
     const existingItem = page.locator(`[cmdk-item][data-value="${category.toLowerCase()}"]`);
@@ -53,5 +63,5 @@ export async function selectCategory(page: Page, category: string) {
     // 7. Wait for popover to close (indicates selection complete)
     // We wait for the command input to be hidden instead of checking for button visibility
     // because there are multiple comboboxes on the page (filter chips)
-    await commandInput.waitFor({ state: "hidden" });
+    await commandInput.waitFor({ state: "hidden", timeout: 5000 });
 }
