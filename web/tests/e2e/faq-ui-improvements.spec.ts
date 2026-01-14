@@ -250,10 +250,11 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         // Click save button (button with text "Save")
         const saveButton = page.locator('button:has-text("Save")');
         await saveButton.click();
-        await page.waitForTimeout(3000);
 
-        // Verify update
-        await expect(faqCard).toContainText("Updated via inline edit");
+        // Wait for the save to complete - check that the updated text appears on the page
+        // and the test question is still visible (indicating the card was re-rendered with new content)
+        await expect(page.locator(`text="${testQuestion}"`).first()).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('text="Updated via inline edit"').first()).toBeVisible({ timeout: 10000 });
 
         // Reload page to ensure we have fresh data from backend
         await page.reload();

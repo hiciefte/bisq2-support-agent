@@ -1,25 +1,16 @@
 import { test, expect } from '@playwright/test';
-
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'dev_admin_key';
+import {
+  ADMIN_API_KEY,
+  WEB_BASE_URL,
+  loginAsAdmin,
+  navigateToFeedbackManagement,
+} from './utils';
 
 test.describe('Conversation History Display', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to admin page (redirects to /admin/overview)
-    await page.goto('http://localhost:3000/admin');
-
-    // Wait for login form to appear
-    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-
-    // Login with API key
-    await page.fill('input[type="password"]', ADMIN_API_KEY);
-    await page.click('button:has-text("Login")');
-
-    // Wait for authenticated UI to appear (sidebar with navigation)
-    await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
-
-    // Navigate to feedback management
-    await page.click('a[href="/admin/manage-feedback"]');
-    await page.waitForSelector('text=Feedback', { timeout: 10000 });
+    // Login to admin and navigate to feedback management
+    await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+    await navigateToFeedbackManagement(page);
   });
 
   test('should show conversation history in feedback detail dialog', async ({ page }) => {

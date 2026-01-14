@@ -508,8 +508,15 @@ async def create_test_response(
     question: str = Query(default="Test question about trading?"),
     detected_version: Optional[str] = Query(default="unknown"),
     confidence: float = Query(default=0.3),
+    status: str = Query(default="pending_version_review"),
+    generated_response: Optional[str] = Query(default=None),
 ) -> Dict[str, str]:
-    """Create a test shadow mode response (for E2E testing only)."""
+    """Create a test shadow mode response (for E2E testing only).
+
+    Args:
+        status: One of "pending_version_review" or "pending_response_review"
+        generated_response: If status is "pending_response_review", the mock response text
+    """
     import uuid
 
     settings = get_settings()
@@ -521,6 +528,28 @@ async def create_test_response(
         )
 
     repo = _get_repository()
+
+    # Parse status
+    try:
+        shadow_status = ShadowStatus(status)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status: {status}. Must be one of: "
+            f"{[s.value for s in ShadowStatus]}",
+        ) from e
+
+    # For pending_response_review, require generated_response
+    response_text = generated_response
+    confirmed_ver = None
+    if shadow_status == ShadowStatus.PENDING_RESPONSE_REVIEW:
+        if not response_text:
+            response_text = (
+                "This is a test generated response for E2E testing. "
+                "It contains information about Bisq trading features."
+            )
+        # Set confirmed version for response review state
+        confirmed_ver = detected_version if detected_version != "unknown" else "bisq2"
 
     # Create ShadowResponse instance with proper structure
     response = ShadowResponse(
@@ -538,14 +567,16 @@ async def create_test_response(
         synthesized_question=question,
         detected_version=detected_version,
         version_confidence=confidence,
-        status=ShadowStatus.PENDING_VERSION_REVIEW,
+        confirmed_version=confirmed_ver,
+        generated_response=response_text,
+        status=shadow_status,
         source="e2e_test",
     )
 
     # Add response to database
     repo.add_response(response)
 
-    logger.info(f"Created test shadow response {response.id}")
+    logger.info(f"Created test shadow response {response.id} with status {status}")
     return {"message": "Test response created", "response_id": response.id}
 
 

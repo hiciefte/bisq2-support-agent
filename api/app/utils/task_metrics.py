@@ -189,6 +189,9 @@ def instrument_faq_extraction(func: Callable) -> Callable:
                 if "faqs_generated" in result:
                     FAQ_EXTRACTION_FAQS_GENERATED.set(result["faqs_generated"])
 
+            # Persist Gauge values to database to survive container restarts
+            _persist_faq_metrics()
+
             return result
 
         except Exception:
@@ -199,6 +202,9 @@ def instrument_faq_extraction(func: Callable) -> Callable:
             # Update failure metrics
             FAQ_EXTRACTION_RUNS.labels(status="failure").inc()
             FAQ_EXTRACTION_LAST_RUN_STATUS.set(0)
+
+            # Persist failure status to database
+            _persist_faq_metrics()
 
             # Re-raise the exception
             raise
@@ -247,6 +253,9 @@ def instrument_wiki_update(func: Callable) -> Callable:
                 if "pages_processed" in result:
                     WIKI_UPDATE_PAGES_PROCESSED.set(result["pages_processed"])
 
+            # Persist Gauge values to database to survive container restarts
+            _persist_wiki_metrics()
+
             return result
 
         except Exception:
@@ -257,6 +266,9 @@ def instrument_wiki_update(func: Callable) -> Callable:
             # Update failure metrics
             WIKI_UPDATE_RUNS.labels(status="failure").inc()
             WIKI_UPDATE_LAST_RUN_STATUS.set(0)
+
+            # Persist failure status to database
+            _persist_wiki_metrics()
 
             # Re-raise the exception
             raise
@@ -305,6 +317,9 @@ def instrument_feedback_processing(func: Callable) -> Callable:
                 if "entries_processed" in result:
                     FEEDBACK_PROCESSING_ENTRIES.set(result["entries_processed"])
 
+            # Persist Gauge values to database to survive container restarts
+            _persist_feedback_metrics()
+
             return result
 
         except Exception:
@@ -315,6 +330,9 @@ def instrument_feedback_processing(func: Callable) -> Callable:
             # Update failure metrics
             FEEDBACK_PROCESSING_RUNS.labels(status="failure").inc()
             FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(0)
+
+            # Persist failure status to database
+            _persist_feedback_metrics()
 
             # Re-raise the exception
             raise
