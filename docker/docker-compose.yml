@@ -213,6 +213,7 @@ services:
       - "3000"
     environment:
       - NEXT_PUBLIC_API_URL=/api # Production-specific for Nginx routing
+      - API_URL_INTERNAL=http://api:8000 # Server-side rendering calls to API
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
     command: npm run start
