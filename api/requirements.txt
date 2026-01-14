@@ -486,7 +486,7 @@ tqdm==4.67.1
     #   huggingface-hub
     #   openai
     #   transformers
-transformers==4.57.4
+transformers==4.57.5
     # via -r api/requirements.in
 typer==0.21.1
     # via chromadb
