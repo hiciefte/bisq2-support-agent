@@ -22,7 +22,8 @@ export async function dismissPrivacyNotice(page: Page): Promise<void> {
 /**
  * Wait for the assistant message to appear after sending a chat message
  *
- * Uses the Bisq AI avatar as the indicator that the response is ready.
+ * Waits for both the Bisq AI avatar AND the input field to become enabled again
+ * (indicating the response has finished loading).
  *
  * @param page - Playwright page instance
  * @param timeout - Maximum time to wait in milliseconds (default: 30000)
@@ -31,7 +32,14 @@ export async function waitForAssistantMessage(
   page: Page,
   timeout: number = 30000
 ): Promise<void> {
+  // Wait for the avatar to appear
   await page.waitForSelector('img[alt="Bisq AI"]', { timeout });
+
+  // Wait for the input field to become enabled (response finished loading)
+  await page.waitForSelector('input:not([disabled]), textarea:not([disabled])', { timeout });
+
+  // Also wait for feedback buttons to appear (indicates complete response)
+  await page.waitForSelector('button[aria-label="Rate as helpful"], button[aria-label="Rate as not helpful"]', { timeout });
 }
 
 /**

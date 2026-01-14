@@ -1,27 +1,44 @@
 import { test, expect } from '@playwright/test';
 import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from './utils/env';
 
+interface TestResponseOptions {
+  detected_version?: string;
+  question?: string;
+  confidence?: number;
+  status?: 'pending_version_review' | 'pending_response_review';
+  generated_response?: string;
+}
+
 /**
  * Create controlled test data for E2E testing
- * @param detected_version - Version to use (e.g., "unknown", "bisq1", "bisq2")
- * @param question - Custom question text
- * @param confidence - Confidence score (0-1)
+ * @param options - Test response options
  * @returns response_id of created test entry
  */
-async function createTestResponse(
-  detected_version: string = 'unknown',
-  question: string = 'Test question about trading features?',
-  confidence: number = 0.3
-): Promise<string> {
+async function createTestResponse(options: TestResponseOptions = {}): Promise<string> {
+  const {
+    detected_version = 'unknown',
+    question = 'Test question about trading features?',
+    confidence = 0.3,
+    status = 'pending_version_review',
+    generated_response,
+  } = options;
+
+  const params: Record<string, string> = {
+    channel_id: `test-e2e-${Date.now()}`,
+    user_id: 'test-user-e2e',
+    question: question,
+    detected_version: detected_version,
+    confidence: confidence.toString(),
+    status: status,
+  };
+
+  if (generated_response) {
+    params.generated_response = generated_response;
+  }
+
   const response = await fetch(
     `${API_BASE_URL}/admin/shadow-mode/test/create-response?` +
-    new URLSearchParams({
-      channel_id: `test-e2e-${Date.now()}`,
-      user_id: 'test-user-e2e',
-      question: question,
-      detected_version: detected_version,
-      confidence: confidence.toString(),
-    }),
+    new URLSearchParams(params),
     {
       method: 'POST',
       headers: {
@@ -188,8 +205,23 @@ test.describe('Shadow Mode Workflow', () => {
   });
 
   test.describe('Response Review Phase', () => {
+    // Create test data in response review state before each test
+    test.beforeEach(async () => {
+      // Create a test response already in pending_response_review state
+      await createTestResponse({
+        detected_version: 'bisq2',
+        question: 'How do I start trading on Bisq Easy?',
+        confidence: 0.85,
+        status: 'pending_response_review',
+        generated_response: 'To start trading on Bisq Easy, first ensure you have Bitcoin in your wallet. Then navigate to the Offerbook to browse available offers or create your own offer.',
+      });
+    });
+
     test('should edit response inline using "e" keyboard shortcut', async ({ page }) => {
-      // Check if we have response review cards
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
+
       const responseCards = page.locator('[data-testid="response-review-card"]');
       const cardCount = await responseCards.count();
 
@@ -219,17 +251,19 @@ test.describe('Shadow Mode Workflow', () => {
     });
 
     test('should approve response in edit mode with single action', async ({ page }) => {
-      // Check if we have response review cards
-      const responseCards = page.locator('[data-testid="response-review-card"]');
-      const cardCount = await responseCards.count();
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
 
-      if (cardCount === 0) {
+      const responseCards = page.locator('[data-testid="response-review-card"]');
+      const initialCardCount = await responseCards.count();
+
+      if (initialCardCount === 0) {
         test.skip(true, 'No response review cards available');
         return;
       }
 
       const firstCard = responseCards.first();
-      const cardId = await firstCard.getAttribute('data-testid');
 
       // Enter edit mode
       await firstCard.locator('button:has-text("Edit")').click();
@@ -242,15 +276,20 @@ test.describe('Shadow Mode Workflow', () => {
       // Click "Save & Approve" button
       await firstCard.locator('button:has-text("Save & Approve")').click();
 
-      // Verify card is removed from pending queue
-      await expect(firstCard).not.toBeVisible({ timeout: 10000 });
+      // Wait for action to complete and verify card count decreased
+      await page.waitForTimeout(2000);
+      const newCardCount = await responseCards.count();
+      expect(newCardCount).toBeLessThan(initialCardCount);
 
-      // Verify success toast (either save or approve message)
-      await expect(page.locator('text=/approved|saved/i')).toBeVisible({ timeout: 5000 });
+      // Verify success toast using sonner toast selector (avoiding matching static "Approved" text in cards)
+      await expect(page.locator('[data-sonner-toast] >> text=/approved|saved/i').first()).toBeVisible({ timeout: 5000 });
     });
 
     test('should reject response with detailed error message if it fails', async ({ page }) => {
-      // Check if we have response review cards
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
+
       const responseCards = page.locator('[data-testid="response-review-card"]');
       const cardCount = await responseCards.count();
 
@@ -278,7 +317,10 @@ test.describe('Shadow Mode Workflow', () => {
     });
 
     test('should cancel edit mode and restore original response', async ({ page }) => {
-      // Check if we have response review cards
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
+
       const responseCards = page.locator('[data-testid="response-review-card"]');
       const cardCount = await responseCards.count();
 
@@ -315,11 +357,14 @@ test.describe('Shadow Mode Workflow', () => {
     });
 
     test('should approve response without editing', async ({ page }) => {
-      // Check if we have response review cards
-      const responseCards = page.locator('[data-testid="response-review-card"]');
-      const cardCount = await responseCards.count();
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
 
-      if (cardCount === 0) {
+      const responseCards = page.locator('[data-testid="response-review-card"]');
+      const initialCardCount = await responseCards.count();
+
+      if (initialCardCount === 0) {
         test.skip(true, 'No response review cards available');
         return;
       }
@@ -329,11 +374,13 @@ test.describe('Shadow Mode Workflow', () => {
       // Click approve directly (not in edit mode)
       await firstCard.locator('button:has-text("Approve")').first().click();
 
-      // Verify card is removed
-      await expect(firstCard).not.toBeVisible({ timeout: 10000 });
+      // Wait for action to complete and verify card count decreased
+      await page.waitForTimeout(2000);
+      const newCardCount = await responseCards.count();
+      expect(newCardCount).toBeLessThan(initialCardCount);
 
-      // Verify success toast
-      await expect(page.locator('text=/approved/i')).toBeVisible({ timeout: 5000 });
+      // Verify success toast using sonner toast selector (avoiding matching static "Approved" text in cards)
+      await expect(page.locator('[data-sonner-toast] >> text=/approved/i').first()).toBeVisible({ timeout: 5000 });
     });
   });
 
@@ -400,6 +447,19 @@ test.describe('Shadow Mode Workflow', () => {
     });
 
     test('should update stats after actions', async ({ page }) => {
+      // Create a test response in response review state
+      await createTestResponse({
+        detected_version: 'bisq2',
+        question: 'Stats update test question',
+        confidence: 0.9,
+        status: 'pending_response_review',
+        generated_response: 'Test response for stats update test.',
+      });
+
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="response-review-card"]', { timeout: 10000 });
+
       // Get initial pending count
       const initialPendingText = await page.locator('[data-testid="stat-pending"]').textContent();
       const initialPending = parseInt(initialPendingText || '0', 10);
@@ -470,6 +530,25 @@ test.describe('Shadow Mode Workflow', () => {
 
   test.describe('Filtering', () => {
     test('should filter responses by status', async ({ page }) => {
+      // Create test data in both version review and response review states
+      await createTestResponse({
+        detected_version: 'unknown',
+        question: 'Version review filter test question',
+        confidence: 0.3,
+        status: 'pending_version_review',
+      });
+      await createTestResponse({
+        detected_version: 'bisq2',
+        question: 'Response review filter test question',
+        confidence: 0.9,
+        status: 'pending_response_review',
+        generated_response: 'Test response for filtering test.',
+      });
+
+      // Refresh page to load newly created test data
+      await page.reload();
+      await page.waitForSelector('[data-testid="version-review-card"], [data-testid="response-review-card"]', { timeout: 10000 });
+
       // Get total count
       const totalText = await page.locator('[data-testid="stat-total"]').textContent();
       const total = parseInt(totalText || '0', 10);
@@ -479,9 +558,10 @@ test.describe('Shadow Mode Workflow', () => {
         return;
       }
 
-      // Change filter to "Version Review"
+      // Change filter to "Protocol Review" (the label for pending_version_review status)
       await page.locator('button:has-text("All Items")').click();
-      await page.locator('text="Version Review"').last().click();
+      await page.waitForSelector('[role="option"]', { timeout: 5000 });
+      await page.locator('[role="option"]:has-text("Protocol Review")').click();
 
       // Wait for filter to apply
       await page.waitForTimeout(1000);
@@ -565,11 +645,12 @@ test.describe('Shadow Mode Workflow', () => {
   test.describe('Unknown Version with Training Version', () => {
     // Create controlled test data with "unknown" version for each test
     test.beforeEach(async ({ page }) => {
-      await createTestResponse(
-        'unknown',
-        'Test question about trading features?',
-        0.3
-      );
+      await createTestResponse({
+        detected_version: 'unknown',
+        question: 'Test question about trading features?',
+        confidence: 0.3,
+        status: 'pending_version_review',
+      });
 
       // Refresh page to load the new test entry
       await page.reload();
