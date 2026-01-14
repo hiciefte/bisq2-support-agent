@@ -17,8 +17,14 @@ except ImportError:
     AsyncClient = None
     RoomMessagesError = None
 
+from app.core.config import get_settings
 from app.integrations.matrix import ConnectionManager, ErrorHandler, SessionManager
 from app.integrations.matrix.polling_state import PollingStateManager
+from app.services.llm_extraction.metrics import (
+    extraction_confidence_score,
+    questions_extracted_total,
+    questions_rejected_total,
+)
 from app.services.matrix_metrics import (
     matrix_poll_duration_seconds,
     matrix_polls_total,
@@ -340,11 +346,28 @@ class MatrixShadowModeService:
             filtered_count = 0
 
             for extracted_q in result.questions:
+                # Record extraction metrics for all questions
+                questions_extracted_total.labels(
+                    question_type=extracted_q.question_type
+                ).inc()
+                extraction_confidence_score.observe(extracted_q.confidence)
+
                 # Skip non-initial questions (follow-ups, acknowledgments, not_question)
                 if extracted_q.question_type != "initial_question":
                     filtered_count += 1
                     logger.debug(
                         f"Filtered {extracted_q.question_type}: {extracted_q.question_text[:50]}..."
+                    )
+                    continue
+
+                # Skip low-confidence initial questions
+                settings = get_settings()
+                if extracted_q.confidence < settings.LLM_EXTRACTION_MIN_CONFIDENCE:
+                    filtered_count += 1
+                    questions_rejected_total.labels(reason="low_confidence").inc()
+                    logger.info(
+                        f"Filtered low-confidence ({extracted_q.confidence:.2f}): "
+                        f"{extracted_q.question_text[:50]}..."
                     )
                     continue
 
@@ -369,7 +392,7 @@ class MatrixShadowModeService:
 
             logger.info(
                 f"Unified batch extraction: {len(questions)} initial questions from {result.total_messages} messages "
-                f"({filtered_count} follow-ups/acknowledgments filtered) "
+                f"({filtered_count} filtered by type/confidence) "
                 f"in {len(result.conversations)} conversations (processing_time={result.processing_time_ms}ms)"
             )
 
