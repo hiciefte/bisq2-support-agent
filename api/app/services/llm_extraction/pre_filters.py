@@ -2,6 +2,17 @@
 
 Filters obvious noise before sending to LLM and normalizes message formatting
 for consistent processing. Includes security features to prevent ReDoS attacks.
+
+Platform Compatibility:
+    The regex timeout mechanism uses signal.SIGALRM which is Unix-only.
+    On Windows or other non-Unix platforms, the timeout protection will not work
+    and regexes will run without time limits. The module will still function
+    but without ReDoS protection.
+
+Thread Safety:
+    The SIGALRM-based timeout is process-global and not thread-safe.
+    In multi-threaded environments, use this module only from the main thread
+    or consider alternative timeout mechanisms.
 """
 
 import logging
@@ -25,17 +36,30 @@ class RegexTimeout(Exception):
 def regex_with_timeout(timeout_seconds: float = 0.5) -> Callable:
     """Decorator for regex operations with timeout protection.
 
+    Note:
+        This decorator uses signal.SIGALRM which is Unix-only and not thread-safe.
+        On non-Unix platforms, the function runs without timeout protection.
+
     Args:
         timeout_seconds: Maximum time allowed for regex execution
 
     Returns:
-        Decorated function with timeout protection
+        Decorated function with timeout protection (Unix) or no-op wrapper (non-Unix)
     """
 
     def decorator(func: Callable) -> Callable:
+        # Check if platform supports SIGALRM
+        if not hasattr(signal, "SIGALRM"):
+            # Non-Unix platform - return function as-is without timeout
+            logger.warning(
+                "SIGALRM not available on this platform. "
+                "Regex timeout protection disabled."
+            )
+            return func
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            def handler(signum, frame):
+            def handler(signum, frame):  # noqa: ARG001
                 raise RegexTimeout(f"Regex execution timeout after {timeout_seconds}s")
 
             # Store old handler and set new one
@@ -55,7 +79,14 @@ def regex_with_timeout(timeout_seconds: float = 0.5) -> Callable:
 
 
 class SafeRegexMatcher:
-    """Thread-safe regex matcher with timeout and input limits."""
+    """Regex matcher with timeout and input limits.
+
+    Note:
+        The timeout mechanism uses SIGALRM which is process-global and not
+        thread-safe. This class should only be used from the main thread in
+        multi-threaded applications. On non-Unix platforms, timeout protection
+        is disabled.
+    """
 
     def __init__(
         self,
@@ -103,9 +134,10 @@ class SafeRegexMatcher:
 
         return False, ""
 
-    @regex_with_timeout(0.5)
     def _match_with_timeout(self, pattern: re.Pattern, text: str) -> bool:
         """Execute regex match with timeout.
+
+        Uses instance-level timeout_seconds for timeout protection.
 
         Args:
             pattern: Compiled regex pattern
@@ -113,8 +145,17 @@ class SafeRegexMatcher:
 
         Returns:
             True if pattern matches text
+
+        Raises:
+            RegexTimeout: If regex execution exceeds timeout_seconds
         """
-        return bool(pattern.search(text))
+
+        # Apply timeout wrapper with instance timeout
+        @regex_with_timeout(self.timeout_seconds)
+        def do_match() -> bool:
+            return bool(pattern.search(text))
+
+        return do_match()
 
 
 def validate_message_input(message: Dict[str, Any]) -> Dict[str, Any]:

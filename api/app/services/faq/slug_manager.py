@@ -3,7 +3,7 @@
 import hashlib
 import re
 import unicodedata
-from typing import FrozenSet, Optional, Set
+from typing import FrozenSet, Set
 
 
 class SlugManager:
@@ -39,9 +39,7 @@ class SlugManager:
     def __init__(self) -> None:
         self._slug_cache: Set[str] = set()
 
-    def generate_slug(
-        self, question: str, faq_id: str, existing_slugs: Optional[Set[str]] = None
-    ) -> str:
+    def generate_slug(self, question: str, faq_id: str) -> str:
         """
         Generate secure URL-safe slug from question text.
 
@@ -52,16 +50,17 @@ class SlugManager:
         4. Truncate at word boundary (leave room for hash)
         5. Add uniqueness hash suffix (prevents collision attacks)
 
+        Note: Uniqueness is guaranteed by the hash suffix derived from faq_id.
+        Two FAQs with different IDs will always produce different slugs,
+        even if their question text is identical.
+
         Args:
             question: The FAQ question text
             faq_id: Unique FAQ identifier for hash generation
-            existing_slugs: Set of existing slugs for collision detection
 
         Returns:
             URL-safe slug string
         """
-        if existing_slugs is None:
-            existing_slugs = self._slug_cache
 
         # Normalize unicode to ASCII
         normalized = unicodedata.normalize("NFKD", question)

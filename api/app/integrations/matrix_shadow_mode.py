@@ -17,7 +17,6 @@ except ImportError:
     AsyncClient = None
     RoomMessagesError = None
 
-from app.core.config import get_settings
 from app.integrations.matrix import ConnectionManager, ErrorHandler, SessionManager
 from app.integrations.matrix.polling_state import PollingStateManager
 from app.services.llm_extraction.metrics import (
@@ -361,7 +360,6 @@ class MatrixShadowModeService:
                     continue
 
                 # Skip low-confidence initial questions
-                settings = get_settings()
                 if extracted_q.confidence < settings.LLM_EXTRACTION_MIN_CONFIDENCE:
                     filtered_count += 1
                     questions_rejected_total.labels(reason="low_confidence").inc()

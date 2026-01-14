@@ -401,7 +401,9 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(feedback_routes.router, tags=["Feedback"])
 app.include_router(metrics_update.router, tags=["Metrics"])
-app.include_router(public_faqs.router)  # Public FAQ endpoints (no auth required)
+app.include_router(
+    public_faqs.router, tags=["Public FAQs"]
+)  # Public FAQ endpoints (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 

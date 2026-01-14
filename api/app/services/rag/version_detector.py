@@ -149,6 +149,9 @@ class VersionDetector:
         if any(kw in question_lower for kw in ["dao", "bsq", "voting"]):
             return "This sounds like a Bisq 1 DAO question. Is that correct, or are you asking about Bisq 2?"
 
+        if any(kw in question_lower for kw in ["mediator", "mediation", "dispute"]):
+            return "Are you asking about mediation in Bisq 1, or Bisq Easy (Bisq 2)? Both versions have mediators."
+
         # Generic fallback
         return (
             "I can help with both Bisq 1 and Bisq 2. "

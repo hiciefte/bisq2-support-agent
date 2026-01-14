@@ -736,6 +736,7 @@ class SimplifiedRAGService:
 
             # Extract sources for the response with wiki URLs and similarity scores
             sources = []
+            slug_manager = SlugManager()  # Initialize once for all FAQ slugs
             for i, doc in enumerate(docs):
                 # Get similarity score for this document
                 similarity_score = doc_scores[i] if i < len(doc_scores) else None
@@ -778,8 +779,7 @@ class SimplifiedRAGService:
                     faq_question = doc.metadata.get("question") or title
                     if faq_id and faq_question:
                         # Generate slug from question and ID
-                        slug_manager = SlugManager()
-                        slug = slug_manager.generate_slug(faq_question, faq_id, set())
+                        slug = slug_manager.generate_slug(faq_question, faq_id)
                         faq_url = f"/faq/{slug}"
 
                     sources.append(

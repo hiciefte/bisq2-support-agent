@@ -3,7 +3,7 @@
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from app.services.faq.slug_manager import SlugManager
@@ -21,7 +21,7 @@ class CacheEntry:
 
     def is_expired(self) -> bool:
         """Check if this cache entry has expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
 
 class PublicFAQService:
@@ -88,14 +88,18 @@ class PublicFAQService:
 
     def _get_from_cache(self, key: str) -> Optional[Any]:
         """Get value from cache if not expired."""
-        entry = self._cache.get(key)
-        if entry and not entry.is_expired():
-            return entry.data
-        return None
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry and not entry.is_expired():
+                return entry.data
+            return None
 
     def _set_cache(self, key: str, data: Any, ttl: timedelta) -> None:
         """Set cache entry with TTL."""
-        self._cache[key] = CacheEntry(data=data, expires_at=datetime.utcnow() + ttl)
+        with self._lock:
+            self._cache[key] = CacheEntry(
+                data=data, expires_at=datetime.now(timezone.utc) + ttl
+            )
 
     def _get_faq_by_id_from_service(self, faq_id: str) -> Any:
         """Get FAQ by ID from the FAQService.
@@ -120,7 +124,7 @@ class PublicFAQService:
                 faq_id = faq.id
                 question = faq.question or ""
 
-                slug = self.slug_manager.generate_slug(question, faq_id, existing_slugs)
+                slug = self.slug_manager.generate_slug(question, faq_id)
                 existing_slugs.add(slug)
                 self._slug_to_id[slug] = faq_id
                 self._id_to_slug[faq_id] = slug
@@ -160,9 +164,7 @@ class PublicFAQService:
                         self.slug_manager.remove_from_cache(old_slug)
 
                     # Generate new slug
-                    new_slug = self.slug_manager.generate_slug(
-                        faq.question, faq_id, set(self._slug_to_id.keys())
-                    )
+                    new_slug = self.slug_manager.generate_slug(faq.question, faq_id)
                     self._slug_to_id[new_slug] = faq_id
                     self._id_to_slug[faq_id] = new_slug
                     self.slug_manager.add_to_cache(new_slug)
