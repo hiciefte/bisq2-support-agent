@@ -1,19 +1,23 @@
 /**
  * Shared configuration for API endpoints
  *
- * In production: Uses '/api' (relative URL) which is proxied by nginx
- * In local development: Set NEXT_PUBLIC_API_URL=http://localhost:8000 for direct API access
+ * SECURITY: All API calls (client-side AND server-side) route through nginx to ensure:
+ * - Rate limiting is enforced (prevents DoS attacks)
+ * - Security headers are applied (CSP, X-Frame-Options, etc.)
+ * - Centralized access logging for security monitoring
  *
- * For server-side rendering in Docker:
- * - Server components need API_URL_INTERNAL (Docker network: http://api:8000)
- * - Client components use NEXT_PUBLIC_API_URL (browser: http://localhost:8000)
+ * Configuration:
+ * - Production: Uses '/api' (relative URL) proxied by nginx
+ * - Local dev: Uses 'http://localhost:8000' for direct API access (dev only)
+ * - SSR in Docker: Uses 'http://nginx:80' to route through nginx (NOT direct to api:8000)
  */
 
 // Client-side API URL (used by browser)
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 // Server-side API URL (used by SSR in Docker containers)
-// Falls back to NEXT_PUBLIC_API_URL if not set (for non-Docker environments)
+// SECURITY: Routes through nginx for rate limiting and security headers
+// Falls back to client URL for non-Docker environments
 export const API_BASE_URL_SERVER =
   process.env.API_URL_INTERNAL ||
   process.env.NEXT_PUBLIC_API_URL ||
