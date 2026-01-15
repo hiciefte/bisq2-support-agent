@@ -460,6 +460,9 @@ fix_permissions() {
 }
 
 # Run FAQ SQLite migration if needed
+# NOTE: Migration is SKIPPED if SQLite DB already has FAQs.
+# SQLite is the authoritative source - JSONL is only for initial migration.
+# To force re-migration, manually delete faqs.db first.
 run_faq_sqlite_migration() {
     log_info "Checking for FAQ SQLite migration needs..."
 
@@ -476,6 +479,30 @@ run_faq_sqlite_migration() {
         docker compose -f "$COMPOSE_FILE" up -d api
         sleep 10
     fi
+
+    # CRITICAL: Skip migration if SQLite already has FAQs
+    # SQLite is the authoritative source after initial migration
+    # Running migration again would overwrite verified status and lose production changes
+    local faq_count
+    faq_count=$(docker exec docker-api-1 python -c "
+import sqlite3
+from pathlib import Path
+db_path = Path('/data/faqs.db')
+if db_path.exists():
+    conn = sqlite3.connect(str(db_path))
+    count = conn.execute('SELECT COUNT(*) FROM faqs').fetchone()[0]
+    conn.close()
+    print(count)
+else:
+    print(0)
+" 2>/dev/null || echo "0")
+
+    if [ "$faq_count" -gt 0 ]; then
+        log_success "SQLite already has $faq_count FAQs - skipping migration (SQLite is authoritative)"
+        return 0
+    fi
+
+    log_info "SQLite DB is empty - running initial migration from JSONL..."
 
     # Run migration in dry-run mode first
     log_info "Running SQLite migration dry-run..."

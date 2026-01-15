@@ -24,6 +24,7 @@ class TestPublicFAQService:
         mock_service = MagicMock()
 
         # Create mock FAQs with IDs
+        # Note: verified=True by default since public endpoint only shows verified FAQs
         class MockFAQ:
             def __init__(self, data, idx):
                 self.id = f"faq-{idx}"
@@ -32,7 +33,7 @@ class TestPublicFAQService:
                 self.category = data.get("category", "General")
                 self.source = data.get("source", "Manual")
                 self.protocol = data.get("protocol", "all")
-                self.verified = data.get("verified", False)
+                self.verified = data.get("verified", True)  # Default True for public
                 self.created_at = None
                 self.updated_at = None
 
@@ -51,6 +52,10 @@ class TestPublicFAQService:
 
         mock_faqs = [MockFAQ(faq, idx) for idx, faq in enumerate(sample_faq_data)]
         mock_service.get_all_faqs.return_value = mock_faqs
+        # get_filtered_faqs is used for categories (verified=True filter)
+        mock_service.get_filtered_faqs.return_value = [
+            f for f in mock_faqs if f.verified
+        ]
         mock_service.repository.get_faq_by_id.side_effect = lambda faq_id: next(
             (faq for faq in mock_faqs if faq.id == faq_id), None
         )
@@ -185,6 +190,65 @@ class TestPublicFAQService:
         assert isinstance(results, list)
         # Should return results from the mock
         assert len(results) == len(sample_faq_data)
+
+    def test_unverified_faq_not_returned_by_slug(self, sample_faq_data):
+        """Test that unverified FAQs are not returned via get_faq_by_slug."""
+        mock_service = MagicMock()
+
+        # Create mock FAQs with mixed verified status
+        class MockFAQ:
+            def __init__(self, data, idx, verified):
+                self.id = f"faq-{idx}"
+                self.question = data["question"]
+                self.answer = data["answer"]
+                self.category = data.get("category", "General")
+                self.source = data.get("source", "Manual")
+                self.protocol = data.get("protocol", "all")
+                self.verified = verified
+                self.created_at = None
+                self.updated_at = None
+
+            def model_dump(self):
+                return {
+                    "id": self.id,
+                    "question": self.question,
+                    "answer": self.answer,
+                    "category": self.category,
+                    "source": self.source,
+                    "protocol": self.protocol,
+                    "verified": self.verified,
+                    "created_at": self.created_at,
+                    "updated_at": self.updated_at,
+                }
+
+        # First FAQ is verified, second is unverified
+        mock_faqs = [
+            MockFAQ(sample_faq_data[0], 0, verified=True),
+            MockFAQ(sample_faq_data[1], 1, verified=False),
+        ]
+        mock_service.get_all_faqs.return_value = mock_faqs
+        mock_service.get_filtered_faqs.return_value = [mock_faqs[0]]  # Only verified
+
+        # Reset singleton for this test
+        PublicFAQService._instance = None
+        service = PublicFAQService(faq_service=mock_service)
+
+        # The unverified FAQ should have a slug but return None when fetched
+        unverified_faq_id = mock_faqs[1].id
+        unverified_slug = service._id_to_slug.get(unverified_faq_id)
+
+        # Slug should exist for unverified FAQ (slug init includes all FAQs)
+        assert unverified_slug is not None, "Unverified FAQ should have a slug"
+        # Even though the slug exists, the FAQ should not be returned
+        faq = service.get_faq_by_slug(unverified_slug)
+        assert faq is None, "Unverified FAQ should not be returned via public API"
+
+        # Verified FAQ should be returned
+        verified_faq_id = mock_faqs[0].id
+        verified_slug = service._id_to_slug.get(verified_faq_id)
+        assert verified_slug is not None, "Verified FAQ should have a slug"
+        faq = service.get_faq_by_slug(verified_slug)
+        assert faq is not None, "Verified FAQ should be returned via public API"
 
 
 class TestPublicFAQEndpoints:
