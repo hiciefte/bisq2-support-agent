@@ -326,8 +326,14 @@ apply_updates() {
         if [ "$API_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps api; then
-                log_error "Failed to rebuild API service"
+            # Build with BUILD_ID for cache invalidation, then start
+            # Note: --build-arg only works with 'docker compose build', not 'up --build'
+            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api; then
+                log_error "Failed to build API service"
+                rollback_update "API rebuild failed"
+            fi
+            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api; then
+                log_error "Failed to start API service"
                 rollback_update "API rebuild failed"
             fi
 
@@ -368,8 +374,14 @@ apply_updates() {
         if [ "$WEB_REBUILD_NEEDED" = "true" ]; then
             log_info "Rebuilding Web service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" up -d --build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" --no-deps web; then
-                log_error "Failed to rebuild Web service"
+            # Build with BUILD_ID for cache invalidation, then start
+            # Note: --build-arg only works with 'docker compose build', not 'up --build'
+            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" web; then
+                log_error "Failed to build Web service"
+                rollback_update "Web rebuild failed"
+            fi
+            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps web; then
+                log_error "Failed to start Web service"
                 rollback_update "Web rebuild failed"
             fi
 
