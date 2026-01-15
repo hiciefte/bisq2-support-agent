@@ -237,17 +237,18 @@ class TestPublicFAQService:
         unverified_faq_id = mock_faqs[1].id
         unverified_slug = service._id_to_slug.get(unverified_faq_id)
 
+        # Slug should exist for unverified FAQ (slug init includes all FAQs)
+        assert unverified_slug is not None, "Unverified FAQ should have a slug"
         # Even though the slug exists, the FAQ should not be returned
-        if unverified_slug:
-            faq = service.get_faq_by_slug(unverified_slug)
-            assert faq is None, "Unverified FAQ should not be returned via public API"
+        faq = service.get_faq_by_slug(unverified_slug)
+        assert faq is None, "Unverified FAQ should not be returned via public API"
 
         # Verified FAQ should be returned
         verified_faq_id = mock_faqs[0].id
         verified_slug = service._id_to_slug.get(verified_faq_id)
-        if verified_slug:
-            faq = service.get_faq_by_slug(verified_slug)
-            assert faq is not None, "Verified FAQ should be returned via public API"
+        assert verified_slug is not None, "Verified FAQ should have a slug"
+        faq = service.get_faq_by_slug(verified_slug)
+        assert faq is not None, "Verified FAQ should be returned via public API"
 
 
 class TestPublicFAQEndpoints:

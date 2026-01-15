@@ -160,16 +160,17 @@ class PublicFAQService:
                 for key in keys_to_remove:
                     del self._cache[key]
 
-                # Refresh slug for this FAQ
+                # Always remove old slug mapping first (even for unverified FAQs)
+                old_slug = self._id_to_slug.get(faq_id)
+                if old_slug:
+                    self._slug_to_id.pop(old_slug, None)
+                    self._id_to_slug.pop(faq_id, None)
+                    self.slug_manager.remove_from_cache(old_slug)
+
+                # Refresh slug only for verified FAQs (public consumption)
                 faq = self._get_faq_by_id_from_service(faq_id)
                 if faq:
-                    # Remove old slug mapping
-                    old_slug = self._id_to_slug.get(faq_id)
-                    if old_slug:
-                        self._slug_to_id.pop(old_slug, None)
-                        self.slug_manager.remove_from_cache(old_slug)
-
-                    # Generate new slug
+                    # Generate new slug for verified FAQ
                     new_slug = self.slug_manager.generate_slug(faq.question, faq_id)
                     self._slug_to_id[new_slug] = faq_id
                     self._id_to_slug[faq_id] = new_slug
