@@ -220,8 +220,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      nginx:
-        condition: service_healthy
+      # Note: nginx depends on web, so adding nginx here would create a circular dependency
+      # SSR calls to nginx will simply fail during the brief startup window, which is acceptable
     networks:
       - bisq-support-network
     healthcheck:
