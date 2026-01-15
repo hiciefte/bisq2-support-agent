@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.bisq_mcp_service import Bisq2MCPService, LiveDataType
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
@@ -59,7 +60,12 @@ class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
 
     def __init__(
-        self, settings=None, feedback_service=None, wiki_service=None, faq_service=None
+        self,
+        settings=None,
+        feedback_service=None,
+        wiki_service=None,
+        faq_service=None,
+        bisq_mcp_service: Optional[Bisq2MCPService] = None,
     ):
         """Initialize the RAG service.
 
@@ -68,6 +74,7 @@ class SimplifiedRAGService:
             feedback_service: Optional FeedbackService instance for feedback operations
             wiki_service: Optional WikiService instance for wiki operations
             faq_service: Optional FAQService instance for FAQ operations
+            bisq_mcp_service: Optional Bisq2MCPService for live data integration
         """
         if settings is None:
             settings = get_settings()
@@ -75,6 +82,7 @@ class SimplifiedRAGService:
         self.feedback_service = feedback_service
         self.wiki_service = wiki_service
         self.faq_service = faq_service
+        self.bisq_mcp_service = bisq_mcp_service
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
@@ -549,6 +557,78 @@ class SimplifiedRAGService:
                 "context_fallback_failed": True,
             }
 
+    def _detect_live_data_needs(
+        self, question: str
+    ) -> tuple[LiveDataType, Optional[str]]:
+        """Detect if a question requires live Bisq data.
+
+        Delegates to Bisq2MCPService for consistent intent detection.
+
+        Args:
+            question: The user's question
+
+        Returns:
+            Tuple of (data_type, extracted_currency)
+        """
+        if not self.bisq_mcp_service:
+            return LiveDataType.NONE, None
+
+        return self.bisq_mcp_service.detect_live_data_needs(question)
+
+    def _extract_currency(self, question: str) -> Optional[str]:
+        """Extract currency code from a question.
+
+        Delegates to Bisq2MCPService for consistent extraction.
+
+        Args:
+            question: The user's question
+
+        Returns:
+            Extracted currency code or None
+        """
+        if not self.bisq_mcp_service:
+            return None
+
+        return self.bisq_mcp_service._extract_currency(question)
+
+    async def _get_live_context(
+        self, data_type: LiveDataType, currency: Optional[str] = None
+    ) -> Optional[str]:
+        """Fetch and format live Bisq data for prompt context.
+
+        Args:
+            data_type: Type of live data needed
+            currency: Optional currency filter
+
+        Returns:
+            Formatted live data string for context, or None if unavailable
+        """
+        if not self.bisq_mcp_service:
+            return None
+
+        if not self.settings.ENABLE_BISQ_MCP_INTEGRATION:
+            logger.debug("Bisq MCP integration disabled, skipping live data")
+            return None
+
+        try:
+            if data_type == LiveDataType.PRICE:
+                return await self.bisq_mcp_service.get_market_prices_formatted(currency)
+            elif data_type == LiveDataType.OFFERS:
+                return await self.bisq_mcp_service.get_offerbook_formatted(currency)
+            elif data_type == LiveDataType.REPUTATION:
+                # Reputation requires a profile ID, which we can't extract from most questions
+                # Return None and let the LLM explain how to check reputation
+                return None
+            elif data_type == LiveDataType.PAYMENT_METHODS:
+                # Payment methods are static reference data, not live API data
+                # Return None and let the RAG system handle from wiki/FAQ
+                return None
+            else:
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to fetch live data ({data_type}): {e}")
+            return None
+
     async def query(
         self,
         question: str,
@@ -647,6 +727,21 @@ class SimplifiedRAGService:
                 detected_version=detected_version,
                 version_confidence=version_confidence,
             )
+
+            # Detect if live data is needed and fetch it
+            live_data_type, live_currency = self._detect_live_data_needs(
+                preprocessed_question
+            )
+            live_context = None
+            if live_data_type != LiveDataType.NONE:
+                logger.info(
+                    f"Detected live data need: {live_data_type.value} (currency: {live_currency})"
+                )
+                live_context = await self._get_live_context(
+                    live_data_type, live_currency
+                )
+                if live_context:
+                    logger.info(f"Fetched live context: {len(live_context)} chars")
 
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
@@ -832,6 +927,12 @@ class SimplifiedRAGService:
                 "version_confidence": version_confidence,
                 "emotion": emotion,
                 "emotion_intensity": emotion_intensity,
+                "live_data_type": (
+                    live_data_type.value
+                    if live_data_type != LiveDataType.NONE
+                    else None
+                ),
+                "live_context_included": live_context is not None,
             }
 
         except Exception as e:

@@ -44,6 +44,12 @@ aiohttp
 mwxml
 mwparserfromhell
 
+# Resilience and caching (for Bisq MCP integration)
+cachetools
+pybreaker
+tenacity
+httpx  # async HTTP client with connection pooling
+
 # Monitoring
 psutil
 prometheus-client

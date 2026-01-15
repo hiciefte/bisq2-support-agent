@@ -22,8 +22,38 @@ class Settings(BaseSettings):
     DATA_DIR: str = "api/data"
 
     # External URLs
-    BISQ_API_URL: str = "http://localhost:8090"
+    BISQ_API_URL: str = "http://bisq2-api:8090"
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
+
+    # Bisq 2 MCP Integration Settings
+    BISQ_API_TIMEOUT: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Timeout in seconds for Bisq API requests",
+    )
+    BISQ_CACHE_TTL_PRICES: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="Cache TTL in seconds for market prices",
+    )
+    BISQ_CACHE_TTL_OFFERS: int = Field(
+        default=30,
+        ge=5,
+        le=300,
+        description="Cache TTL in seconds for offerbook data",
+    )
+    BISQ_CACHE_TTL_REPUTATION: int = Field(
+        default=300,
+        ge=60,
+        le=3600,
+        description="Cache TTL in seconds for reputation data",
+    )
+    ENABLE_BISQ_MCP_INTEGRATION: bool = Field(
+        default=False,
+        description="Enable live Bisq 2 data integration (market prices, offers, reputation)",
+    )
 
     # Matrix integration settings for shadow mode
     MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
