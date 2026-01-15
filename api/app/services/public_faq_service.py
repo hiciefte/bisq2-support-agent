@@ -104,15 +104,21 @@ class PublicFAQService:
     def _get_faq_by_id_from_service(self, faq_id: str) -> Any:
         """Get FAQ by ID from the FAQService.
 
+        Only returns verified FAQs for public consumption.
+
         Args:
             faq_id: The FAQ identifier
 
         Returns:
-            FAQIdentifiedItem or None if not found
+            FAQIdentifiedItem or None if not found or not verified
         """
-        return next(
+        faq = next(
             (faq for faq in self.faq_service.get_all_faqs() if faq.id == faq_id), None
         )
+        # Only return verified FAQs for public consumption
+        if faq and not faq.verified:
+            return None
+        return faq
 
     def _initialize_slugs(self) -> None:
         """Generate slugs for all FAQs on startup."""
@@ -309,11 +315,13 @@ class PublicFAQService:
             return cached
 
         # Use existing pagination from FAQService
+        # IMPORTANT: Only show verified FAQs publicly
         result = self.faq_service.get_faqs_paginated(
             page=page,
             page_size=limit,
             search_text=search if search else None,
             categories=[category] if category else None,
+            verified=True,  # Only show verified FAQs publicly
         )
 
         # Sanitize each FAQ and add slugs
@@ -338,7 +346,7 @@ class PublicFAQService:
         return response
 
     def get_categories(self) -> List[Dict[str, Any]]:
-        """Get all categories with counts.
+        """Get all categories with counts (verified FAQs only).
 
         Returns:
             List of category dicts with name, count, and slug
@@ -348,7 +356,8 @@ class PublicFAQService:
         if cached is not None:
             return cached
 
-        faqs = self.faq_service.get_all_faqs()
+        # Only count verified FAQs for public category counts
+        faqs = self.faq_service.get_filtered_faqs(verified=True)
         category_counts: Dict[str, int] = {}
 
         for faq in faqs:
