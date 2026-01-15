@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
-from app.services.bisq_mcp_service import Bisq2MCPService, LiveDataType
+from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
@@ -83,6 +83,19 @@ class SimplifiedRAGService:
         self.wiki_service = wiki_service
         self.faq_service = faq_service
         self.bisq_mcp_service = bisq_mcp_service
+
+        # Initialize MCP server for autonomous tool calling (if Bisq service available)
+        self.mcp_server = None
+        self.mcp_tools: List[Dict[str, Any]] = []
+        if self.bisq_mcp_service and self.settings.ENABLE_BISQ_MCP_INTEGRATION:
+            try:
+                from app.services.mcp.bisq_mcp_server import create_mcp_server
+
+                self.mcp_server = create_mcp_server(self.bisq_mcp_service)
+                logger.info("MCP server initialized for Bisq 2 APIs")
+            except Exception as e:
+                logger.warning(f"Failed to initialize MCP server: {e}")
+                self.mcp_server = None
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
@@ -221,6 +234,46 @@ class SimplifiedRAGService:
     def initialize_llm(self) -> None:
         """Delegate to LLM provider for model initialization."""
         self.llm = self.llm_provider.initialize_llm()
+
+        # Initialize MCP tool definitions after LLM is ready
+        if self.mcp_server:
+            self._initialize_mcp_tools()
+
+    def _initialize_mcp_tools(self) -> None:
+        """Initialize MCP tool definitions for LLM tool calling.
+
+        Converts MCP server tools to OpenAI function calling format
+        for use with invoke_with_tools.
+        """
+        if not self.mcp_server:
+            return
+
+        try:
+            # Get tools synchronously (FastMCP provides list_tools() which is async)
+            import asyncio
+
+            from app.services.rag.llm_provider import convert_mcp_tools_to_openai_format
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # We're in async context - schedule as task
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self.mcp_server.list_tools())
+                    mcp_tools = future.result(timeout=5)
+            else:
+                mcp_tools = asyncio.run(self.mcp_server.list_tools())
+
+            self.mcp_tools = convert_mcp_tools_to_openai_format(mcp_tools)
+            logger.info(f"Initialized {len(self.mcp_tools)} MCP tools for LLM")
+        except Exception as e:
+            logger.warning(f"Failed to initialize MCP tools: {e}")
+            self.mcp_tools = []
 
     @instrument_stage("retrieval")
     def _retrieve_with_version_priority(
@@ -557,78 +610,6 @@ class SimplifiedRAGService:
                 "context_fallback_failed": True,
             }
 
-    def _detect_live_data_needs(
-        self, question: str
-    ) -> tuple[LiveDataType, Optional[str]]:
-        """Detect if a question requires live Bisq data.
-
-        Delegates to Bisq2MCPService for consistent intent detection.
-
-        Args:
-            question: The user's question
-
-        Returns:
-            Tuple of (data_type, extracted_currency)
-        """
-        if not self.bisq_mcp_service:
-            return LiveDataType.NONE, None
-
-        return self.bisq_mcp_service.detect_live_data_needs(question)
-
-    def _extract_currency(self, question: str) -> Optional[str]:
-        """Extract currency code from a question.
-
-        Delegates to Bisq2MCPService for consistent extraction.
-
-        Args:
-            question: The user's question
-
-        Returns:
-            Extracted currency code or None
-        """
-        if not self.bisq_mcp_service:
-            return None
-
-        return self.bisq_mcp_service._extract_currency(question)
-
-    async def _get_live_context(
-        self, data_type: LiveDataType, currency: Optional[str] = None
-    ) -> Optional[str]:
-        """Fetch and format live Bisq data for prompt context.
-
-        Args:
-            data_type: Type of live data needed
-            currency: Optional currency filter
-
-        Returns:
-            Formatted live data string for context, or None if unavailable
-        """
-        if not self.bisq_mcp_service:
-            return None
-
-        if not self.settings.ENABLE_BISQ_MCP_INTEGRATION:
-            logger.debug("Bisq MCP integration disabled, skipping live data")
-            return None
-
-        try:
-            if data_type == LiveDataType.PRICE:
-                return await self.bisq_mcp_service.get_market_prices_formatted(currency)
-            elif data_type == LiveDataType.OFFERS:
-                return await self.bisq_mcp_service.get_offerbook_formatted(currency)
-            elif data_type == LiveDataType.REPUTATION:
-                # Reputation requires a profile ID, which we can't extract from most questions
-                # Return None and let the LLM explain how to check reputation
-                return None
-            elif data_type == LiveDataType.PAYMENT_METHODS:
-                # Payment methods are static reference data, not live API data
-                # Return None and let the RAG system handle from wiki/FAQ
-                return None
-            else:
-                return None
-        except Exception as e:
-            logger.warning(f"Failed to fetch live data ({data_type}): {e}")
-            return None
-
     async def query(
         self,
         question: str,
@@ -728,26 +709,12 @@ class SimplifiedRAGService:
                 version_confidence=version_confidence,
             )
 
-            # Detect if live data is needed and fetch it
-            live_data_type, live_currency = self._detect_live_data_needs(
-                preprocessed_question
-            )
-            live_context = None
-            if live_data_type != LiveDataType.NONE:
-                logger.info(
-                    f"Detected live data need: {live_data_type.value} (currency: {live_currency})"
-                )
-                live_context = await self._get_live_context(
-                    live_data_type, live_currency
-                )
-                if live_context:
-                    logger.info(f"Fetched live context: {len(live_context)} chars")
-
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
             docs, doc_scores = self.document_retriever.retrieve_with_scores(
                 preprocessed_question, detected_version
             )
+
             logger.info(
                 f"Retrieved {len(docs)} relevant documents (for version: {detected_version})"
             )
@@ -805,11 +772,56 @@ class SimplifiedRAGService:
                 logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
                 logger.debug(f"  Content: {doc.page_content[:200]}...")
 
-            # Generate response using the RAG chain
-            # The chain handles retrieval, formatting, and LLM invocation internally
-            # Note: We already retrieved docs above for logging/source tracking,
-            # but the chain will do its own retrieval which is fine
-            response_text = self.rag_chain(preprocessed_question, chat_history)
+            # Generate response - use MCP tools if available for autonomous tool calling
+            # The LLM decides when to use tools based on the question
+            mcp_tools_used: list[dict[str, str]] | None = None
+            mcp_invocation_succeeded = False
+            if self.mcp_tools:
+                logger.info("MCP tools available, using tool-enabled invocation")
+                try:
+                    # Build prompt with context from retrieved documents
+                    context = self._format_docs(docs)
+                    chat_history_str = self.prompt_manager.format_chat_history(
+                        chat_history
+                    )
+                    full_prompt = self.prompt_manager.format_prompt_for_mcp(
+                        context, preprocessed_question, chat_history_str
+                    )
+
+                    # Invoke LLM with MCP tools available
+                    # The LLM autonomously decides when to call tools
+                    tool_result = self.llm.invoke_with_tools(
+                        prompt=full_prompt,
+                        tools=self.mcp_tools,
+                        max_turns=3,
+                    )
+                    response_text = tool_result.content
+                    mcp_invocation_succeeded = True
+
+                    # Return detailed tool usage info if LLM actually called tools
+                    if tool_result.tool_calls_made:
+                        from datetime import datetime, timezone
+
+                        timestamp = datetime.now(timezone.utc).isoformat()
+                        mcp_tools_used = [
+                            {"tool": tc["tool"], "timestamp": timestamp}
+                            for tc in tool_result.tool_calls_made
+                        ]
+                        logger.info(
+                            f"MCP tool calls made: {[tc['tool'] for tc in tool_result.tool_calls_made]}"
+                        )
+                    else:
+                        logger.info(
+                            "LLM processed with tools available but didn't use any"
+                        )
+                except Exception as e:
+                    logger.warning(f"MCP tool invocation failed, falling back: {e}")
+                    # Fall through to standard RAG chain
+
+            if not mcp_invocation_succeeded:
+                # Standard RAG chain invocation (no MCP tools available)
+                # The chain handles retrieval, formatting, and LLM invocation internally
+                response_text = self.rag_chain(preprocessed_question, chat_history)
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -927,12 +939,7 @@ class SimplifiedRAGService:
                 "version_confidence": version_confidence,
                 "emotion": emotion,
                 "emotion_intensity": emotion_intensity,
-                "live_data_type": (
-                    live_data_type.value
-                    if live_data_type != LiveDataType.NONE
-                    else None
-                ),
-                "live_context_included": live_context is not None,
+                "mcp_tools_used": mcp_tools_used,
             }
 
         except Exception as e:

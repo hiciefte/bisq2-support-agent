@@ -1,12 +1,13 @@
 /**
  * Component to render individual chat messages
- * Updated with consolidated metadata row following Apple/Vercel/shadcn design principles
+ * Consolidated metadata row following Apple/Vercel/shadcn design principles
  */
 
 import Image from "next/image"
 import { UserIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Rating } from "@/components/ui/rating"
+import { LiveDataBadge } from "@/components/live-data"
 import { SourceBadges } from "./source-badges"
 import { ConfidenceBadge } from "./confidence-badge"
 import type { Message } from "../types/chat.types"
@@ -16,21 +17,33 @@ interface MessageItemProps {
     onRating?: (messageId: string, rating: number) => void
 }
 
-export const MessageItem = ({ message, onRating }: MessageItemProps) => {
-    const hasMetadata =
-        message.role === "assistant" &&
-        ((message.sources && message.sources.length > 0) ||
-            message.confidence !== undefined ||
-            (message.id && !message.isThankYouMessage && onRating))
+export function MessageItem({ message, onRating }: MessageItemProps) {
+    const isAssistant = message.role === "assistant"
+    const hasSources = message.sources && message.sources.length > 0
+    const hasConfidence = message.confidence !== undefined
+    const hasLiveData = Boolean(message.mcp_tools_used)
+    const canRate = message.id && !message.isThankYouMessage && onRating
+
+    const hasMetadata = isAssistant && (hasSources || hasConfidence || hasLiveData || canRate)
+
+    // Format timestamp for LiveDataBadge
+    const formattedTimestamp = message.timestamp instanceof Date
+        ? message.timestamp.toISOString()
+        : message.timestamp
+
+    // Extract tool names from MCP tools
+    const toolNames = Array.isArray(message.mcp_tools_used)
+        ? message.mcp_tools_used.map(t => t.tool)
+        : undefined
 
     return (
         <div
             className={cn(
                 "flex items-start gap-4 px-4",
-                message.role === "user" ? "flex-row-reverse" : ""
+                !isAssistant && "flex-row-reverse"
             )}
         >
-            {message.role === "assistant" ? (
+            {isAssistant ? (
                 <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-full bg-background shadow">
                     <Image
                         src="/bisq-fav.png"
@@ -45,17 +58,11 @@ export const MessageItem = ({ message, onRating }: MessageItemProps) => {
                     <UserIcon className="h-4 w-4" />
                 </div>
             )}
-            <div
-                className={cn(
-                    "flex-1 space-y-2",
-                    message.role === "user" ? "text-right" : ""
-                )}
-            >
+            <div className={cn("flex-1 space-y-2", !isAssistant && "text-right")}>
                 <div className="inline-block rounded-lg px-3 py-2 text-sm bg-muted">
                     {message.content}
                 </div>
 
-                {/* Consolidated metadata row - sources, confidence, and rating */}
                 {hasMetadata && (
                     <div
                         className={cn(
@@ -63,21 +70,24 @@ export const MessageItem = ({ message, onRating }: MessageItemProps) => {
                             "flex-col sm:flex-row sm:items-center sm:justify-between"
                         )}
                     >
-                        {/* Left side: Sources and confidence */}
                         <div className="flex flex-wrap items-center gap-2">
-                            {message.sources && message.sources.length > 0 && (
-                                <SourceBadges sources={message.sources} />
-                            )}
-                            {message.confidence !== undefined && (
+                            {hasSources && <SourceBadges sources={message.sources!} />}
+                            {hasConfidence && (
                                 <ConfidenceBadge
-                                    confidence={message.confidence}
+                                    confidence={message.confidence!}
                                     version={message.detected_version}
+                                />
+                            )}
+                            {hasLiveData && (
+                                <LiveDataBadge
+                                    type="live"
+                                    timestamp={formattedTimestamp}
+                                    toolsUsed={toolNames}
                                 />
                             )}
                         </div>
 
-                        {/* Right side: Rating */}
-                        {message.id && !message.isThankYouMessage && onRating && (
+                        {canRate && (
                             <Rating
                                 className="self-end sm:self-auto flex-shrink-0"
                                 onRate={(rating) => onRating(message.id!, rating)}

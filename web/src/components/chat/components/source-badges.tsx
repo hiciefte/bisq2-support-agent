@@ -4,7 +4,6 @@
  */
 
 import { SourceLinksTrigger } from "./source-links"
-import { cn } from "@/lib/utils"
 import type { Source } from "../types/chat.types"
 
 interface SourceBadgesProps {
@@ -12,15 +11,7 @@ interface SourceBadgesProps {
     className?: string
 }
 
-export const SourceBadges = ({ sources, className }: SourceBadgesProps) => {
-    // Early return if no sources to avoid rendering empty container
-    if (!sources || sources.length === 0) {
-        return null
-    }
-
-    return (
-        <div className={cn("flex items-center gap-1.5", className)}>
-            <SourceLinksTrigger sources={sources} />
-        </div>
-    )
+export function SourceBadges({ sources, className }: SourceBadgesProps) {
+    // SourceLinksTrigger handles empty sources internally
+    return <SourceLinksTrigger sources={sources} className={className} />
 }

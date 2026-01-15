@@ -89,10 +89,9 @@ export function ConfidenceBadge({
             <CollapsibleTrigger asChild>
                 <button
                     className={cn(
-                        "inline-flex items-center gap-1.5 px-2 py-1 rounded-full",
+                        "inline-flex items-center gap-1.5 px-2 py-1 rounded-md",
                         "text-xs font-medium transition-all duration-200",
                         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                        // Minimum touch target: 44x44px achieved via padding
                         "min-h-[28px]",
                         config.className,
                         config.bgClassName,

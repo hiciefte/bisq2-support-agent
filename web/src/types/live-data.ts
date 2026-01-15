@@ -62,6 +62,8 @@ export interface LiveDataBadgeProps {
   type: 'live' | 'cached' | 'stale';
   /** Optional timestamp to display */
   timestamp?: string;
+  /** Optional list of MCP tools used to fetch this data */
+  toolsUsed?: string[];
   /** Additional CSS classes */
   className?: string;
 }

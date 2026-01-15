@@ -47,6 +47,13 @@ class Source(BaseModel):
     similarity_score: Optional[float] = None
 
 
+class McpToolUsage(BaseModel):
+    """Details about MCP tool usage for live Bisq 2 data."""
+
+    tool: str
+    timestamp: str
+
+
 class QueryRequest(BaseModel):
     question: str
     chat_history: Optional[List[ChatMessage]] = None
@@ -66,6 +73,8 @@ class QueryResponse(BaseModel):
     emotion: Optional[str] = None
     emotion_intensity: Optional[float] = None
     forwarded_to_human: bool = False
+    # MCP tools metadata - detailed info about tools used for live Bisq 2 data
+    mcp_tools_used: Optional[List[McpToolUsage]] = None
 
 
 @router.api_route("/query", methods=["POST"])
@@ -162,6 +171,8 @@ async def query(
             emotion=result.get("emotion"),
             emotion_intensity=result.get("emotion_intensity"),
             forwarded_to_human=result.get("forwarded_to_human", False),
+            # MCP tools metadata
+            mcp_tools_used=result.get("mcp_tools_used"),
         )
 
         # Log response size and validate JSON serializability

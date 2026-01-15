@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import transformers, but make it optional
 try:
-    from transformers import pipeline  # type: ignore[import-untyped]
+    from transformers import pipeline
 
     HAS_TRANSFORMERS = True
 except ImportError:
