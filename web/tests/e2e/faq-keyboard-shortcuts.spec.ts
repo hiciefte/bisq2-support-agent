@@ -13,6 +13,9 @@ import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./uti
  */
 
 test.describe("FAQ Keyboard Shortcuts", () => {
+    // Increase timeout for tests that may run after container restart tests
+    test.setTimeout(90000);
+
     // Base selector for FAQ cards (without border-border since it changes when selected)
     const FAQ_CARD_SELECTOR = ".bg-card.rounded-lg.border";
     // Selector for selected FAQ cards (has ring-2 when selected)
@@ -48,21 +51,40 @@ test.describe("FAQ Keyboard Shortcuts", () => {
         return null;
     };
 
-    // Helper to login and navigate to FAQ management
-    const loginAndNavigateToFaqs = async (page: Page) => {
-        await page.goto(`${WEB_BASE_URL}/admin`);
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-        await page.fill('input[type="password"]', ADMIN_API_KEY);
-        await page.click('button:has-text("Login")');
-        await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
-        await page.click('a[href="/admin/manage-faqs"]');
-        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
+    // Helper to login and navigate to FAQ management with retry logic
+    const loginAndNavigateToFaqs = async (page: Page, maxRetries: number = 5) => {
+        let lastError: Error | null = null;
 
-        // Wait for FAQ cards or "Add New FAQ" button
-        await Promise.race([
-            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
-            page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
-        ]);
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await page.goto(`${WEB_BASE_URL}/admin`, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 20000
+                });
+                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.click('button:has-text("Login")');
+                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
+                await page.click('a[href="/admin/manage-faqs"]');
+                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 15000 });
+
+                // Wait for FAQ cards or "Add New FAQ" button
+                await Promise.race([
+                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 }).catch(() => null),
+                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 10000 }),
+                ]);
+                return; // Success
+            } catch (error) {
+                lastError = error as Error;
+                console.log(`loginAndNavigateToFaqs attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 3000;
+                    console.log(`Waiting ${delay}ms before retry...`);
+                    await new Promise(r => setTimeout(r, delay));
+                }
+            }
+        }
+        if (lastError) throw lastError;
     };
 
     test.afterEach(async ({ request }) => {

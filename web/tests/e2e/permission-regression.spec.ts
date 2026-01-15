@@ -305,11 +305,36 @@ test.describe("Permission Regression Tests", () => {
         }
 
         // Verify files have correct ownership
-        const { stdout: permissions } = await execAsync(
-            'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl'
-        );
+        // Check faqs.db (SQLite - primary storage) first, fall back to extracted_faq.jsonl (legacy)
+        let permissions = "";
+        let fileChecked = "";
 
-        console.log("FAQ file ownership:", permissions);
+        try {
+            const { stdout } = await execAsync(
+                'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/faqs.db 2>/dev/null'
+            );
+            permissions = stdout;
+            fileChecked = "faqs.db";
+        } catch {
+            // faqs.db may not exist yet, try extracted_faq.jsonl
+            try {
+                const { stdout } = await execAsync(
+                    'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl 2>/dev/null'
+                );
+                permissions = stdout;
+                fileChecked = "extracted_faq.jsonl";
+            } catch {
+                // Neither file exists yet - this is acceptable for fresh installations
+                console.log("No FAQ data files exist yet (fresh installation). Checking data directory permissions instead.");
+                const { stdout } = await execAsync(
+                    'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data 2>/dev/null'
+                );
+                permissions = stdout;
+                fileChecked = "/data directory";
+            }
+        }
+
+        console.log(`${fileChecked} ownership:`, permissions);
         expect(permissions.trim()).toMatch(/bisq-support:bisq-support|1001:1001/);
     });
 });

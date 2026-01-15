@@ -17,7 +17,6 @@ import pytest
 from app.services.bisq_mcp_service import (
     Bisq2MCPService,
     CurrencyValidator,
-    LiveDataType,
     ProfileIdValidator,
     PromptSanitizer,
     SecureErrorHandler,
@@ -283,7 +282,7 @@ class TestCaching:
     async def test_offers_cache_separate_from_prices(self, service):
         """Test that offers and prices use separate caches."""
         prices_data = {"prices": []}
-        offers_data = {"offers": []}
+        offers_data = []  # Bisq 2 API returns list directly
 
         with patch.object(
             service, "_make_request", new_callable=AsyncMock
@@ -291,10 +290,10 @@ class TestCaching:
             mock_request.side_effect = [prices_data, offers_data]
 
             await service.get_market_prices()
-            await service.get_offerbook()
+            await service.get_offerbook(currency="EUR")  # Currency now required
 
             assert "prices_all" in service._price_cache
-            assert "offers_all_all" in service._offers_cache
+            assert "offers_EUR_all" in service._offers_cache
 
 
 # =============================================================================
@@ -438,62 +437,6 @@ class TestGracefulDegradation:
 
 
 # =============================================================================
-# Intent Detection Tests
-# =============================================================================
-
-
-class TestIntentDetection:
-    """Tests for live data intent detection."""
-
-    def test_detects_price_intent(self, service):
-        """Test detection of price-related questions."""
-        questions = [
-            "What is the current BTC price?",
-            "How much is Bitcoin worth?",
-            "What's the rate for BTC/USD?",
-        ]
-        for q in questions:
-            data_type, _ = service.detect_live_data_needs(q)
-            assert data_type == LiveDataType.PRICE, f"Failed for: {q}"
-
-    def test_detects_offer_intent(self, service):
-        """Test detection of offer-related questions."""
-        questions = [
-            "Are there any offers to buy Bitcoin?",
-            "Can I sell BTC on Bisq?",
-            "Show me the available trades",
-        ]
-        for q in questions:
-            data_type, _ = service.detect_live_data_needs(q)
-            assert data_type == LiveDataType.OFFERS, f"Failed for: {q}"
-
-    def test_detects_reputation_intent(self, service):
-        """Test detection of reputation-related questions."""
-        # Note: Avoid words like "trader" which contains "trade" (offer keyword)
-        questions = [
-            "How can I check a user's reputation?",
-            "Is this person reliable?",
-            "What's the rating system?",
-        ]
-        for q in questions:
-            data_type, _ = service.detect_live_data_needs(q)
-            assert data_type == LiveDataType.REPUTATION, f"Failed for: {q}"
-
-    def test_extracts_currency_from_question(self, service):
-        """Test currency extraction from questions."""
-        _, currency = service.detect_live_data_needs("What is the BTC/EUR price?")
-        assert currency == "EUR"
-
-        _, currency = service.detect_live_data_needs("Price in USD please")
-        assert currency == "USD"
-
-    def test_returns_none_for_unrelated_questions(self, service):
-        """Test that unrelated questions return NONE."""
-        data_type, _ = service.detect_live_data_needs("How do I install Bisq?")
-        assert data_type == LiveDataType.NONE
-
-
-# =============================================================================
 # Formatted Output Tests
 # =============================================================================
 
@@ -518,7 +461,7 @@ class TestFormattedOutput:
     @pytest.mark.asyncio
     async def test_offers_formatted_includes_marker(self, service):
         """Test that formatted offers output includes marker."""
-        service._offers_cache["offers_all_all"] = {
+        service._offers_cache["offers_EUR_all"] = {
             "success": True,
             "offers": [
                 {
@@ -533,7 +476,7 @@ class TestFormattedOutput:
             "timestamp": "2024-01-01T00:00:00",
         }
 
-        result = await service.get_offerbook_formatted()
+        result = await service.get_offerbook_formatted(currency="EUR")
 
         assert "[LIVE OFFERBOOK]" in result
         assert "BUY" in result

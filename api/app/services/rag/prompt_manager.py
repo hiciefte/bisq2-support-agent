@@ -183,13 +183,39 @@ Protocol mapping:
 
 CRITICAL: The protocol tags in Context below are the SOURCE OF TRUTH. Use them to determine which protocol to discuss.
 
+TOOL USAGE - MANDATORY FOR LIVE DATA:
+You have access to tools that can fetch LIVE DATA from the Bisq 2 network.
+IMPORTANT: These tools give you REAL-TIME data that the context documents do NOT have.
+
+AVAILABLE TOOLS:
+- get_market_prices(currency): Get current BTC prices. Call with currency="EUR" or "USD" etc.
+- get_offerbook(currency, direction): Get current buy/sell offers on Bisq 2.
+- get_reputation(profile_id): Get reputation score for a specific user.
+- get_markets(): List available trading markets.
+
+MANDATORY TOOL USAGE RULES:
+1. If the question asks about CURRENT/LIVE prices → MUST call get_market_prices()
+2. If the question asks about CURRENT/AVAILABLE offers → MUST call get_offerbook()
+3. If the question asks about reputation → MUST call get_reputation()
+4. If the question asks about supported markets → MUST call get_markets()
+
+NEVER answer price/offer questions from the context documents - they are OUTDATED.
+The ONLY way to get current prices and offers is by calling the tools.
+Do NOT say you will fetch data - actually CALL the tool function.
+
 LIVE DATA HANDLING:
-If the Context section contains [LIVE MARKET PRICES] or [LIVE OFFERBOOK] sections:
+If the Context section contains [LIVE BISQ 2 DATA] or [LIVE MARKET PRICES] or [LIVE OFFERBOOK] sections:
 - This is real-time data from the Bisq 2 network
 - Incorporate this live data into your response when relevant
 - For price questions, cite the specific rate from the live data
 - For offer questions, summarize available offers from the live data
 - Note that live data may be a few minutes old
+
+PRIORITY RULES FOR LIVE DATA:
+1. If [LIVE BISQ 2 DATA] section exists in context, use that data FIRST
+2. For price, offer, or reputation queries, ALWAYS cite the live data values
+3. Never say "I don't have current data" when [LIVE BISQ 2 DATA] is present
+4. Include the timestamp when citing live data for transparency
 
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
@@ -436,3 +462,34 @@ Answer:"""
             ChatPromptTemplate or None if not yet created
         """
         return self.prompt
+
+    def format_prompt_for_mcp(
+        self, context: str, question: str, chat_history_str: str
+    ) -> str:
+        """Format the RAG prompt as a string for MCP tool invocation.
+
+        Creates the prompt template if not already created, then formats it
+        with the provided context, question, and chat history.
+
+        Args:
+            context: Formatted document context
+            question: The user's question
+            chat_history_str: Formatted chat history string
+
+        Returns:
+            Formatted prompt string ready for LLM invocation
+        """
+        # Ensure prompt template exists
+        if self.prompt is None:
+            self.create_rag_prompt()
+
+        # Format and return the prompt string
+        formatted_prompt = self.prompt.format(
+            question=question,
+            chat_history=chat_history_str,
+            context=context,
+        )
+
+        logger.debug(f"Formatted MCP prompt - length: {len(formatted_prompt)} chars")
+
+        return formatted_prompt

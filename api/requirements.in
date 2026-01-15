@@ -22,8 +22,10 @@ transformers>=4.35.0
 matrix-nio>=0.21.0
 
 # LLM providers
-# AISuite for unified LLM interface (pinned for reproducible builds)
-aisuite==0.1.12
+# AISuite for unified LLM interface with MCP support
+aisuite[mcp]>=0.1.12
+# MCP SDK for building Model Context Protocol servers
+mcp[cli]>=1.0.0
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
 # 2.0.0 changes Response tool-call output schema (breaking change)
 openai<2.0.0
@@ -49,6 +51,7 @@ cachetools
 pybreaker
 tenacity
 httpx  # async HTTP client with connection pooling
+nest-asyncio  # Allow nested event loops for MCP tool execution
 
 # Monitoring
 psutil

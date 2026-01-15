@@ -111,34 +111,72 @@ export async function hasVisibleSources(page: Page): Promise<boolean> {
 }
 
 /**
- * Login to admin interface
+ * Login to admin interface with retry logic for server recovery
  *
  * @param page - Playwright page instance
  * @param apiKey - Admin API key for authentication
  * @param baseUrl - Base URL of the web application
+ * @param maxRetries - Maximum number of retry attempts (default: 5)
  */
 export async function loginAsAdmin(
   page: Page,
   apiKey: string,
-  baseUrl: string
+  baseUrl: string,
+  maxRetries: number = 5
 ): Promise<void> {
-  await page.goto(`${baseUrl}/admin`);
-  await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-  await page.fill('input[type="password"]', apiKey);
-  await page.click('button:has-text("Login")');
-  await page.waitForSelector('text=Admin Dashboard', { timeout: 10000 });
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Use domcontentloaded for more reliable navigation
+      await page.goto(`${baseUrl}/admin`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 20000
+      });
+      await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+      await page.fill('input[type="password"]', apiKey);
+      await page.click('button:has-text("Login")');
+      await page.waitForSelector('text=Admin Dashboard', { timeout: 15000 });
+      return; // Success
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`loginAsAdmin attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+      if (attempt < maxRetries) {
+        const delay = attempt * 3000; // Exponential backoff
+        console.log(`Waiting ${delay}ms before retry...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
- * Navigate to FAQ management page (assumes already logged in as admin)
+ * Navigate to FAQ management page with retry logic (assumes already logged in as admin)
  *
  * @param page - Playwright page instance
+ * @param maxRetries - Maximum number of retry attempts (default: 3)
  */
-export async function navigateToFaqManagement(page: Page): Promise<void> {
-  const faqLink = page.locator('a[href="/admin/manage-faqs"]').first();
-  await faqLink.waitFor({ state: 'visible', timeout: 15000 });
-  await faqLink.click();
-  await page.waitForSelector('text=FAQ', { timeout: 10000 });
+export async function navigateToFaqManagement(page: Page, maxRetries: number = 3): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const faqLink = page.locator('a[href="/admin/manage-faqs"]').first();
+      await faqLink.waitFor({ state: 'visible', timeout: 15000 });
+      await faqLink.click();
+      await page.waitForSelector('text=FAQ', { timeout: 15000 });
+      return; // Success
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`navigateToFaqManagement attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+      if (attempt < maxRetries) {
+        const delay = attempt * 2000;
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -156,15 +194,31 @@ export function hasPermissionErrors(logs: string): boolean {
 }
 
 /**
- * Navigate to feedback management page (assumes already logged in as admin)
+ * Navigate to feedback management page with retry logic (assumes already logged in as admin)
  *
  * @param page - Playwright page instance
+ * @param maxRetries - Maximum number of retry attempts (default: 3)
  */
-export async function navigateToFeedbackManagement(page: Page): Promise<void> {
-  const feedbackLink = page.locator('a[href="/admin/manage-feedback"]').first();
-  await feedbackLink.waitFor({ state: 'visible', timeout: 15000 });
-  await feedbackLink.click();
-  await page.waitForURL('**/admin/manage-feedback');
-  // Wait for feedback cards or empty state
-  await page.waitForSelector('[class*="border-l-4"]', { timeout: 10000 });
+export async function navigateToFeedbackManagement(page: Page, maxRetries: number = 3): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const feedbackLink = page.locator('a[href="/admin/manage-feedback"]').first();
+      await feedbackLink.waitFor({ state: 'visible', timeout: 15000 });
+      await feedbackLink.click();
+      await page.waitForURL('**/admin/manage-feedback', { timeout: 15000 });
+      // Wait for feedback cards or empty state
+      await page.waitForSelector('[class*="border-l-4"]', { timeout: 15000 });
+      return; // Success
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`navigateToFeedbackManagement attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+      if (attempt < maxRetries) {
+        const delay = attempt * 2000;
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
 }

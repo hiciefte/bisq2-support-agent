@@ -6,3 +6,4 @@ services:
       target: development
     volumes:
       - ../api:/app/api
+      - ../api/tests:/app/tests

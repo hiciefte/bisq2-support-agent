@@ -211,7 +211,8 @@ export const useChatMessages = () => {
                     },
                     confidence: data.confidence,
                     detected_version: data.detected_version,
-                    version_confidence: data.version_confidence
+                    version_confidence: data.version_confidence,
+                    mcp_tools_used: data.mcp_tools_used
                 }
 
                 const updatedWithResponse = [...updatedMessages, assistantMessage]

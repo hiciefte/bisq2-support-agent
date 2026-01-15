@@ -18,8 +18,8 @@ Features:
 import asyncio
 import logging
 import re
+import unicodedata
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
@@ -204,6 +204,10 @@ class PromptSanitizer:
         # Convert to string and strip
         sanitized = str(text).strip()
 
+        # Normalize Unicode FIRST to prevent bypass attacks using homographs
+        # NFKC normalizes compatibility characters (e.g., ﬁ → fi, ① → 1)
+        sanitized = unicodedata.normalize("NFKC", sanitized)
+
         # Apply length limit
         max_len = cls.MAX_LENGTHS.get(field_type, cls.MAX_LENGTHS["general"])
         if len(sanitized) > max_len:
@@ -250,21 +254,6 @@ class SecureErrorHandler:
             "error": f"Service temporarily unavailable. Reference: {error_id}",
             "error_id": error_id,
         }
-
-
-# =============================================================================
-# Live Data Types
-# =============================================================================
-
-
-class LiveDataType(Enum):
-    """Types of live data that can be detected in queries."""
-
-    PRICE = "price"
-    OFFERS = "offers"
-    REPUTATION = "reputation"
-    PAYMENT_METHODS = "payment_methods"
-    NONE = "none"
 
 
 # =============================================================================
@@ -329,8 +318,6 @@ class Bisq2MCPService:
 
     async def _get_rate_limiter(self):
         """Get or create the rate limiter."""
-        import asyncio
-
         if self._rate_limiter is None:
             self._rate_limiter = asyncio.Semaphore(5)  # Max 5 concurrent requests
         return self._rate_limiter
@@ -339,7 +326,7 @@ class Bisq2MCPService:
         """Synchronous wrapper for the circuit breaker.
 
         This wrapper allows pybreaker to track success/failure of our requests.
-        It creates a new event loop for synchronous execution.
+        Uses synchronous httpx client to avoid event loop conflicts.
 
         Args:
             endpoint: API endpoint path
@@ -348,19 +335,15 @@ class Bisq2MCPService:
         Returns:
             JSON response as dictionary
         """
-
-        async def _do_request():
-            client = await self._get_client()
-            response = await client.get(endpoint, params=params)
+        # Use synchronous httpx to avoid event loop conflicts
+        # The circuit breaker and retry decorators are sync, so this fits better
+        with httpx.Client(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout),
+        ) as client:
+            response = client.get(endpoint, params=params)
             response.raise_for_status()
             return response.json()
-
-        # Run the async request in a new event loop
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_do_request())
-        finally:
-            loop.close()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -408,7 +391,7 @@ class Bisq2MCPService:
     # =========================================================================
 
     async def get_market_prices(self, currency: Optional[str] = None) -> Dict[str, Any]:
-        """Get current market prices.
+        """Get current market prices from Bisq 2 network.
 
         Args:
             currency: Optional currency code to filter (e.g., "USD", "EUR")
@@ -433,14 +416,33 @@ class Bisq2MCPService:
             return self._price_cache[cache_key]
 
         try:
-            params = {"currency": currency} if currency else None
-            response = await self._make_request("/api/v1/market/prices", params)
+            # Correct Bisq 2 endpoint: /api/v1/market-price/quotes
+            response = await self._make_request("/api/v1/market-price/quotes")
 
-            # Transform response
+            # Parse Bisq 2 response format: {"quotes": {"EUR": {"value": X}, "USD": {"value": Y}, ...}}
+            quotes = response.get("quotes", {})
+
+            # Transform to our standard format
+            prices = []
+            for curr_code, quote_data in quotes.items():
+                # Value is in satoshi precision (8 decimals)
+                # Convert to human-readable price
+                raw_value = quote_data.get("value", 0)
+                # The value is stored as: price * 10000 (4 decimal precision for fiat)
+                price_value = raw_value / 10000.0 if raw_value else 0
+                prices.append({"currency": curr_code, "rate": price_value})
+
+            # Sort by currency code for consistent output
+            prices.sort(key=lambda x: x["currency"])
+
+            # Filter by currency if specified
+            if currency:
+                prices = [p for p in prices if p["currency"] == currency]
+
             api_result: Dict[str, Any] = {
                 "success": True,
                 "timestamp": datetime.now(UTC).isoformat(),
-                "prices": response.get("prices", []),
+                "prices": prices,
                 "currency_filter": currency,
             }
 
@@ -462,11 +464,12 @@ class Bisq2MCPService:
         currency: Optional[str] = None,
         direction: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get current offerbook.
+        """Get current offerbook from Bisq 2 network.
 
         Args:
-            currency: Optional currency code to filter
-            direction: Optional direction filter ("buy" or "sell")
+            currency: Currency code to filter offers (e.g., "EUR", "USD").
+                     If not provided, returns empty with message to specify currency.
+            direction: Optional direction filter ("buy" or "sell") - applied client-side
 
         Returns:
             Dictionary with offers
@@ -474,44 +477,84 @@ class Bisq2MCPService:
         if not self.enabled:
             return {"error": "Bisq MCP integration disabled", "offers": []}
 
-        # Validate currency if provided
-        if currency:
-            is_valid, validated = CurrencyValidator.validate(currency)
-            if not is_valid:
-                return {"error": validated, "offers": []}
-            currency = validated
+        # Currency is required for the Bisq 2 API endpoint
+        if not currency:
+            return {
+                "success": False,
+                "error": "Currency code is required (e.g., EUR, USD, CHF)",
+                "offers": [],
+            }
 
-        # Validate direction if provided
+        # Validate currency
+        is_valid, validated = CurrencyValidator.validate(currency)
+        if not is_valid:
+            return {"error": validated, "offers": []}
+        currency = validated
+
+        # Validate direction if provided (for client-side filtering)
         if direction and direction.lower() not in ("buy", "sell"):
             return {"error": "Direction must be 'buy' or 'sell'", "offers": []}
         if direction:
             direction = direction.lower()
 
         # Check cache
-        cache_key = f"offers_{currency or 'all'}_{direction or 'all'}"
+        cache_key = f"offers_{currency}_{direction or 'all'}"
         if cache_key in self._offers_cache:
             logger.debug(f"Cache hit for {cache_key}")
             return self._offers_cache[cache_key]
 
         try:
-            params = {}
-            if currency:
-                params["currency"] = currency
-            if direction:
-                params["direction"] = direction
-
+            # Correct Bisq 2 endpoint: /api/v1/offerbook/markets/{currencyCode}/offers
             response = await self._make_request(
-                "/api/v1/offerbook", params if params else None
+                f"/api/v1/offerbook/markets/{currency}/offers"
             )
 
-            # Transform response
+            # Response is a list of OfferItemPresentationDto objects
+            # Each contains: bisqEasyOffer, formattedPrice, formattedQuoteAmount, etc.
+            raw_offers: list[Any] = response if isinstance(response, list) else []
+
+            # Transform to our standard format
+            offers = []
+            for offer_item in raw_offers:
+                bisq_offer = offer_item.get("bisqEasyOffer", {})
+                offer_direction = bisq_offer.get("direction", "UNKNOWN")
+
+                # Apply client-side direction filter
+                if direction:
+                    offer_dir_lower = offer_direction.lower() if offer_direction else ""
+                    if direction != offer_dir_lower:
+                        continue
+
+                # Get market info
+                market = bisq_offer.get("market", {})
+
+                offers.append(
+                    {
+                        "id": bisq_offer.get("id", ""),
+                        "direction": offer_direction,
+                        "currency": market.get("quoteCurrencyCode", currency),
+                        "formattedPrice": offer_item.get("formattedPrice", "N/A"),
+                        "formattedQuoteAmount": offer_item.get(
+                            "formattedQuoteAmount", "N/A"
+                        ),
+                        "formattedBaseAmount": offer_item.get(
+                            "formattedBaseAmount", "N/A"
+                        ),
+                        "paymentMethods": offer_item.get("quoteSidePaymentMethods", []),
+                        "reputationScore": offer_item.get("reputationScore", {}).get(
+                            "totalScore", 0
+                        ),
+                        "formattedDate": offer_item.get("formattedDate", ""),
+                    }
+                )
+
             api_result: Dict[str, Any] = {
                 "success": True,
                 "timestamp": datetime.now(UTC).isoformat(),
-                "offers": response.get("offers", []),
+                "offers": offers,
                 "currency_filter": currency,
                 "direction_filter": direction,
-                "total_count": len(response.get("offers", [])),
+                "total_count": len(offers),
             }
 
             # Cache result
@@ -528,7 +571,7 @@ class Bisq2MCPService:
             return SecureErrorHandler.handle_api_error(e, "get_offerbook")
 
     async def get_reputation(self, profile_id: str) -> Dict[str, Any]:
-        """Get reputation score for a user profile.
+        """Get reputation score for a user profile from Bisq 2 network.
 
         Args:
             profile_id: Bisq user profile ID (Base58 encoded)
@@ -552,16 +595,43 @@ class Bisq2MCPService:
             return self._reputation_cache[cache_key]
 
         try:
+            # Correct Bisq 2 endpoint: /api/v1/reputation/score/{userProfileId}
             response = await self._make_request(
                 f"/api/v1/reputation/score/{profile_id}"
             )
 
-            # Transform response
+            # Response is ReputationScoreDto: {totalScore, fiveSystemScore, ranking}
+            # Transform to our standard format
+            reputation = {
+                "totalScore": response.get("totalScore", 0),
+                "fiveSystemScore": response.get("fiveSystemScore", 0.0),
+                "ranking": response.get("ranking", 0),
+            }
+
+            # Optionally fetch profile age (separate endpoint)
+            try:
+                age_response = await self._make_request(
+                    f"/api/v1/reputation/profile-age/{profile_id}"
+                )
+                # Response is a Long timestamp or null
+                if age_response is not None:
+                    # Convert timestamp to days
+                    profile_age_ms = (
+                        age_response if isinstance(age_response, int) else 0
+                    )
+                    if profile_age_ms > 0:
+                        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                        age_days = (now_ms - profile_age_ms) // (1000 * 60 * 60 * 24)
+                        reputation["profileAgeDays"] = age_days
+            except Exception as e:
+                logger.debug(f"Could not fetch profile age for {profile_id}: {e}")
+                # Profile age is optional, don't fail the whole request
+
             api_result: Dict[str, Any] = {
                 "success": True,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "profile_id": profile_id,
-                "reputation": response.get("reputation", {}),
+                "reputation": reputation,
             }
 
             # Cache result
@@ -578,7 +648,7 @@ class Bisq2MCPService:
             return SecureErrorHandler.handle_api_error(e, "get_reputation")
 
     async def get_markets(self) -> Dict[str, Any]:
-        """Get list of available markets.
+        """Get list of available markets from Bisq 2 network.
 
         Returns:
             Dictionary with available markets
@@ -593,14 +663,35 @@ class Bisq2MCPService:
             return self._markets_cache[cache_key]
 
         try:
-            response = await self._make_request("/api/v1/markets")
+            # Correct Bisq 2 endpoint: /api/v1/offerbook/markets
+            response = await self._make_request("/api/v1/offerbook/markets")
 
-            # Transform response
+            # Response is a list of Market objects:
+            # [{"baseCurrencyCode": "BTC", "quoteCurrencyCode": "EUR", ...}, ...]
+            raw_markets: list[Any] = response if isinstance(response, list) else []
+
+            # Transform to our standard format
+            markets = []
+            for market in raw_markets:
+                base = market.get("baseCurrencyCode", "BTC")
+                quote = market.get("quoteCurrencyCode", "")
+                quote_name = market.get("quoteCurrencyName", quote)
+                markets.append(
+                    {
+                        "currency": quote,
+                        "name": quote_name,
+                        "pair": f"{base}/{quote}",
+                    }
+                )
+
+            # Sort by currency code
+            markets.sort(key=lambda x: x["currency"])
+
             result = {
                 "success": True,
                 "timestamp": datetime.now(UTC).isoformat(),
-                "markets": response.get("markets", []),
-                "total_count": len(response.get("markets", [])),
+                "markets": markets,
+                "total_count": len(markets),
             }
 
             # Cache result
@@ -662,8 +753,8 @@ class Bisq2MCPService:
         """Get offerbook formatted for LLM context.
 
         Args:
-            currency: Optional currency code to filter
-            direction: Optional direction filter
+            currency: Currency code to filter offers (required)
+            direction: Optional direction filter ("buy" or "sell")
             max_offers: Maximum offers to include (default 5)
 
         Returns:
@@ -685,145 +776,89 @@ class Bisq2MCPService:
                 filter_text += f" ({direction})"
             return f"[No offers currently available{filter_text}]"
 
-        # Format offers for context
+        # Format offers for context using Bisq 2 formatted fields
         lines = ["[LIVE OFFERBOOK]"]
         for offer in offers[:max_offers]:
             offer_dir = PromptSanitizer.sanitize(
                 offer.get("direction", "???"), "general"
             )
-            offer_currency = PromptSanitizer.sanitize(
-                offer.get("currency", "???"), "currency"
-            )
-            amount = offer.get("amount", 0)
-            price = offer.get("price", 0)
-            payment = PromptSanitizer.sanitize(
-                offer.get("paymentMethod", "???"), "payment_method"
-            )
+            # Use pre-formatted values from Bisq 2 API
+            formatted_amount = offer.get("formattedBaseAmount", "N/A")
+            formatted_price = offer.get("formattedPrice", "N/A")
+            formatted_quote = offer.get("formattedQuoteAmount", "N/A")
+            # Join payment methods list
+            payment_methods = offer.get("paymentMethods", [])
+            payment_str = ", ".join(payment_methods[:2]) if payment_methods else "N/A"
+            if len(payment_methods) > 2:
+                payment_str += f" +{len(payment_methods) - 2} more"
+            reputation = offer.get("reputationScore", 0)
             lines.append(
-                f"  {offer_dir.upper()}: {amount} BTC @ {price:,.2f} {offer_currency} via {payment}"
+                f"  {offer_dir.upper()}: {formatted_amount} @ {formatted_price} "
+                f"({formatted_quote}) via {payment_str} [Rep: {reputation:,}]"
             )
 
         lines.append(f"[Total offers: {result.get('total_count', 0)}]")
         lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
         return "\n".join(lines)
 
-    # =========================================================================
-    # Intent Detection
-    # =========================================================================
-
-    def detect_live_data_needs(
-        self, question: str
-    ) -> Tuple[LiveDataType, Optional[str]]:
-        """Detect if a question requires live data.
+    async def get_reputation_formatted(self, profile_id: str) -> str:
+        """Get reputation data formatted for LLM context.
 
         Args:
-            question: The user's question
+            profile_id: Bisq user profile ID
 
         Returns:
-            Tuple of (data_type, extracted_currency)
+            Formatted string suitable for prompt context
         """
-        if not question:
-            return LiveDataType.NONE, None
+        result = await self.get_reputation(profile_id)
 
-        question_lower = question.lower()
+        if not result.get("success"):
+            return (
+                f"[Reputation Data Unavailable: {result.get('error', 'Unknown error')}]"
+            )
 
-        # Price-related keywords
-        price_keywords = [
-            "price",
-            "rate",
-            "cost",
-            "worth",
-            "value",
-            "how much",
-            "current",
-            "today",
-            "now",
-            "btc/",
-            "/btc",
-        ]
+        reputation = result.get("reputation", {})
+        if not reputation:
+            return f"[No reputation data found for profile {profile_id[:20]}...]"
 
-        # Offer-related keywords
-        offer_keywords = [
-            "offer",
-            "buy",
-            "sell",
-            "trade",
-            "available",
-            "listing",
-            "offerbook",
-        ]
+        # Format reputation for context using Bisq 2 reputation fields
+        lines = ["[REPUTATION DATA]"]
+        lines.append(f"  Profile ID: {profile_id[:20]}...")
+        lines.append(f"  Total Score: {reputation.get('totalScore', 0):,}")
+        lines.append(f"  Star Rating: {reputation.get('fiveSystemScore', 0):.1f}/5.0")
+        lines.append(f"  Ranking: #{reputation.get('ranking', 'N/A')}")
+        if "profileAgeDays" in reputation:
+            lines.append(f"  Profile Age: {reputation.get('profileAgeDays')} days")
+        lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
+        return "\n".join(lines)
 
-        # Reputation keywords
-        reputation_keywords = [
-            "reputation",
-            "trust",
-            "score",
-            "rating",
-            "reliable",
-            "profile",
-        ]
-
-        # Payment method keywords
-        payment_keywords = [
-            "payment method",
-            "pay with",
-            "accept",
-            "sepa",
-            "zelle",
-            "revolut",
-            "wise",
-            "transferwise",
-            "bank transfer",
-        ]
-
-        # Detect type
-        data_type = LiveDataType.NONE
-
-        if any(kw in question_lower for kw in price_keywords):
-            data_type = LiveDataType.PRICE
-        elif any(kw in question_lower for kw in offer_keywords):
-            data_type = LiveDataType.OFFERS
-        elif any(kw in question_lower for kw in reputation_keywords):
-            data_type = LiveDataType.REPUTATION
-        elif any(kw in question_lower for kw in payment_keywords):
-            data_type = LiveDataType.PAYMENT_METHODS
-
-        # Extract currency if detected
-        currency = None
-        if data_type in (LiveDataType.PRICE, LiveDataType.OFFERS):
-            currency = self._extract_currency(question)
-
-        return data_type, currency
-
-    def _extract_currency(self, question: str) -> Optional[str]:
-        """Extract currency code from question.
-
-        Args:
-            question: The user's question
+    async def get_markets_formatted(self) -> str:
+        """Get available markets formatted for LLM context.
 
         Returns:
-            Extracted and validated currency code, or None
+            Formatted string suitable for prompt context
         """
-        # Pattern to find currency codes
-        # Look for patterns like "USD", "in EUR", "BTC/USD", etc.
-        patterns = [
-            r"\b(BTC)[/\\](USD|EUR|GBP|CHF|CAD|AUD|JPY)\b",
-            r"\b(USD|EUR|GBP|CHF|CAD|AUD|JPY)\b",
-            r"\bin\s+([A-Z]{3})\b",
-        ]
+        result = await self.get_markets()
 
-        question_upper = question.upper()
+        if not result.get("success"):
+            return f"[Markets Data Unavailable: {result.get('error', 'Unknown error')}]"
 
-        for pattern in patterns:
-            match = re.search(pattern, question_upper)
-            if match:
-                # Get the currency (last group if multiple)
-                currency = match.group(match.lastindex or 1)
-                is_valid, result = CurrencyValidator.validate(currency)
-                if is_valid:
-                    return result
+        markets = result.get("markets", [])
+        if not markets:
+            return "[No markets currently available]"
 
-        return None
+        # Format markets for context
+        lines = ["[AVAILABLE MARKETS]"]
+        for market in markets[:15]:  # Limit to 15 for context size
+            market_code = PromptSanitizer.sanitize(
+                market.get("currency", "???"), "currency"
+            )
+            market_name = PromptSanitizer.sanitize(market.get("name", ""), "general")
+            lines.append(f"  BTC/{market_code}: {market_name}")
+
+        lines.append(f"[Total markets: {result.get('total_count', 0)}]")
+        lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
+        return "\n".join(lines)
 
     # =========================================================================
     # Lifecycle
