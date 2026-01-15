@@ -213,13 +213,15 @@ services:
       - "3000"
     environment:
       - NEXT_PUBLIC_API_URL=/api # Production-specific for Nginx routing
-      - API_URL_INTERNAL=http://api:8000 # Server-side rendering calls to API
+      - API_URL_INTERNAL=http://nginx:80 # SSR calls go through nginx for rate limiting and security headers
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
     command: npm run start
     depends_on:
       api:
         condition: service_healthy
+      # Note: nginx depends on web, so adding nginx here would create a circular dependency
+      # SSR calls to nginx will simply fail during the brief startup window, which is acceptable
     networks:
       - bisq-support-network
     healthcheck:
