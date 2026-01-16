@@ -35,7 +35,7 @@ export function SourceLinksPopover({
             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
 
             <PopoverContent
-                className="w-80 max-h-96 overflow-hidden p-0"
+                className="w-[min(320px,calc(100vw-2rem))] max-h-96 overflow-hidden p-0"
                 sideOffset={8}
                 align="start"
             >

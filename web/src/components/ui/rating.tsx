@@ -36,7 +36,7 @@ export function Rating({
           aria-label="Rate as helpful"
           disabled={disabled || hasRated}
           className={cn(
-            "rounded-sm p-1 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
+            "rounded-sm p-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
             !hasRated && "disabled:opacity-50",
             !hasRated && "hover:text-[#25B135]",
             rating === 1 && "text-[#25B135] opacity-100"
@@ -50,7 +50,7 @@ export function Rating({
           aria-label="Rate as unhelpful"
           disabled={disabled || hasRated}
           className={cn(
-            "rounded-sm p-1 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
+            "rounded-sm p-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default transition-colors",
             !hasRated && "disabled:opacity-50",
             !hasRated && "hover:text-destructive",
             rating === 0 && "text-destructive opacity-100"

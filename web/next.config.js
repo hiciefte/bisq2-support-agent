@@ -31,4 +31,17 @@ const nextConfig = {
     reactStrictMode: true,
 };
 
-module.exports = nextConfig;
+// Conditionally wrap with bundle analyzer (only available when ANALYZE=true and dev deps installed)
+let exportedConfig = nextConfig;
+if (process.env.ANALYZE === 'true') {
+    try {
+        const withBundleAnalyzer = require('@next/bundle-analyzer')({
+            enabled: true,
+        });
+        exportedConfig = withBundleAnalyzer(nextConfig);
+    } catch {
+        console.warn('Bundle analyzer not available. Run: npm install --save-dev @next/bundle-analyzer');
+    }
+}
+
+module.exports = exportedConfig;

@@ -3,6 +3,7 @@
  */
 
 import Image from "next/image"
+import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -37,6 +38,8 @@ interface FeedbackDialogProps {
     onFeedbackTextChange: (text: string) => void
     onIssueToggle: (issueId: string) => void
     onSubmit: () => void
+    isSubmitting?: boolean
+    submitError?: string | null
 }
 
 export const FeedbackDialog = ({
@@ -46,7 +49,9 @@ export const FeedbackDialog = ({
     onOpenChange,
     onFeedbackTextChange,
     onIssueToggle,
-    onSubmit
+    onSubmit,
+    isSubmitting = false,
+    submitError = null
 }: FeedbackDialogProps) => {
     return (
         <Dialog open={dialogState.isOpen} onOpenChange={onOpenChange}>
@@ -121,6 +126,12 @@ export const FeedbackDialog = ({
                             className="resize-none border-border/60 focus:border-[#25B135]/30 focus-visible:ring-[#25B135]/10"
                         />
                     </div>
+
+                    {submitError && (
+                        <p className="text-sm text-destructive" role="alert">
+                            {submitError}
+                        </p>
+                    )}
                 </div>
 
                 <DialogFooter className="sm:justify-between gap-2">
@@ -133,15 +144,22 @@ export const FeedbackDialog = ({
                     </Button>
                     <Button
                         onClick={onSubmit}
-                        disabled={!feedbackText && selectedIssues.length === 0}
+                        disabled={isSubmitting || (!feedbackText && selectedIssues.length === 0)}
                         className={cn(
                             "transition-colors",
-                            (feedbackText || selectedIssues.length > 0)
+                            (feedbackText || selectedIssues.length > 0) && !isSubmitting
                                 ? "bg-[#25B135] hover:bg-[#25B135]/90 text-white"
                                 : "bg-muted text-muted-foreground"
                         )}
                     >
-                        Submit Feedback
+                        {isSubmitting ? (
+                            <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Submitting...
+                            </>
+                        ) : (
+                            "Submit Feedback"
+                        )}
                     </Button>
                 </DialogFooter>
             </DialogContent>

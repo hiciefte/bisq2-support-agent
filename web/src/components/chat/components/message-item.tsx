@@ -1,8 +1,10 @@
 /**
  * Component to render individual chat messages
  * Consolidated metadata row following Apple/Vercel/shadcn design principles
+ * Memoized to prevent unnecessary re-renders when parent state changes
  */
 
+import { memo } from "react"
 import Image from "next/image"
 import { UserIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -17,7 +19,7 @@ interface MessageItemProps {
     onRating?: (messageId: string, rating: number) => void
 }
 
-export function MessageItem({ message, onRating }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({ message, onRating }: MessageItemProps) {
     const isAssistant = message.role === "assistant"
     const hasSources = message.sources && message.sources.length > 0
     const hasConfidence = message.confidence !== undefined
@@ -98,4 +100,4 @@ export function MessageItem({ message, onRating }: MessageItemProps) {
             </div>
         </div>
     )
-}
+})

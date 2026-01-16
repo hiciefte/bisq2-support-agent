@@ -2,7 +2,7 @@
  * Hook for managing chat messages, API communication, and message state
  */
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { v4 as uuidv4 } from 'uuid'
 import { API_BASE_URL } from '@/lib/config'
 import type { Message } from "../types/chat.types"
@@ -79,38 +79,44 @@ export const useChatMessages = () => {
     const [loadingMessage, setLoadingMessage] = useState("")
     const [globalAverageResponseTime, setGlobalAverageResponseTime] = useState<number>(300)
 
-    // Save messages to localStorage whenever they change
-    useEffect(() => {
-        if (typeof window !== 'undefined' && messages.length > 0) {
-            localStorage.setItem('bisq_chat_messages', JSON.stringify(messages))
-            console.log('Saved messages to localStorage:', messages)
+    // Debounced save to localStorage
+    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const debouncedSaveToLocalStorage = useCallback((msgs: Message[]) => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current)
         }
-    }, [messages])
+        saveTimeoutRef.current = setTimeout(() => {
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('bisq_chat_messages', JSON.stringify(msgs))
+            }
+        }, 1000)
+    }, [])
+
+    // Save messages to localStorage whenever they change (debounced)
+    useEffect(() => {
+        if (messages.length > 0) {
+            debouncedSaveToLocalStorage(messages)
+        }
+        return () => {
+            if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current)
+            }
+        }
+    }, [messages, debouncedSaveToLocalStorage])
 
     // Fetch global stats on component mount
     useEffect(() => {
         const fetchGlobalStats = async () => {
             try {
-                const statsUrl = `${API_BASE_URL}/chat/stats`
-                console.log(`Fetching stats from: ${statsUrl}`)
-
-                const response = await fetch(statsUrl)
-                console.log(`Stats response status: ${response.status} ${response.statusText}`)
-
+                const response = await fetch(`${API_BASE_URL}/chat/stats`)
                 if (response.ok) {
                     const stats = await response.json()
-                    console.log('Stats response data:', stats)
                     const avgTime = stats.last_24h_average_response_time || stats.average_response_time || 300
                     setGlobalAverageResponseTime(avgTime)
-                    console.log('Loaded global average response time:', avgTime)
                 } else {
-                    console.error('Failed to fetch global stats:', response.statusText)
-                    console.log('Using default average response time of 12 seconds')
                     setGlobalAverageResponseTime(12)
                 }
-            } catch (error) {
-                console.error('Error fetching global stats:', error)
-                console.log('Using default average response time of 12 seconds')
+            } catch {
                 setGlobalAverageResponseTime(12)
             }
         }
@@ -118,8 +124,8 @@ export const useChatMessages = () => {
         fetchGlobalStats()
     }, [])
 
-    // Calculate average response time from existing messages
-    const calculateLocalAverageResponseTime = (): number => {
+    // Memoized average response time calculation
+    const avgResponseTime = useMemo(() => {
         const responseTimes = messages
             .filter(msg => msg.role === "assistant" && msg.metadata?.response_time)
             .map(msg => msg.metadata!.response_time)
@@ -128,12 +134,8 @@ export const useChatMessages = () => {
             return globalAverageResponseTime
         }
 
-        const sum = responseTimes.reduce((acc, time) => acc + time, 0)
-        return sum / responseTimes.length
-    }
-
-    // Get the average response time, preferring local data if available
-    const avgResponseTime = calculateLocalAverageResponseTime()
+        return responseTimes.reduce((acc, time) => acc + time, 0) / responseTimes.length
+    }, [messages, globalAverageResponseTime])
 
     // Update loading message when isLoading changes
     useEffect(() => {
@@ -152,14 +154,11 @@ export const useChatMessages = () => {
 
         const updatedMessages = [...messages, userMessage]
         setMessages(updatedMessages)
-        console.log('Updated messages state:', updatedMessages)
 
         setInput("")
         setIsLoading(true)
 
         try {
-            console.log(`Using API URL: ${API_BASE_URL}`)
-
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 600000)
 
@@ -167,10 +166,6 @@ export const useChatMessages = () => {
                 role: msg.role,
                 content: msg.content
             })).slice(-MAX_CHAT_HISTORY_LENGTH)
-
-            if (process.env.NODE_ENV !== 'production') {
-                console.log("Sending chat history:", chatHistory)
-            }
 
             try {
                 const response = await fetch(`${API_BASE_URL}/chat/query`, {
@@ -215,29 +210,14 @@ export const useChatMessages = () => {
                     mcp_tools_used: data.mcp_tools_used
                 }
 
-                const updatedWithResponse = [...updatedMessages, assistantMessage]
-                setMessages(updatedWithResponse)
-                console.log('Updated messages with assistant response:', updatedWithResponse)
+                setMessages([...updatedMessages, assistantMessage])
             } catch (error: unknown) {
                 let errorContent = "An error occurred while processing your request."
 
                 if (error instanceof DOMException && error.name === "AbortError") {
                     errorContent = "The request took too long to complete. The server might be busy processing your question. Please try again later or ask a simpler question."
-                } else {
-                    console.error("Error fetching response:", error)
-                    if (error instanceof Error) {
-                        console.error("Error name:", error.name)
-                        console.error("Error message:", error.message)
-                        console.error("Error stack:", error.stack)
-
-                        if (process.env.NODE_ENV !== 'production') {
-                            errorContent = `An error occurred: ${error.name} - ${error.message}. Please try again.`
-                        }
-                    }
-
-                    console.error("Request URL:", `${API_BASE_URL}/chat/query`)
-                    console.error("Question length:", text.length)
-                    console.error("Chat history length:", chatHistory.length)
+                } else if (error instanceof Error && process.env.NODE_ENV !== 'production') {
+                    errorContent = `An error occurred: ${error.name} - ${error.message}. Please try again.`
                 }
 
                 const errorMessage: Message = {
@@ -249,13 +229,7 @@ export const useChatMessages = () => {
 
                 setMessages((prev) => [...prev, errorMessage])
             }
-        } catch (error: unknown) {
-            console.error("Error in sendMessage:", error)
-            if (error instanceof Error) {
-                console.error("Error message:", error.message)
-                console.error("Error stack:", error.stack)
-            }
-
+        } catch {
             const errorMessage: Message = {
                 id: generateUUID(),
                 content: "An unexpected error occurred. Please try again.",
@@ -273,7 +247,6 @@ export const useChatMessages = () => {
         setMessages([])
         if (typeof window !== 'undefined') {
             localStorage.removeItem('bisq_chat_messages')
-            console.log('Chat history cleared')
         }
     }
 

@@ -86,15 +86,17 @@ const ChatInterface = () => {
         <>
             <PrivacyWarningModal />
             <div className="flex flex-col h-full overflow-hidden">
-                <MessageList
-                    messages={messages}
-                    isLoading={isLoading}
-                    loadingMessage={loadingMessage}
-                    formattedAvgTime={formattedAvgTime}
-                    scrollAreaRef={scrollAreaRef}
-                    loadingRef={loadingRef}
-                    onRating={handleRating}
-                />
+                <div role="log" aria-live="polite" aria-label="Chat conversation">
+                    <MessageList
+                        messages={messages}
+                        isLoading={isLoading}
+                        loadingMessage={loadingMessage}
+                        formattedAvgTime={formattedAvgTime}
+                        scrollAreaRef={scrollAreaRef}
+                        loadingRef={loadingRef}
+                        onRating={handleRating}
+                    />
+                </div>
 
                 <FeedbackDialog
                     dialogState={feedbackDialog}

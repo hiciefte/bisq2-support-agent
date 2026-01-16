@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -8,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { AlertTriangle } from 'lucide-react';
 import { LiveDataBadge } from './LiveDataBadge';
 import { OfferCard } from './OfferCard';
 import { ReputationBadgeCompact } from './ReputationBadge';
@@ -26,8 +28,35 @@ import type { OfferTableProps } from '@/types/live-data';
  * - Dark mode support
  * - Accessible table structure
  */
-const OfferTable = React.forwardRef<HTMLDivElement, OfferTableProps>(
-  ({ offers, currency, maxOffers = 5, meta, className }, ref) => {
+interface ExtendedOfferTableProps extends OfferTableProps {
+  error?: Error | null;
+  onRetry?: () => void;
+}
+
+const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
+  ({ offers, currency, maxOffers = 5, meta, className, error, onRetry }, ref) => {
+    // Handle error state
+    if (error) {
+      return (
+        <div
+          ref={ref}
+          role="region"
+          aria-label={`${currency} offers error`}
+          className={cn('w-full', className)}
+        >
+          <div className="flex flex-col items-center justify-center p-8 rounded-lg border border-destructive/20 bg-destructive/5">
+            <AlertTriangle className="h-8 w-8 text-destructive mb-3" aria-hidden="true" />
+            <p className="text-sm text-destructive mb-3">Failed to load {currency} offers</p>
+            {onRetry && (
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // Limit displayed offers
     const displayedOffers = offers.slice(0, maxOffers);
     const hasMore = offers.length > maxOffers;
