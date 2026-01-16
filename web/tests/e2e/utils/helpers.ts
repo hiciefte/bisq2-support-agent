@@ -208,8 +208,12 @@ export async function navigateToFeedbackManagement(page: Page, maxRetries: numbe
       await feedbackLink.waitFor({ state: 'visible', timeout: 15000 });
       await feedbackLink.click();
       await page.waitForURL('**/admin/manage-feedback', { timeout: 15000 });
-      // Wait for feedback cards or empty state
-      await page.waitForSelector('[class*="border-l-4"]', { timeout: 15000 });
+      // Wait for page content: feedback cards, empty state, or page heading
+      await Promise.race([
+        page.waitForSelector('[class*="border-l-4"]', { timeout: 15000 }),
+        page.waitForSelector('text=No feedback found', { timeout: 15000 }),
+        page.locator('h1:has-text("Feedback Management")').waitFor({ timeout: 15000 }),
+      ]);
       return; // Success
     } catch (error) {
       lastError = error as Error;

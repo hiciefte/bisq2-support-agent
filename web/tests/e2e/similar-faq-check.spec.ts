@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import type { Page, Route, APIRequestContext } from "@playwright/test";
+import type { Page, Route, Request, APIRequestContext } from "@playwright/test";
 import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
 
 /**

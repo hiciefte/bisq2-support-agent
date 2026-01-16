@@ -156,8 +156,11 @@ export const useChatMessages = () => {
             timestamp: new Date(),
         }
 
+        // Use functional update to prevent message loss during rapid sends
+        setMessages((prev) => [...prev, userMessage])
+
+        // Compute updatedMessages for chatHistory (closure-based, acceptable for API call)
         const updatedMessages = [...messages, userMessage]
-        setMessages(updatedMessages)
 
         setInput("")
         setIsLoading(true)

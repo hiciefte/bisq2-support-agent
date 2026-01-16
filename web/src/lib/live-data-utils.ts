@@ -7,7 +7,8 @@ import type { FormattedTimestamp, ReputationLevel } from '@/types/live-data';
  */
 export function formatTimestamp(date: Date): FormattedTimestamp {
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  // Clamp to 0 if future timestamp (clock skew protection)
+  const diffMs = Math.max(0, now.getTime() - date.getTime());
   const diffSeconds = Math.floor(diffMs / 1000);
   const diffMinutes = Math.floor(diffSeconds / 60);
   const diffHours = Math.floor(diffMinutes / 60);

@@ -799,7 +799,7 @@ class Bisq2MCPService:
             reputation = offer.get("reputationScore", 0)
             lines.append(
                 f"  {offer_dir.upper()}: {formatted_amount} @ {formatted_price} "
-                f"({formatted_quote}) via {payment_str} [Rep: {reputation:,}]"
+                f"({formatted_quote}) via {payment_str} [Rep: {reputation}]"
             )
 
         lines.append(f"[Total offers: {result.get('total_count', 0)}]")

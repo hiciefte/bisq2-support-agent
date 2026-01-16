@@ -100,7 +100,9 @@ const LiveDataBadge = React.forwardRef<HTMLButtonElement, LiveDataBadgeProps>(
         parts.push(`updated ${formattedTime.text}`);
       }
       if (toolsUsed && toolsUsed.length > 0) {
-        const toolLabels = toolsUsed
+        // Deduplicate tools for cleaner aria-label
+        const uniqueTools = [...new Set(toolsUsed)];
+        const toolLabels = uniqueTools
           .map(tool => TOOL_METADATA[tool]?.label || tool)
           .join(', ');
         parts.push(`using ${toolLabels}`);
@@ -109,9 +111,11 @@ const LiveDataBadge = React.forwardRef<HTMLButtonElement, LiveDataBadgeProps>(
     }, [config.label, formattedTime, toolsUsed]);
 
     // Format tools for tooltip with detailed descriptions
+    // Deduplicate tools to avoid React key warnings
     const toolsInfo = React.useMemo(() => {
       if (!toolsUsed || toolsUsed.length === 0) return null;
-      return toolsUsed.map(tool => ({
+      const uniqueTools = [...new Set(toolsUsed)];
+      return uniqueTools.map(tool => ({
         name: tool,
         ...(TOOL_METADATA[tool] || { label: tool, description: 'MCP tool' }),
       }));
@@ -164,7 +168,7 @@ const LiveDataBadge = React.forwardRef<HTMLButtonElement, LiveDataBadgeProps>(
           <TooltipContent
             side="top"
             align="start"
-            className="max-w-[300px] p-3"
+            className="max-w-[300px] p-3 bg-popover text-popover-foreground border border-border shadow-md"
             sideOffset={8}
           >
             {/* Primary description */}

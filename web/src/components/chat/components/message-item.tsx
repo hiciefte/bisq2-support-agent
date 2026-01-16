@@ -24,10 +24,18 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
     const isAssistant = message.role === "assistant"
     const hasSources = message.sources && message.sources.length > 0
     const hasConfidence = message.confidence !== undefined
-    const hasLiveData = Boolean(message.mcp_tools_used)
+    const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
     const canRate = message.id && !message.isThankYouMessage && onRating
 
-    const hasMetadata = isAssistant && (hasSources || hasConfidence || hasLiveData || canRate)
+    // Check if live data is displayed inline (via LiveDataContent with PriceDisplay)
+    // This is used to avoid showing duplicate LiveDataBadge in the metadata row
+    const hasInlineLiveData = hasLiveData &&
+        message.mcp_tools_used!.filter(t => t.result).length > 0
+
+    // Only show LiveDataBadge in metadata row when live data is NOT displayed inline
+    const showLiveBadgeInMetadata = hasLiveData && !hasInlineLiveData
+
+    const hasMetadata = isAssistant && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
 
     // Format timestamp for LiveDataBadge
     const formattedTimestamp = message.timestamp instanceof Date
@@ -35,14 +43,11 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
         : message.timestamp
 
     // Extract tool data from MCP tools
-    const toolNames = Array.isArray(message.mcp_tools_used)
-        ? message.mcp_tools_used.map(t => t.tool)
-        : undefined
+    const toolNames = message.mcp_tools_used?.map(t => t.tool)
 
     // Extract tool results for rich rendering
-    const toolResults = Array.isArray(message.mcp_tools_used)
-        ? message.mcp_tools_used.filter(t => t.result).map(t => ({ tool: t.tool, result: t.result! }))
-        : []
+    const toolResults = message.mcp_tools_used
+        ?.filter(t => t.result).map(t => ({ tool: t.tool, result: t.result! })) ?? []
 
     return (
         <div
@@ -94,7 +99,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                                     version={message.detected_version}
                                 />
                             )}
-                            {hasLiveData && (
+                            {showLiveBadgeInMetadata && (
                                 <LiveDataBadge
                                     type="live"
                                     timestamp={formattedTimestamp}

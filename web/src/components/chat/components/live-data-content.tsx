@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * Component to render message content with rich live data components
  *

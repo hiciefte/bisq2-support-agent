@@ -86,7 +86,7 @@ const ChatInterface = () => {
         <>
             <PrivacyWarningModal />
             <div className="flex flex-col h-full overflow-hidden">
-                <div role="log" aria-live="polite" aria-label="Chat conversation">
+                <div role="log" aria-live="polite" aria-label="Chat conversation" className="flex-1 min-h-0 flex flex-col">
                     <MessageList
                         messages={messages}
                         isLoading={isLoading}

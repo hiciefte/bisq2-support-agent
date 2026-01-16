@@ -34,7 +34,7 @@ export interface Message {
     version_confidence?: number
     isThankYouMessage?: boolean
     /** MCP tools used to fetch live Bisq 2 data (if any) */
-    mcp_tools_used?: boolean | McpToolUsage[]
+    mcp_tools_used?: McpToolUsage[]
 }
 
 /**
