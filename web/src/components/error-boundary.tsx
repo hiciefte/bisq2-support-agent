@@ -36,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
                     <p className="text-muted-foreground mb-4">
                         An error occurred while rendering this section.
                     </p>
-                    <Button onClick={() => this.setState({ hasError: false })}>
+                    <Button onClick={() => this.setState({ hasError: false, error: undefined })}>
                         Try again
                     </Button>
                 </div>

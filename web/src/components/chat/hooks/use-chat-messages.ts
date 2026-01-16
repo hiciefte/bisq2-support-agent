@@ -93,9 +93,13 @@ export const useChatMessages = () => {
     }, [])
 
     // Save messages to localStorage whenever they change (debounced)
+    // Also clear localStorage when messages array becomes empty to avoid stale rehydration
     useEffect(() => {
         if (messages.length > 0) {
             debouncedSaveToLocalStorage(messages)
+        } else {
+            // Clear localStorage when messages are emptied
+            localStorage.removeItem('bisq_chat_messages')
         }
         return () => {
             if (saveTimeoutRef.current) {
@@ -210,7 +214,8 @@ export const useChatMessages = () => {
                     mcp_tools_used: data.mcp_tools_used
                 }
 
-                setMessages([...updatedMessages, assistantMessage])
+                // Use functional update to avoid message loss when multiple sends overlap
+                setMessages((prev) => [...prev, assistantMessage])
             } catch (error: unknown) {
                 let errorContent = "An error occurred while processing your request."
 

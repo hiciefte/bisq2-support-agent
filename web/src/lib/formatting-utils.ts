@@ -3,15 +3,30 @@
  */
 
 export function formatResponseTime(seconds: number): string {
-    return seconds < 60
-        ? `${Math.round(seconds)} seconds`
-        : `${Math.round(seconds / 60)} minutes`
+    if (seconds < 60) {
+        const rounded = Math.round(seconds)
+        return `${rounded} ${rounded === 1 ? 'second' : 'seconds'}`
+    }
+    const rounded = Math.round(seconds / 60)
+    return `${rounded} ${rounded === 1 ? 'minute' : 'minutes'}`
 }
 
 export function formatTimeAgo(timestamp: string | Date): string {
     const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
+
+    // Guard against invalid timestamps
+    if (isNaN(date.getTime())) {
+        return 'unknown'
+    }
+
     const now = new Date()
     const diffMs = now.getTime() - date.getTime()
+
+    // Guard against future timestamps (clock skew)
+    if (diffMs < 0) {
+        return 'just now'
+    }
+
     const diffMins = Math.floor(diffMs / 60000)
 
     if (diffMins < 1) return 'just now'

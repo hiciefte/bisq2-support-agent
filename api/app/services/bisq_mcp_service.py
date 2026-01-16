@@ -20,7 +20,7 @@ import logging
 import re
 import unicodedata
 from datetime import UTC, datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple
 
 import httpx
 from app.core.config import Settings
@@ -168,7 +168,7 @@ class PromptSanitizer:
     """Sanitize external data before prompt injection."""
 
     # Patterns that could indicate injection attempts
-    INJECTION_PATTERNS = [
+    INJECTION_PATTERNS: ClassVar[List[Pattern[str]]] = [
         re.compile(r"ignore\s+(previous|all|above)", re.IGNORECASE),
         re.compile(r"forget\s+(everything|all|instructions)", re.IGNORECASE),
         re.compile(r"system\s*:\s*", re.IGNORECASE),
@@ -179,7 +179,7 @@ class PromptSanitizer:
     ]
 
     # Maximum lengths for different field types
-    MAX_LENGTHS = {
+    MAX_LENGTHS: ClassVar[Dict[str, int]] = {
         "currency": 5,
         "profile_id": 50,
         "payment_method": 50,
@@ -375,9 +375,14 @@ class Bisq2MCPService:
         async with rate_limiter:
             try:
                 # Use circuit breaker's call method which automatically
-                # tracks failures and successes
-                return self._circuit_breaker.call(
-                    self._sync_request_wrapper, endpoint, params
+                # tracks failures and successes.
+                # Wrap in asyncio.to_thread to avoid blocking the event loop
+                # since circuit_breaker.call and _sync_request_wrapper are sync.
+                return await asyncio.to_thread(
+                    self._circuit_breaker.call,
+                    self._sync_request_wrapper,
+                    endpoint,
+                    params,
                 )
             except CircuitBreakerError:
                 logger.warning(f"Circuit breaker open for request to {endpoint}")

@@ -52,6 +52,8 @@ class McpToolUsage(BaseModel):
 
     tool: str
     timestamp: str
+    # Raw result from the MCP tool (contains structured data like prices/offers)
+    result: Optional[str] = None
 
 
 class QueryRequest(BaseModel):

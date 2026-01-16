@@ -260,12 +260,21 @@ class SimplifiedRAGService:
                 loop = None
 
             if loop and loop.is_running():
-                # We're in async context - schedule as task
+                # We're in async context - run in threadpool to avoid blocking
                 import concurrent.futures
 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
                     future = executor.submit(asyncio.run, self.mcp_server.list_tools())
-                    mcp_tools = future.result(timeout=5)
+                    try:
+                        mcp_tools = future.result(timeout=5)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning("MCP tools initialization timed out after 5s")
+                        future.cancel()
+                        mcp_tools = []
+                finally:
+                    # Always shutdown without waiting to avoid blocking
+                    executor.shutdown(wait=False)
             else:
                 mcp_tools = asyncio.run(self.mcp_server.list_tools())
 
@@ -793,7 +802,7 @@ class SimplifiedRAGService:
                     tool_result = self.llm.invoke_with_tools(
                         prompt=full_prompt,
                         tools=self.mcp_tools,
-                        max_turns=3,
+                        max_turns=5,
                     )
                     response_text = tool_result.content
                     mcp_invocation_succeeded = True
@@ -804,7 +813,13 @@ class SimplifiedRAGService:
 
                         timestamp = datetime.now(timezone.utc).isoformat()
                         mcp_tools_used = [
-                            {"tool": tc["tool"], "timestamp": timestamp}
+                            {
+                                "tool": tc["tool"],
+                                "timestamp": timestamp,
+                                "result": tc.get(
+                                    "result"
+                                ),  # Include raw result for rich rendering
+                            }
                             for tc in tool_result.tool_calls_made
                         ]
                         logger.info(

@@ -206,9 +206,13 @@ class AISuiteLLMWrapper:
             if choice.message.tool_calls:
                 logger.info(f"LLM made {len(choice.message.tool_calls)} tool call(s)")
                 for tc in choice.message.tool_calls:
+                    # Log only non-sensitive metadata at INFO level to avoid PII exposure
+                    args_str = tc.function.arguments or ""  # type: ignore[union-attr]
                     logger.info(
-                        f"Tool call: {tc.function.name}({tc.function.arguments})"  # type: ignore[union-attr]
+                        f"Tool call: {tc.function.name}(args_len={len(args_str)})"  # type: ignore[union-attr]
                     )
+                    # Full arguments only at DEBUG level
+                    logger.debug(f"Tool call details: {tc.function.name}({args_str})")  # type: ignore[union-attr]
             else:
                 content_preview = (
                     choice.message.content[:200] if choice.message.content else "None"
@@ -343,6 +347,8 @@ class AISuiteLLMWrapper:
 
             # Handle tuple return from call_tool: (content_list, metadata)
             content_list, _ = result
+            if not content_list:
+                return "Tool returned no content."
             return content_list[0].text
         except TimeoutError as e:
             logger.warning(f"Tool {tool_call.function.name} timed out: {e}")

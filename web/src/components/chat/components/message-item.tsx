@@ -12,6 +12,7 @@ import { Rating } from "@/components/ui/rating"
 import { LiveDataBadge } from "@/components/live-data"
 import { SourceBadges } from "./source-badges"
 import { ConfidenceBadge } from "./confidence-badge"
+import { LiveDataContent } from "./live-data-content"
 import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
@@ -33,10 +34,15 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
         ? message.timestamp.toISOString()
         : message.timestamp
 
-    // Extract tool names from MCP tools
+    // Extract tool data from MCP tools
     const toolNames = Array.isArray(message.mcp_tools_used)
         ? message.mcp_tools_used.map(t => t.tool)
         : undefined
+
+    // Extract tool results for rich rendering
+    const toolResults = Array.isArray(message.mcp_tools_used)
+        ? message.mcp_tools_used.filter(t => t.result).map(t => ({ tool: t.tool, result: t.result! }))
+        : []
 
     return (
         <div
@@ -62,7 +68,15 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
             )}
             <div className={cn("flex-1 space-y-2", !isAssistant && "text-right")}>
                 <div className="inline-block rounded-lg px-3 py-2 text-sm bg-muted">
-                    {message.content}
+                    {isAssistant && hasLiveData && toolResults.length > 0 ? (
+                        <LiveDataContent
+                            content={message.content}
+                            toolResults={toolResults}
+                            timestamp={formattedTimestamp}
+                        />
+                    ) : (
+                        message.content
+                    )}
                 </div>
 
                 {hasMetadata && (

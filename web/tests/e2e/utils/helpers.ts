@@ -142,13 +142,13 @@ export async function loginAsAdmin(
       lastError = error as Error;
       console.log(`loginAsAdmin attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
       if (attempt < maxRetries) {
-        const delay = attempt * 3000; // Exponential backoff
+        const delay = attempt * 3000; // Linear backoff
         console.log(`Waiting ${delay}ms before retry...`);
         await new Promise(r => setTimeout(r, delay));
       }
     }
   }
-  throw lastError;
+  throw lastError ?? new Error('loginAsAdmin failed with no retries configured');
 }
 
 /**
@@ -171,12 +171,12 @@ export async function navigateToFaqManagement(page: Page, maxRetries: number = 3
       lastError = error as Error;
       console.log(`navigateToFaqManagement attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
       if (attempt < maxRetries) {
-        const delay = attempt * 2000;
+        const delay = attempt * 2000; // Linear backoff
         await new Promise(r => setTimeout(r, delay));
       }
     }
   }
-  throw lastError;
+  throw lastError ?? new Error('navigateToFaqManagement failed with no retries configured');
 }
 
 /**
@@ -215,10 +215,10 @@ export async function navigateToFeedbackManagement(page: Page, maxRetries: numbe
       lastError = error as Error;
       console.log(`navigateToFeedbackManagement attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
       if (attempt < maxRetries) {
-        const delay = attempt * 2000;
+        const delay = attempt * 2000; // Linear backoff
         await new Promise(r => setTimeout(r, delay));
       }
     }
   }
-  throw lastError;
+  throw lastError ?? new Error('navigateToFeedbackManagement failed with no retries configured');
 }

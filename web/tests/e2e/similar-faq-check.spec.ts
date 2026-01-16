@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import type { Page, Route, Request } from "@playwright/test";
+import type { Page, Route, APIRequestContext } from "@playwright/test";
 import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
 
 /**
@@ -46,7 +46,7 @@ test.describe("Similar FAQ Check", () => {
      * Wait for both API and web app to be ready
      * This is critical after container restart tests
      */
-    const waitForServicesReady = async (request: Request["request"], maxRetries: number = 10): Promise<void> => {
+    const waitForServicesReady = async (request: APIRequestContext, maxRetries: number = 10): Promise<void> => {
         for (let i = 0; i < maxRetries; i++) {
             try {
                 // Check API health

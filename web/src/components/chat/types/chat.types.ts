@@ -45,6 +45,8 @@ export interface McpToolUsage {
     tool: string
     /** ISO timestamp when the tool was called */
     timestamp: string
+    /** Raw result from the MCP tool (contains structured data like prices/offers) */
+    result?: string
 }
 
 export interface FeedbackDialogState {

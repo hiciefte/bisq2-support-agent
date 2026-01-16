@@ -137,7 +137,8 @@ export function getReputationLevel(score: number): ReputationLevel {
  * @returns String of filled and empty stars (e.g., '★★★★☆')
  */
 export function getStarRating(score: number): string {
-  const filledStars = Math.round(score);
+  // Clamp to [0, 5] to avoid RangeError from repeat()
+  const filledStars = Math.min(5, Math.max(0, Math.round(score)));
   const emptyStars = 5 - filledStars;
   return '★'.repeat(filledStars) + '☆'.repeat(emptyStars);
 }
