@@ -6,7 +6,10 @@ import os
 from pathlib import Path
 
 try:
-    from nio import AsyncClient, LoginResponse  # type: ignore[import-not-found]
+    from nio import (  # type: ignore[import-untyped]
+        AsyncClient,
+        LoginResponse,
+    )
 
     NIO_AVAILABLE = True
 except ImportError:

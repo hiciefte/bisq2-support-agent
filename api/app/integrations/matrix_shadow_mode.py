@@ -9,7 +9,10 @@ if TYPE_CHECKING:
     from app.services.shadow_mode_processor import ShadowModeProcessor
 
 try:
-    from nio import AsyncClient, RoomMessagesError  # type: ignore[import-not-found]
+    from nio import (  # type: ignore[import-untyped]
+        AsyncClient,
+        RoomMessagesError,
+    )
 
     NIO_AVAILABLE = True
 except ImportError:

@@ -84,18 +84,14 @@ class SimplifiedRAGService:
         self.faq_service = faq_service
         self.bisq_mcp_service = bisq_mcp_service
 
-        # Initialize MCP server for autonomous tool calling (if Bisq service available)
-        self.mcp_server = None
-        self.mcp_tools: List[Dict[str, Any]] = []
-        if self.bisq_mcp_service and self.settings.ENABLE_BISQ_MCP_INTEGRATION:
-            try:
-                from app.services.mcp.bisq_mcp_server import create_mcp_server
-
-                self.mcp_server = create_mcp_server(self.bisq_mcp_service)
-                logger.info("MCP server initialized for Bisq 2 APIs")
-            except Exception as e:
-                logger.warning(f"Failed to initialize MCP server: {e}")
-                self.mcp_server = None
+        # MCP is now handled via HTTP transport in LLM provider
+        # The LLM wrapper connects to MCP server at mcp_url
+        self.mcp_enabled = (
+            self.bisq_mcp_service is not None
+            and self.settings.ENABLE_BISQ_MCP_INTEGRATION
+        )
+        if self.mcp_enabled:
+            logger.info("MCP integration enabled (via HTTP transport)")
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
@@ -232,57 +228,14 @@ class SimplifiedRAGService:
         self.embeddings = self.llm_provider.initialize_embeddings()
 
     def initialize_llm(self) -> None:
-        """Delegate to LLM provider for model initialization."""
-        self.llm = self.llm_provider.initialize_llm()
+        """Delegate to LLM provider for model initialization.
 
-        # Initialize MCP tool definitions after LLM is ready
-        if self.mcp_server:
-            self._initialize_mcp_tools()
-
-    def _initialize_mcp_tools(self) -> None:
-        """Initialize MCP tool definitions for LLM tool calling.
-
-        Converts MCP server tools to OpenAI function calling format
-        for use with invoke_with_tools.
+        If MCP integration is enabled, passes the MCP HTTP URL to the LLM wrapper
+        for native AISuite MCP support.
         """
-        if not self.mcp_server:
-            return
-
-        try:
-            # Get tools synchronously (FastMCP provides list_tools() which is async)
-            import asyncio
-
-            from app.services.rag.llm_provider import convert_mcp_tools_to_openai_format
-
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                # We're in async context - run in threadpool to avoid blocking
-                import concurrent.futures
-
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                try:
-                    future = executor.submit(asyncio.run, self.mcp_server.list_tools())
-                    try:
-                        mcp_tools = future.result(timeout=5)
-                    except concurrent.futures.TimeoutError:
-                        logger.warning("MCP tools initialization timed out after 5s")
-                        future.cancel()
-                        mcp_tools = []
-                finally:
-                    # Always shutdown without waiting to avoid blocking
-                    executor.shutdown(wait=False)
-            else:
-                mcp_tools = asyncio.run(self.mcp_server.list_tools())
-
-            self.mcp_tools = convert_mcp_tools_to_openai_format(mcp_tools)
-            logger.info(f"Initialized {len(self.mcp_tools)} MCP tools for LLM")
-        except Exception as e:
-            logger.warning(f"Failed to initialize MCP tools: {e}")
-            self.mcp_tools = []
+        # Construct MCP URL based on settings (default: http://localhost:8000/mcp)
+        mcp_url = getattr(self.settings, "MCP_HTTP_URL", "http://localhost:8000/mcp")
+        self.llm = self.llm_provider.initialize_llm(mcp_url=mcp_url)
 
     @instrument_stage("retrieval")
     def _retrieve_with_version_priority(
@@ -781,12 +734,14 @@ class SimplifiedRAGService:
                 logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
                 logger.debug(f"  Content: {doc.page_content[:200]}...")
 
-            # Generate response - use MCP tools if available for autonomous tool calling
-            # The LLM decides when to use tools based on the question
+            # Generate response - use MCP tools if enabled for autonomous tool calling
+            # The LLM uses MCP HTTP transport to access tools at mcp_url
             mcp_tools_used: list[dict[str, str]] | None = None
             mcp_invocation_succeeded = False
-            if self.mcp_tools:
-                logger.info("MCP tools available, using tool-enabled invocation")
+            if self.mcp_enabled:
+                logger.info(
+                    "MCP enabled, using tool-enabled invocation via HTTP transport"
+                )
                 try:
                     # Build prompt with context from retrieved documents
                     context = self._format_docs(docs)
@@ -797,13 +752,21 @@ class SimplifiedRAGService:
                         context, preprocessed_question, chat_history_str
                     )
 
-                    # Invoke LLM with MCP tools available
+                    # Invoke LLM with MCP tools via AISuite native HTTP transport
                     # The LLM autonomously decides when to call tools
+                    # (no tools parameter - MCP config is baked into the wrapper)
                     tool_result = self.llm.invoke_with_tools(
                         prompt=full_prompt,
-                        tools=self.mcp_tools,
                         max_turns=5,
                     )
+
+                    # Check if tool invocation actually succeeded
+                    if not tool_result.success:
+                        logger.warning(
+                            f"MCP tool infrastructure failed, falling back: {tool_result.content[:100]}"
+                        )
+                        raise RuntimeError("MCP tool invocation failed")
+
                     response_text = tool_result.content
                     mcp_invocation_succeeded = True
 

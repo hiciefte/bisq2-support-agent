@@ -12,6 +12,7 @@ aiohttp==3.13.3
     # via
     #   -r api/requirements.in
     #   aiohttp-socks
+    #   litellm
     #   matrix-nio
 aiohttp-socks==0.11.0
     # via matrix-nio
@@ -69,6 +70,7 @@ chromadb==1.4.1
 click==8.3.1
     # via
     #   black
+    #   litellm
     #   pip-tools
     #   typer
     #   uvicorn
@@ -94,6 +96,8 @@ durationpy==0.10
     # via kubernetes
 fastapi==0.128.0
     # via -r api/requirements.in
+fastuuid==0.14.0
+    # via litellm
 filelock==3.20.3
     # via
     #   huggingface-hub
@@ -138,6 +142,7 @@ httpx==0.27.2
     #   aisuite
     #   chromadb
     #   langsmith
+    #   litellm
     #   mcp
     #   openai
 httpx-sse==0.4.3
@@ -159,13 +164,17 @@ idna==3.11
     #   requests
     #   yarl
 importlib-metadata==8.7.1
-    # via opentelemetry-api
+    # via
+    #   litellm
+    #   opentelemetry-api
 importlib-resources==6.5.2
     # via chromadb
 iniconfig==2.3.0
     # via pytest
 isort==7.0.0
     # via -r api/requirements.in
+jinja2==3.1.6
+    # via litellm
 jiter==0.12.0
     # via openai
 joblib==1.5.3
@@ -179,6 +188,7 @@ jsonpointer==3.0.0
 jsonschema==4.26.0
     # via
     #   chromadb
+    #   litellm
     #   matrix-nio
     #   mcp
     #   mwxml
@@ -204,8 +214,12 @@ langsmith==0.6.4
     # via langchain-core
 librt==0.7.8
     # via mypy
+litellm==1.80.0
+    # via -r api/requirements.in
 markdown-it-py==4.0.0
     # via rich
+markupsafe==3.0.3
+    # via jinja2
 matplotlib==3.10.8
     # via -r api/requirements.in
 matrix-nio==0.25.2
@@ -269,6 +283,7 @@ openai==1.109.1
     # via
     #   -r api/requirements.in
     #   langchain-openai
+    #   litellm
 opentelemetry-api==1.39.1
     # via
     #   chromadb
@@ -368,6 +383,7 @@ pydantic==2.12.5
     #   fastapi
     #   langchain-core
     #   langsmith
+    #   litellm
     #   mcp
     #   openai
     #   pydantic-settings
@@ -407,6 +423,7 @@ python-dateutil==2.9.0.post0
     #   posthog
 python-dotenv==1.2.1
     # via
+    #   litellm
     #   mcp
     #   pydantic-settings
     #   uvicorn
@@ -499,10 +516,13 @@ tenacity==9.1.2
 threadpoolctl==3.6.0
     # via scikit-learn
 tiktoken==0.12.0
-    # via langchain-openai
+    # via
+    #   langchain-openai
+    #   litellm
 tokenizers==0.22.2
     # via
     #   chromadb
+    #   litellm
     #   transformers
 tqdm==4.67.1
     # via

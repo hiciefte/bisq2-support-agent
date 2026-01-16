@@ -8,6 +8,7 @@ from app.services.rag.conversation_state import (
 )
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.evaluation import EvaluationResult, RAGEvaluator
 from app.services.rag.llm_provider import LLMProvider
@@ -25,6 +26,7 @@ __all__ = [
     "DocumentProcessor",
     "DocumentRetriever",
     "EmpathyDetector",
+    "LiteLLMEmbeddings",
     "EvaluationResult",
     "LLMProvider",
     "NLIValidator",

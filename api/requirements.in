@@ -23,7 +23,9 @@ matrix-nio>=0.21.0
 
 # LLM providers
 # AISuite for unified LLM interface with MCP support
-aisuite[mcp]>=0.1.12
+aisuite[mcp]>=0.1.14
+# LiteLLM for vendor-portable embeddings (100+ providers)
+litellm>=1.30.0
 # MCP SDK for building Model Context Protocol servers
 mcp[cli]>=1.0.0
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes

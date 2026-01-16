@@ -33,6 +33,8 @@ from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.mcp.mcp_http_server import router as mcp_router
+from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.public_faq_service import PublicFAQService
 from app.services.shadow_mode.repository import ShadowModeRepository
 from app.services.shadow_mode_processor import ShadowModeProcessor
@@ -106,6 +108,8 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Bisq2MCPService...")
     bisq_mcp_service = Bisq2MCPService(settings=settings)
     app.state.bisq_mcp_service = bisq_mcp_service
+    # Set the service for MCP HTTP endpoint
+    set_bisq_service(bisq_mcp_service)
     logger.info(
         f"Bisq2MCPService initialized (enabled={settings.ENABLE_BISQ_MCP_INTEGRATION})"
     )
@@ -421,6 +425,9 @@ app.include_router(
 )  # Public FAQ endpoints (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
+app.include_router(
+    mcp_router, tags=["MCP"]
+)  # MCP HTTP endpoint for AISuite integration
 
 
 @app.get("/healthcheck")
