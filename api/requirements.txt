@@ -111,8 +111,6 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.1.0
     # via huggingface-hub
-google-auth==2.47.0
-    # via kubernetes
 googleapis-common-protos==1.72.0
     # via opentelemetry-exporter-otlp-proto-grpc
 grpcio==1.76.0
@@ -188,7 +186,7 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.4.9
     # via matplotlib
-kubernetes==33.1.0
+kubernetes==35.0.0
     # via chromadb
 langchain-chroma==1.1.0
     # via -r api/requirements.in
@@ -202,7 +200,7 @@ langchain-openai==1.1.7
     # via -r api/requirements.in
 langchain-text-splitters==1.1.0
     # via -r api/requirements.in
-langsmith==0.6.3
+langsmith==0.6.4
     # via langchain-core
 librt==0.7.8
     # via mypy
@@ -247,7 +245,9 @@ mypy-extensions==1.1.0
     #   black
     #   mypy
 nest-asyncio==1.6.0
-    # via aisuite
+    # via
+    #   -r api/requirements.in
+    #   aisuite
 nodeenv==1.10.0
     # via pre-commit
 numpy==2.4.1
@@ -262,9 +262,7 @@ numpy==2.4.1
     #   scipy
     #   transformers
 oauthlib==3.3.1
-    # via
-    #   kubernetes
-    #   requests-oauthlib
+    # via requests-oauthlib
 onnxruntime==1.23.2
     # via chromadb
 openai==1.109.1
@@ -353,12 +351,6 @@ protobuf==6.33.4
     #   opentelemetry-proto
 psutil==7.2.1
     # via -r api/requirements.in
-pyasn1==0.6.1
-    # via
-    #   pyasn1-modules
-    #   rsa
-pyasn1-modules==0.4.2
-    # via google-auth
 pybase64==1.4.3
     # via chromadb
 pybreaker==1.4.1
@@ -470,8 +462,6 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-rsa==4.9.1
-    # via google-auth
 safetensors==0.7.0
     # via transformers
 scikit-learn==1.8.0
