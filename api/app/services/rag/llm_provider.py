@@ -295,18 +295,46 @@ class AISuiteLLMWrapper:
                 max_tokens=self.max_tokens,
             )
 
-            # Extract tool calls from intermediate messages if available
-            tool_calls_made = []
+            # Extract tool calls AND their results from intermediate messages
+            tool_calls_made: list[dict[str, Any]] = []
+            tool_results: dict[str, str] = {}  # Map tool_call_id -> result
             iterations = 0
+
             if hasattr(response.choices[0], "intermediate_messages"):
+                # First pass: collect all tool results
+                for msg in response.choices[0].intermediate_messages:
+                    # Check for tool result messages - can be dict or object
+                    if isinstance(msg, dict):
+                        # AISuite returns tool results as dicts
+                        if msg.get("role") == "tool":
+                            tool_call_id = msg.get("tool_call_id")
+                            content = msg.get("content", "")
+                            if tool_call_id and content:
+                                tool_results[tool_call_id] = content
+                    else:
+                        # OpenAI SDK style message objects
+                        if getattr(msg, "role", None) == "tool":
+                            tool_call_id = getattr(msg, "tool_call_id", None)
+                            content = getattr(msg, "content", "")
+                            if tool_call_id and content:
+                                tool_results[tool_call_id] = content
+
+                # Second pass: collect tool calls and match with results
                 for msg in response.choices[0].intermediate_messages:
                     if hasattr(msg, "tool_calls") and msg.tool_calls:
                         iterations += 1
                         for tc in msg.tool_calls:
+                            tool_call_id = getattr(tc, "id", None)
+                            result = (
+                                tool_results.get(tool_call_id, "")
+                                if tool_call_id
+                                else ""
+                            )
                             tool_calls_made.append(
                                 {
                                     "tool": tc.function.name,
                                     "args": tc.function.arguments,
+                                    "result": result,
                                 }
                             )
 
