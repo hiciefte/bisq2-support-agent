@@ -11,8 +11,9 @@ export { LiveDataBadge } from './LiveDataBadge';
 // Price display
 export { PriceDisplay } from './PriceDisplay';
 
-// Reputation badges
+// Reputation badges and card
 export { ReputationBadge, ReputationBadgeCompact } from './ReputationBadge';
+export { ReputationCard } from './ReputationCard';
 
 // Offer components
 export { OfferCard } from './OfferCard';
@@ -34,12 +35,14 @@ export type {
   LiveDataMeta,
   MarketPrice,
   OfferSummary,
+  ReputationData,
   LiveDataResponse,
   LiveDataBadgeProps,
   PriceDisplayProps,
   OfferTableProps,
   OfferCardProps,
   ReputationBadgeProps,
+  ReputationCardProps,
   DataUnavailableBadgeProps,
   ReputationLevel,
   FormattedTimestamp,

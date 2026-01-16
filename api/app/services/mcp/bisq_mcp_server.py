@@ -103,9 +103,18 @@ class BisqMCPServer:
             Returns active trading offers on the Bisq 2 network.
             Use this when users ask about available offers to buy or sell BTC.
 
+            IMPORTANT - Direction logic (from MAKER's perspective):
+            - direction="SELL": Makers selling BTC → user can BUY BTC from them
+            - direction="BUY": Makers buying BTC → user can SELL BTC to them
+
+            So if user asks "offers to buy BTC" → use direction="SELL"
+            If user asks "offers to sell BTC" → use direction="BUY"
+
             Args:
                 currency: Optional 3-letter currency code to filter offers.
-                direction: Optional "BUY" or "SELL" to filter by offer type.
+                direction: Optional "BUY" or "SELL" to filter by MAKER's direction.
+                          To show offers where user can BUY BTC, use "SELL".
+                          To show offers where user can SELL BTC, use "BUY".
 
             Returns:
                 Formatted string listing available offers with prices and amounts.

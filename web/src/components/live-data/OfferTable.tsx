@@ -9,10 +9,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { AlertTriangle } from 'lucide-react';
 import { LiveDataBadge } from './LiveDataBadge';
 import { OfferCard } from './OfferCard';
-import { ReputationBadgeCompact } from './ReputationBadge';
+import { ReputationBadgeWithTooltip } from './ReputationBadge';
 import type { OfferTableProps } from '@/types/live-data';
 
 /**
@@ -34,7 +40,7 @@ interface ExtendedOfferTableProps extends OfferTableProps {
 }
 
 const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
-  ({ offers, currency, maxOffers = 5, meta, className, error, onRetry }, ref) => {
+  ({ offers, currency, maxOffers = 5, totalOffers, meta, className, error, onRetry }, ref) => {
     // Handle error state
     if (error) {
       return (
@@ -61,12 +67,49 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
     const displayedOffers = offers.slice(0, maxOffers);
     const hasMore = offers.length > maxOffers;
 
-    // Direction badge styling
-    const getDirectionStyle = (direction: 'buy' | 'sell') => {
-      if (direction === 'buy') {
-        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+    // Determine if offers are filtered by direction
+    // If all offers have the same direction, show that specific direction in the header
+    const uniqueDirections = new Set(offers.map(o => o.direction));
+    const isDirectionFiltered = uniqueDirections.size === 1 && offers.length > 0;
+    const filteredDirection = isDirectionFiltered ? offers[0].direction : null;
+
+    // Get header text for offer count
+    // Always shows the TOTAL count (e.g., "59 total")
+    // If direction filtered, also shows what type is displayed below (e.g., "showing 11 buy")
+    const getOfferCountText = () => {
+      const total = totalOffers ?? offers.length;
+      if (!isDirectionFiltered) {
+        return `${total} total`;
       }
-      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+      // When direction filtered, show total count and what's being shown
+      // Direction is already USER-CENTRIC from backend: 'buy' = user buys, 'sell' = user sells
+      return `${total} total, showing ${offers.length} ${filteredDirection}`;
+    };
+
+    // Direction badge styling and label (from USER's perspective)
+    // Direction is already USER-CENTRIC from backend: 'buy' = user buys BTC, 'sell' = user sells BTC
+    const getDirectionInfo = (userDirection: 'buy' | 'sell') => {
+      if (userDirection === 'buy') {
+        // User buys BTC (green - getting BTC)
+        return {
+          label: 'Buy from',
+          style: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+        };
+      }
+      // User sells BTC (red - giving away BTC)
+      return {
+        label: 'Sell to',
+        style: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+      };
+    };
+
+    // Get color class for price percentage (green for premium, red for discount)
+    const getPricePercentageStyle = (percentage: string | undefined) => {
+      if (!percentage) return 'text-muted-foreground';
+      const value = parseFloat(percentage.replace('%', ''));
+      if (isNaN(value) || value === 0) return 'text-muted-foreground';
+      if (value > 0) return 'text-red-600 dark:text-red-400'; // Premium (buyer pays more)
+      return 'text-emerald-600 dark:text-emerald-400'; // Discount (buyer pays less)
     };
 
     return (
@@ -84,7 +127,7 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
               {currency} Offers
             </h3>
             <span className="text-xs text-muted-foreground">
-              ({offers.length} available)
+              ({getOfferCountText()})
             </span>
           </div>
           {meta && (
@@ -100,11 +143,11 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-16">Type</TableHead>
-                <TableHead>Price</TableHead>
+                <TableHead className="w-20">Action</TableHead>
+                <TableHead className="w-24">Price</TableHead>
                 <TableHead>Amount</TableHead>
                 <TableHead>Methods</TableHead>
-                <TableHead className="w-20 text-right">Rep</TableHead>
+                <TableHead className="w-16 text-right">Rep</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -120,21 +163,42 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
               ) : (
                 displayedOffers.map((offer, index) => (
                   <TableRow key={index}>
-                    {/* Direction */}
+                    {/* Direction (from taker's perspective) */}
                     <TableCell>
-                      <span
-                        className={cn(
-                          'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold uppercase',
-                          getDirectionStyle(offer.direction)
-                        )}
-                      >
-                        {offer.direction}
-                      </span>
+                      {(() => {
+                        const dirInfo = getDirectionInfo(offer.direction);
+                        return (
+                          <span
+                            className={cn(
+                              'inline-flex items-center whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-semibold',
+                              dirInfo.style
+                            )}
+                          >
+                            {dirInfo.label}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
 
-                    {/* Price */}
-                    <TableCell className="font-mono text-sm">
-                      {offer.formattedPrice}
+                    {/* Price (shows percentage with actual price in tooltip) */}
+                    <TableCell>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className={cn(
+                                'cursor-help font-mono text-sm',
+                                getPricePercentageStyle(offer.pricePercentage)
+                              )}
+                            >
+                              {offer.pricePercentage || '0.00%'}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <span className="font-mono">{offer.formattedPrice}</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </TableCell>
 
                     {/* Amount */}
@@ -163,7 +227,11 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
 
                     {/* Reputation */}
                     <TableCell className="text-right">
-                      <ReputationBadgeCompact score={offer.reputationScore} />
+                      <ReputationBadgeWithTooltip
+                        score={offer.reputationScore}
+                        makerProfileId={offer.makerProfileId}
+                        makerNickName={offer.makerNickName}
+                      />
                     </TableCell>
                   </TableRow>
                 ))
@@ -185,10 +253,10 @@ const OfferTable = React.forwardRef<HTMLDivElement, ExtendedOfferTableProps>(
           )}
         </div>
 
-        {/* Show more indicator */}
+        {/* Show more indicator - only if there are more offers than displayed */}
         {hasMore && (
           <p className="mt-2 text-center text-xs text-muted-foreground">
-            +{offers.length - maxOffers} more offers available
+            Showing {displayedOffers.length} of {totalOffers ?? offers.length} offers
           </p>
         )}
       </div>

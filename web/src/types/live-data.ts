@@ -32,6 +32,8 @@ export interface MarketPrice {
 export interface OfferSummary {
   /** Offer direction: 'buy' or 'sell' from the maker's perspective */
   direction: 'buy' | 'sell';
+  /** Quote currency code (e.g., 'USD', 'EUR') */
+  currency: string;
   /** Formatted price string (e.g., '$98,500.00') */
   formattedPrice: string;
   /** Formatted quote amount (e.g., '0.05 BTC' or '$500') */
@@ -40,6 +42,12 @@ export interface OfferSummary {
   paymentMethods: string[];
   /** Maker's reputation score (0.0 to 5.0) */
   reputationScore: number;
+  /** Price percentage vs market price (e.g., '+1.00%', '-2.50%', '0.00%') */
+  pricePercentage?: string;
+  /** Maker's profile ID (for lookup) */
+  makerProfileId?: string;
+  /** Maker's nickname */
+  makerNickName?: string;
 }
 
 /**
@@ -94,6 +102,8 @@ export interface OfferTableProps {
   currency: string;
   /** Maximum number of offers to display (default: 5) */
   maxOffers?: number;
+  /** Total offers available in market (buy + sell combined) */
+  totalOffers?: number | null;
   /** Data freshness metadata */
   meta?: LiveDataMeta;
   /** Additional CSS classes */
@@ -111,11 +121,41 @@ export interface OfferCardProps {
 }
 
 /**
+ * Reputation data for a Bisq 2 user profile
+ */
+export interface ReputationData {
+  /** Truncated profile ID */
+  profileId: string;
+  /** User's chosen nickname (visible in desktop app) */
+  nickName?: string;
+  /** Total reputation score */
+  totalScore: number;
+  /** Star rating (0.0 to 5.0) */
+  starRating: number;
+  /** Ranking position */
+  ranking: string;
+  /** Profile age in days */
+  profileAgeDays?: number;
+  /** Data freshness metadata */
+  meta: LiveDataMeta;
+}
+
+/**
  * Props for the ReputationBadge component
  */
 export interface ReputationBadgeProps {
   /** Reputation score (0.0 to 5.0) */
   score: number;
+  /** Additional CSS classes */
+  className?: string;
+}
+
+/**
+ * Props for the ReputationCard component
+ */
+export interface ReputationCardProps {
+  /** Reputation data to display */
+  reputation: ReputationData;
   /** Additional CSS classes */
   className?: string;
 }

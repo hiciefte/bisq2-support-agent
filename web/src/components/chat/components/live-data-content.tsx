@@ -10,14 +10,14 @@
  */
 
 import { memo, useMemo } from 'react';
-import { PriceDisplay, OfferTable } from '@/components/live-data';
+import { PriceDisplay, OfferTable, ReputationCard } from '@/components/live-data';
 import { parseLiveDataContent } from '@/lib/live-data-parser';
-import type { LiveDataMeta } from '@/types/live-data';
+import { getDataFreshness } from '@/lib/live-data-utils';
+import type { LiveDataMeta, ReputationData } from '@/types/live-data';
+import type { McpToolUsage } from '../types/chat.types';
 
-interface ToolResult {
-  tool: string;
-  result: string;
-}
+/** ToolResult with required result field (filtered from McpToolUsage) */
+type ToolResult = Required<Pick<McpToolUsage, 'tool' | 'result'>>;
 
 interface LiveDataContentProps {
   /** LLM response text */
@@ -32,9 +32,10 @@ interface LiveDataContentProps {
  * Create metadata object for live data components
  */
 function createMeta(timestamp?: string): LiveDataMeta {
+  const ts = timestamp || new Date().toISOString();
   return {
-    type: 'live',
-    timestamp: timestamp || new Date().toISOString(),
+    type: getDataFreshness(ts),
+    timestamp: ts,
     source: 'bisq2-api',
   };
 }
@@ -52,6 +53,8 @@ export const LiveDataContent = memo(function LiveDataContent({
   const parsed = useMemo(() => {
     const allPrices: ReturnType<typeof parseLiveDataContent>['prices'] = [];
     const allOffers: ReturnType<typeof parseLiveDataContent>['offers'] = [];
+    let reputation: ReputationData | null = null;
+    let totalOffers: number | null = null;
 
     for (const { tool, result } of toolResults) {
       // Parse the tool result text for structured data
@@ -63,13 +66,23 @@ export const LiveDataContent = memo(function LiveDataContent({
 
       if (tool === 'get_offerbook' && toolParsed.offers.length > 0) {
         allOffers.push(...toolParsed.offers);
+        // Capture total offers count from the parsed result
+        if (toolParsed.totalOffers !== null) {
+          totalOffers = toolParsed.totalOffers;
+        }
+      }
+
+      if (tool === 'get_reputation' && toolParsed.reputation) {
+        reputation = toolParsed.reputation;
       }
     }
 
     return {
       prices: allPrices,
       offers: allOffers,
-      hasLiveData: allPrices.length > 0 || allOffers.length > 0,
+      reputation,
+      totalOffers,
+      hasLiveData: allPrices.length > 0 || allOffers.length > 0 || reputation !== null,
     };
   }, [toolResults]);
 
@@ -103,13 +116,21 @@ export const LiveDataContent = memo(function LiveDataContent({
           currency={parsed.offers[0]?.formattedPrice.match(/[A-Z]{3}/)?.[0] || 'EUR'}
           meta={meta}
           maxOffers={5}
+          totalOffers={parsed.totalOffers}
         />
       )}
 
-      {/* Always render the LLM response text */}
-      <div className={parsed.hasLiveData ? 'mt-2 pt-2 border-t border-border/50' : ''}>
-        <span>{content}</span>
-      </div>
+      {/* Render reputation card if reputation data was found */}
+      {parsed.reputation && (
+        <ReputationCard reputation={parsed.reputation} />
+      )}
+
+      {/* Always render LLM text for helpful context (e.g., troubleshooting why offers don't appear) */}
+      {content && (
+        <div className={parsed.hasLiveData ? 'mt-2 text-sm text-muted-foreground' : ''}>
+          <span>{content}</span>
+        </div>
+      )}
     </div>
   );
 });

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page, Route, Request, APIRequestContext } from "@playwright/test";
-import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
+import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
 
 /**
  * Similar FAQ Check E2E Tests
@@ -78,7 +78,7 @@ test.describe("Similar FAQ Check", () => {
         // Wait for both API and web services to be ready (important after container restart tests)
         await waitForServicesReady(request);
 
-        // Retry navigation with exponential backoff for flaky server startup
+        // Retry navigation with linear backoff for flaky server startup
         let lastError: Error | null = null;
         for (let attempt = 1; attempt <= 5; attempt++) {
             try {
@@ -109,7 +109,7 @@ test.describe("Similar FAQ Check", () => {
                 lastError = error as Error;
                 console.log(`Attempt ${attempt}/5 failed: ${lastError.message}`);
                 if (attempt < 5) {
-                    // Wait before retry with exponential backoff
+                    // Wait before retry with linear backoff
                     const delay = attempt * 3000;
                     console.log(`Waiting ${delay}ms before retry...`);
                     await new Promise(r => setTimeout(r, delay));

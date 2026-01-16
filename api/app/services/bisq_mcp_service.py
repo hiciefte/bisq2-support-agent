@@ -134,19 +134,22 @@ class CurrencyValidator:
 
 
 class ProfileIdValidator:
-    """Validate Bisq profile IDs (Base58 encoded)."""
+    """Validate Bisq profile IDs (Base58 encoded or hex format)."""
 
     # Base58 alphabet (no 0, O, I, l)
     BASE58_PATTERN = re.compile(
         r"^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{20,50}$"
     )
 
+    # Hex-encoded profile ID pattern (40 hex characters = 20 bytes)
+    HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+
     @classmethod
     def validate(cls, profile_id: str) -> Tuple[bool, str]:
         """Validate a Bisq profile ID.
 
         Args:
-            profile_id: The profile ID to validate
+            profile_id: The profile ID to validate (Base58 or hex format)
 
         Returns:
             Tuple of (is_valid, sanitized_id_or_error)
@@ -157,11 +160,15 @@ class ProfileIdValidator:
         # Trim whitespace
         normalized = profile_id.strip()
 
-        # Check pattern
-        if not cls.BASE58_PATTERN.match(normalized):
-            return False, f"Invalid profile ID format: {profile_id[:20]}..."
+        # Check if it's a valid Base58 profile ID
+        if cls.BASE58_PATTERN.match(normalized):
+            return True, normalized
 
-        return True, normalized
+        # Check if it's a valid hex-encoded profile ID
+        if cls.HEX_PATTERN.match(normalized):
+            return True, normalized.lower()  # Normalize to lowercase hex
+
+        return False, f"Invalid profile ID format: {profile_id[:20]}..."
 
 
 class PromptSanitizer:
@@ -254,6 +261,47 @@ class SecureErrorHandler:
             "error": f"Service temporarily unavailable. Reference: {error_id}",
             "error_id": error_id,
         }
+
+
+# =============================================================================
+# Reputation Score Conversion
+# =============================================================================
+
+
+def get_five_system_score(total_score: int) -> float:
+    """Convert Bisq 2 total reputation score to 0-5 star rating.
+
+    This implements the same logic as Bisq 2's ReputationService.getFiveSystemScore().
+    The thresholds are defined in the Bisq 2 Java codebase.
+
+    Args:
+        total_score: Raw reputation score (can be 0 to millions)
+
+    Returns:
+        Star rating from 0.0 to 5.0 in 0.5 increments
+    """
+    if total_score < 1_200:
+        return 0.0
+    elif total_score < 5_000:
+        return 0.5
+    elif total_score < 15_000:
+        return 1.0
+    elif total_score < 20_000:
+        return 1.5
+    elif total_score < 25_000:
+        return 2.0
+    elif total_score < 30_000:
+        return 2.5
+    elif total_score < 35_000:
+        return 3.0
+    elif total_score < 40_000:
+        return 3.5
+    elif total_score < 60_000:
+        return 4.0
+    elif total_score < 100_000:
+        return 4.5
+    else:
+        return 5.0
 
 
 # =============================================================================
@@ -519,6 +567,8 @@ class Bisq2MCPService:
             raw_offers: list[Any] = response if isinstance(response, list) else []
 
             # Transform to our standard format
+            # Track total count BEFORE direction filtering
+            total_before_filter = len(raw_offers)
             offers = []
             for offer_item in raw_offers:
                 bisq_offer = offer_item.get("bisqEasyOffer", {})
@@ -533,6 +583,18 @@ class Bisq2MCPService:
                 # Get market info
                 market = bisq_offer.get("market", {})
 
+                # Extract maker profile info from nested structure
+                # Path: bisqEasyOffer.makerNetworkId.pubKey.id
+                maker_network_id = bisq_offer.get("makerNetworkId", {})
+                maker_pub_key = maker_network_id.get("pubKey", {})
+                maker_profile_id = maker_pub_key.get("id", "")
+
+                # Extract maker nickname from userProfile
+                user_profile = offer_item.get("userProfile", {})
+                maker_nickname = user_profile.get("nickName") or user_profile.get(
+                    "userName", ""
+                )
+
                 offers.append(
                     {
                         "id": bisq_offer.get("id", ""),
@@ -546,12 +608,23 @@ class Bisq2MCPService:
                             "formattedBaseAmount", "N/A"
                         ),
                         "paymentMethods": offer_item.get("quoteSidePaymentMethods", []),
-                        "reputationScore": offer_item.get("reputationScore", {}).get(
-                            "totalScore", 0
+                        "reputationScore": get_five_system_score(
+                            offer_item.get("reputationScore", {}).get("totalScore", 0)
                         ),
                         "formattedDate": offer_item.get("formattedDate", ""),
+                        # Price spec percentage (e.g., "+1.00%", "-2.50%", "0.00%")
+                        "formattedPriceSpec": offer_item.get(
+                            "formattedPriceSpec", "0.00%"
+                        ),
+                        # Maker profile info for reputation tooltip
+                        "makerProfileId": maker_profile_id,
+                        "makerNickName": maker_nickname,
                     }
                 )
+
+            # Sort offers by reputation score (highest first)
+            # This ensures users see the most reputable offers first
+            offers.sort(key=lambda o: o.get("reputationScore", 0), reverse=True)
 
             api_result: Dict[str, Any] = {
                 "success": True,
@@ -559,7 +632,8 @@ class Bisq2MCPService:
                 "offers": offers,
                 "currency_filter": currency,
                 "direction_filter": direction,
-                "total_count": len(offers),
+                "total_count": total_before_filter,  # Total BEFORE direction filter
+                "filtered_count": len(offers),  # Count AFTER direction filter
             }
 
             # Cache result
@@ -627,10 +701,34 @@ class Bisq2MCPService:
                     if profile_age_ms > 0:
                         now_ms = int(datetime.now(UTC).timestamp() * 1000)
                         age_days = (now_ms - profile_age_ms) // (1000 * 60 * 60 * 24)
-                        reputation["profileAgeDays"] = age_days
+                        # Clamp to 0 if future timestamp (clock skew protection)
+                        reputation["profileAgeDays"] = max(0, age_days)
             except Exception as e:
                 logger.debug(f"Could not fetch profile age for {profile_id}: {e}")
                 # Profile age is optional, don't fail the whole request
+
+            # Optionally fetch user profile for nickname (separate endpoint)
+            try:
+                profile_response = await self._make_request(
+                    f"/api/v1/user-profiles?ids={profile_id}"
+                )
+                # Response is array of UserProfileDto
+                if profile_response and isinstance(profile_response, list):
+                    if len(profile_response) > 0:
+                        user_profile = profile_response[0]
+                        # Use nickName or userName (they're usually the same)
+                        nickname = user_profile.get("nickName") or user_profile.get(
+                            "userName"
+                        )
+                        if nickname:
+                            reputation["nickName"] = nickname
+                        # Also get nym (randomly generated name)
+                        nym = user_profile.get("nym")
+                        if nym:
+                            reputation["nym"] = nym
+            except Exception as e:
+                logger.debug(f"Could not fetch user profile for {profile_id}: {e}")
+                # User profile is optional, don't fail the whole request
 
             api_result: Dict[str, Any] = {
                 "success": True,
@@ -782,27 +880,74 @@ class Bisq2MCPService:
             return f"[No offers currently available{filter_text}]"
 
         # Format offers for context using Bisq 2 formatted fields
+        # Use user-centric direction labels to avoid confusion:
+        # - Maker's "BUY" offer = User can SELL BTC to them
+        # - Maker's "SELL" offer = User can BUY BTC from them
         lines = ["[LIVE OFFERBOOK]"]
         for offer in offers[:max_offers]:
-            offer_dir = PromptSanitizer.sanitize(
-                offer.get("direction", "???"), "general"
+            maker_direction = offer.get("direction", "???").upper()
+            # Convert maker direction to user action
+            if maker_direction == "BUY":
+                offer_dir = "SELL"  # User sells BTC to maker who wants to buy
+            elif maker_direction == "SELL":
+                offer_dir = "BUY"  # User buys BTC from maker who wants to sell
+            else:
+                offer_dir = maker_direction
+            # Sanitize all external values to prevent prompt injection
+            formatted_amount = PromptSanitizer.sanitize(
+                offer.get("formattedBaseAmount", "N/A"), "general"
             )
-            # Use pre-formatted values from Bisq 2 API
-            formatted_amount = offer.get("formattedBaseAmount", "N/A")
-            formatted_price = offer.get("formattedPrice", "N/A")
-            formatted_quote = offer.get("formattedQuoteAmount", "N/A")
-            # Join payment methods list
+            formatted_price = PromptSanitizer.sanitize(
+                offer.get("formattedPrice", "N/A"), "general"
+            )
+            formatted_quote = PromptSanitizer.sanitize(
+                offer.get("formattedQuoteAmount", "N/A"), "general"
+            )
+            # Join and sanitize payment methods list
             payment_methods = offer.get("paymentMethods", [])
-            payment_str = ", ".join(payment_methods[:2]) if payment_methods else "N/A"
+            payment_str = (
+                ", ".join(
+                    PromptSanitizer.sanitize(pm, "general")
+                    for pm in payment_methods[:2]
+                )
+                if payment_methods
+                else "N/A"
+            )
             if len(payment_methods) > 2:
                 payment_str += f" +{len(payment_methods) - 2} more"
-            reputation = offer.get("reputationScore", 0)
+            # Use reputationScore (0.0-5.0 stars) for display
+            # Note: get_offerbook stores the fiveSystemScore as 'reputationScore'
+            star_raw = offer.get("reputationScore", 0.0)
+            star_rating = star_raw if isinstance(star_raw, (int, float)) else 0.0
+            price_spec = PromptSanitizer.sanitize(
+                offer.get("formattedPriceSpec", "0.00%"), "general"
+            )
+            # Get maker info for attribution
+            maker_id = offer.get("makerProfileId", "")
+            maker_name = PromptSanitizer.sanitize(
+                offer.get("makerNickName", ""), "general"
+            )
+            maker_str = f" Maker:{maker_name}" if maker_name else ""
+            if maker_id:
+                maker_str += f"({maker_id})"
             lines.append(
                 f"  {offer_dir.upper()}: {formatted_amount} @ {formatted_price} "
-                f"({formatted_quote}) via {payment_str} [Rep: {reputation}]"
+                f"({price_spec}) ({formatted_quote}) via {payment_str} "
+                f"[Rep: {star_rating:.1f}]{maker_str}"
             )
 
-        lines.append(f"[Total offers: {result.get('total_count', 0)}]")
+        # Show total offers (before any direction filter)
+        total_count = result.get("total_count", 0)
+        filtered_count = result.get("filtered_count", total_count)
+        direction_filter = result.get("direction_filter")
+        if direction_filter and filtered_count != total_count:
+            # User-centric label for direction filter
+            user_action = "SELL" if direction_filter.lower() == "buy" else "BUY"
+            lines.append(
+                f"[Showing {filtered_count} {user_action} offers out of {total_count} total]"
+            )
+        else:
+            lines.append(f"[Total offers: {total_count}]")
         lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
         return "\n".join(lines)
 
@@ -829,6 +974,9 @@ class Bisq2MCPService:
         # Format reputation for context using Bisq 2 reputation fields
         lines = ["[REPUTATION DATA]"]
         lines.append(f"  Profile ID: {profile_id[:20]}...")
+        # Include nickname if available
+        if "nickName" in reputation:
+            lines.append(f"  Nickname: {reputation.get('nickName')}")
         lines.append(f"  Total Score: {reputation.get('totalScore', 0):,}")
         lines.append(f"  Star Rating: {reputation.get('fiveSystemScore', 0):.1f}/5.0")
         lines.append(f"  Ranking: #{reputation.get('ranking', 'N/A')}")

@@ -27,27 +27,24 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
     const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
     const canRate = message.id && !message.isThankYouMessage && onRating
 
-    // Check if live data is displayed inline (via LiveDataContent with PriceDisplay)
-    // This is used to avoid showing duplicate LiveDataBadge in the metadata row
-    const hasInlineLiveData = hasLiveData &&
-        message.mcp_tools_used!.filter(t => t.result).length > 0
-
-    // Only show LiveDataBadge in metadata row when live data is NOT displayed inline
-    const showLiveBadgeInMetadata = hasLiveData && !hasInlineLiveData
-
-    const hasMetadata = isAssistant && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
-
     // Format timestamp for LiveDataBadge
     const formattedTimestamp = message.timestamp instanceof Date
         ? message.timestamp.toISOString()
         : message.timestamp
 
-    // Extract tool data from MCP tools
+    // Extract tool data from MCP tools (single filter pass, reused for inline check)
     const toolNames = message.mcp_tools_used?.map(t => t.tool)
-
-    // Extract tool results for rich rendering
     const toolResults = message.mcp_tools_used
         ?.filter(t => t.result).map(t => ({ tool: t.tool, result: t.result! })) ?? []
+
+    // Check if live data is displayed inline (via LiveDataContent with PriceDisplay)
+    // Reuses toolResults to avoid double-filtering
+    const hasInlineLiveData = toolResults.length > 0
+
+    // Only show LiveDataBadge in metadata row when live data is NOT displayed inline
+    const showLiveBadgeInMetadata = hasLiveData && !hasInlineLiveData
+
+    const hasMetadata = isAssistant && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
 
     return (
         <div

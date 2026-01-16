@@ -5,11 +5,12 @@
  * Refactored to use modular hooks and components
  */
 
-import { FormEvent } from "react"
+import { FormEvent, useCallback } from "react"
 import { PrivacyWarningModal } from "@/components/privacy/privacy-warning-modal"
 import { MessageList } from "./components/message-list"
 import { ChatInput } from "./components/chat-input"
 import { FeedbackDialog } from "./components/feedback-dialog"
+import { ChatProvider } from "./context"
 import { useChatMessages } from "./hooks/use-chat-messages"
 import { useChatScroll } from "./hooks/use-chat-scroll"
 import { useFeedback } from "./hooks/use-feedback"
@@ -58,10 +59,15 @@ const ChatInterface = () => {
         await sendMessage(input)
     }
 
-    // Handle example question clicks
-    const handleQuestionClick = async (question: string) => {
+    // Handle example question clicks (memoized for context provider)
+    const handleQuestionClick = useCallback(async (question: string) => {
         await sendMessage(question)
-    }
+    }, [sendMessage])
+
+    // Memoized setInput for context provider
+    const handleSetInput = useCallback((value: string) => {
+        setInput(value)
+    }, [setInput])
 
     // Handle feedback dialog issue toggle
     const handleIssueToggle = (issueId: string) => {
@@ -83,7 +89,7 @@ const ChatInterface = () => {
     }
 
     return (
-        <>
+        <ChatProvider onSendQuestion={handleQuestionClick} onSetInput={handleSetInput}>
             <PrivacyWarningModal />
             <div className="flex flex-col h-full overflow-hidden">
                 <div role="log" aria-live="polite" aria-label="Chat conversation" className="flex-1 min-h-0 flex flex-col">
@@ -118,7 +124,7 @@ const ChatInterface = () => {
                     onClearHistory={clearChatHistory}
                 />
             </div>
-        </>
+        </ChatProvider>
     )
 }
 

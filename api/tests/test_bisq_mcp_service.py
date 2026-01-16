@@ -479,7 +479,9 @@ class TestFormattedOutput:
         result = await service.get_offerbook_formatted(currency="EUR")
 
         assert "[LIVE OFFERBOOK]" in result
-        assert "BUY" in result
+        # Mock has maker direction "BUY" which converts to user direction "SELL"
+        # (user sells BTC to maker who wants to buy)
+        assert "SELL" in result
 
     @pytest.mark.asyncio
     async def test_formatted_output_on_error(self, service):

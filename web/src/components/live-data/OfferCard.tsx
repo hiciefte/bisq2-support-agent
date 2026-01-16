@@ -22,50 +22,79 @@ const OfferCard = React.forwardRef<HTMLDivElement, OfferCardProps>(
       formattedQuoteAmount,
       paymentMethods,
       reputationScore,
+      pricePercentage,
     } = offer;
 
-    // Direction styling
-    const directionStyles = {
-      buy: {
-        bg: 'bg-emerald-100 dark:bg-emerald-900/30',
-        text: 'text-emerald-700 dark:text-emerald-400',
-        border: 'border-emerald-200 dark:border-emerald-800',
-      },
-      sell: {
+    // Direction styling and label (from USER's perspective)
+    // Direction is already USER-CENTRIC from backend: 'buy' = user buys BTC, 'sell' = user sells BTC
+    const getDirectionInfo = (userDirection: 'buy' | 'sell') => {
+      if (userDirection === 'buy') {
+        // User buys BTC (green - getting BTC)
+        return {
+          label: 'Buy from',
+          bg: 'bg-emerald-100 dark:bg-emerald-900/30',
+          text: 'text-emerald-700 dark:text-emerald-400',
+          border: 'border-emerald-200 dark:border-emerald-800',
+        };
+      }
+      // User sells BTC (red - giving away BTC)
+      return {
+        label: 'Sell to',
         bg: 'bg-red-100 dark:bg-red-900/30',
         text: 'text-red-700 dark:text-red-400',
         border: 'border-red-200 dark:border-red-800',
-      },
+      };
     };
 
-    const styles = directionStyles[direction];
+    // Get color class for price percentage (green for discount, red for premium)
+    const getPricePercentageStyle = (percentage: string | undefined) => {
+      if (!percentage) return 'text-muted-foreground';
+      const value = parseFloat(percentage.replace('%', ''));
+      if (isNaN(value) || value === 0) return 'text-muted-foreground';
+      if (value > 0) return 'text-red-600 dark:text-red-400'; // Premium (buyer pays more)
+      return 'text-emerald-600 dark:text-emerald-400'; // Discount (buyer pays less)
+    };
+
+    const dirInfo = getDirectionInfo(direction);
 
     return (
       <article
         ref={ref}
         role="article"
-        aria-label={`${direction === 'buy' ? 'Buy' : 'Sell'} offer at ${formattedPrice}`}
+        aria-label={`${dirInfo.label} offer at ${formattedPrice}`}
         className={cn(
           'rounded-lg border bg-card p-3 shadow-sm transition-colors hover:bg-accent/5',
           'focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2',
-          styles.border,
+          dirInfo.border,
           className
         )}
       >
-        {/* Header: Direction and Price */}
+        {/* Header: Direction (from user's perspective) and Price */}
         <div className="flex items-center justify-between mb-2">
           <span
             className={cn(
-              'inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold uppercase',
-              styles.bg,
-              styles.text
+              'inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold',
+              dirInfo.bg,
+              dirInfo.text
             )}
           >
-            {direction}
+            {dirInfo.label}
           </span>
-          <span className="font-mono text-sm font-medium text-foreground">
-            {formattedPrice}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-medium text-foreground">
+              {formattedPrice}
+            </span>
+            {pricePercentage && (
+              <span
+                className={cn(
+                  'font-mono text-xs',
+                  getPricePercentageStyle(pricePercentage)
+                )}
+              >
+                ({pricePercentage})
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Amount */}

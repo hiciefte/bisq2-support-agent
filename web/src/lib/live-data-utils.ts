@@ -171,7 +171,8 @@ export function getDataFreshness(timestamp: string): 'live' | 'cached' | 'stale'
   if (!date) return 'stale';
 
   const now = new Date();
-  const diffMinutes = (now.getTime() - date.getTime()) / (1000 * 60);
+  // Clamp to 0 if future timestamp (clock skew protection)
+  const diffMinutes = Math.max(0, now.getTime() - date.getTime()) / (1000 * 60);
 
   if (diffMinutes < 1) return 'live';
   if (diffMinutes < 30) return 'cached';
