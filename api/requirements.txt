@@ -511,7 +511,7 @@ tqdm==4.67.1
     #   huggingface-hub
     #   openai
     #   transformers
-transformers==4.57.5
+transformers==4.57.6
     # via -r api/requirements.in
 typer==0.21.1
     # via
