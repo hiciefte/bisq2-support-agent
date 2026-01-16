@@ -55,13 +55,33 @@ class JsonRpcRequest(BaseModel):
     id: int | str | None = None
 
 
-class JsonRpcResponse(BaseModel):
-    """JSON-RPC 2.0 response format."""
+def make_json_rpc_response(
+    id: int | str | None,
+    result: Any = None,
+    error: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a JSON-RPC 2.0 response dict.
 
-    jsonrpc: str = "2.0"
-    result: Any = None
-    error: dict[str, Any] | None = None
-    id: int | str | None = None
+    Important: Only includes 'error' field when error is not None.
+    AISuite MCP client breaks if "error": null is present (tries to call .get() on None).
+
+    Args:
+        id: Request ID to echo back
+        result: Successful result data
+        error: Error object (only included if not None)
+
+    Returns:
+        JSON-RPC 2.0 compliant response dict
+    """
+    response: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": id,
+    }
+    if error is not None:
+        response["error"] = error
+    else:
+        response["result"] = result
+    return response
 
 
 # Tool definitions following MCP protocol
@@ -125,11 +145,24 @@ TOOL_DEFINITIONS = [
 ]
 
 
+# Server capabilities for MCP protocol
+SERVER_INFO = {
+    "name": "bisq2-mcp-server",
+    "version": "1.0.0",
+}
+
+SERVER_CAPABILITIES: dict[str, Any] = {
+    "tools": {},  # We support tools
+}
+
+
 @router.post("")
-async def handle_jsonrpc(request: JsonRpcRequest) -> JsonRpcResponse:
+async def handle_jsonrpc(request: JsonRpcRequest) -> dict[str, Any]:
     """Handle JSON-RPC 2.0 requests for MCP protocol.
 
     Supports the following methods:
+    - initialize: Initialize the MCP session (required first)
+    - notifications/initialized: Client confirms initialization complete
     - tools/list: Return list of available tools
     - tools/call: Execute a tool with given arguments
 
@@ -137,11 +170,34 @@ async def handle_jsonrpc(request: JsonRpcRequest) -> JsonRpcResponse:
         request: JSON-RPC 2.0 request
 
     Returns:
-        JSON-RPC 2.0 response with result or error
+        JSON-RPC 2.0 response dict (excludes 'error' field when no error)
     """
     try:
-        if request.method == "tools/list":
-            return JsonRpcResponse(
+        # MCP Protocol: initialize handshake (required first)
+        if request.method == "initialize":
+            params = request.params or {}
+            client_version = params.get("protocolVersion", "2024-11-05")
+            logger.info(
+                f"MCP initialize from client (version: {client_version}): "
+                f"{params.get('clientInfo', {})}"
+            )
+            return make_json_rpc_response(
+                id=request.id,
+                result={
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": SERVER_CAPABILITIES,
+                    "serverInfo": SERVER_INFO,
+                },
+            )
+
+        # MCP Protocol: initialized notification (client confirms ready)
+        elif request.method == "notifications/initialized":
+            logger.info("MCP client confirmed initialization complete")
+            # Notifications don't require a response, but we return success for consistency
+            return make_json_rpc_response(id=request.id, result={})
+
+        elif request.method == "tools/list":
+            return make_json_rpc_response(
                 id=request.id,
                 result={"tools": TOOL_DEFINITIONS},
             )
@@ -152,19 +208,19 @@ async def handle_jsonrpc(request: JsonRpcRequest) -> JsonRpcResponse:
             tool_args = params.get("arguments", {})
 
             if not tool_name:
-                return JsonRpcResponse(
+                return make_json_rpc_response(
                     id=request.id,
                     error={"code": -32602, "message": "Missing tool name in params"},
                 )
 
             result = await _execute_tool(tool_name, tool_args)
-            return JsonRpcResponse(
+            return make_json_rpc_response(
                 id=request.id,
                 result={"content": [{"type": "text", "text": result}]},
             )
 
         else:
-            return JsonRpcResponse(
+            return make_json_rpc_response(
                 id=request.id,
                 error={
                     "code": -32601,
@@ -174,7 +230,7 @@ async def handle_jsonrpc(request: JsonRpcRequest) -> JsonRpcResponse:
 
     except Exception as e:
         logger.exception(f"MCP request failed: {e}")
-        return JsonRpcResponse(
+        return make_json_rpc_response(
             id=request.id,
             error={"code": -32603, "message": f"Internal error: {str(e)}"},
         )

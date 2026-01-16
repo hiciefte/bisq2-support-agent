@@ -50,7 +50,9 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # Default command for development (can be overridden)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Note: --loop asyncio disables uvloop to allow AISuite's MCP client to work
+# (nest_asyncio cannot patch uvloop, only standard asyncio event loops)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--loop", "asyncio"]
 
 
 # --- Final Stage ---
@@ -103,4 +105,6 @@ EXPOSE 8000
 # Use entrypoint to fix permissions on startup, then drop privileges
 # Entrypoint will run as root initially to fix permissions, then exec as bisq-support user
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Note: --loop asyncio disables uvloop to allow AISuite's MCP client to work
+# (nest_asyncio cannot patch uvloop, only standard asyncio event loops)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]

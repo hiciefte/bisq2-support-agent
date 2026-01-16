@@ -30,7 +30,9 @@ services:
       - ENVIRONMENT=development
       - BISQ_API_URL=http://bisq2-api:8090
       - DATA_DIR=/data # Point to the non-reloaded data directory
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    # Note: --loop asyncio disables uvloop to allow AISuite's MCP client to work
+    # (nest_asyncio cannot patch uvloop, only standard asyncio event loops)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --loop asyncio
     ports:
       - "8000:8000"
     healthcheck:
