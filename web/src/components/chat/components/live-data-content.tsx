@@ -113,7 +113,7 @@ export const LiveDataContent = memo(function LiveDataContent({
       {parsed.offers.length > 0 && (
         <OfferTable
           offers={parsed.offers}
-          currency={parsed.offers[0]?.formattedPrice.match(/[A-Z]{3}/)?.[0] || 'EUR'}
+          currency={parsed.offers[0]?.currency || 'EUR'}
           meta={meta}
           maxOffers={5}
           totalOffers={parsed.totalOffers}
