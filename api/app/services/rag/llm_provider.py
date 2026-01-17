@@ -6,6 +6,7 @@ This module provides:
 - Embeddings via LiteLLM abstraction
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -54,6 +55,34 @@ LIVE_DATA_KEYWORDS = [
     "rating",
     "trust",
 ]
+
+
+def _parse_tool_content(content: str) -> str:
+    """Parse tool result content, handling JSON-encoded strings.
+
+    AISuite may return tool content as a JSON-encoded string (with quotes
+    and escaped characters). This function detects and parses such strings
+    to return the raw content that parsers expect.
+
+    Args:
+        content: Tool result content (may be JSON-encoded)
+
+    Returns:
+        Parsed content string
+    """
+    if not content:
+        return content
+
+    # Detect JSON-encoded string: starts and ends with quotes
+    if content.startswith('"') and content.endswith('"'):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, str):
+                return parsed
+        except json.JSONDecodeError:
+            pass  # Not valid JSON, return as-is
+
+    return content
 
 
 @dataclass
@@ -310,14 +339,20 @@ class AISuiteLLMWrapper:
                             tool_call_id = msg.get("tool_call_id")
                             content = msg.get("content", "")
                             if tool_call_id and content:
-                                tool_results[tool_call_id] = content
+                                # Parse JSON-encoded content if needed
+                                tool_results[tool_call_id] = _parse_tool_content(
+                                    content
+                                )
                     else:
                         # OpenAI SDK style message objects
                         if getattr(msg, "role", None) == "tool":
                             tool_call_id = getattr(msg, "tool_call_id", None)
                             content = getattr(msg, "content", "")
                             if tool_call_id and content:
-                                tool_results[tool_call_id] = content
+                                # Parse JSON-encoded content if needed
+                                tool_results[tool_call_id] = _parse_tool_content(
+                                    content
+                                )
 
                 # Second pass: collect tool calls and match with results
                 for msg in response.choices[0].intermediate_messages:
