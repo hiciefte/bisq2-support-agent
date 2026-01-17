@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -733,37 +733,35 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("MATRIX_PASSWORD")
-    @classmethod
-    def validate_matrix_auth_in_production(cls, v: str, info) -> str:
+    @model_validator(mode="after")
+    def validate_matrix_auth_in_production(self) -> "Settings":
         """Ensure Matrix authentication is configured when Matrix is enabled.
 
-        Args:
-            v: The MATRIX_PASSWORD value
-            info: Validation info containing other field values
+        This is a model validator (mode='after') to ensure all fields are loaded
+        before validation. Field validators run in field definition order, which
+        caused issues when MATRIX_PASSWORD validator ran before MATRIX_TOKEN was loaded.
 
         Returns:
-            The validated and stripped MATRIX_PASSWORD
+            The validated Settings instance
 
         Raises:
             ValueError: If Matrix is enabled but neither password nor token is set
         """
-        v = v.strip()
-
         # Only validate if Matrix integration is enabled
-        homeserver = str(info.data.get("MATRIX_HOMESERVER_URL", "")).strip()
+        homeserver = (self.MATRIX_HOMESERVER_URL or "").strip()
         if not homeserver:
-            return v  # Matrix not enabled, skip validation
+            return self  # Matrix not enabled, skip validation
 
         # Check if either password or token is provided
-        token = str(info.data.get("MATRIX_TOKEN", "")).strip()
-        if not v and not token:
+        password = (self.MATRIX_PASSWORD or "").strip()
+        token = (self.MATRIX_TOKEN or "").strip()
+        if not password and not token:
             raise ValueError(
                 "MATRIX_PASSWORD or MATRIX_TOKEN required when MATRIX_HOMESERVER_URL is set. "
                 "MATRIX_PASSWORD is recommended for automatic session management."
             )
 
-        return v
+        return self
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
