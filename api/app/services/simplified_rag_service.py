@@ -233,9 +233,8 @@ class SimplifiedRAGService:
         If MCP integration is enabled, passes the MCP HTTP URL to the LLM wrapper
         for native AISuite MCP support.
         """
-        # Construct MCP URL based on settings (default: http://localhost:8000/mcp)
-        mcp_url = getattr(self.settings, "MCP_HTTP_URL", "http://localhost:8000/mcp")
-        self.llm = self.llm_provider.initialize_llm(mcp_url=mcp_url)
+        # Use configured MCP HTTP URL for AISuite MCP integration
+        self.llm = self.llm_provider.initialize_llm(mcp_url=self.settings.MCP_HTTP_URL)
 
     @instrument_stage("retrieval")
     def _retrieve_with_version_priority(

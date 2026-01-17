@@ -129,17 +129,23 @@ class LiteLLMEmbeddings(Embeddings):
         if "/" not in model:
             model = f"{provider}/{model}"
 
-        # Get API key based on provider
+        # Get API key and base URL based on provider
         api_key = None
+        api_base = None
         if provider == "openai":
             api_key = getattr(settings, "OPENAI_API_KEY", None)
         elif provider == "cohere":
             api_key = getattr(settings, "COHERE_API_KEY", None)
         elif provider == "voyage":
             api_key = getattr(settings, "VOYAGE_API_KEY", None)
+        elif provider == "ollama":
+            # Ollama requires api_base URL, API key is optional
+            api_base = getattr(settings, "OLLAMA_API_URL", None)
+            api_key = getattr(settings, "OLLAMA_API_KEY", None)
 
         return cls(
             model=model,
             api_key=api_key,
+            api_base=api_base,
             dimensions=getattr(settings, "EMBEDDING_DIMENSIONS", None),
         )

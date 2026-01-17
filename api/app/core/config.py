@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # External URLs
     BISQ_API_URL: str = "http://bisq2-api:8090"
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
+    MCP_HTTP_URL: str = "http://localhost:8000/mcp"  # MCP HTTP server URL for AISuite
 
     # Bisq 2 MCP Integration Settings
     BISQ_API_TIMEOUT: int = Field(
