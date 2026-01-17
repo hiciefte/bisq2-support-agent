@@ -88,8 +88,9 @@ class LiteLLMEmbeddings(Embeddings):
 
             response = litellm.embedding(**kwargs)
             # Handle both dict and object response formats from LiteLLM
+            data = response["data"] if isinstance(response, dict) else response.data
             embeddings = []
-            for item in response.data:
+            for item in data:
                 if isinstance(item, dict):
                     embeddings.append(item["embedding"])
                 else:
