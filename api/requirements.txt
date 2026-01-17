@@ -12,12 +12,13 @@ aiohttp==3.13.3
     # via
     #   -r api/requirements.in
     #   aiohttp-socks
+    #   litellm
     #   matrix-nio
 aiohttp-socks==0.11.0
     # via matrix-nio
 aiosignal==1.4.0
     # via aiohttp
-aisuite==0.1.12
+aisuite[mcp]==0.1.14
     # via -r api/requirements.in
 annotated-doc==0.0.4
     # via fastapi
@@ -26,7 +27,9 @@ annotated-types==0.7.0
 anyio==4.12.1
     # via
     #   httpx
+    #   mcp
     #   openai
+    #   sse-starlette
     #   starlette
     #   watchfiles
 attrs==25.4.0
@@ -46,12 +49,16 @@ build==1.4.0
     # via
     #   chromadb
     #   pip-tools
+cachetools==6.2.4
+    # via -r api/requirements.in
 certifi==2026.1.4
     # via
     #   httpcore
     #   httpx
     #   kubernetes
     #   requests
+cffi==2.0.0
+    # via cryptography
 cfgv==3.5.0
     # via pre-commit
 charset-normalizer==3.4.4
@@ -63,6 +70,7 @@ chromadb==1.4.1
 click==8.3.1
     # via
     #   black
+    #   litellm
     #   pip-tools
     #   typer
     #   uvicorn
@@ -70,6 +78,8 @@ coloredlogs==15.0.1
     # via onnxruntime
 contourpy==1.3.3
     # via matplotlib
+cryptography==46.0.3
+    # via pyjwt
 cycler==0.12.1
     # via matplotlib
 distlib==0.4.0
@@ -80,12 +90,14 @@ distro==1.9.0
     #   posthog
 docopt==0.6.2
     # via mwcli
-docstring-parser==0.14.1
+docstring-parser==0.15
     # via aisuite
 durationpy==0.10
     # via kubernetes
 fastapi==0.128.0
     # via -r api/requirements.in
+fastuuid==0.14.0
+    # via litellm
 filelock==3.20.3
     # via
     #   huggingface-hub
@@ -103,8 +115,6 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.1.0
     # via huggingface-hub
-google-auth==2.47.0
-    # via kubernetes
 googleapis-common-protos==1.72.0
     # via opentelemetry-exporter-otlp-proto-grpc
 grpcio==1.76.0
@@ -128,10 +138,15 @@ httptools==0.7.1
     # via uvicorn
 httpx==0.27.2
     # via
+    #   -r api/requirements.in
     #   aisuite
     #   chromadb
     #   langsmith
+    #   litellm
+    #   mcp
     #   openai
+httpx-sse==0.4.3
+    # via mcp
 huggingface-hub==0.36.0
     # via
     #   tokenizers
@@ -149,13 +164,17 @@ idna==3.11
     #   requests
     #   yarl
 importlib-metadata==8.7.1
-    # via opentelemetry-api
+    # via
+    #   litellm
+    #   opentelemetry-api
 importlib-resources==6.5.2
     # via chromadb
 iniconfig==2.3.0
     # via pytest
 isort==7.0.0
     # via -r api/requirements.in
+jinja2==3.1.6
+    # via litellm
 jiter==0.12.0
     # via openai
 joblib==1.5.3
@@ -169,13 +188,15 @@ jsonpointer==3.0.0
 jsonschema==4.26.0
     # via
     #   chromadb
+    #   litellm
     #   matrix-nio
+    #   mcp
     #   mwxml
 jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.4.9
     # via matplotlib
-kubernetes==33.1.0
+kubernetes==35.0.0
     # via chromadb
 langchain-chroma==1.1.0
     # via -r api/requirements.in
@@ -189,18 +210,26 @@ langchain-openai==1.1.7
     # via -r api/requirements.in
 langchain-text-splitters==1.1.0
     # via -r api/requirements.in
-langsmith==0.6.3
+langsmith==0.6.4
     # via langchain-core
 librt==0.7.8
     # via mypy
+litellm==1.80.0
+    # via -r api/requirements.in
 markdown-it-py==4.0.0
     # via rich
+markupsafe==3.0.3
+    # via jinja2
 matplotlib==3.10.8
     # via -r api/requirements.in
 matrix-nio==0.25.2
     # via -r api/requirements.in
 mccabe==0.7.0
     # via flake8
+mcp[cli]==1.25.0
+    # via
+    #   -r api/requirements.in
+    #   aisuite
 mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.2.0
@@ -229,6 +258,10 @@ mypy-extensions==1.1.0
     # via
     #   black
     #   mypy
+nest-asyncio==1.6.0
+    # via
+    #   -r api/requirements.in
+    #   aisuite
 nodeenv==1.10.0
     # via pre-commit
 numpy==2.4.1
@@ -243,15 +276,14 @@ numpy==2.4.1
     #   scipy
     #   transformers
 oauthlib==3.3.1
-    # via
-    #   kubernetes
-    #   requests-oauthlib
+    # via requests-oauthlib
 onnxruntime==1.23.2
     # via chromadb
 openai==1.109.1
     # via
     #   -r api/requirements.in
     #   langchain-openai
+    #   litellm
 opentelemetry-api==1.39.1
     # via
     #   chromadb
@@ -334,38 +366,41 @@ protobuf==6.33.4
     #   opentelemetry-proto
 psutil==7.2.1
     # via -r api/requirements.in
-pyasn1==0.6.1
-    # via
-    #   pyasn1-modules
-    #   rsa
-pyasn1-modules==0.4.2
-    # via google-auth
 pybase64==1.4.3
     # via chromadb
+pybreaker==1.4.1
+    # via -r api/requirements.in
 pycodestyle==2.14.0
     # via flake8
+pycparser==2.23
+    # via cffi
 pycryptodome==3.23.0
     # via matrix-nio
 pydantic==2.12.5
     # via
     #   -r api/requirements.in
-    #   aisuite
     #   chromadb
     #   fastapi
     #   langchain-core
     #   langsmith
+    #   litellm
+    #   mcp
     #   openai
     #   pydantic-settings
 pydantic-core==2.41.5
     # via pydantic
 pydantic-settings==2.12.0
-    # via -r api/requirements.in
+    # via
+    #   -r api/requirements.in
+    #   mcp
 pyflakes==3.4.0
     # via flake8
 pygments==2.19.2
     # via
     #   pytest
     #   rich
+pyjwt[crypto]==2.10.1
+    # via mcp
 pyparsing==3.3.1
     # via matplotlib
 pypika==0.50.0
@@ -388,10 +423,14 @@ python-dateutil==2.9.0.post0
     #   posthog
 python-dotenv==1.2.1
     # via
+    #   litellm
+    #   mcp
     #   pydantic-settings
     #   uvicorn
 python-json-logger==4.0.0
     # via -r api/requirements.in
+python-multipart==0.0.21
+    # via mcp
 python-socks[asyncio]==2.8.0
     # via aiohttp-socks
 pytokens==0.3.0
@@ -440,8 +479,6 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-rsa==4.9.1
-    # via google-auth
 safetensors==0.7.0
     # via transformers
 scikit-learn==1.8.0
@@ -461,23 +498,31 @@ sniffio==1.3.1
     #   openai
 soupsieve==2.8.1
     # via beautifulsoup4
+sse-starlette==3.2.0
+    # via mcp
 starlette==0.50.0
     # via
     #   fastapi
+    #   mcp
     #   prometheus-fastapi-instrumentator
+    #   sse-starlette
 sympy==1.14.0
     # via onnxruntime
 tenacity==9.1.2
     # via
+    #   -r api/requirements.in
     #   chromadb
     #   langchain-core
 threadpoolctl==3.6.0
     # via scikit-learn
 tiktoken==0.12.0
-    # via langchain-openai
+    # via
+    #   langchain-openai
+    #   litellm
 tokenizers==0.22.2
     # via
     #   chromadb
+    #   litellm
     #   transformers
 tqdm==4.67.1
     # via
@@ -486,10 +531,12 @@ tqdm==4.67.1
     #   huggingface-hub
     #   openai
     #   transformers
-transformers==4.57.5
+transformers==4.57.6
     # via -r api/requirements.in
 typer==0.21.1
-    # via chromadb
+    # via
+    #   chromadb
+    #   mcp
 typing-extensions==4.15.0
     # via
     #   aiosignal
@@ -500,6 +547,7 @@ typing-extensions==4.15.0
     #   grpcio
     #   huggingface-hub
     #   langchain-core
+    #   mcp
     #   mypy
     #   openai
     #   opentelemetry-api
@@ -515,6 +563,7 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via
+    #   mcp
     #   pydantic
     #   pydantic-settings
 tzdata==2025.3
@@ -534,6 +583,7 @@ uvicorn[standard]==0.40.0
     # via
     #   -r api/requirements.in
     #   chromadb
+    #   mcp
 uvloop==0.22.1
     # via uvicorn
 virtualenv==20.36.1

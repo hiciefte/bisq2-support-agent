@@ -37,6 +37,16 @@ class VersionDetector:
         "novice bitcoin",
         "bisq 2",
         "bisq2",
+        # Live data keywords (MCP tools are Bisq 2 features)
+        "current price",
+        "market price",
+        "live price",
+        "btc price",
+        "bitcoin price",
+        "offerbook",
+        "current offers",
+        "available offers",
+        "active offers",
     ]
 
     async def detect_version(

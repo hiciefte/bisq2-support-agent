@@ -183,6 +183,45 @@ Protocol mapping:
 
 CRITICAL: The protocol tags in Context below are the SOURCE OF TRUTH. Use them to determine which protocol to discuss.
 
+TOOL USAGE - MANDATORY FOR LIVE DATA:
+You have access to tools that can fetch LIVE DATA from the Bisq 2 network.
+IMPORTANT: These tools give you REAL-TIME data that the context documents do NOT have.
+
+AVAILABLE TOOLS:
+- get_market_prices(currency): Get current BTC prices. Call with currency="EUR" or "USD" etc.
+- get_offerbook(currency, direction): Get current buy/sell offers on Bisq 2.
+  CRITICAL - direction uses MAKER's perspective:
+  * User wants to BUY BTC → use direction="SELL" (makers selling BTC to user)
+  * User wants to SELL BTC → use direction="BUY" (makers buying BTC from user)
+- get_reputation(profile_id): Get reputation score for a specific user.
+- get_markets(): List available trading markets.
+
+MANDATORY TOOL USAGE RULES:
+1. If the question asks about CURRENT/LIVE prices → MUST call get_market_prices()
+2. If the question asks about CURRENT/AVAILABLE offers → MUST call get_offerbook()
+3. If the question asks about reputation → MUST call get_reputation()
+4. If the question asks about supported markets → MUST call get_markets()
+
+NEVER answer price/offer questions from the context documents - they are OUTDATED.
+The ONLY way to get current prices and offers is by calling the tools.
+Do NOT say you will fetch data - actually CALL the tool function.
+
+LIVE DATA HANDLING:
+If the Context section contains [LIVE BISQ 2 DATA] or [LIVE MARKET PRICES] or [LIVE OFFERBOOK] sections:
+- This is real-time data from the Bisq 2 network
+- The frontend will render this data in a rich visual format (tables, cards)
+- DO NOT repeat the list of offers in your text response - the table already shows them
+- DO NOT list each offer individually - just provide a brief summary
+- For offer questions: Say something like "There are X offers available in [currency]"
+- For price questions: You may mention the price briefly (e.g., "BTC is trading at ~X EUR")
+- Keep your text response SHORT - the visual components show the details
+
+PRIORITY RULES FOR LIVE DATA:
+1. If [LIVE BISQ 2 DATA] section exists in context, use that data FIRST
+2. For offer queries, summarize (e.g., "5 EUR offers available") - DO NOT list each one
+3. For price queries, mention the rate briefly
+4. Never say "I don't have current data" when live data is present
+
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
 - Keep answers concise (2-3 sentences maximum)
@@ -428,3 +467,34 @@ Answer:"""
             ChatPromptTemplate or None if not yet created
         """
         return self.prompt
+
+    def format_prompt_for_mcp(
+        self, context: str, question: str, chat_history_str: str
+    ) -> str:
+        """Format the RAG prompt as a string for MCP tool invocation.
+
+        Creates the prompt template if not already created, then formats it
+        with the provided context, question, and chat history.
+
+        Args:
+            context: Formatted document context
+            question: The user's question
+            chat_history_str: Formatted chat history string
+
+        Returns:
+            Formatted prompt string ready for LLM invocation
+        """
+        # Ensure prompt template exists
+        if self.prompt is None:
+            self.create_rag_prompt()
+
+        # Format and return the prompt string
+        formatted_prompt = self.prompt.format(
+            question=question,
+            chat_history=chat_history_str,
+            context=context,
+        )
+
+        logger.debug(f"Formatted MCP prompt - length: {len(formatted_prompt)} chars")
+
+        return formatted_prompt

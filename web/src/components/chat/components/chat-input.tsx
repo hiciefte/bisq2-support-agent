@@ -46,10 +46,11 @@ export const ChatInput = ({
             <div className="mx-auto w-full max-w-2xl px-4">
                 {!hasMessages && (
                     <div className="grid grid-cols-2 gap-4 w-full mb-4">
-                        {exampleQuestions.map((question, index) => (
+                        {exampleQuestions.map((question) => (
                             <button
-                                key={index}
+                                key={question}
                                 type="button"
+                                aria-label={`Ask example question: ${question}`}
                                 onClick={() => onQuestionClick(question)}
                                 className="rounded-lg border border-border/60 bg-card/50 p-4 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
                             >
@@ -90,7 +91,7 @@ export const ChatInput = ({
                     <div className="flex justify-center mt-3">
                         <button
                             onClick={onClearHistory}
-                            className="text-xs text-muted-foreground/60 hover:text-muted-foreground/90 transition-colors"
+                            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                             type="button"
                         >
                             Clear conversation

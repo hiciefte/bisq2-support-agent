@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Optional
 
 try:
-    from nio import ErrorResponse, RoomMessagesError  # type: ignore[import-not-found]
+    from nio import ErrorResponse, RoomMessagesError  # type: ignore[import-untyped]
 
     NIO_AVAILABLE = True
 except ImportError:

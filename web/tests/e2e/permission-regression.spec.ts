@@ -305,11 +305,68 @@ test.describe("Permission Regression Tests", () => {
         }
 
         // Verify files have correct ownership
-        const { stdout: permissions } = await execAsync(
-            'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl'
-        );
+        // Check faqs.db (SQLite - primary storage) first, fall back to extracted_faq.jsonl (legacy)
+        let permissions = "";
+        let fileChecked = "";
 
-        console.log("FAQ file ownership:", permissions);
+        // Helper to check if error is permission-related (should fail fast)
+        const isPermissionError = (error: unknown): boolean => {
+            if (error instanceof Error) {
+                const msg = error.message.toLowerCase();
+                return msg.includes("permission denied") || msg.includes("eacces");
+            }
+            return false;
+        };
+
+        // Helper to check if error indicates file not found (can try fallback)
+        const isFileNotFound = (error: unknown): boolean => {
+            if (error instanceof Error) {
+                const msg = error.message.toLowerCase();
+                return msg.includes("no such file") || msg.includes("cannot stat");
+            }
+            return false;
+        };
+
+        try {
+            const { stdout } = await execAsync(
+                'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/faqs.db 2>/dev/null'
+            );
+            permissions = stdout;
+            fileChecked = "faqs.db";
+        } catch (error) {
+            // Fail fast on permission errors
+            if (isPermissionError(error)) {
+                throw error;
+            }
+            // faqs.db may not exist yet, try extracted_faq.jsonl
+            if (!isFileNotFound(error)) {
+                throw error; // Unknown error, don't swallow
+            }
+            try {
+                const { stdout } = await execAsync(
+                    'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data/extracted_faq.jsonl 2>/dev/null'
+                );
+                permissions = stdout;
+                fileChecked = "extracted_faq.jsonl";
+            } catch (error2) {
+                // Fail fast on permission errors
+                if (isPermissionError(error2)) {
+                    throw error2;
+                }
+                if (!isFileNotFound(error2)) {
+                    throw error2; // Unknown error, don't swallow
+                }
+                // Neither file exists yet - this is acceptable for fresh installations
+                console.log("No FAQ data files exist yet (fresh installation). Checking data directory permissions instead.");
+                const { stdout } = await execAsync(
+                    'docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml exec -T api stat -c "%U:%G %a" /data 2>/dev/null'
+                );
+                permissions = stdout;
+                fileChecked = "/data directory";
+            }
+        }
+
+        console.log(`${fileChecked} ownership:`, permissions);
         expect(permissions.trim()).toMatch(/bisq-support:bisq-support|1001:1001/);
     });
 });

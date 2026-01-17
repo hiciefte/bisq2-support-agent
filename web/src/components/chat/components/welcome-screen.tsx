@@ -20,10 +20,10 @@ export const WelcomeScreen = ({ formattedAvgTime }: WelcomeScreenProps) => {
                     height={40}
                     className="rounded"
                 />
-                <Plus className="h-5 w-5 text-muted-foreground" />
-                <MessageSquare className="h-8 w-8 text-muted-foreground" />
+                <Plus className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+                <MessageSquare className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
             </div>
-            <p className="text-lg font-medium mb-2">Welcome to Bisq Support AI</p>
+            <h1 className="text-lg font-medium mb-2">Welcome to Bisq Support AI</h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm mb-8">
                 Meet your digital dumpster fire of wisdom! Our CPU-powered chaos takes
                 about {formattedAvgTime} to answer, but the wait&#39;s worth it. Picture a

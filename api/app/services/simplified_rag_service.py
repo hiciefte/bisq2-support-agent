@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import chromadb
 from app.core.config import get_settings
+from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
@@ -59,7 +60,12 @@ class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
 
     def __init__(
-        self, settings=None, feedback_service=None, wiki_service=None, faq_service=None
+        self,
+        settings=None,
+        feedback_service=None,
+        wiki_service=None,
+        faq_service=None,
+        bisq_mcp_service: Optional[Bisq2MCPService] = None,
     ):
         """Initialize the RAG service.
 
@@ -68,6 +74,7 @@ class SimplifiedRAGService:
             feedback_service: Optional FeedbackService instance for feedback operations
             wiki_service: Optional WikiService instance for wiki operations
             faq_service: Optional FAQService instance for FAQ operations
+            bisq_mcp_service: Optional Bisq2MCPService for live data integration
         """
         if settings is None:
             settings = get_settings()
@@ -75,6 +82,16 @@ class SimplifiedRAGService:
         self.feedback_service = feedback_service
         self.wiki_service = wiki_service
         self.faq_service = faq_service
+        self.bisq_mcp_service = bisq_mcp_service
+
+        # MCP is now handled via HTTP transport in LLM provider
+        # The LLM wrapper connects to MCP server at mcp_url
+        self.mcp_enabled = (
+            self.bisq_mcp_service is not None
+            and self.settings.ENABLE_BISQ_MCP_INTEGRATION
+        )
+        if self.mcp_enabled:
+            logger.info("MCP integration enabled (via HTTP transport)")
 
         # Set up paths
         self.db_path = self.settings.VECTOR_STORE_DIR_PATH
@@ -211,8 +228,13 @@ class SimplifiedRAGService:
         self.embeddings = self.llm_provider.initialize_embeddings()
 
     def initialize_llm(self) -> None:
-        """Delegate to LLM provider for model initialization."""
-        self.llm = self.llm_provider.initialize_llm()
+        """Delegate to LLM provider for model initialization.
+
+        If MCP integration is enabled, passes the MCP HTTP URL to the LLM wrapper
+        for native AISuite MCP support.
+        """
+        # Use configured MCP HTTP URL for AISuite MCP integration
+        self.llm = self.llm_provider.initialize_llm(mcp_url=self.settings.MCP_HTTP_URL)
 
     @instrument_stage("retrieval")
     def _retrieve_with_version_priority(
@@ -653,6 +675,7 @@ class SimplifiedRAGService:
             docs, doc_scores = self.document_retriever.retrieve_with_scores(
                 preprocessed_question, detected_version
             )
+
             logger.info(
                 f"Retrieved {len(docs)} relevant documents (for version: {detected_version})"
             )
@@ -710,11 +733,72 @@ class SimplifiedRAGService:
                 logger.debug(f"  Type: {doc.metadata.get('type', 'N/A')}")
                 logger.debug(f"  Content: {doc.page_content[:200]}...")
 
-            # Generate response using the RAG chain
-            # The chain handles retrieval, formatting, and LLM invocation internally
-            # Note: We already retrieved docs above for logging/source tracking,
-            # but the chain will do its own retrieval which is fine
-            response_text = self.rag_chain(preprocessed_question, chat_history)
+            # Generate response - use MCP tools if enabled for autonomous tool calling
+            # The LLM uses MCP HTTP transport to access tools at mcp_url
+            mcp_tools_used: list[dict[str, str]] | None = None
+            mcp_invocation_succeeded = False
+            if self.mcp_enabled:
+                logger.info(
+                    "MCP enabled, using tool-enabled invocation via HTTP transport"
+                )
+                try:
+                    # Build prompt with context from retrieved documents
+                    context = self._format_docs(docs)
+                    chat_history_str = self.prompt_manager.format_chat_history(
+                        chat_history
+                    )
+                    full_prompt = self.prompt_manager.format_prompt_for_mcp(
+                        context, preprocessed_question, chat_history_str
+                    )
+
+                    # Invoke LLM with MCP tools via AISuite native HTTP transport
+                    # The LLM autonomously decides when to call tools
+                    # (no tools parameter - MCP config is baked into the wrapper)
+                    tool_result = self.llm.invoke_with_tools(
+                        prompt=full_prompt,
+                        max_turns=5,
+                    )
+
+                    # Check if tool invocation actually succeeded
+                    if not tool_result.success:
+                        logger.warning(
+                            f"MCP tool infrastructure failed, falling back: {tool_result.content[:100]}"
+                        )
+                        raise RuntimeError("MCP tool invocation failed")
+
+                    response_text = tool_result.content
+                    mcp_invocation_succeeded = True
+
+                    # Return detailed tool usage info if LLM actually called tools
+                    if tool_result.tool_calls_made:
+                        from datetime import datetime, timezone
+
+                        timestamp = datetime.now(timezone.utc).isoformat()
+                        mcp_tools_used = [
+                            {
+                                "tool": tc["tool"],
+                                "timestamp": timestamp,
+                                "result": tc.get(
+                                    "result"
+                                ),  # Include raw result for rich rendering
+                            }
+                            for tc in tool_result.tool_calls_made
+                        ]
+                        logger.info(
+                            f"MCP tool calls made: {[tc['tool'] for tc in tool_result.tool_calls_made]}"
+                        )
+                    else:
+                        logger.info(
+                            "LLM processed with tools available but didn't use any"
+                        )
+                except Exception as e:
+                    logger.warning(f"MCP tool invocation failed, falling back: {e}")
+                    # Fall through to standard RAG chain
+
+            if not mcp_invocation_succeeded:
+                # Standard RAG chain invocation (no MCP tools available)
+                # The chain handles retrieval, formatting, and LLM invocation internally
+                response_text = self.rag_chain(preprocessed_question, chat_history)
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -832,6 +916,7 @@ class SimplifiedRAGService:
                 "version_confidence": version_confidence,
                 "emotion": emotion,
                 "emotion_intensity": emotion_intensity,
+                "mcp_tools_used": mcp_tools_used,
             }
 
         except Exception as e:

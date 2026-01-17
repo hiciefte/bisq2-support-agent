@@ -30,8 +30,11 @@ from app.routes import (
     public_faqs,
 )
 from app.routes.admin import include_admin_routers
+from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
+from app.services.mcp.mcp_http_server import router as mcp_router
+from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.public_faq_service import PublicFAQService
 from app.services.shadow_mode.repository import ShadowModeRepository
 from app.services.shadow_mode_processor import ShadowModeProcessor
@@ -101,12 +104,23 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing PublicFAQService...")
     public_faq_service = PublicFAQService(faq_service=faq_service)
 
+    # Initialize Bisq2MCPService for live data integration
+    logger.info("Initializing Bisq2MCPService...")
+    bisq_mcp_service = Bisq2MCPService(settings=settings)
+    app.state.bisq_mcp_service = bisq_mcp_service
+    # Set the service for MCP HTTP endpoint
+    set_bisq_service(bisq_mcp_service)
+    logger.info(
+        f"Bisq2MCPService initialized (enabled={settings.ENABLE_BISQ_MCP_INTEGRATION})"
+    )
+
     logger.info("Initializing SimplifiedRAGService...")
     rag_service = SimplifiedRAGService(
         settings=settings,
         feedback_service=feedback_service,
         wiki_service=wiki_service,
         faq_service=faq_service,
+        bisq_mcp_service=bisq_mcp_service,
     )
 
     # Set up the RAG service (loads data, builds vector store)
@@ -197,6 +211,11 @@ async def lifespan(app: FastAPI):
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
         await app.state.tor_monitoring_service.stop()
+
+    # Clean up Bisq MCP service
+    if hasattr(app.state, "bisq_mcp_service") and app.state.bisq_mcp_service:
+        logger.info("Closing Bisq MCP service...")
+        await app.state.bisq_mcp_service.close()
 
     # Perform any cleanup here if needed
     # For example, rag_service might have a cleanup method
@@ -406,6 +425,9 @@ app.include_router(
 )  # Public FAQ endpoints (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
+app.include_router(
+    mcp_router, tags=["MCP"]
+)  # MCP HTTP endpoint for AISuite integration
 
 
 @app.get("/healthcheck")

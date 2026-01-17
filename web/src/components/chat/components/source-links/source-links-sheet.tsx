@@ -30,12 +30,11 @@ export function SourceLinksSheet({
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent side="bottom" className="h-[70vh] rounded-t-xl">
+            <SheetContent side="bottom" className="h-[min(70vh,500px)] rounded-t-xl">
                 <SheetHeader className="border-b pb-3">
                     <SheetTitle>Sources ({sources.length})</SheetTitle>
                 </SheetHeader>
-
-                <div className="overflow-y-auto h-[calc(70vh-4rem)] py-2">
+                <div className="overflow-y-auto h-[calc(min(70vh,500px)-4rem)] py-2">
                     {groupedSources.map((source, idx) => (
                         <SourceLinkItem
                             key={`${source.type}-${source.title}-${idx}`}

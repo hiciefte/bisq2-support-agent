@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
 
 // Global type declaration for console error tracking
 declare global {
@@ -18,6 +18,9 @@ declare global {
  */
 
 test.describe("FAQ Management", () => {
+    // Increase timeout for tests that run after container restart tests
+    test.setTimeout(90000);
+
     // FAQ card selector constant - used throughout tests
     // Note: Use base classes only (no border-border) as it's conditionally applied
     const FAQ_CARD_SELECTOR = ".bg-card.border.rounded-lg";
@@ -45,7 +48,10 @@ test.describe("FAQ Management", () => {
         }
     };
 
-    test.beforeEach(async ({ page }) => {
+    test.beforeEach(async ({ page, request }) => {
+        // Wait for API to be ready (important after container restart tests)
+        await waitForApiReady(request);
+
         // Inject console error tracking BEFORE navigation
         await page.addInitScript(() => {
             window.consoleErrors = [];
@@ -56,30 +62,54 @@ test.describe("FAQ Management", () => {
             };
         });
 
-        // Navigate to admin page (redirects to /admin/overview)
-        await page.goto(`${WEB_BASE_URL}/admin`);
+        // Retry navigation with exponential backoff for flaky server startup
+        let lastError: Error | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                // Navigate to admin page using domcontentloaded (more reliable than networkidle)
+                await page.goto(`${WEB_BASE_URL}/admin`, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 20000
+                });
 
-        // Wait for login form to appear
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+                // Wait for login form to appear
+                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
 
-        // Login with admin API key
-        await page.fill('input[type="password"]', ADMIN_API_KEY);
-        await page.click('button:has-text("Login")');
+                // Login with admin API key
+                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.click('button:has-text("Login")');
 
-        // Wait for authenticated UI to appear (sidebar with navigation)
-        await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
+                // Wait for authenticated UI to appear (sidebar with navigation)
+                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
 
-        // Navigate to FAQ management
-        await page.click('a[href="/admin/manage-faqs"]');
+                // Navigate to FAQ management
+                await page.click('a[href="/admin/manage-faqs"]');
 
-        // Wait for FAQ management page to load - look for specific heading
-        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
+                // Wait for FAQ management page to load - look for specific heading
+                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 15000 });
 
-        // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
-        await Promise.race([
-            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
-            page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
-        ]);
+                // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
+                await Promise.race([
+                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
+                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
+                ]);
+
+                // Success - exit retry loop
+                lastError = null;
+                break;
+            } catch (error) {
+                lastError = error as Error;
+                console.log(`Attempt ${attempt}/3 failed: ${lastError.message}`);
+                if (attempt < 3) {
+                    // Wait before retry with exponential backoff
+                    await new Promise(r => setTimeout(r, attempt * 2000));
+                }
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
     });
 
     test.afterEach(async ({ page, request }) => {

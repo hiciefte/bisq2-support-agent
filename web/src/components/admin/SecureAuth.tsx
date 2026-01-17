@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import { loginWithApiKey, logout, makeAuthenticatedRequest, registerSessionTimeoutCallback } from '@/lib/auth';
+import { loginWithApiKey, makeAuthenticatedRequest, registerSessionTimeoutCallback } from '@/lib/auth';
 
 interface SecureAuthProps {
   children: React.ReactNode;
@@ -86,16 +86,6 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-    setIsAuthenticated(false);
-    onAuthChange?.(false);
-  };
-
   if (isCheckingAuth) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -145,15 +135,5 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
     );
   }
 
-  return (
-    <div>
-      {/* Add a logout button that can be accessed from authenticated content */}
-      <div className="hidden">
-        <Button onClick={handleLogout} variant="ghost">
-          Logout
-        </Button>
-      </div>
-      {children}
-    </div>
-  );
+  return <>{children}</>;
 }

@@ -3,7 +3,7 @@
 import logging
 
 try:
-    from nio import AsyncClient  # type: ignore[import-not-found]
+    from nio import AsyncClient  # type: ignore[import-untyped]
 
     NIO_AVAILABLE = True
 except ImportError:

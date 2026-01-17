@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import type { Page, Route, Request } from "@playwright/test";
+import type { Page, Route, Request, APIRequestContext } from "@playwright/test";
 import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
 
 /**
@@ -13,6 +13,9 @@ import { API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
  */
 
 test.describe("Similar FAQ Check", () => {
+    // Increase timeout for all tests in this suite due to potential server recovery from previous tests
+    test.setTimeout(120000);
+
     // Track created FAQs for cleanup
     const createdFaqQuestions: string[] = [];
 
@@ -39,23 +42,84 @@ test.describe("Similar FAQ Check", () => {
         });
     };
 
-    test.beforeEach(async ({ page }) => {
-        // Navigate to admin page
-        await page.goto(`${WEB_BASE_URL}/admin`);
+    /**
+     * Wait for both API and web app to be ready
+     * This is critical after container restart tests
+     */
+    const waitForServicesReady = async (request: APIRequestContext, maxRetries: number = 10): Promise<void> => {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                // Check API health
+                const apiRes = await request.get(`${API_BASE_URL}/health`);
+                if (apiRes.status() !== 200) {
+                    throw new Error(`API not ready: ${apiRes.status()}`);
+                }
 
-        // Wait for login form
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+                // Check web app is responding
+                const webRes = await request.get(`${WEB_BASE_URL}/admin`);
+                if (webRes.status() !== 200) {
+                    throw new Error(`Web not ready: ${webRes.status()}`);
+                }
 
-        // Login with admin API key
-        await page.fill('input[type="password"]', ADMIN_API_KEY);
-        await page.click('button:has-text("Login")');
+                // Both services are up
+                return;
+            } catch (error) {
+                console.log(`Services check ${i + 1}/${maxRetries}: ${(error as Error).message}`);
+                if (i < maxRetries - 1) {
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+            }
+        }
+        // Continue anyway after max retries - let the test fail naturally if services are truly down
+        console.log('Services may not be fully ready, continuing anyway...');
+    };
 
-        // Wait for authenticated UI
-        await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
+    test.beforeEach(async ({ page, request }) => {
+        // Wait for both API and web services to be ready (important after container restart tests)
+        await waitForServicesReady(request);
 
-        // Navigate to FAQ management
-        await page.click('a[href="/admin/manage-faqs"]');
-        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
+        // Retry navigation with linear backoff for flaky server startup
+        let lastError: Error | null = null;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+            try {
+                // Navigate to admin page using domcontentloaded (more reliable than networkidle)
+                await page.goto(`${WEB_BASE_URL}/admin`, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 30000
+                });
+
+                // Wait for login form
+                await page.waitForSelector('input[type="password"]', { timeout: 20000 });
+
+                // Login with admin API key
+                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.click('button:has-text("Login")');
+
+                // Wait for authenticated UI
+                await page.waitForSelector("text=Admin Dashboard", { timeout: 20000 });
+
+                // Navigate to FAQ management
+                await page.click('a[href="/admin/manage-faqs"]');
+                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 20000 });
+
+                // Success - exit retry loop
+                lastError = null;
+                break;
+            } catch (error) {
+                lastError = error as Error;
+                console.log(`Attempt ${attempt}/5 failed: ${lastError.message}`);
+                if (attempt < 5) {
+                    // Wait before retry with linear backoff
+                    const delay = attempt * 3000;
+                    console.log(`Waiting ${delay}ms before retry...`);
+                    await new Promise(r => setTimeout(r, delay));
+                }
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
     });
 
     test.afterEach(async ({ request }) => {

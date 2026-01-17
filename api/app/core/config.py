@@ -22,8 +22,39 @@ class Settings(BaseSettings):
     DATA_DIR: str = "api/data"
 
     # External URLs
-    BISQ_API_URL: str = "http://localhost:8090"
+    BISQ_API_URL: str = "http://bisq2-api:8090"
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
+    MCP_HTTP_URL: str = "http://localhost:8000/mcp"  # MCP HTTP server URL for AISuite
+
+    # Bisq 2 MCP Integration Settings
+    BISQ_API_TIMEOUT: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Timeout in seconds for Bisq API requests",
+    )
+    BISQ_CACHE_TTL_PRICES: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="Cache TTL in seconds for market prices",
+    )
+    BISQ_CACHE_TTL_OFFERS: int = Field(
+        default=30,
+        ge=5,
+        le=300,
+        description="Cache TTL in seconds for offerbook data",
+    )
+    BISQ_CACHE_TTL_REPUTATION: int = Field(
+        default=300,
+        ge=60,
+        le=3600,
+        description="Cache TTL in seconds for reputation data",
+    )
+    ENABLE_BISQ_MCP_INTEGRATION: bool = Field(
+        default=False,
+        description="Enable live Bisq 2 data integration (market prices, offers, reputation)",
+    )
 
     # Matrix integration settings for shadow mode
     MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
@@ -46,6 +77,15 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "openai:gpt-4o-mini"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
+
+    # Embedding Provider Configuration (LiteLLM multi-provider support)
+    EMBEDDING_PROVIDER: str = "openai"  # Provider: openai, cohere, voyage, ollama
+    EMBEDDING_MODEL: str = (
+        "text-embedding-3-small"  # Model name (without provider prefix)
+    )
+    EMBEDDING_DIMENSIONS: int | None = None  # Optional dimensions (model-dependent)
+    COHERE_API_KEY: str = ""  # API key for Cohere embeddings
+    VOYAGE_API_KEY: str = ""  # API key for Voyage embeddings
 
     # Token pricing (for cost tracking in metrics)
     # Default values are for GPT-4o-mini as of 2024
