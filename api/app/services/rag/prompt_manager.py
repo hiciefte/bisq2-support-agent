@@ -212,13 +212,22 @@ If the Context section contains [LIVE BISQ 2 DATA] or [LIVE MARKET PRICES] or [L
 - The frontend will render this data in a rich visual format (tables, cards)
 - DO NOT repeat the list of offers in your text response - the table already shows them
 - DO NOT list each offer individually - just provide a brief summary
-- For offer questions: Say something like "There are X offers available in [currency]"
-- For price questions: You may mention the price briefly (e.g., "BTC is trading at ~X EUR")
 - Keep your text response SHORT - the visual components show the details
+
+CRITICAL - OFFER COUNT REPORTING:
+The tool response contains TWO different counts - use the correct one:
+- "Total offers: X" or "total_count" = ALL offers for this currency (the MAIN number)
+- "Showing Y ... offers out of X total" = Y is a FILTERED subset, X is the total
+- When user asks "how many offers?" or "are there offers?" → ALWAYS use the TOTAL count
+- When user asks specifically about buying or selling → use the filtered count for that direction
+- Example: If output shows "[Showing 14 BUY offers out of 56 total]":
+  * "How many EUR offers?" → Answer: "56 EUR offers" (NOT 14!)
+  * "Can I buy BTC with EUR?" → Answer: "14 offers to buy BTC from"
+  * "I don't see any offers" → Say: "There are 56 EUR offers available. If you're not seeing them, try refreshing..."
 
 PRIORITY RULES FOR LIVE DATA:
 1. If [LIVE BISQ 2 DATA] section exists in context, use that data FIRST
-2. For offer queries, summarize (e.g., "5 EUR offers available") - DO NOT list each one
+2. For offer queries, use TOTAL count (e.g., "56 EUR offers available") unless user specifically asked about one direction
 3. For price queries, mention the rate briefly
 4. Never say "I don't have current data" when live data is present
 

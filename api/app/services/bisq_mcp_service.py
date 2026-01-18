@@ -936,18 +936,29 @@ class Bisq2MCPService:
                 f"[Rep: {star_rating:.1f}]{maker_str}"
             )
 
-        # Show total offers (before any direction filter)
+        # Show counts with clear labels to avoid LLM misinterpretation
+        # IMPORTANT: total_count is ALL offers, filtered_count is subset after direction filter
         total_count = result.get("total_count", 0)
         filtered_count = result.get("filtered_count", total_count)
         direction_filter = result.get("direction_filter")
+        currency_filter = result.get("currency_filter", "")
+
+        # Always show total count prominently first
+        lines.append(f"[TOTAL {currency_filter} OFFERS: {total_count}]")
+
         if direction_filter and filtered_count != total_count:
             # User-centric label for direction filter
-            user_action = "SELL" if direction_filter.lower() == "buy" else "BUY"
-            lines.append(
-                f"[Showing {filtered_count} {user_action} offers out of {total_count} total]"
+            user_action = (
+                "sell BTC to" if direction_filter.lower() == "buy" else "buy BTC from"
             )
-        else:
-            lines.append(f"[Total offers: {total_count}]")
+            other_action = (
+                "buy BTC from" if direction_filter.lower() == "buy" else "sell BTC to"
+            )
+            other_count = total_count - filtered_count
+            lines.append(
+                f"[Filtered view: {filtered_count} offers to {user_action}, "
+                f"{other_count} offers to {other_action}]"
+            )
         lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
         return "\n".join(lines)
 
