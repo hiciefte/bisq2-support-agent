@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, X, Filter } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -32,17 +32,17 @@ export function FaqFilters({
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
 
-  // Debounce search input
+  // Use refs to access current values in debounced callback without stale closures
+  const searchInputRef = useRef(searchInput);
+  const selectedCategoryRef = useRef(selectedCategory);
+
+  // Keep refs in sync with state
   useEffect(() => {
-    const timer = setTimeout(() => {
-      updateUrlParams({ search: searchInput, category: selectedCategory });
-    }, 300);
-    return () => clearTimeout(timer);
+    searchInputRef.current = searchInput;
   }, [searchInput]);
 
-  // Update URL when category changes (immediate, no debounce)
   useEffect(() => {
-    updateUrlParams({ search: searchInput, category: selectedCategory });
+    selectedCategoryRef.current = selectedCategory;
   }, [selectedCategory]);
 
   const updateUrlParams = useCallback(
@@ -71,6 +71,25 @@ export function FaqFilters({
     },
     [router, searchParams]
   );
+
+  // Debounce search input - use refs to avoid stale closure
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      updateUrlParams({
+        search: searchInputRef.current,
+        category: selectedCategoryRef.current,
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput, updateUrlParams]);
+
+  // Update URL when category changes (immediate, no debounce)
+  useEffect(() => {
+    updateUrlParams({
+      search: searchInputRef.current,
+      category: selectedCategoryRef.current,
+    });
+  }, [selectedCategory, updateUrlParams]);
 
   const handleClearFilters = () => {
     setSearchInput('');

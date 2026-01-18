@@ -7,8 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { fetchPublicFAQBySlug, fetchAllFAQSlugs } from '@/lib/faqPublicApi';
 
-// Revalidate every hour (3600 seconds) for Incremental Static Regeneration
-export const revalidate = 3600;
+// Revalidate every 15 minutes (consistent with FAQ list page)
+export const revalidate = 900;
 
 interface FaqDetailPageProps {
   params: Promise<{ slug: string }>;

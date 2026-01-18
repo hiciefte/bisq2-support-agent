@@ -24,11 +24,14 @@ export function FaqGrid({ initialFaqs, initialPagination }: FaqGridProps) {
   // Current filter values from URL
   const search = searchParams.get('search') || '';
   const category = searchParams.get('category') || '';
-  const page = parseInt(searchParams.get('page') || '1', 10);
+  const parsedPage = parseInt(searchParams.get('page') || '1', 10);
+  // Validate page number: must be positive integer, default to 1 if invalid
+  const page = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
 
   // Fetch FAQs when URL params change
   useEffect(() => {
-    let isMounted = true;
+    // Use AbortController to cancel in-flight requests on param changes
+    const abortController = new AbortController();
 
     const loadFaqs = async () => {
       setIsLoading(true);
@@ -40,14 +43,18 @@ export function FaqGrid({ initialFaqs, initialPagination }: FaqGridProps) {
           category: category || undefined,
         });
 
-        if (isMounted) {
+        // Only update state if this request wasn't aborted
+        if (!abortController.signal.aborted) {
           setFaqs(result.data);
           setPagination(result.pagination);
         }
       } catch (error) {
-        console.error('Failed to load FAQs:', error);
+        // Ignore abort errors, log others
+        if (error instanceof Error && error.name !== 'AbortError') {
+          console.error('Failed to load FAQs:', error);
+        }
       } finally {
-        if (isMounted) {
+        if (!abortController.signal.aborted) {
           setIsLoading(false);
         }
       }
@@ -61,10 +68,11 @@ export function FaqGrid({ initialFaqs, initialPagination }: FaqGridProps) {
       loadFaqs();
     }
 
+    // Cleanup: abort any pending request when deps change or unmount
     return () => {
-      isMounted = false;
+      abortController.abort();
     };
-  }, [search, category, page]);
+  }, [search, category, page, initialFaqs.length]);
 
   const handlePageChange = useCallback(
     (newPage: number) => {

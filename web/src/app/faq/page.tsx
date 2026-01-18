@@ -39,7 +39,9 @@ function FaqGridSkeleton() {
 export default async function FaqBrowsePage({ searchParams }: FaqPageProps) {
   // Await searchParams (Next.js 15 requirement)
   const resolvedParams = await searchParams;
-  const page = parseInt(resolvedParams.page || '1', 10);
+  const parsedPage = parseInt(resolvedParams.page || '1', 10);
+  // Validate page number: must be positive integer, default to 1 if invalid
+  const page = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
   const search = resolvedParams.search || '';
   const category = resolvedParams.category || '';
 
