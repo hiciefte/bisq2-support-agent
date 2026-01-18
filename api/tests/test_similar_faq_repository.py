@@ -174,16 +174,14 @@ class TestSimilarFaqRepositoryApproveAction:
         repo = SimilarFaqRepository(temp_db_path)
 
         # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
-        repo._writer_conn.execute(
-            """
+        repo._writer_conn.execute("""
             CREATE TABLE IF NOT EXISTS faqs (
                 id INTEGER PRIMARY KEY,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 category TEXT
             )
-            """
-        )
+            """)
 
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(
@@ -282,16 +280,14 @@ class TestSimilarFaqRepositoryMergeAction:
         repo = SimilarFaqRepository(temp_db_path)
 
         # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
-        repo._writer_conn.execute(
-            """
+        repo._writer_conn.execute("""
             CREATE TABLE IF NOT EXISTS faqs (
                 id INTEGER PRIMARY KEY,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 category TEXT
             )
-            """
-        )
+            """)
 
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(
@@ -367,16 +363,14 @@ class TestSimilarFaqRepositoryDismissAction:
         repo = SimilarFaqRepository(temp_db_path)
 
         # Create faqs table for foreign key reference (not created by SimilarFaqRepository)
-        repo._writer_conn.execute(
-            """
+        repo._writer_conn.execute("""
             CREATE TABLE IF NOT EXISTS faqs (
                 id INTEGER PRIMARY KEY,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 category TEXT
             )
-            """
-        )
+            """)
 
         # Insert sample FAQ for foreign key reference
         repo._writer_conn.execute(

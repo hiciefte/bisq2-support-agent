@@ -113,12 +113,10 @@ class TestDatabaseSchema:
         conn = sqlite3.connect(temp_db)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT name FROM sqlite_master
             WHERE type='index' AND name='idx_shadow_responses_clarification'
-        """
-        )
+        """)
         index = cursor.fetchone()
         conn.close()
 
@@ -129,12 +127,10 @@ class TestDatabaseSchema:
         conn = sqlite3.connect(temp_db)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT name FROM sqlite_master
             WHERE type='index' AND name='idx_shadow_responses_version_training'
-        """
-        )
+        """)
         index = cursor.fetchone()
         conn.close()
 
@@ -145,12 +141,10 @@ class TestDatabaseSchema:
         conn = sqlite3.connect(temp_db)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT name FROM sqlite_master
             WHERE type='index' AND name='idx_shadow_responses_source'
-        """
-        )
+        """)
         index = cursor.fetchone()
         conn.close()
 

@@ -276,12 +276,10 @@ class TestMigrationIntegrity:
         cursor = conn.cursor()
 
         # Test processed column CHECK constraint (should be 0 or 1)
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO feedback (message_id, question, answer, rating)
             VALUES ('test-id', 'q', 'a', 0)
-        """
-        )
+        """)
 
         # Should allow 0 or 1
         cursor.execute("UPDATE feedback SET processed = 0 WHERE message_id = 'test-id'")
@@ -305,12 +303,10 @@ class TestMigrationIntegrity:
         cursor = conn.cursor()
 
         # Insert test data before migrations
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO feedback (message_id, question, answer, rating)
             VALUES ('test-msg-1', 'Test question', 'Test answer', 1)
-        """
-        )
+        """)
         conn.commit()
         conn.close()
 
