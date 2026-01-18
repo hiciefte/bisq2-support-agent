@@ -43,8 +43,8 @@ const REPUTATION_SCORE_REGEX = /Total Score:\s*([\d,]+)/;
 const REPUTATION_STAR_REGEX = /Star Rating:\s*([\d.]+)\/5\.0/;
 const REPUTATION_RANKING_REGEX = /Ranking:\s*#?(\S+)/;
 const REPUTATION_AGE_REGEX = /Profile Age:\s*(\d+)\s*days/;
-// Total offers count line: [Total offers: 60]
-const TOTAL_OFFERS_REGEX = /\[Total offers:\s*(\d+)\]/;
+// Total offers count line: [TOTAL EUR OFFERS: 57]
+const TOTAL_OFFERS_REGEX = /\[TOTAL\s+\w+\s+OFFERS:\s*(\d+)\]/i;
 // Filtered offers line: [Showing 48 BUY offers out of 60 total]
 const FILTERED_OFFERS_REGEX = /\[Showing\s+(\d+)\s+\w+\s+offers\s+out\s+of\s+(\d+)\s+total\]/;
 
@@ -191,7 +191,7 @@ export function parseLiveDataContent(content: string): ParsedLiveData {
     // Remove the filtered offers line from clean content
     cleanContent = cleanContent.replace(FILTERED_OFFERS_REGEX, '').trim();
   } else {
-    // Fallback to simple format: [Total offers: X]
+    // Backend format: [TOTAL EUR OFFERS: X]
     const totalOffersMatch = content.match(TOTAL_OFFERS_REGEX);
     if (totalOffersMatch) {
       totalOffers = parseInt(totalOffersMatch[1], 10);
