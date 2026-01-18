@@ -48,7 +48,7 @@ export function PendingReviewQueuePage() {
       const data = await response.json();
       setResponses(data.responses || []);
       setIsLoading(false);
-    } catch {
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load pending responses');
       setIsLoading(false);
     }
