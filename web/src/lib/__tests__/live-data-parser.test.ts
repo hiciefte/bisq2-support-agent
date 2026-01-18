@@ -26,7 +26,7 @@ describe('parseLiveDataContent', () => {
       expect(result.totalOffers).toBe(57);
     });
 
-    it('should parse total offers from filtered view format', () => {
+    it('should parse total offers when response includes filtered view metadata', () => {
       const content = `There are 56 EUR offers available.
 
 [LIVE OFFERBOOK]
