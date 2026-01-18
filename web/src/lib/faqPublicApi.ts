@@ -119,3 +119,31 @@ export async function fetchPublicFAQCategories(): Promise<PublicFAQCategory[]> {
   const data: PublicFAQCategoriesResponse = await response.json();
   return data.categories;
 }
+
+/**
+ * Fetch all FAQ slugs for static generation
+ * Used by generateStaticParams in FAQ detail page
+ */
+export async function fetchAllFAQSlugs(): Promise<string[]> {
+  try {
+    const baseUrl = getApiBaseUrl();
+    const response = await fetch(`${baseUrl}/api/public/faqs?limit=1000`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+      next: { revalidate: 3600 }, // Cache for 1 hour
+    });
+
+    if (!response.ok) {
+      console.error('Failed to fetch FAQ slugs:', response.status);
+      return [];
+    }
+
+    const data: PublicFAQListResponse = await response.json();
+    return data.data?.map((faq: PublicFAQ) => faq.slug) || [];
+  } catch (error) {
+    console.error('Error fetching FAQ slugs:', error);
+    return [];
+  }
+}
