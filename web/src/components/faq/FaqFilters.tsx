@@ -35,6 +35,7 @@ export function FaqFilters({
   // Use refs to access current values in debounced callback without stale closures
   const searchInputRef = useRef(searchInput);
   const selectedCategoryRef = useRef(selectedCategory);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -74,17 +75,25 @@ export function FaqFilters({
 
   // Debounce search input - use refs to avoid stale closure
   useEffect(() => {
-    const timer = setTimeout(() => {
+    debounceTimerRef.current = setTimeout(() => {
       updateUrlParams({
         search: searchInputRef.current,
         category: selectedCategoryRef.current,
       });
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
   }, [searchInput, updateUrlParams]);
 
   // Update URL when category changes (immediate, no debounce)
   useEffect(() => {
+    // Clear any pending debounce timer to prevent stale updates
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     updateUrlParams({
       search: searchInputRef.current,
       category: selectedCategoryRef.current,
