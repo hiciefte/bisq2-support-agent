@@ -1,5 +1,12 @@
 import Link from "next/link"
+import { Metadata } from "next"
 import { Card } from "@/components/ui/card"
+
+export const metadata: Metadata = {
+  title: "Privacy Policy - Bisq 2 Support Assistant",
+  description:
+    "Learn how we handle your data. We collect minimal information and automatically delete personal data after 30 days.",
+}
 
 export default function PrivacyPolicy() {
   return (

@@ -84,15 +84,13 @@ class TaskMetricsPersistence:
     def _ensure_table(self) -> None:
         """Create task_metrics table if it doesn't exist."""
         with self._get_connection() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS task_metrics (
                     metric_name TEXT PRIMARY KEY,
                     metric_value REAL NOT NULL,
                     last_updated REAL NOT NULL
                 )
-                """
-            )
+                """)
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:

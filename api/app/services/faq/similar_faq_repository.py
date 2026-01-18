@@ -107,8 +107,7 @@ class SimilarFaqRepository:
             # Create similar FAQ candidates table
             # Note: matched_faq_* columns store denormalized data because
             # FAQs are in a separate database (faqs.db), not this database
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TABLE IF NOT EXISTS similar_faq_candidates (
                     id TEXT PRIMARY KEY,
                     extracted_question TEXT NOT NULL,
@@ -126,23 +125,18 @@ class SimilarFaqRepository:
                     dismiss_reason TEXT,
                     merge_mode TEXT
                 )
-            """
-            )
+            """)
 
             # Create indexes for performance
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_similar_faq_status
                 ON similar_faq_candidates(status)
-            """
-            )
+            """)
 
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_similar_faq_matched_id
                 ON similar_faq_candidates(matched_faq_id)
-            """
-            )
+            """)
 
     def _execute_with_retry(self, operation, *args, **kwargs):
         """
@@ -278,13 +272,11 @@ class SimilarFaqRepository:
             SimilarFaqCandidateListResponse with pending candidates
         """
         with self._read_lock:
-            cursor = self._reader_conn.execute(
-                """
+            cursor = self._reader_conn.execute("""
                 SELECT * FROM similar_faq_candidates
                 WHERE status = 'pending'
                 ORDER BY extracted_at DESC
-                """
-            )
+                """)
             rows = cursor.fetchall()
 
             # Get total count

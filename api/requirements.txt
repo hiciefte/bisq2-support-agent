@@ -43,7 +43,7 @@ bcrypt==5.0.0
     # via chromadb
 beautifulsoup4==4.14.3
     # via -r api/requirements.in
-black==25.12.0
+black==26.1.0
     # via -r api/requirements.in
 build==1.4.0
     # via

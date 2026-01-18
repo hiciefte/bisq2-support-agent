@@ -234,6 +234,7 @@ describe('PendingReviewQueuePage', () => {
     });
 
     test('should show success toast after approval', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { toast } = require('sonner');
 
       mockFetch
@@ -261,6 +262,7 @@ describe('PendingReviewQueuePage', () => {
     });
 
     test('should rollback on API error', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { toast } = require('sonner');
 
       mockFetch

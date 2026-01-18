@@ -97,7 +97,7 @@ export function PendingReviewQueuePage() {
       }
 
       toast.success('✓ Response approved and sent');
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {
@@ -130,7 +130,7 @@ export function PendingReviewQueuePage() {
       }
 
       toast.success('Response rejected');
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {
@@ -171,7 +171,7 @@ export function PendingReviewQueuePage() {
 
       toast.success('✓ Answer saved and approved');
       setEditingResponse(null);
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {

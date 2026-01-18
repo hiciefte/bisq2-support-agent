@@ -87,15 +87,13 @@ def get_applied_migrations(conn: sqlite3.Connection) -> List[str]:
     cursor = conn.cursor()
 
     # Create migrations table if it doesn't exist
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             migration_name TEXT UNIQUE NOT NULL,
             applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+        """)
     conn.commit()
 
     # Upgrade table to include metadata columns

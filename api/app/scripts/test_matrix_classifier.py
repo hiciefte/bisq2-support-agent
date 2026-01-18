@@ -199,7 +199,9 @@ def test_classification():
     if accuracy >= 85 and precision >= 85:
         print("✅ TEST PASSED - Classifier performing as expected!")
     elif accuracy >= 70 and precision >= 70:
-        print("⚠️  TEST PARTIALLY PASSED - Acceptable performance, room for improvement")
+        print(
+            "⚠️  TEST PARTIALLY PASSED - Acceptable performance, room for improvement"
+        )
     else:
         print("❌ TEST FAILED - Classifier needs tuning")
     print("=" * 80 + "\n")

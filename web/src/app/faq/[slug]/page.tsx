@@ -5,10 +5,22 @@ import { ChevronLeft, MessageCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { fetchPublicFAQBySlug } from '@/lib/faqPublicApi';
+import { fetchPublicFAQBySlug, fetchAllFAQSlugs } from '@/lib/faqPublicApi';
+
+// Revalidate every 15 minutes (consistent with FAQ list page)
+export const revalidate = 900;
 
 interface FaqDetailPageProps {
   params: Promise<{ slug: string }>;
+}
+
+/**
+ * Generate static params for all FAQ pages at build time
+ * This enables static generation with ISR for FAQ detail pages
+ */
+export async function generateStaticParams() {
+  const slugs = await fetchAllFAQSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({

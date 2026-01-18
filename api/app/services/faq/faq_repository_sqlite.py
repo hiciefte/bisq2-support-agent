@@ -179,8 +179,7 @@ class FAQRepositorySQLite:
         """
         with self._writer_conn:
             # Create FAQs table with protocol column (v2 schema)
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TABLE IF NOT EXISTS faqs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question TEXT NOT NULL UNIQUE,
@@ -197,82 +196,65 @@ class FAQRepositorySQLite:
                     CHECK(LENGTH(category) <= 100),
                     CHECK(LENGTH(source) <= 100)
                 )
-            """
-            )
+            """)
 
             # Run migration FIRST if needed (upgrade from v1 with bisq_version to v2 with protocol)
             # This must happen before creating protocol index on existing databases
             self._migrate_to_protocol()
 
             # Create indexes for performance (after migration ensures protocol column exists)
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_faqs_category
                 ON faqs(category)
-            """
-            )
+            """)
 
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_faqs_verified
                 ON faqs(verified)
-            """
-            )
+            """)
 
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_faqs_protocol
                 ON faqs(protocol)
-            """
-            )
+            """)
 
             # Full-text search index
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS faqs_fts
                 USING fts5(question, answer, content=faqs, content_rowid=id)
-            """
-            )
+            """)
 
             # Create triggers to keep FTS index in sync
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS faqs_ai AFTER INSERT ON faqs BEGIN
                     INSERT INTO faqs_fts(rowid, question, answer)
                     VALUES (new.id, new.question, new.answer);
                 END
-            """
-            )
+            """)
 
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS faqs_ad AFTER DELETE ON faqs BEGIN
                     INSERT INTO faqs_fts(faqs_fts, rowid, question, answer)
                     VALUES('delete', old.id, old.question, old.answer);
                 END
-            """
-            )
+            """)
 
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS faqs_au AFTER UPDATE ON faqs BEGIN
                     INSERT INTO faqs_fts(faqs_fts, rowid, question, answer)
                     VALUES('delete', old.id, old.question, old.answer);
                     INSERT INTO faqs_fts(rowid, question, answer)
                     VALUES(new.id, new.question, new.answer);
                 END
-            """
-            )
+            """)
 
             # Schema version tracking
-            self._writer_conn.execute(
-                """
+            self._writer_conn.execute("""
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL
                 )
-            """
-            )
+            """)
 
             # Insert schema version if not exists
             self._writer_conn.execute(
@@ -326,8 +308,7 @@ class FAQRepositorySQLite:
 
         # Now recreate the table without bisq_version column
         # SQLite doesn't support DROP COLUMN, so we need to recreate
-        self._writer_conn.execute(
-            """
+        self._writer_conn.execute("""
             CREATE TABLE IF NOT EXISTS faqs_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 question TEXT NOT NULL UNIQUE,
@@ -344,12 +325,10 @@ class FAQRepositorySQLite:
                 CHECK(LENGTH(category) <= 100),
                 CHECK(LENGTH(source) <= 100)
             )
-        """
-        )
+        """)
 
         # Copy data to new table
-        self._writer_conn.execute(
-            """
+        self._writer_conn.execute("""
             INSERT INTO faqs_new (
                 id, question, answer, category, source, verified,
                 protocol, created_at, updated_at, verified_at
@@ -358,8 +337,7 @@ class FAQRepositorySQLite:
                 id, question, answer, category, source, verified,
                 protocol, created_at, updated_at, verified_at
             FROM faqs
-        """
-        )
+        """)
 
         # Drop old table and rename new one
         self._writer_conn.execute("DROP TABLE faqs")

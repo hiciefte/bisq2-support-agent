@@ -102,18 +102,34 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_offerbook",
-        "description": "Get current buy/sell offers from the Bisq 2 offerbook. Returns active trading offers on the Bisq 2 network. Use direction='SELL' to find offers where user can BUY BTC, use direction='BUY' to find offers where user can SELL BTC.",
+        "description": """Get current buy/sell offers from the Bisq 2 offerbook.
+
+IMPORTANT - Understanding the response:
+- 'total_count' = ALL offers for this currency (e.g., 56 EUR offers total)
+- 'filtered_count' = subset matching direction filter (e.g., 14 offers user can buy from)
+- When user asks "how many offers?" → ALWAYS report the TOTAL count
+- When user asks "how many offers to buy from?" → report the filtered count for that direction
+
+Direction filter (from MAKER's perspective):
+- direction='SELL' = offers where user can BUY BTC (makers are selling)
+- direction='BUY' = offers where user can SELL BTC (makers are buying)
+- Omit direction to get ALL offers for the currency
+
+Example: If there are 56 EUR offers total (42 sell-to, 14 buy-from):
+- User asks "Are there EUR offers?" → Answer: "Yes, 56 EUR offers are available"
+- User asks "Can I buy BTC with EUR?" → Answer: "Yes, 14 offers to buy BTC from"
+- User says "I see no offers" → Check total_count first, troubleshoot if > 0""",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "currency": {
                     "type": "string",
-                    "description": "3-letter currency code to filter offers (e.g., EUR, USD).",
+                    "description": "3-letter currency code to filter offers (e.g., EUR, USD). REQUIRED for useful results.",
                 },
                 "direction": {
                     "type": "string",
                     "enum": ["BUY", "SELL"],
-                    "description": "Filter by maker's direction. 'SELL' = user can BUY BTC, 'BUY' = user can SELL BTC.",
+                    "description": "Optional: Filter by direction. SELL=user buys BTC, BUY=user sells BTC. Omit to get ALL offers.",
                 },
             },
             "required": [],

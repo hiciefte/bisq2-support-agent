@@ -1,5 +1,12 @@
 import Link from "next/link"
+import { Metadata } from "next"
 import { Card } from "@/components/ui/card"
+
+export const metadata: Metadata = {
+  title: "Terms of Service - Bisq 2 Support Assistant",
+  description:
+    "Terms of service and disclaimer for the unofficial Bisq 2 Support Assistant community service.",
+}
 
 export default function TermsOfService() {
   return (

@@ -100,8 +100,7 @@ class ShadowModeRepository:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS shadow_responses (
                 id TEXT PRIMARY KEY,
                 channel_id TEXT NOT NULL,
@@ -133,50 +132,37 @@ class ShadowModeRepository:
                 version_confirmed_at TEXT,
                 response_generated_at TEXT
             )
-        """
-        )
+        """)
 
         # Create indexes for common queries
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_status
             ON shadow_responses(status)
-        """
-        )
-        cursor.execute(
-            """
+        """)
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_created_at
             ON shadow_responses(created_at)
-        """
-        )
-        cursor.execute(
-            """
+        """)
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_channel_id
             ON shadow_responses(channel_id)
-        """
-        )
+        """)
 
         # Unknown version enhancement indexes
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_responses_clarification
             ON shadow_responses(requires_clarification, training_protocol)
             WHERE requires_clarification = TRUE
-        """
-        )
-        cursor.execute(
-            """
+        """)
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_responses_version_training
             ON shadow_responses(confirmed_version, training_protocol)
-        """
-        )
-        cursor.execute(
-            """
+        """)
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_shadow_responses_source
             ON shadow_responses(source, created_at)
             WHERE source = 'rag_bot_clarification'
-        """
-        )
+        """)
 
         conn.commit()
         conn.close()
@@ -358,13 +344,11 @@ class ShadowModeRepository:
         cursor = conn.cursor()
 
         # Get counts by status
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT status, COUNT(*) as count
             FROM shadow_responses
             GROUP BY status
-        """
-        )
+        """)
         status_counts = {row[0]: row[1] for row in cursor.fetchall()}
 
         # Get total
@@ -372,13 +356,11 @@ class ShadowModeRepository:
         total = cursor.fetchone()[0]
 
         # Get average confidence
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT AVG(version_confidence)
             FROM shadow_responses
             WHERE version_confidence > 0
-        """
-        )
+        """)
         avg_confidence = cursor.fetchone()[0] or 0.0
 
         conn.close()
@@ -519,8 +501,7 @@ class ShadowModeRepository:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT id, messages, synthesized_question, detected_version,
                    version_confidence, detection_signals, confirmed_version,
                    version_change_reason, training_protocol, requires_clarification,
@@ -529,8 +510,7 @@ class ShadowModeRepository:
             WHERE confirmed_version IS NOT NULL
               AND confirmed_version != detected_version
             ORDER BY version_confirmed_at DESC
-        """
-        )
+        """)
 
         rows = cursor.fetchall()
         conn.close()
@@ -574,15 +554,13 @@ class ShadowModeRepository:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT id, messages, synthesized_question, skip_reason, updated_at,
                    requires_clarification, version_confidence
             FROM shadow_responses
             WHERE status = 'skipped'
             ORDER BY updated_at DESC
-        """
-        )
+        """)
 
         rows = cursor.fetchall()
         conn.close()

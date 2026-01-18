@@ -573,15 +573,13 @@ class FeedbackRepository:
             unprocessed_negative = cursor.fetchone()["unprocessed"]
 
             # Most common issues
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT issue_type, COUNT(*) as count
                 FROM feedback_issues
                 GROUP BY issue_type
                 ORDER BY count DESC
                 LIMIT 10
-                """
-            )
+                """)
             common_issues = [
                 {"issue": row["issue_type"], "count": row["count"]}
                 for row in cursor.fetchall()

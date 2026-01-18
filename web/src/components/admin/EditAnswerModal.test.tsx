@@ -8,11 +8,13 @@
  * - Spatial Consistency (predictable button layout)
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { EditAnswerModal } from './EditAnswerModal';
 import type { PendingResponse } from '@/types/pending-response';
 
-// Mock shadcn/ui components
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Mock shadcn/ui components - using 'any' is acceptable for test mocks
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children, open }: any) => (open ? <div role="dialog" aria-label="Edit Answer" aria-modal="true">{children}</div> : null),
   DialogContent: ({ children }: any) => <div>{children}</div>,
@@ -32,11 +34,14 @@ jest.mock('@/components/ui/button', () => ({
 jest.mock('@/components/ui/label', () => ({
   Label: ({ children, htmlFor }: any) => <label htmlFor={htmlFor}>{children}</label>,
 }));
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 jest.mock('@/components/ui/textarea', () => {
-  const React = require('react');
-  return {
-    Textarea: React.forwardRef(({ value, onChange, onKeyDown, 'aria-label': ariaLabel, id }: any, ref: any) => (
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ReactModule = require('react');
+  const TextareaComponent = ReactModule.forwardRef(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ({ value, onChange, onKeyDown, 'aria-label': ariaLabel, id }: any, ref: any) => (
       <textarea
         ref={ref}
         id={id}
@@ -45,8 +50,10 @@ jest.mock('@/components/ui/textarea', () => {
         onKeyDown={onKeyDown}
         aria-label={ariaLabel}
       />
-    )),
-  };
+    )
+  );
+  TextareaComponent.displayName = 'Textarea';
+  return { Textarea: TextareaComponent };
 });
 
 const mockResponse: PendingResponse = {
