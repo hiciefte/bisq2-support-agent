@@ -49,36 +49,6 @@ class PublicFAQService:
     FAQ_DETAIL_TTL = timedelta(minutes=15)
     CATEGORIES_TTL = timedelta(minutes=30)
 
-    def _resolve_category_slug(self, slug: str) -> Optional[str]:
-        """Resolve a category slug to its original name.
-
-        Args:
-            slug: The URL-friendly slug (e.g., "trading", "account-setup")
-
-        Returns:
-            The original category name (e.g., "Trading", "Account Setup")
-            or the original slug if no match found
-        """
-        if not slug:
-            return None
-
-        # Get all categories (uses cache)
-        categories = self.get_categories()
-
-        # Build slug -> name lookup
-        for cat in categories:
-            if cat.get("slug") == slug:
-                return cat.get("name")
-
-        # If exact slug not found, try case-insensitive match on name
-        slug_lower = slug.lower()
-        for cat in categories:
-            if cat.get("name", "").lower() == slug_lower:
-                return cat.get("name")
-
-        # Fallback: return original value (may work for exact name matches)
-        return slug
-
     def __new__(cls, *args: Any, **kwargs: Any) -> "PublicFAQService":
         """Thread-safe singleton pattern."""
         if cls._instance is None:
@@ -111,6 +81,36 @@ class PublicFAQService:
             self._initialize_slugs()
             self._initialized = True
             logger.info("PublicFAQService initialized")
+
+    def _resolve_category_slug(self, slug: str) -> Optional[str]:
+        """Resolve a category slug to its original name.
+
+        Args:
+            slug: The URL-friendly slug (e.g., "trading", "account-setup")
+
+        Returns:
+            The original category name (e.g., "Trading", "Account Setup")
+            or the original slug if no match found
+        """
+        if not slug:
+            return None
+
+        # Get all categories (uses cache)
+        categories = self.get_categories()
+
+        # Build slug -> name lookup
+        for cat in categories:
+            if cat.get("slug") == slug:
+                return cat.get("name")
+
+        # If exact slug not found, try case-insensitive match on name
+        slug_lower = slug.lower()
+        for cat in categories:
+            if cat.get("name", "").lower() == slug_lower:
+                return cat.get("name")
+
+        # Fallback: return original value (may work for exact name matches)
+        return slug
 
     def _get_cache_key(self, prefix: str, *args: Any) -> str:
         """Generate cache key with version."""

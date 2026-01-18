@@ -48,7 +48,7 @@ export function PendingReviewQueuePage() {
       const data = await response.json();
       setResponses(data.responses || []);
       setIsLoading(false);
-    } catch (err) {
+    } catch {
       setError(err instanceof Error ? err.message : 'Failed to load pending responses');
       setIsLoading(false);
     }
@@ -97,7 +97,7 @@ export function PendingReviewQueuePage() {
       }
 
       toast.success('✓ Response approved and sent');
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {
@@ -130,7 +130,7 @@ export function PendingReviewQueuePage() {
       }
 
       toast.success('Response rejected');
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {
@@ -171,7 +171,7 @@ export function PendingReviewQueuePage() {
 
       toast.success('✓ Answer saved and approved');
       setEditingResponse(null);
-    } catch (err) {
+    } catch {
       // Rollback on error
       setResponses(originalResponses);
       setRemovingIds((prev) => {

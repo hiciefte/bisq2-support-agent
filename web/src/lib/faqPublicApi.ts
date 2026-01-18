@@ -123,27 +123,45 @@ export async function fetchPublicFAQCategories(): Promise<PublicFAQCategory[]> {
 /**
  * Fetch all FAQ slugs for static generation
  * Used by generateStaticParams in FAQ detail page
+ * Paginates through all pages to collect all slugs
  */
 export async function fetchAllFAQSlugs(): Promise<string[]> {
+  const allSlugs: string[] = [];
+  const limit = 50; // Fetch in smaller batches
+  let page = 1;
+  let hasMore = true;
+
   try {
     const baseUrl = getApiBaseUrl();
-    const response = await fetch(`${baseUrl}/api/public/faqs?limit=1000`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-      next: { revalidate: 3600 }, // Cache for 1 hour
-    });
 
-    if (!response.ok) {
-      console.error('Failed to fetch FAQ slugs:', response.status);
-      return [];
+    while (hasMore) {
+      const response = await fetch(
+        `${baseUrl}/api/public/faqs?limit=${limit}&page=${page}`,
+        {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+          },
+          next: { revalidate: 3600 }, // Cache for 1 hour
+        }
+      );
+
+      if (!response.ok) {
+        console.error('Failed to fetch FAQ slugs:', response.status);
+        break;
+      }
+
+      const data: PublicFAQListResponse = await response.json();
+      const slugs = data.data?.map((faq: PublicFAQ) => faq.slug) || [];
+      allSlugs.push(...slugs);
+
+      hasMore = data.pagination.has_next;
+      page++;
     }
 
-    const data: PublicFAQListResponse = await response.json();
-    return data.data?.map((faq: PublicFAQ) => faq.slug) || [];
+    return allSlugs;
   } catch (error) {
     console.error('Error fetching FAQ slugs:', error);
-    return [];
+    return allSlugs; // Return whatever we collected so far
   }
 }

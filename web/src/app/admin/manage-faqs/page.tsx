@@ -86,7 +86,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/config";
 import debounce from "lodash.debounce";
-import { format, startOfDay, endOfDay } from "date-fns";
+import { startOfDay, endOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "sonner";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -897,9 +897,19 @@ export default function ManageFaqsPage() {
                         previousDataHashRef.current = dataHash;
                         setFaqData(data);
 
+                        // Compute hasActiveFilters inline to avoid stale closure
+                        const activeFilters =
+                            filters.search_text ||
+                            filters.categories.length > 0 ||
+                            filters.source ||
+                            filters.verified !== "all" ||
+                            filters.protocol ||
+                            filters.verified_from ||
+                            filters.verified_to;
+
                         // Extract unique categories and sources ONLY if no filters are active
                         // This prevents the category list from disappearing when a category filter is applied
-                        if (data.faqs && !hasActiveFilters) {
+                        if (data.faqs && !activeFilters) {
                             const categories = [
                                 ...new Set(
                                     data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)
@@ -1138,6 +1148,7 @@ export default function ManageFaqsPage() {
      * Check for similar FAQs using semantic similarity.
      * Debounced to avoid excessive API calls.
      */
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce wrapper hides dependencies from ESLint
     const checkSimilarFaqs = useCallback(
         debounce(async (question: string, excludeId?: string) => {
             // Skip if question is too short
