@@ -39,13 +39,11 @@ def setup_test_files(tmp_path):
 class TestVectorStoreManagerSQLite:
     """Test suite for VectorStoreManager SQLite integration."""
 
-    def test_tracks_sqlite_database_not_jsonl(
-        self, vectorstore_manager, setup_test_files
-    ):
-        """Test that VectorStoreManager tracks faqs.db, not extracted_faq.jsonl.
+    def test_tracks_sqlite_database_only(self, vectorstore_manager, setup_test_files):
+        """Test that VectorStoreManager tracks faqs.db (authoritative FAQ source).
 
-        This is the core test validating the migration to SQLite-based
-        change tracking.
+        SQLite (faqs.db) is the authoritative source for FAQ storage.
+        This test validates the vectorstore manager correctly tracks it.
         """
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
@@ -57,22 +55,21 @@ class TestVectorStoreManagerSQLite:
         assert faq_source["mtime"] > 0
         assert faq_source["size"] > 0
 
-    def test_does_not_track_jsonl_file(
+    def test_tracks_only_sqlite_db(
         self, vectorstore_manager, setup_test_files, tmp_path
     ):
-        """Test that legacy JSONL file is not tracked."""
-        # Setup: Create legacy JSONL file
-        jsonl_file = tmp_path / "extracted_faq.jsonl"
+        """Test that only SQLite database is tracked for FAQ source."""
+        # Setup: Create a random JSONL file (should be ignored)
+        jsonl_file = tmp_path / "some_other_file.jsonl"
         jsonl_file.write_text('{"question": "test", "answer": "test"}')
 
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
 
-        # Assert: FAQ source should point to faqs.db, not extracted_faq.jsonl
+        # Assert: FAQ source should point to faqs.db only
         assert "faq" in metadata["sources"], "FAQ source must be tracked"
         faq_path = metadata["sources"]["faq"]["path"]
         assert "faqs.db" in faq_path, "FAQ source must point to faqs.db"
-        assert "extracted_faq.jsonl" not in faq_path, "FAQ source must not be JSONL"
 
     def test_detects_database_changes(self, vectorstore_manager, setup_test_files):
         """Test that database file changes trigger rebuild detection."""

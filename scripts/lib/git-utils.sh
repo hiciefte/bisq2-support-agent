@@ -175,8 +175,8 @@ preserve_production_data() {
     local backup_dir="$repo_dir/api/data/.backup_$(date +%Y%m%d_%H%M%S)_$$"
 
     # Files that should never be overwritten by git (dynamic production data)
+    # NOTE: faqs.db is the authoritative FAQ source (SQLite)
     local production_files=(
-        "api/data/extracted_faq.jsonl"
         "api/data/processed_message_ids.jsonl"
         "api/data/conversations.jsonl"
         "api/data/faqs.db"
@@ -260,8 +260,8 @@ restore_production_data() {
     local restored_count=0
 
     # SECURITY: Use whitelist of allowed files instead of dynamic iteration
+    # NOTE: faqs.db is the authoritative FAQ source (SQLite)
     local allowed_files=(
-        "extracted_faq.jsonl"
         "processed_message_ids.jsonl"
         "conversations.jsonl"
         "faqs.db"
@@ -301,33 +301,26 @@ restore_production_data() {
 }
 
 # Function to run FAQ schema migration
+# NOTE: This is DEPRECATED - SQLite is now the authoritative source for FAQs.
+# The migration from JSONL to SQLite is handled by run_faq_sqlite_migration() in update.sh
+# This function now only checks if SQLite DB exists and has data.
 run_faq_migration() {
     local repo_dir="${1:-.}"
-    local migration_script="$repo_dir/scripts/migrate_faq_schema.py"
+    local data_dir="$repo_dir/api/data"
+    local sqlite_db="$data_dir/faqs.db"
 
     cd "$repo_dir" || return 1
 
-    if [ ! -f "$migration_script" ]; then
-        log_warning "FAQ migration script not found: $migration_script"
+    # Check if SQLite database exists and has FAQs
+    if [ -f "$sqlite_db" ]; then
+        log_info "SQLite FAQ database exists - JSONL migration skipped (SQLite is authoritative)"
         return 0
     fi
 
-    log_info "Running FAQ schema migration..."
-
-    # Make script executable
-    chmod +x "$migration_script"
-
-    # SECURITY: Pass data directory explicitly
-    local data_dir="$repo_dir/api/data"
-
-    # Run migration with --data-dir argument
-    if python3 "$migration_script" --data-dir "$data_dir"; then
-        log_success "FAQ schema migration completed"
-        return 0
-    else
-        log_error "FAQ schema migration failed"
-        return 1
-    fi
+    # If SQLite doesn't exist, warn but don't fail
+    # The actual migration is handled by run_faq_sqlite_migration() in update.sh
+    log_warning "SQLite FAQ database not found - will be created by update.sh migration"
+    return 0
 }
 
 # Function to update repository with stash handling and production data preservation

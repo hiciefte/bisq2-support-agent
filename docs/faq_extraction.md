@@ -88,7 +88,7 @@ The following file paths are used:
 
 | Path | Description | Default Location |
 |------|-------------|------------------|
-| `FAQ_FILE_PATH` | Path to the FAQ JSONL file | `{DATA_DIR}/extracted_faq.jsonl` |
+| `FAQ_DB_PATH` | Path to the FAQ SQLite database | `{DATA_DIR}/faqs.db` |
 | `CHAT_EXPORT_FILE_PATH` | Path to the support chat export CSV | `{DATA_DIR}/support_chat_export.csv` |
 | `PROCESSED_CONVS_FILE_PATH` | Path to the processed conversations JSON | `{DATA_DIR}/processed_conversations.json` |
 | `CONVERSATIONS_FILE_PATH` | Path to the conversations JSONL | `{DATA_DIR}/conversations.jsonl` |
