@@ -79,7 +79,7 @@ if [ "$DRY_RUN" = true ]; then
     log "DRY RUN MODE - No files will be deleted"
 fi
 
-# Files to clean up (excluding extracted_faq.jsonl which should be preserved)
+# Files to clean up (excluding faqs.db which is the authoritative FAQ source)
 FILES_TO_CLEAN=(
     "conversations.jsonl"
     "support_chat_export.csv"
@@ -208,12 +208,12 @@ log "Files checked: $total_files_checked"
 log "Files deleted: $total_files_deleted"
 log "Space freed: $(format_bytes $total_space_freed)"
 
-# Verify that extracted_faq.jsonl still exists
-FAQ_FILE="$DATA_DIR/extracted_faq.jsonl"
-if [ -f "$FAQ_FILE" ]; then
-    log "✓ extracted_faq.jsonl preserved (permanent storage)"
+# Verify that SQLite FAQ database exists (authoritative source)
+FAQ_DB="$DATA_DIR/faqs.db"
+if [ -f "$FAQ_DB" ]; then
+    log "✓ faqs.db preserved (authoritative FAQ storage)"
 else
-    log "⚠ WARNING: extracted_faq.jsonl not found - this file should be preserved"
+    log "⚠ WARNING: faqs.db not found - this is the authoritative FAQ database"
 fi
 
 # Exit with appropriate status

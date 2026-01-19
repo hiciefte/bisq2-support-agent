@@ -84,7 +84,8 @@ api/data/vectorstore/
 *.sqlite3
 *.log
 
-# Production FAQ data (dynamically managed via admin interface + extraction)
+# Production FAQ data (SQLite database is authoritative, JSONL is legacy - both ignored)
+api/data/faqs.db
 api/data/extracted_faq.jsonl
 
 # Ignore sensitive chat and conversation data (privacy-first data management)

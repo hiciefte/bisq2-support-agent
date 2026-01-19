@@ -171,7 +171,7 @@ The project uses the following data directories within `api/data/`:
 -   `wiki/`: Contains wiki documents for the RAG knowledge base.
 -   `vectorstore/`: Stores vector embeddings for semantic search.
 -   `feedback.db`: SQLite database storing user feedback (automatically created on first run).
--   `extracted_faq.jsonl`: Stores FAQs automatically generated from support chats.
+-   `faqs.db`: SQLite database storing FAQs (authoritative source, automatically created on first run).
 
 These are automatically created during deployment. For local development, create them manually if needed: `mkdir -p api/data/{wiki,vectorstore}`.
 
@@ -270,13 +270,10 @@ The RAG system's knowledge base is built from two sources:
 -   **Automatic Extraction**:
     - FAQs are automatically extracted from support chat conversations
     - The system uses OpenAI to identify and format FAQs
-    - Extracted FAQs are stored in `api/data/extracted_faq.jsonl`
+    - Extracted FAQs are stored in SQLite database (`api/data/faqs.db`)
 -   **Manual Addition**:
-    - You can manually add FAQs by appending to the JSONL file
-    - Each FAQ entry should follow this format:
-      ```json
-      {"question": "Your question here", "answer": "Your answer here", "category": "Category name", "source": "Bisq Support Chat"}
-      ```
+    - Use the admin interface at `/admin/manage-faqs` to add FAQs manually
+    - FAQs are stored directly in the SQLite database with full CRUD support
 
 ### Content Processing
 

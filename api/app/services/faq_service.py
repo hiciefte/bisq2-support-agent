@@ -56,7 +56,7 @@ class FAQService:
             # Ensure data directory exists before creating locks/files
             data_dir.mkdir(parents=True, exist_ok=True)
 
-            self._faq_file_path = data_dir / "extracted_faq.jsonl"
+            # NOTE: FAQs are stored in SQLite (faqs.db), managed by FAQRepository
             self.processed_convs_path = data_dir / "processed_conversations.json"
             self.processed_msg_ids_path = data_dir / "processed_message_ids.jsonl"
             self.conversations_path = data_dir / "conversations.jsonl"
@@ -64,7 +64,7 @@ class FAQService:
 
             # Ensure lock file parent directory exists
             # Portalocker may create subdirectories for lock files
-            lock_file_path = Path(str(self._faq_file_path) + ".lock")
+            lock_file_path = data_dir / "faq_service.lock"
             lock_file_path.parent.mkdir(parents=True, exist_ok=True)
 
             self._file_lock = portalocker.Lock(str(lock_file_path), timeout=10)

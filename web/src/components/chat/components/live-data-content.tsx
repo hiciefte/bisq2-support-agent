@@ -6,13 +6,20 @@
  * Parses tool results from MCP tools and renders:
  * - PriceDisplay for get_market_prices results
  * - OfferTable for get_offerbook results
- * - Plain text for the LLM response
+ * - ReputationCard for get_reputation results
+ * - Markdown text for the LLM response
+ *
+ * Performance optimizations:
+ * - Memoized parsing of tool results
+ * - Memoized metadata creation
+ * - Parent component memoization
  */
 
 import { memo, useMemo } from 'react';
 import { PriceDisplay, OfferTable, ReputationCard } from '@/components/live-data';
 import { parseLiveDataContent } from '@/lib/live-data-parser';
 import { getDataFreshness } from '@/lib/live-data-utils';
+import { MarkdownContent } from './markdown-content';
 import type { LiveDataMeta, ReputationData } from '@/types/live-data';
 import type { McpToolUsage } from '../types/chat.types';
 
@@ -26,18 +33,6 @@ interface LiveDataContentProps {
   toolResults: ToolResult[];
   /** Timestamp for the live data badge */
   timestamp?: string;
-}
-
-/**
- * Create metadata object for live data components
- */
-function createMeta(timestamp?: string): LiveDataMeta {
-  const ts = timestamp || new Date().toISOString();
-  return {
-    type: getDataFreshness(ts),
-    timestamp: ts,
-    source: 'bisq2-api',
-  };
 }
 
 /**
@@ -86,7 +81,15 @@ export const LiveDataContent = memo(function LiveDataContent({
     };
   }, [toolResults]);
 
-  const meta = createMeta(timestamp);
+  // Memoize metadata to prevent unnecessary object creation
+  const meta = useMemo<LiveDataMeta>(() => {
+    const ts = timestamp || new Date().toISOString();
+    return {
+      type: getDataFreshness(ts),
+      timestamp: ts,
+      source: 'bisq2-api',
+    };
+  }, [timestamp]);
 
   return (
     <div className="space-y-4">
@@ -127,9 +130,10 @@ export const LiveDataContent = memo(function LiveDataContent({
 
       {/* Always render LLM text for helpful context (e.g., troubleshooting why offers don't appear) */}
       {content && (
-        <div className={parsed.hasLiveData ? 'mt-2 text-sm text-muted-foreground' : ''}>
-          <span>{content}</span>
-        </div>
+        <MarkdownContent
+          content={content}
+          className={parsed.hasLiveData ? 'mt-2 text-sm text-muted-foreground' : ''}
+        />
       )}
     </div>
   );

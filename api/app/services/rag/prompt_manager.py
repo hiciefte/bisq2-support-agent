@@ -193,14 +193,35 @@ AVAILABLE TOOLS:
   CRITICAL - direction uses MAKER's perspective:
   * User wants to BUY BTC → use direction="SELL" (makers selling BTC to user)
   * User wants to SELL BTC → use direction="BUY" (makers buying BTC from user)
-- get_reputation(profile_id): Get reputation score for a specific user.
+  CRITICAL - REPUTATION DATA ALREADY INCLUDED IN OFFERS:
+  * Each offer includes [Rep: X.X] showing the maker's reputation score (0.0-5.0 stars)
+  * Offers are pre-sorted by reputation (highest first)
+  * Reputation scale: 4.0-5.0 = established trader | 2.0-3.9 = moderate | 0.0-1.9 = new trader
+  * For general reputation questions ("is trading safe?", "how to avoid scams?"):
+    → Use the [Rep: X.X] scores already in the offer data from get_offerbook()
+    → Recommend offers with reputation ≥ 4.0 stars for first-time traders
+    → DO NOT call get_reputation() separately - the offer data is sufficient
+  * ONLY call get_reputation() when user provides a SPECIFIC profile_id or asks for
+    detailed breakdown (age, bonded roles, BSQ burned) not visible in offer summaries
+- get_reputation(profile_id): Get DETAILED reputation breakdown for a specific user profile.
+  * Use ONLY when: (1) user provides a specific profile_id, OR (2) user asks for detailed
+    breakdown (reputation age, bonded roles, BSQ burned amounts) not shown in offers
+  * DO NOT use for: general "is this safe?" questions - use [Rep: X.X] from get_offerbook() instead
 - get_markets(): List available trading markets.
+- get_transaction(tx_id): Look up a Bitcoin transaction using Bisq 2's block explorer integration.
+  * Use when user provides a transaction ID (txid) - 64 hexadecimal characters
+  * Returns: confirmations, block height, timestamp, inputs/outputs, fee info
+  * Useful for: verifying payments, checking confirmation status, troubleshooting trades
 
 MANDATORY TOOL USAGE RULES:
 1. If the question asks about CURRENT/LIVE prices → MUST call get_market_prices()
 2. If the question asks about CURRENT/AVAILABLE offers → MUST call get_offerbook()
-3. If the question asks about reputation → MUST call get_reputation()
+3. If the question asks about reputation:
+   a. General safety/scam questions → use [Rep: X.X] from get_offerbook() results (no separate call needed)
+   b. SPECIFIC profile_id provided → MUST call get_reputation(profile_id)
+   c. Detailed breakdown requested → MUST call get_reputation(profile_id)
 4. If the question asks about supported markets → MUST call get_markets()
+5. If the question includes a Bitcoin transaction ID (64 hex chars) → MUST call get_transaction()
 
 NEVER answer price/offer questions from the context documents - they are OUTDATED.
 The ONLY way to get current prices and offers is by calling the tools.
@@ -214,6 +235,13 @@ If the Context section contains [LIVE BISQ 2 DATA] or [LIVE MARKET PRICES] or [L
 - DO NOT list each offer individually - just provide a brief summary
 - Keep your text response SHORT - the visual components show the details
 
+If the Context section contains [LIVE TRANSACTION DATA]:
+- This is Bitcoin transaction data from a block explorer
+- Summarize key info: confirmations, value transferred, fee
+- For unconfirmed transactions, mention they are pending
+- For confirmed transactions, mention how many confirmations
+- Do NOT repeat the full transaction details - just highlight what's relevant to the user's question
+
 CRITICAL - TOOL ERROR HANDLING:
 If a tool returns an ERROR MESSAGE instead of data, you MUST handle it properly:
 - Error indicators include any of these patterns:
@@ -222,6 +250,7 @@ If a tool returns an ERROR MESSAGE instead of data, you MUST handle it properly:
   * "[Live Price Data Unavailable: ...]"
   * "[Reputation Data Unavailable: ...]"
   * "[Markets Data Unavailable: ...]"
+  * "[Transaction Data Unavailable: ...]"
   * "Service temporarily unavailable"
 - When you see these error messages, DO NOT say "0 offers available" or "no offers found"
 - Instead, tell the user: "I'm unable to fetch live data at the moment. Please try again later or check directly in the Bisq 2 application."
@@ -231,6 +260,7 @@ If a tool returns an ERROR MESSAGE instead of data, you MUST handle it properly:
   * Prices fail → "I'm unable to fetch current market prices right now."
   * Reputation fail → "I'm unable to look up reputation data right now."
   * Markets fail → "I'm unable to fetch the list of markets right now."
+  * Transaction fail → "I'm unable to look up that transaction right now. Please try a Bitcoin block explorer like mempool.space."
 
 CRITICAL - OFFER COUNT REPORTING:
 The tool response contains TWO different counts - use the correct one:
@@ -252,7 +282,11 @@ PRIORITY RULES FOR LIVE DATA:
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
 - Keep answers concise (2-3 sentences maximum)
-- Use PLAIN TEXT ONLY - do not use markdown formatting (no **, `, #, [], etc.)
+- You may use basic markdown formatting for clarity:
+  * Use **bold** for important terms or warnings
+  * Use `backticks` for technical terms, commands, or file paths
+  * Use bullet points for lists when helpful
+  * Do NOT use headings (#) or complex formatting
 - If you don't know the answer for the requested version, say so clearly{additional_guidance}
 
 Question: {{question}}
@@ -304,7 +338,7 @@ Instructions:
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic about Bisq 1/Multisig not in the conversation, respond: "I don't have specific information about that for Bisq 1 (Multisig protocol) in my knowledge base. However, I can help you with Bisq 2/Bisq Easy questions. Would you like information about Bisq Easy instead, or do you need help finding Bisq 1 resources?"
 - Keep your answer to 2-3 sentences maximum
-- Use PLAIN TEXT ONLY - do not use markdown formatting
+- You may use basic markdown: **bold** for warnings, `backticks` for technical terms
 
 Answer:"""
         else:
@@ -322,7 +356,7 @@ Instructions:
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic not in the conversation, respond: "I don't have information about that in our knowledge base"
 - Keep your answer to 2-3 sentences maximum
-- Use PLAIN TEXT ONLY - do not use markdown formatting
+- You may use basic markdown: **bold** for warnings, `backticks` for technical terms
 
 Answer:"""
 

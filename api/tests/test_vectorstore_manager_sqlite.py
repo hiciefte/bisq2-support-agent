@@ -36,16 +36,22 @@ def setup_test_files(tmp_path):
     return {"faq_db": faq_db, "wiki_file": wiki_file}
 
 
+# Alias fixture for tests that need side effects only (files created)
+# Using underscore prefix signals the return value is intentionally unused
+@pytest.fixture
+def _setup_test_files(setup_test_files):
+    """Alias for setup_test_files when return value is unused."""
+    return setup_test_files
+
+
 class TestVectorStoreManagerSQLite:
     """Test suite for VectorStoreManager SQLite integration."""
 
-    def test_tracks_sqlite_database_not_jsonl(
-        self, vectorstore_manager, setup_test_files
-    ):
-        """Test that VectorStoreManager tracks faqs.db, not extracted_faq.jsonl.
+    def test_tracks_sqlite_database_only(self, vectorstore_manager, _setup_test_files):
+        """Test that VectorStoreManager tracks faqs.db (authoritative FAQ source).
 
-        This is the core test validating the migration to SQLite-based
-        change tracking.
+        SQLite (faqs.db) is the authoritative source for FAQ storage.
+        This test validates the vectorstore manager correctly tracks it.
         """
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
@@ -57,22 +63,28 @@ class TestVectorStoreManagerSQLite:
         assert faq_source["mtime"] > 0
         assert faq_source["size"] > 0
 
-    def test_does_not_track_jsonl_file(
-        self, vectorstore_manager, setup_test_files, tmp_path
+    def test_tracks_only_sqlite_db(
+        self, vectorstore_manager, _setup_test_files, tmp_path
     ):
-        """Test that legacy JSONL file is not tracked."""
-        # Setup: Create legacy JSONL file
-        jsonl_file = tmp_path / "extracted_faq.jsonl"
+        """Test that only SQLite database is tracked for FAQ source."""
+        # Setup: Create a random JSONL file (should be ignored)
+        jsonl_file = tmp_path / "some_other_file.jsonl"
         jsonl_file.write_text('{"question": "test", "answer": "test"}')
 
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
 
-        # Assert: FAQ source should point to faqs.db, not extracted_faq.jsonl
+        # Assert: FAQ source should point to faqs.db only
         assert "faq" in metadata["sources"], "FAQ source must be tracked"
         faq_path = metadata["sources"]["faq"]["path"]
         assert "faqs.db" in faq_path, "FAQ source must point to faqs.db"
-        assert "extracted_faq.jsonl" not in faq_path, "FAQ source must not be JSONL"
+
+        # Assert: JSONL file should NOT be tracked in any source
+        jsonl_path_str = str(jsonl_file)
+        all_tracked_paths = [src["path"] for src in metadata["sources"].values()]
+        assert not any(
+            jsonl_path_str in path for path in all_tracked_paths
+        ), f"JSONL file {jsonl_path_str} should not be tracked"
 
     def test_detects_database_changes(self, vectorstore_manager, setup_test_files):
         """Test that database file changes trigger rebuild detection."""
@@ -96,7 +108,7 @@ class TestVectorStoreManagerSQLite:
             > initial_metadata["sources"]["faq"]["mtime"]
         )
 
-    def test_tracks_wiki_file_unchanged(self, vectorstore_manager, setup_test_files):
+    def test_tracks_wiki_file_unchanged(self, vectorstore_manager, _setup_test_files):
         """Test that wiki file tracking remains unchanged."""
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
@@ -117,7 +129,7 @@ class TestVectorStoreManagerSQLite:
         assert "faq" not in metadata["sources"]
 
     def test_metadata_persistence_with_database_path(
-        self, vectorstore_manager, setup_test_files
+        self, vectorstore_manager, _setup_test_files
     ):
         """Test that metadata correctly persists database path."""
         # Setup: Collect and save metadata

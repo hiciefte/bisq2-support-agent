@@ -249,9 +249,9 @@ class Settings(BaseSettings):
 
     # Path properties that return complete paths
     @property
-    def FAQ_FILE_PATH(self) -> str:
-        """Complete path to the FAQ file"""
-        return os.path.join(self.DATA_DIR, "extracted_faq.jsonl")
+    def FAQ_DB_PATH(self) -> str:
+        """Complete path to the FAQ SQLite database (authoritative source)"""
+        return os.path.join(self.DATA_DIR, "faqs.db")
 
     @property
     def CHAT_EXPORT_FILE_PATH(self) -> str:
@@ -287,11 +287,6 @@ class Settings(BaseSettings):
     def PROCESSED_MESSAGE_IDS_FILE_PATH(self) -> str:
         """Complete path to the processed message IDs file"""
         return os.path.join(self.DATA_DIR, "processed_message_ids.jsonl")
-
-    @property
-    def FAQ_DB_PATH(self) -> str:
-        """Complete path to the SQLite FAQ database file"""
-        return os.path.join(self.DATA_DIR, "faqs.db")
 
     @property
     def SIMILAR_FAQ_DB_PATH(self) -> str:
