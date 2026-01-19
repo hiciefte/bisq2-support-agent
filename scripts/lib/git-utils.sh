@@ -300,10 +300,10 @@ restore_production_data() {
     fi
 }
 
-# Function to run FAQ schema migration
-# NOTE: This is DEPRECATED - SQLite is now the authoritative source for FAQs.
+# Function to verify FAQ SQLite database status
+# NOTE: This is a verification function - SQLite is the authoritative source for FAQs.
 # The migration from JSONL to SQLite is handled by run_faq_sqlite_migration() in update.sh
-# This function now only checks if SQLite DB exists and has data.
+# This function checks if SQLite DB exists AND contains FAQ data.
 run_faq_migration() {
     local repo_dir="${1:-.}"
     local data_dir="$repo_dir/api/data"
@@ -311,16 +311,25 @@ run_faq_migration() {
 
     cd "$repo_dir" || return 1
 
-    # Check if SQLite database exists and has FAQs
-    if [ -f "$sqlite_db" ]; then
-        log_info "SQLite FAQ database exists - JSONL migration skipped (SQLite is authoritative)"
+    # Check if SQLite database exists
+    if [ ! -f "$sqlite_db" ]; then
+        # If SQLite doesn't exist, warn but don't fail
+        # The actual migration is handled by run_faq_sqlite_migration() in update.sh
+        log_warning "SQLite FAQ database not found - will be created by update.sh migration"
         return 0
     fi
 
-    # If SQLite doesn't exist, warn but don't fail
-    # The actual migration is handled by run_faq_sqlite_migration() in update.sh
-    log_warning "SQLite FAQ database not found - will be created by update.sh migration"
-    return 0
+    # Verify database contains FAQs (not just an empty file)
+    local faq_count
+    faq_count=$(sqlite3 "$sqlite_db" "SELECT COUNT(*) FROM faqs;" 2>/dev/null || echo "0")
+
+    if [ "$faq_count" -gt 0 ]; then
+        log_info "SQLite FAQ database exists with $faq_count FAQs - JSONL migration skipped (SQLite is authoritative)"
+        return 0
+    else
+        log_warning "SQLite FAQ database exists but is empty - migration may be needed"
+        return 0
+    fi
 }
 
 # Function to update repository with stash handling and production data preservation

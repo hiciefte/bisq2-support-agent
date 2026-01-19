@@ -65,8 +65,8 @@ The FAQ extraction process follows these steps:
    - Parse responses into structured FAQ objects
 
 5. **Data Storage**:
-   - Save extracted FAQs to a JSONL file
-   - Update the list of processed conversation IDs
+   - Save extracted FAQs to the SQLite database
+   - Update the list of processed message IDs
    - Save all conversations for future reference
 
 ## Configuration

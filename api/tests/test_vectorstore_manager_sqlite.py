@@ -36,10 +36,18 @@ def setup_test_files(tmp_path):
     return {"faq_db": faq_db, "wiki_file": wiki_file}
 
 
+# Alias fixture for tests that need side effects only (files created)
+# Using underscore prefix signals the return value is intentionally unused
+@pytest.fixture
+def _setup_test_files(setup_test_files):  # noqa: PT004
+    """Alias for setup_test_files when return value is unused."""
+    return setup_test_files
+
+
 class TestVectorStoreManagerSQLite:
     """Test suite for VectorStoreManager SQLite integration."""
 
-    def test_tracks_sqlite_database_only(self, vectorstore_manager, setup_test_files):
+    def test_tracks_sqlite_database_only(self, vectorstore_manager, _setup_test_files):
         """Test that VectorStoreManager tracks faqs.db (authoritative FAQ source).
 
         SQLite (faqs.db) is the authoritative source for FAQ storage.
@@ -56,7 +64,7 @@ class TestVectorStoreManagerSQLite:
         assert faq_source["size"] > 0
 
     def test_tracks_only_sqlite_db(
-        self, vectorstore_manager, setup_test_files, tmp_path
+        self, vectorstore_manager, _setup_test_files, tmp_path
     ):
         """Test that only SQLite database is tracked for FAQ source."""
         # Setup: Create a random JSONL file (should be ignored)
@@ -93,7 +101,7 @@ class TestVectorStoreManagerSQLite:
             > initial_metadata["sources"]["faq"]["mtime"]
         )
 
-    def test_tracks_wiki_file_unchanged(self, vectorstore_manager, setup_test_files):
+    def test_tracks_wiki_file_unchanged(self, vectorstore_manager, _setup_test_files):
         """Test that wiki file tracking remains unchanged."""
         # Action: Collect source metadata
         metadata = vectorstore_manager.collect_source_metadata()
@@ -114,7 +122,7 @@ class TestVectorStoreManagerSQLite:
         assert "faq" not in metadata["sources"]
 
     def test_metadata_persistence_with_database_path(
-        self, vectorstore_manager, setup_test_files
+        self, vectorstore_manager, _setup_test_files
     ):
         """Test that metadata correctly persists database path."""
         # Setup: Collect and save metadata
