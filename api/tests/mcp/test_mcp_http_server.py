@@ -30,6 +30,9 @@ class TestMCPHttpServerContract:
         service.get_markets_formatted = AsyncMock(
             return_value="[AVAILABLE MARKETS]\n  BTC/USD, BTC/EUR"
         )
+        service.get_transaction_formatted = AsyncMock(
+            return_value="[TRANSACTION DETAILS]\n  TX ID: abc123\n  Status: CONFIRMED"
+        )
         return service
 
     @pytest.fixture
@@ -50,8 +53,8 @@ class TestMCPHttpServerContract:
         # Reset service after test
         mcp_http_server.set_bisq_service(None)
 
-    def test_tools_list_returns_all_four_tools(self, test_client):
-        """MCP server must expose exactly 4 tools."""
+    def test_tools_list_returns_all_five_tools(self, test_client):
+        """MCP server must expose exactly 5 tools."""
         response = test_client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
@@ -61,7 +64,7 @@ class TestMCPHttpServerContract:
         data = response.json()
         assert "result" in data
         assert "tools" in data["result"]
-        assert len(data["result"]["tools"]) == 4
+        assert len(data["result"]["tools"]) == 5
 
         tool_names = {t["name"] for t in data["result"]["tools"]}
         assert tool_names == {
@@ -69,6 +72,7 @@ class TestMCPHttpServerContract:
             "get_offerbook",
             "get_reputation",
             "get_markets",
+            "get_transaction",
         }
 
     def test_tools_list_includes_input_schemas(self, test_client):
@@ -206,6 +210,47 @@ class TestMCPHttpServerContract:
 
         assert response.status_code == 200
         mock_bisq_service.get_markets_formatted.assert_called_once()
+
+    def test_tool_call_get_transaction_requires_tx_id(self, test_client):
+        """get_transaction must require tx_id."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "get_transaction", "arguments": {}},
+                "id": 12,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Should return error in content
+        text = data["result"]["content"][0]["text"]
+        assert "required" in text.lower() or "error" in text.lower()
+
+    def test_tool_call_get_transaction_with_tx_id(self, test_client, mock_bisq_service):
+        """get_transaction with valid tx_id must call service."""
+        # Valid Bitcoin transaction ID (64 hex characters)
+        valid_tx_id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_transaction",
+                    "arguments": {"tx_id": valid_tx_id},
+                },
+                "id": 13,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "result" in data
+        assert "content" in data["result"]
+        mock_bisq_service.get_transaction_formatted.assert_called_once_with(valid_tx_id)
 
     def test_unknown_method_returns_error(self, test_client):
         """Unknown JSON-RPC method must return error code -32601."""
@@ -363,3 +408,16 @@ class TestMCPToolSchemas:
         schema = tools["get_markets"]["inputSchema"]
 
         assert schema.get("required", []) == []
+
+    def test_get_transaction_schema(self, test_client):
+        """get_transaction schema should require tx_id parameter."""
+        response = test_client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+        )
+
+        tools = {t["name"]: t for t in response.json()["result"]["tools"]}
+        schema = tools["get_transaction"]["inputSchema"]
+
+        assert "tx_id" in schema.get("properties", {})
+        assert "tx_id" in schema.get("required", [])
