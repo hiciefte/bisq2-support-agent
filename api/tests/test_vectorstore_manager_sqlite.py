@@ -39,7 +39,7 @@ def setup_test_files(tmp_path):
 # Alias fixture for tests that need side effects only (files created)
 # Using underscore prefix signals the return value is intentionally unused
 @pytest.fixture
-def _setup_test_files(setup_test_files):  # noqa: PT004
+def _setup_test_files(setup_test_files):
     """Alias for setup_test_files when return value is unused."""
     return setup_test_files
 
@@ -78,6 +78,13 @@ class TestVectorStoreManagerSQLite:
         assert "faq" in metadata["sources"], "FAQ source must be tracked"
         faq_path = metadata["sources"]["faq"]["path"]
         assert "faqs.db" in faq_path, "FAQ source must point to faqs.db"
+
+        # Assert: JSONL file should NOT be tracked in any source
+        jsonl_path_str = str(jsonl_file)
+        all_tracked_paths = [src["path"] for src in metadata["sources"].values()]
+        assert not any(
+            jsonl_path_str in path for path in all_tracked_paths
+        ), f"JSONL file {jsonl_path_str} should not be tracked"
 
     def test_detects_database_changes(self, vectorstore_manager, setup_test_files):
         """Test that database file changes trigger rebuild detection."""
