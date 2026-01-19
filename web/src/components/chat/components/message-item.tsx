@@ -13,6 +13,7 @@ import { LiveDataBadge } from "@/components/live-data"
 import { SourceBadges } from "./source-badges"
 import { ConfidenceBadge } from "./confidence-badge"
 import { LiveDataContent } from "./live-data-content"
+import { MarkdownContent } from "./markdown-content"
 import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
@@ -23,7 +24,10 @@ interface MessageItemProps {
 export const MessageItem = memo(function MessageItem({ message, onRating }: MessageItemProps) {
     const isAssistant = message.role === "assistant"
     const hasSources = message.sources && message.sources.length > 0
-    const hasConfidence = message.confidence !== undefined
+    // Don't show confidence badge for clarification questions (routing_action === "needs_clarification")
+    // Also ensure confidence is a valid number (not null/undefined)
+    const isClarificationQuestion = message.routing_action === "needs_clarification"
+    const hasConfidence = typeof message.confidence === "number" && !isClarificationQuestion
     const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
     const canRate = message.id && !message.isThankYouMessage && onRating
 
@@ -76,6 +80,8 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                             toolResults={toolResults}
                             timestamp={formattedTimestamp}
                         />
+                    ) : isAssistant ? (
+                        <MarkdownContent content={message.content} />
                     ) : (
                         message.content
                     )}

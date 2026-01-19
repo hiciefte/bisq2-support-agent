@@ -13,6 +13,7 @@ import { memo, useMemo } from 'react';
 import { PriceDisplay, OfferTable, ReputationCard } from '@/components/live-data';
 import { parseLiveDataContent } from '@/lib/live-data-parser';
 import { getDataFreshness } from '@/lib/live-data-utils';
+import { MarkdownContent } from './markdown-content';
 import type { LiveDataMeta, ReputationData } from '@/types/live-data';
 import type { McpToolUsage } from '../types/chat.types';
 
@@ -127,9 +128,10 @@ export const LiveDataContent = memo(function LiveDataContent({
 
       {/* Always render LLM text for helpful context (e.g., troubleshooting why offers don't appear) */}
       {content && (
-        <div className={parsed.hasLiveData ? 'mt-2 text-sm text-muted-foreground' : ''}>
-          <span>{content}</span>
-        </div>
+        <MarkdownContent
+          content={content}
+          className={parsed.hasLiveData ? 'mt-2 text-sm text-muted-foreground' : ''}
+        />
       )}
     </div>
   );

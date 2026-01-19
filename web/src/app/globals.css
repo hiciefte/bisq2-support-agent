@@ -70,3 +70,82 @@
     @apply border-border;
   }
 }
+
+@layer components {
+  /**
+   * prose-chat: Chat-optimized markdown styling
+   * Follows 4px/8px/16px spacing rhythm from design system
+   * Uses existing color tokens for consistency
+   */
+  .prose-chat {
+    /* Paragraphs - minimal vertical rhythm for chat context */
+    & p {
+      @apply my-2 first:mt-0 last:mb-0;
+    }
+
+    /* Bold and italic - subtle emphasis */
+    & strong {
+      @apply font-semibold;
+    }
+
+    & em {
+      @apply italic;
+    }
+
+    /* Inline code - uses muted background consistent with chat bubble */
+    & code {
+      @apply bg-background/50 px-1 py-0.5 rounded text-xs font-mono;
+    }
+
+    /* Code blocks - scrollable with subtle background */
+    & pre {
+      @apply bg-background/50 p-2 rounded my-2 overflow-x-auto text-xs;
+    }
+
+    & pre code {
+      @apply bg-transparent p-0;
+    }
+
+    /* Links - uses primary color (Bisq green) */
+    & a {
+      @apply text-primary hover:underline inline-flex items-center gap-0.5;
+    }
+
+    /* Lists - compact with 8px rhythm */
+    & ul,
+    & ol {
+      @apply my-2 ml-4 space-y-1;
+    }
+
+    & ul {
+      @apply list-disc;
+    }
+
+    & ol {
+      @apply list-decimal;
+    }
+
+    & li {
+      @apply text-sm;
+    }
+
+    /* Headings - minimal since chat rarely needs them */
+    & h1,
+    & h2,
+    & h3 {
+      @apply font-semibold text-foreground mt-4 mb-2 first:mt-0;
+    }
+
+    & h1 {
+      @apply text-base;
+    }
+
+    & h2 {
+      @apply text-sm;
+    }
+
+    & h3 {
+      @apply text-sm;
+    }
+  }
+}

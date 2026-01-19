@@ -11,6 +11,7 @@ const customJestConfig = {
   testEnvironment: 'jest-environment-jsdom',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^react-markdown$': '<rootDir>/src/__mocks__/react-markdown.tsx',
   },
   collectCoverageFrom: [
     'src/**/*.{js,jsx,ts,tsx}',
@@ -23,7 +24,7 @@ const customJestConfig = {
     '<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}',
   ],
   transformIgnorePatterns: [
-    '/node_modules/(?!(lucide-react)/)',
+    '/node_modules/(?!(lucide-react|react-markdown|remark-parse|remark-rehype|unified|bail|is-plain-obj|trough|vfile|vfile-message|unist-util-stringify-position|mdast-util-from-markdown|mdast-util-to-string|micromark|decode-named-character-reference|character-entities|mdast-util-to-hast|unist-util-position|unist-util-visit|unist-util-is|hast-util-whitespace|property-information|space-separated-tokens|comma-separated-tokens|hast-util-to-jsx-runtime|estree-util-is-identifier-name|devlop|unist-util-position-from-estree)/)',
     '^.+\\.module\\.(css|sass|scss)$',
   ],
 }

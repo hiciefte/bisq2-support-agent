@@ -35,6 +35,8 @@ export interface Message {
     isThankYouMessage?: boolean
     /** MCP tools used to fetch live Bisq 2 data (if any) */
     mcp_tools_used?: McpToolUsage[]
+    /** Routing action from the RAG system (e.g., "needs_clarification", "auto_send", "queue_medium") */
+    routing_action?: string
 }
 
 /**

@@ -214,7 +214,8 @@ export const useChatMessages = () => {
                     confidence: data.confidence,
                     detected_version: data.detected_version,
                     version_confidence: data.version_confidence,
-                    mcp_tools_used: data.mcp_tools_used
+                    mcp_tools_used: data.mcp_tools_used,
+                    routing_action: data.routing_action
                 }
 
                 // Use functional update to avoid message loss when multiple sends overlap
