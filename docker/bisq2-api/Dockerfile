@@ -19,11 +19,11 @@ RUN git clone --depth 1 --recurse-submodules -b ${BISQ2_BRANCH} ${BISQ2_REPO_URL
 
 # Attempt to download dependencies using files cloned inside the container.
 # Continue even if it fails (e.g., project structure changed).
-RUN ./gradlew :apps:http-api-app:dependencies --no-daemon || echo "Dependency download step failed or project has no dependencies task, continuing build..."
+RUN ./gradlew :apps:api-app:dependencies --no-daemon || echo "Dependency download step failed or project has no dependencies task, continuing build..."
 
 # Build the application using installDist to create a distribution package
 # Use --no-daemon to avoid leaving a Gradle daemon running
-RUN ./gradlew :apps:http-api-app:installDist --no-daemon
+RUN ./gradlew :apps:api-app:installDist --no-daemon
 
 # ---- Final Stage ----
 # Use a smaller JRE image for the runtime environment
@@ -55,7 +55,7 @@ RUN mkdir -p /opt/bisq2/data /opt/bisq2/config
 
 # Copy built application artifacts from the builder stage
 # The installDist task typically puts outputs in build/install/<appName>
-COPY --from=builder /opt/bisq2/apps/http-api-app/build/install/http-api-app /opt/bisq2/app
+COPY --from=builder /opt/bisq2/apps/api-app/build/install/api-app /opt/bisq2/app
 
 # Copy custom configuration file to the standard config location
 COPY config/http_api_app.conf /opt/bisq2/config/http_api_app.conf

@@ -158,6 +158,34 @@ Example: If there are 56 EUR offers total (42 sell-to, 14 buy-from):
             "required": [],
         },
     },
+    {
+        "name": "get_transaction",
+        "description": """Look up a Bitcoin transaction using Bisq 2's block explorer integration.
+
+Use this tool when users ask about:
+- Transaction confirmation status
+- Whether a payment was received/confirmed
+- Transaction details (outputs, amounts)
+- Troubleshooting trade payment issues
+
+Returns:
+- Transaction ID
+- Confirmation status (confirmed/unconfirmed)
+- Output addresses and amounts
+- Total output value in BTC and satoshis
+
+Note: This queries Bisq 2's configured block explorer. The transaction must be broadcast to the Bitcoin network to be found.""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tx_id": {
+                    "type": "string",
+                    "description": "Bitcoin transaction ID (txid) - 64 hexadecimal characters",
+                }
+            },
+            "required": ["tx_id"],
+        },
+    },
 ]
 
 
@@ -281,6 +309,12 @@ async def _execute_tool(name: str, args: dict) -> str:
 
     elif name == "get_markets":
         return await service.get_markets_formatted()
+
+    elif name == "get_transaction":
+        tx_id = args.get("tx_id")
+        if not tx_id:
+            return "Error: tx_id is required for get_transaction tool"
+        return await service.get_transaction_formatted(tx_id)
 
     else:
         return f"Unknown tool: {name}"

@@ -171,6 +171,38 @@ class ProfileIdValidator:
         return False, f"Invalid profile ID format: {profile_id[:20]}..."
 
 
+class TransactionIdValidator:
+    """Validate Bitcoin transaction IDs (txid).
+
+    Bitcoin transaction IDs are 64 hexadecimal characters (32 bytes).
+    """
+
+    # Bitcoin txid pattern: exactly 64 hex characters
+    TXID_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+
+    @classmethod
+    def validate(cls, tx_id: str) -> Tuple[bool, str]:
+        """Validate a Bitcoin transaction ID.
+
+        Args:
+            tx_id: The transaction ID to validate (64 hex characters)
+
+        Returns:
+            Tuple of (is_valid, sanitized_txid_or_error)
+        """
+        if not tx_id:
+            return False, "Transaction ID is required"
+
+        # Trim whitespace
+        normalized = tx_id.strip()
+
+        # Check if it's a valid txid
+        if cls.TXID_PATTERN.match(normalized):
+            return True, normalized.lower()  # Normalize to lowercase hex
+
+        return False, "Invalid transaction ID format: expected 64 hex characters"
+
+
 class PromptSanitizer:
     """Sanitize external data before prompt injection."""
 
@@ -339,6 +371,9 @@ class Bisq2MCPService:
             maxsize=200, ttl=cache_ttl_reputation
         )
         self._markets_cache: TTLCache = TTLCache(maxsize=1, ttl=cache_ttl_prices)
+        # Transaction cache with short TTL since confirmation status changes
+        cache_ttl_tx = getattr(settings, "BISQ_CACHE_TTL_TRANSACTIONS", 60)
+        self._transaction_cache: TTLCache = TTLCache(maxsize=100, ttl=cache_ttl_tx)
 
         # Initialize circuit breaker
         self._circuit_breaker = CircuitBreaker(
@@ -810,6 +845,83 @@ class Bisq2MCPService:
         except Exception as e:
             return SecureErrorHandler.handle_api_error(e, "get_markets")
 
+    async def get_transaction(self, tx_id: str) -> Dict[str, Any]:
+        """Get transaction details from the Bisq 2 block explorer.
+
+        This helps users verify Bitcoin transaction status and details
+        when troubleshooting trade issues.
+
+        Args:
+            tx_id: Bitcoin transaction ID (64 hex characters)
+
+        Returns:
+            Dictionary with transaction details including confirmation status
+        """
+        if not self.enabled:
+            return {"error": "Bisq MCP integration disabled", "transaction": None}
+
+        # Validate transaction ID
+        is_valid, validated = TransactionIdValidator.validate(tx_id)
+        if not is_valid:
+            return {"error": validated, "transaction": None}
+        tx_id = validated
+
+        # Check cache
+        cache_key = f"tx_{tx_id}"
+        if cache_key in self._transaction_cache:
+            logger.debug(f"Cache hit for {cache_key}")
+            return self._transaction_cache[cache_key]
+
+        try:
+            # Bisq 2 Explorer API endpoint: /api/v1/explorer/tx/{txId}
+            response = await self._make_request(f"/api/v1/explorer/tx/{tx_id}")
+
+            # Response is ExplorerTxDto: {txId, isConfirmed, outputs}
+            # outputs is List<ExplorerOutputDto>: {address, value}
+            transaction = {
+                "txId": response.get("txId", tx_id),
+                "isConfirmed": response.get("isConfirmed", False),
+                "outputs": [],
+            }
+
+            # Parse outputs (guard against non-list responses)
+            raw_outputs = response.get("outputs", [])
+            if not isinstance(raw_outputs, list):
+                raw_outputs = []
+            for output in raw_outputs:
+                transaction["outputs"].append(
+                    {
+                        "address": output.get("address", ""),
+                        # Value is in satoshis
+                        "value": output.get("value", 0),
+                    }
+                )
+
+            # Calculate total output value
+            total_sats = sum(o.get("value", 0) for o in transaction["outputs"])
+            transaction["totalOutputSats"] = total_sats
+            transaction["totalOutputBtc"] = total_sats / 100_000_000
+
+            api_result: Dict[str, Any] = {
+                "success": True,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "tx_id": tx_id,
+                "transaction": transaction,
+            }
+
+            # Cache result
+            self._transaction_cache[cache_key] = api_result
+            return api_result
+
+        except CircuitBreakerError:
+            return {
+                "success": False,
+                "error": "Service temporarily unavailable (circuit breaker open)",
+                "transaction": None,
+            }
+        except Exception as e:
+            return SecureErrorHandler.handle_api_error(e, "get_transaction")
+
     # =========================================================================
     # Formatted Output Methods
     # =========================================================================
@@ -1024,6 +1136,58 @@ class Bisq2MCPService:
         lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
         return "\n".join(lines)
 
+    async def get_transaction_formatted(self, tx_id: str) -> str:
+        """Get transaction details formatted for LLM context.
+
+        Args:
+            tx_id: Bitcoin transaction ID (64 hex characters)
+
+        Returns:
+            Formatted string suitable for prompt context
+        """
+        result = await self.get_transaction(tx_id)
+
+        if not result.get("success"):
+            return f"[Transaction Data Unavailable: {result.get('error', 'Unknown error')}]"
+
+        transaction = result.get("transaction", {})
+        if not transaction:
+            return f"[No transaction data found for {tx_id[:16]}...]"
+
+        # Format transaction for context
+        lines = ["[TRANSACTION DETAILS]"]
+        lines.append(f"  TX ID: {transaction.get('txId', 'N/A')}")
+
+        # Confirmation status is important for support
+        is_confirmed = transaction.get("isConfirmed", False)
+        status_str = "CONFIRMED" if is_confirmed else "UNCONFIRMED (pending)"
+        lines.append(f"  Status: {status_str}")
+
+        # Output summary
+        outputs = transaction.get("outputs", [])
+        lines.append(f"  Outputs: {len(outputs)}")
+
+        # Total value
+        total_btc = transaction.get("totalOutputBtc", 0)
+        total_sats = transaction.get("totalOutputSats", 0)
+        lines.append(f"  Total Output: {total_btc:.8f} BTC ({total_sats:,} sats)")
+
+        # Show first few outputs (limit for context size)
+        if outputs:
+            lines.append("  Output Details:")
+            for i, output in enumerate(outputs[:5]):
+                address = PromptSanitizer.sanitize(
+                    output.get("address", "N/A")[:20] + "...", "general"
+                )
+                value_sats = output.get("value", 0)
+                value_btc = value_sats / 100_000_000
+                lines.append(f"    [{i+1}] {address} : {value_btc:.8f} BTC")
+            if len(outputs) > 5:
+                lines.append(f"    ... and {len(outputs) - 5} more outputs")
+
+        lines.append(f"[Updated: {result.get('timestamp', 'Unknown')}]")
+        return "\n".join(lines)
+
     # =========================================================================
     # Lifecycle
     # =========================================================================
@@ -1048,6 +1212,7 @@ class Bisq2MCPService:
                 "prices": len(self._price_cache),
                 "offers": len(self._offers_cache),
                 "reputation": len(self._reputation_cache),
+                "transactions": len(self._transaction_cache),
             },
         }
 
