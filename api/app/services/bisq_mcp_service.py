@@ -884,8 +884,10 @@ class Bisq2MCPService:
                 "outputs": [],
             }
 
-            # Parse outputs
+            # Parse outputs (guard against non-list responses)
             raw_outputs = response.get("outputs", [])
+            if not isinstance(raw_outputs, list):
+                raw_outputs = []
             for output in raw_outputs:
                 transaction["outputs"].append(
                     {
