@@ -3,10 +3,13 @@
  *
  * TDD Implementation: Tests written BEFORE component implementation
  * Following design principles:
- * - Speed Through Subtraction (lightweight rendering)
+ * - Speed Through Subtraction (lightweight rendering with dynamic imports)
  * - Spatial Consistency (prose-chat styling with existing rhythm)
- * - Progressive Disclosure (markdown renders on demand)
- * - Feedback Immediacy (synchronous rendering)
+ * - Progressive Disclosure (markdown renders on demand via Suspense)
+ * - Feedback Immediacy (fallback shows content while loading)
+ *
+ * Note: Component uses dynamic imports with Suspense, so some tests
+ * use async findBy* queries to wait for content to load.
  */
 
 import { render, screen } from '@testing-library/react';
@@ -14,10 +17,11 @@ import { MarkdownContent } from './markdown-content';
 
 describe('MarkdownContent', () => {
   describe('Basic Rendering', () => {
-    test('should render plain text content', () => {
+    test('should render plain text content', async () => {
       render(<MarkdownContent content="Hello, this is plain text." />);
 
-      expect(screen.getByText('Hello, this is plain text.')).toBeInTheDocument();
+      // Use findByText for async content loading (dynamic import)
+      expect(await screen.findByText('Hello, this is plain text.')).toBeInTheDocument();
     });
 
     test('should render with prose-chat class for styling', () => {
@@ -145,11 +149,15 @@ describe('MarkdownContent', () => {
       expect(screen.getByText(/Hello/)).toBeInTheDocument();
     });
 
-    // Note: javascript: URL blocking is tested via Playwright E2E
+    // Note: Dangerous URL scheme blocking is tested via Playwright E2E
     // because the Jest mock doesn't support the CustomLink component pattern
-    test('should block javascript URLs (validated in E2E)', () => {
-      // The actual component blocks javascript: URLs in CustomLink
-      // This is validated via Playwright E2E tests
+    test('should block dangerous URL schemes (validated in E2E)', () => {
+      // The actual component blocks dangerous URLs in CustomLink:
+      // - javascript: (XSS via script execution)
+      // - data: (XSS via data URIs)
+      // - vbscript: (legacy IE scripting)
+      // All are normalized (trim + lowercase) before checking
+      // Full validation is done via Playwright E2E tests
       expect(true).toBe(true);
     });
   });

@@ -193,14 +193,20 @@ AVAILABLE TOOLS:
   CRITICAL - direction uses MAKER's perspective:
   * User wants to BUY BTC → use direction="SELL" (makers selling BTC to user)
   * User wants to SELL BTC → use direction="BUY" (makers buying BTC from user)
-  CRITICAL - REPUTATION DATA ALREADY INCLUDED:
+  CRITICAL - REPUTATION DATA ALREADY INCLUDED IN OFFERS:
   * Each offer includes [Rep: X.X] showing the maker's reputation score (0.0-5.0 stars)
   * Offers are pre-sorted by reputation (highest first)
   * Reputation scale: 4.0-5.0 = established trader | 2.0-3.9 = moderate | 0.0-1.9 = new trader
-  * For "scam" questions: Analyze the reputation scores already in the offer data
-  * For "first trade" recommendations: Suggest offers with reputation ≥ 4.0 stars
-  * You DO NOT need to call get_reputation() separately - the data is already there
-- get_reputation(profile_id): Get detailed reputation for a specific user (use ONLY if user asks about a specific profile_id).
+  * For general reputation questions ("is trading safe?", "how to avoid scams?"):
+    → Use the [Rep: X.X] scores already in the offer data from get_offerbook()
+    → Recommend offers with reputation ≥ 4.0 stars for first-time traders
+    → DO NOT call get_reputation() separately - the offer data is sufficient
+  * ONLY call get_reputation() when user provides a SPECIFIC profile_id or asks for
+    detailed breakdown (age, bonded roles, BSQ burned) not visible in offer summaries
+- get_reputation(profile_id): Get DETAILED reputation breakdown for a specific user profile.
+  * Use ONLY when: (1) user provides a specific profile_id, OR (2) user asks for detailed
+    breakdown (reputation age, bonded roles, BSQ burned amounts) not shown in offers
+  * DO NOT use for: general "is this safe?" questions - use [Rep: X.X] from get_offerbook() instead
 - get_markets(): List available trading markets.
 - get_transaction(tx_id): Look up a Bitcoin transaction using Bisq 2's block explorer integration.
   * Use when user provides a transaction ID (txid) - 64 hexadecimal characters
@@ -210,7 +216,10 @@ AVAILABLE TOOLS:
 MANDATORY TOOL USAGE RULES:
 1. If the question asks about CURRENT/LIVE prices → MUST call get_market_prices()
 2. If the question asks about CURRENT/AVAILABLE offers → MUST call get_offerbook()
-3. If the question asks about reputation → MUST call get_reputation()
+3. If the question asks about reputation:
+   a. General safety/scam questions → use [Rep: X.X] from get_offerbook() results (no separate call needed)
+   b. SPECIFIC profile_id provided → MUST call get_reputation(profile_id)
+   c. Detailed breakdown requested → MUST call get_reputation(profile_id)
 4. If the question asks about supported markets → MUST call get_markets()
 5. If the question includes a Bitcoin transaction ID (64 hex chars) → MUST call get_transaction()
 

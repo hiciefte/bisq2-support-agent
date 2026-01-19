@@ -6,7 +6,13 @@
  * Parses tool results from MCP tools and renders:
  * - PriceDisplay for get_market_prices results
  * - OfferTable for get_offerbook results
- * - Plain text for the LLM response
+ * - ReputationCard for get_reputation results
+ * - Markdown text for the LLM response
+ *
+ * Performance optimizations:
+ * - Memoized parsing of tool results
+ * - Memoized metadata creation
+ * - Parent component memoization
  */
 
 import { memo, useMemo } from 'react';
@@ -27,18 +33,6 @@ interface LiveDataContentProps {
   toolResults: ToolResult[];
   /** Timestamp for the live data badge */
   timestamp?: string;
-}
-
-/**
- * Create metadata object for live data components
- */
-function createMeta(timestamp?: string): LiveDataMeta {
-  const ts = timestamp || new Date().toISOString();
-  return {
-    type: getDataFreshness(ts),
-    timestamp: ts,
-    source: 'bisq2-api',
-  };
 }
 
 /**
@@ -87,7 +81,15 @@ export const LiveDataContent = memo(function LiveDataContent({
     };
   }, [toolResults]);
 
-  const meta = createMeta(timestamp);
+  // Memoize metadata to prevent unnecessary object creation
+  const meta = useMemo<LiveDataMeta>(() => {
+    const ts = timestamp || new Date().toISOString();
+    return {
+      type: getDataFreshness(ts),
+      timestamp: ts,
+      source: 'bisq2-api',
+    };
+  }, [timestamp]);
 
   return (
     <div className="space-y-4">
