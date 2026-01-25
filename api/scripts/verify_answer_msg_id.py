@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import aisuite  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.services.training.unified_faq_extractor import (  # noqa: E402
+from app.services.training.unified_faq_extractor import (
     UnifiedFAQExtractor,
-)
+)  # noqa: E402
 
 
 async def verify_answer_msg_ids():

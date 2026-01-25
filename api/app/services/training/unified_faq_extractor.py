@@ -386,7 +386,7 @@ class UnifiedFAQExtractor:
             llm_response = await self._call_llm(messages_text=anonymized_text)
 
             # Parse and validate response
-            faqs = self._parse_llm_response(llm_response, username_mapping)
+            faqs = self._parse_llm_response(llm_response)
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -582,7 +582,7 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
         for attempt in range(self.MAX_RETRIES):
             try:
                 # AISuite is synchronous, run in executor to avoid blocking
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 response = await loop.run_in_executor(
                     None,
                     lambda: self.aisuite_client.chat.completions.create(
@@ -641,13 +641,11 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
     def _parse_llm_response(
         self,
         response: Dict[str, Any],
-        username_mapping: Dict[str, str],
     ) -> List[ExtractedFAQ]:
         """Parse LLM response into ExtractedFAQ objects.
 
         Args:
             response: Parsed JSON response from LLM
-            username_mapping: Mapping from anonymized to real usernames
 
         Returns:
             List of ExtractedFAQ objects

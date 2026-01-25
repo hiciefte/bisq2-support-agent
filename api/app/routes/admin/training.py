@@ -517,7 +517,7 @@ async def approve_candidate(
                     for faq in e.similar_faqs
                 ],
             },
-        )
+        ) from e
     except Exception as e:
         logger.exception(f"Failed to approve candidate {candidate_id}")
         raise HTTPException(
@@ -746,7 +746,7 @@ async def undo_candidate_action(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.exception(f"Failed to undo action for candidate {candidate_id}")
         raise HTTPException(
@@ -1018,7 +1018,7 @@ async def trigger_matrix_sync(
 
         # Check if matrix-nio is available
         try:
-            import nio  # noqa: F401
+            import nio
         except ImportError:
             logger.warning("matrix-nio not installed, skipping Matrix sync")
             return SyncResponse(
@@ -1222,11 +1222,11 @@ async def resolve_flagged_faq(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(e),
-            )
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.exception(f"Failed to resolve flagged FAQ thread {thread_id}")
         raise HTTPException(

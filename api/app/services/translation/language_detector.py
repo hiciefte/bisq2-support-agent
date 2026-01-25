@@ -4,7 +4,8 @@ Uses fast heuristics for English detection and LLM fallback for other languages.
 """
 
 import asyncio
-from typing import Any, Optional, Tuple
+import re
+from typing import Any, ClassVar, Optional, Tuple
 
 # Supported languages (ISO 639-1 two-letter and ISO 639-2/3 three-letter codes)
 SUPPORTED_LANGUAGES = {
@@ -121,7 +122,7 @@ Text: {text}
 Language code:"""
 
     # Common English words/patterns for fast detection
-    ENGLISH_MARKERS = [
+    ENGLISH_MARKERS: ClassVar[list[str]] = [
         "the ",
         "is ",
         "are ",
@@ -161,6 +162,61 @@ Language code:"""
         " on ",
         " at ",
     ]
+
+    # ISO 639-3 to ISO 639-1 mapping (3-letter to 2-letter codes)
+    ISO_639_3_TO_1: ClassVar[dict[str, str]] = {
+        "eng": "en",
+        "deu": "de",
+        "ger": "de",
+        "spa": "es",
+        "fra": "fr",
+        "fre": "fr",
+        "ita": "it",
+        "por": "pt",
+        "nld": "nl",
+        "dut": "nl",
+        "pol": "pl",
+        "rus": "ru",
+        "zho": "zh",
+        "chi": "zh",
+        "jpn": "ja",
+        "kor": "ko",
+        "ara": "ar",
+        "hin": "hi",
+        "tur": "tr",
+        "vie": "vi",
+        "tha": "th",
+        "ind": "id",
+        "ces": "cs",
+        "cze": "cs",
+        "swe": "sv",
+        "dan": "da",
+        "fin": "fi",
+        "nor": "no",
+        "ell": "el",
+        "gre": "el",
+        "heb": "he",
+        "hun": "hu",
+        "ron": "ro",
+        "rum": "ro",
+        "ukr": "uk",
+        "bul": "bg",
+        "hrv": "hr",
+        "slk": "sk",
+        "slo": "sk",
+        "slv": "sl",
+        "est": "et",
+        "lav": "lv",
+        "lit": "lt",
+        "msa": "ms",
+        "may": "ms",
+        "fas": "fa",
+        "per": "fa",
+        "ben": "bn",
+        "tam": "ta",
+        "tel": "te",
+        "mar": "mr",
+    }
 
     def __init__(self, llm_provider: Optional[Any] = None):
         """Initialize the LanguageDetector.
@@ -203,8 +259,6 @@ Language code:"""
 
         # Use LLM for non-English detection
         try:
-            import re
-
             prompt = self.DETECTION_PROMPT.format(text=text[:500])
             response = await self.llm.generate(prompt)
 
@@ -231,68 +285,13 @@ Language code:"""
                     # No match in supported languages, use the last token
                     lang_code = code_matches[-1]
 
-            # Handle 3-letter ISO 639-2/3 codes by mapping to 2-letter ISO 639-1
-            iso_639_3_to_1 = {
-                "eng": "en",
-                "deu": "de",
-                "ger": "de",
-                "spa": "es",
-                "fra": "fr",
-                "fre": "fr",
-                "ita": "it",
-                "por": "pt",
-                "nld": "nl",
-                "dut": "nl",
-                "pol": "pl",
-                "rus": "ru",
-                "zho": "zh",
-                "chi": "zh",
-                "jpn": "ja",
-                "kor": "ko",
-                "ara": "ar",
-                "hin": "hi",
-                "tur": "tr",
-                "vie": "vi",
-                "tha": "th",
-                "ind": "id",
-                "ces": "cs",
-                "cze": "cs",
-                "swe": "sv",
-                "dan": "da",
-                "fin": "fi",
-                "nor": "no",
-                "ell": "el",
-                "gre": "el",
-                "heb": "he",
-                "hun": "hu",
-                "ron": "ro",
-                "rum": "ro",
-                "ukr": "uk",
-                "bul": "bg",
-                "hrv": "hr",
-                "slk": "sk",
-                "slo": "sk",
-                "slv": "sl",
-                "est": "et",
-                "lav": "lv",
-                "lit": "lt",
-                "msa": "ms",
-                "may": "ms",
-                "fas": "fa",
-                "per": "fa",
-                "ben": "bn",
-                "tam": "ta",
-                "tel": "te",
-                "mar": "mr",
-            }
-
             # First check exact match in SUPPORTED_LANGUAGES (handles both 2 and 3-letter codes)
             if lang_code in SUPPORTED_LANGUAGES:
                 return (lang_code, 0.9)
 
-            # Try 3-letter code mapping to 2-letter
-            if lang_code in iso_639_3_to_1:
-                return (iso_639_3_to_1[lang_code], 0.85)
+            # Try 3-letter code mapping to 2-letter using class constant
+            if lang_code in self.ISO_639_3_TO_1:
+                return (self.ISO_639_3_TO_1[lang_code], 0.85)
 
             # Try first 2 characters as fallback (2-letter code)
             if len(lang_code) >= 2:

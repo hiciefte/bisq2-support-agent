@@ -11,6 +11,7 @@ The repository handles:
 - Source-based filtering for the admin UI
 """
 
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -1214,8 +1215,6 @@ class UnifiedFAQCandidateRepository:
         Returns:
             Dictionary with learning state or None if not found
         """
-        import json
-
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -1253,8 +1252,6 @@ class UnifiedFAQCandidateRepository:
             review_history: List of review records
             threshold_history: List of threshold history records
         """
-        import json
-
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -1587,8 +1584,6 @@ class UnifiedFAQCandidateRepository:
         )
 
         # Create audit record
-        import json
-
         metadata_json = json.dumps(metadata) if metadata else None
         cursor.execute(
             """

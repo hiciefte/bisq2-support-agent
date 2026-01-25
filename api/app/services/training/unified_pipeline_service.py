@@ -1723,8 +1723,8 @@ class UnifiedPipelineService:
                     original_staff_answer=faq_data.get("original_staff_answer"),
                 )
                 results.append(result)
-            except Exception as e:
-                logger.error(f"Failed to process extracted FAQ: {e}")
+            except Exception:
+                logger.exception("Failed to process extracted FAQ")
                 continue
 
         logger.info(

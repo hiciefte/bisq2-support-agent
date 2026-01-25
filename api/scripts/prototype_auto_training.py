@@ -23,9 +23,9 @@ from app.core.config import Settings  # noqa: E402
 from app.services.simplified_rag_service import SimplifiedRAGService  # noqa: E402
 from app.services.training.comparison_engine import AnswerComparisonEngine  # noqa: E402
 from app.services.training.matrix_export_parser import MatrixExportParser  # noqa: E402
-from app.services.training.substantive_filter import (  # noqa: E402
+from app.services.training.substantive_filter import (
     SubstantiveAnswerFilter,
-)
+)  # noqa: E402
 from app.services.wiki_service import WikiService  # noqa: E402
 from langchain_openai import OpenAIEmbeddings  # noqa: E402
 
