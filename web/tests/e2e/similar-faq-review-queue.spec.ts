@@ -95,10 +95,10 @@ test.describe("Similar FAQ Review Queue", () => {
         await page.goto(`${WEB_BASE_URL}/admin`);
 
         // Wait for login form
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+        await page.getByLabel('API Key').waitFor({ timeout: 10000 });
 
         // Login with admin API key
-        await page.fill('input[type="password"]', ADMIN_API_KEY);
+        await page.getByLabel('API Key').fill(ADMIN_API_KEY);
         await page.click('button:has-text("Login")');
 
         // Wait for authenticated UI

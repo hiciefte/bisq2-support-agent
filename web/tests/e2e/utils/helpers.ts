@@ -133,8 +133,8 @@ export async function loginAsAdmin(
         waitUntil: 'domcontentloaded',
         timeout: 20000
       });
-      await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-      await page.fill('input[type="password"]', apiKey);
+      await page.getByLabel('API Key').waitFor({ timeout: 15000 });
+      await page.getByLabel('API Key').fill(apiKey);
       await page.click('button:has-text("Login")');
       await page.waitForSelector('text=Admin Dashboard', { timeout: 15000 });
       return; // Success

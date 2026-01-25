@@ -2,6 +2,7 @@
 
 import json
 import logging
+from functools import partial
 from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import BaseAppException
@@ -9,6 +10,7 @@ from app.core.security import verify_admin_access
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -440,9 +442,11 @@ async def get_batch_items(
     limit = max(1, min(limit, MAX_BATCH_SIZE))
 
     try:
-        candidates = pipeline_service.repository.get_pending(
-            routing=routing,
-            limit=limit,
+        candidates = await run_in_threadpool(
+            lambda: pipeline_service.repository.get_pending(
+                routing=routing,
+                limit=limit,
+            )
         )
         return {
             "items": [_candidate_to_dict(c) for c in candidates],
@@ -469,7 +473,9 @@ async def approve_candidate(
     logger.info(f"Admin request to approve candidate {candidate_id}")
     try:
         # Get candidate first to record generation_confidence for learning
-        candidate = pipeline_service.repository.get_by_id(candidate_id)
+        candidate = await run_in_threadpool(
+            lambda: pipeline_service.repository.get_by_id(candidate_id)
+        )
         if candidate is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -557,7 +563,9 @@ async def batch_approve_candidates(
     for candidate_id in request_body.candidate_ids:
         try:
             # Get candidate first to record generation_confidence for learning
-            candidate = pipeline_service.repository.get_by_id(candidate_id)
+            candidate = await run_in_threadpool(
+                partial(pipeline_service.repository.get_by_id, candidate_id)
+            )
             if candidate is None:
                 logger.warning(f"Batch approve: Candidate {candidate_id} not found")
                 failed_ids.append(candidate_id)
@@ -649,7 +657,9 @@ async def reject_candidate(
 
     try:
         # Get candidate first to record generation_confidence for learning
-        candidate = pipeline_service.repository.get_by_id(candidate_id)
+        candidate = await run_in_threadpool(
+            lambda: pipeline_service.repository.get_by_id(candidate_id)
+        )
         if candidate is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -785,7 +795,9 @@ async def rate_generated_answer(
     )
     try:
         # Get candidate to access generation_confidence
-        candidate = pipeline_service.repository.get_by_id(candidate_id)
+        candidate = await run_in_threadpool(
+            lambda: pipeline_service.repository.get_by_id(candidate_id)
+        )
         if candidate is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1211,6 +1223,14 @@ async def resolve_flagged_faq(
             detail=f"Invalid action '{request_body.action}'. "
             f"Must be one of: {', '.join(valid_actions)}",
         )
+
+    # Validate new_answer is required for "update" action
+    if request_body.action == "update":
+        if not request_body.new_answer or not request_body.new_answer.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="new_answer is required and must be non-empty for the 'update' action",
+            )
 
     try:
         await pipeline_service.resolve_flagged_faq(

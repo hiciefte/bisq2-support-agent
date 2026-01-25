@@ -14,8 +14,8 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
     test.beforeEach(async ({ page }) => {
         // Navigate and login
         await page.goto(`${WEB_BASE_URL}/admin`);
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-        await page.fill('input[type="password"]', ADMIN_API_KEY);
+        await page.getByLabel('API Key').waitFor({ timeout: 10000 });
+        await page.getByLabel('API Key').fill(ADMIN_API_KEY);
         await page.click('button:has-text("Login")');
         await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
 

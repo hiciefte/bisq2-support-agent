@@ -76,10 +76,10 @@ test.describe("FAQ Management", () => {
                 });
 
                 // Wait for login form to appear
-                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+                await page.getByLabel('API Key').waitFor({ timeout: 15000 });
 
                 // Login with admin API key
-                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.getByLabel('API Key').fill(ADMIN_API_KEY);
                 await page.click('button:has-text("Login")');
 
                 // Wait for authenticated UI to appear (sidebar with navigation)
