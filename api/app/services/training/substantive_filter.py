@@ -122,7 +122,8 @@ Return JSON array with classification for each answer."""
                 response_text = response.choices[0].message.content or "[]"
                 results = extract_json_from_llm_response(response_text)
 
-                if results is None:
+                # Validate results is a list
+                if results is None or not isinstance(results, list):
                     logger.warning("Failed to parse filter response, including batch")
                     substantive.extend(batch)
                     continue
@@ -132,16 +133,33 @@ Return JSON array with classification for each answer."""
 
                 # Process results
                 for result in results:
-                    idx = result.get("answer_index", 0)
+                    # Validate result is a dict with valid answer_index
+                    if not isinstance(result, dict):
+                        logger.debug("Skipping non-dict result in filter response")
+                        continue
+
+                    raw_idx = result.get("answer_index")
+                    # Validate answer_index is an int and in valid range
+                    if (
+                        not isinstance(raw_idx, int)
+                        or raw_idx < 0
+                        or raw_idx >= len(batch)
+                    ):
+                        logger.debug(
+                            f"Skipping invalid answer_index: {raw_idx} "
+                            f"(batch size: {len(batch)})"
+                        )
+                        continue
+
+                    idx = raw_idx
                     classification = result.get("classification", "trivial")
 
-                    if idx < len(batch):
-                        processed_indices.add(idx)
-                        pair = batch[idx]
-                        if classification == "substantive":
-                            substantive.append(pair)
-                        else:
-                            filtered.append((pair, classification))
+                    processed_indices.add(idx)
+                    pair = batch[idx]
+                    if classification == "substantive":
+                        substantive.append(pair)
+                    else:
+                        filtered.append((pair, classification))
 
                 # Include unprocessed pairs as substantive (conservative fallback)
                 for idx, pair in enumerate(batch):
@@ -220,8 +238,8 @@ Return JSON array with classification for each answer."""
                 classification = results[0].get("classification", "trivial")
                 return classification == "substantive", classification
 
-        except Exception as e:
-            logger.warning(f"Single filter failed, defaulting to substantive: {e}")
+        except Exception:
+            logger.exception("Single filter failed, defaulting to substantive")
             # On error, default to substantive (conservative approach)
             return True, "substantive"
 
