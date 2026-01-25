@@ -235,7 +235,7 @@ Return JSON array with classification for each answer."""
             async contexts. If called from an async context, use filter_answers directly.
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             # No running loop - safe to use asyncio.run()
             return asyncio.run(self.filter_answers(qa_pairs, batch_size))
