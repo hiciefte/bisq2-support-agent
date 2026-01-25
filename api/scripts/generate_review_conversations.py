@@ -266,8 +266,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("  REVIEW INSTRUCTIONS")
     print("=" * 60)
-    print(
-        """
+    print("""
 To review the generated conversations:
 
 1. Open the output files:
@@ -291,8 +290,7 @@ To review the generated conversations:
    - Multi-turn conversations missing messages
    - Wrong answer selected (should be final/corrected)
    - Question context missing important follow-ups
-"""
-    )
+""")
 
 
 if __name__ == "__main__":

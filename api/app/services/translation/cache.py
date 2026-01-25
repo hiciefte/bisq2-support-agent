@@ -114,22 +114,18 @@ class SQLiteCache:
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS translations (
                     cache_key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL
                 )
-            """
-            )
-            cursor.execute(
-                """
+            """)
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_expires_at
                 ON translations(expires_at)
-            """
-            )
+            """)
             conn.commit()
         finally:
             conn.close()

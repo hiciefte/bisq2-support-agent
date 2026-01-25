@@ -85,13 +85,11 @@ class TestRepositoryInit:
 
         try:
             with pytest.raises(sqlite3.IntegrityError):
-                cursor.execute(
-                    """
+                cursor.execute("""
                     INSERT INTO unified_faq_candidates
                     (source, source_event_id, source_timestamp, question_text, staff_answer, routing, created_at)
                     VALUES ('invalid_source', 'test_id', '2025-01-01', 'question', 'answer', 'FULL_REVIEW', '2025-01-01')
-                    """
-                )
+                    """)
                 conn.commit()
         finally:
             conn.close()
