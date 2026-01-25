@@ -152,6 +152,12 @@ Return JSON array with classification for each answer."""
                         continue
 
                     idx = raw_idx
+
+                    # Skip duplicate indices to avoid duplicate outputs
+                    if idx in processed_indices:
+                        logger.debug(f"Duplicate answer_index {idx}; skipping")
+                        continue
+
                     classification = result.get("classification", "trivial")
 
                     processed_indices.add(idx)
@@ -261,8 +267,10 @@ Return JSON array with classification for each answer."""
             Tuple of (substantive_pairs, filtered_pairs_with_reasons)
 
         Note:
-            This uses asyncio.get_event_loop() to safely run in both sync and
-            async contexts. If called from an async context, use filter_answers directly.
+            Do not call from an async context. Use filter_answers directly.
+
+        Raises:
+            RuntimeError: If called from an async context.
         """
         try:
             asyncio.get_running_loop()
@@ -270,16 +278,8 @@ Return JSON array with classification for each answer."""
             # No running loop - safe to use asyncio.run()
             return asyncio.run(self.filter_answers(qa_pairs, batch_size))
 
-        # There's an existing event loop - this shouldn't be called from async context
-        # Log a warning and run in a new thread to avoid nested event loop issues
-        import concurrent.futures
-
-        logger.warning(
-            "filter_answers_sync called from async context. "
-            "Consider using filter_answers directly."
+        # There's an existing event loop - raise error instead of blocking
+        raise RuntimeError(
+            "filter_answers_sync cannot be called from an async context. "
+            "Use `await filter_answers(...)` instead."
         )
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                asyncio.run, self.filter_answers(qa_pairs, batch_size)
-            )
-            return future.result()

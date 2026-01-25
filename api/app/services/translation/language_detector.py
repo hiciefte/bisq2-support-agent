@@ -3,6 +3,7 @@
 Uses fast heuristics for English detection and LLM fallback for other languages.
 """
 
+import asyncio
 from typing import Any, Optional, Tuple
 
 # Supported languages (ISO 639-1 codes)
@@ -286,6 +287,9 @@ Language code:"""
 
             # Unknown language code, default to English
             return ("en", 0.5)
+        except asyncio.CancelledError:
+            # Re-raise cancellations to support cooperative cancellation
+            raise
         except Exception:
             # On error, default to English with low confidence
             return ("en", 0.3)
