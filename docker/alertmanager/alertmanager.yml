@@ -55,17 +55,17 @@ receivers:
   # Default Matrix receiver (all alerts)
   - name: 'matrix-notifications'
     webhook_configs:
-      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+      - url: 'http://api:8000/alertmanager/alerts'
         send_resolved: true
 
   # Critical alerts receiver
   - name: 'matrix-critical'
     webhook_configs:
-      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+      - url: 'http://api:8000/alertmanager/alerts'
         send_resolved: true
 
   # Warning alerts receiver
   - name: 'matrix-warnings'
     webhook_configs:
-      - url: 'http://matrix-alertmanager-webhook:3000/alerts'
+      - url: 'http://api:8000/alertmanager/alerts'
         send_resolved: true

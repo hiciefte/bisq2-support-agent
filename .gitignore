@@ -146,3 +146,7 @@ web/tsconfig.tsbuildinfo
 /claudedocs/
 /docs/implementation/
 api/data/matrix_session.json
+/AGENTS.md
+/api/data/bisq_sync_state.json
+/api/data/sample_bisq2_messages.json
+/api/data/sample_matrix_messages.json

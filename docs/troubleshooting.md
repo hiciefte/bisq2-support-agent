@@ -278,6 +278,97 @@ To fix these conflicts:
    docker compose -f docker/docker-compose.yml restart api
    ```
 
+## File Permission Issues
+
+**Problem**: FAQ operations fail with permission errors.
+
+**Symptoms**:
+```
+ERROR:app.services.faq_service:Failed to write to database: [Errno 13] Permission denied: '/data/faqs.db'
+```
+
+**Root Cause**: Data files owned by incorrect UID/GID (not matching container user UID 1001).
+
+**Solution**:
+```bash
+# On production server
+sudo find /opt/bisq-support/api/data -type f -exec chown 1001:1001 {} \;
+
+# Verify fix
+sudo docker exec docker-api-1 ls -la /data/faqs.db
+# Should show: bisq-support bisq-support (UID/GID 1001)
+```
+
+**Prevention**: The `deploy.sh` and `update.sh` scripts now automatically fix file permissions during deployment/updates.
+
+**Technical Details**:
+- Container runs as UID 1001 (bisq-support)
+- Files created by host processes may use different UIDs (e.g., 1000)
+- Docker bind mount preserves host file ownership
+- Container user needs write permissions to modify files
+
+## Tor Hidden Service Not Accessible
+
+**Problem**: The .onion site is not accessible via Tor Browser.
+
+**Symptoms**:
+- Tor Browser shows "Unable to connect" or times out
+- Repeated "Giving up on launching a rendezvous circuit" errors in Tor logs
+- Local HTTP access works (curl http://127.0.0.1:80 returns 200)
+
+**Diagnosis Steps**:
+```bash
+# 1. Check if Tor service is running
+systemctl status tor@default
+
+# 2. Check Tor logs for circuit errors
+journalctl -u tor@default --since "1 hour ago" | grep -iE "(error|warn|fail|circuit|rendezvous)"
+
+# 3. Verify hidden service configuration
+cat /etc/tor/torrc | grep -v "^#" | grep -v "^$"
+# Should show:
+# HiddenServiceDir /var/lib/tor/bisq-support/
+# HiddenServicePort 80 127.0.0.1:80
+
+# 4. Verify .onion hostname exists
+cat /var/lib/tor/bisq-support/hostname
+
+# 5. Test local HTTP access (should return 200)
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:80/
+```
+
+**Root Cause**: Tor hidden services can develop stale circuit state after running for extended periods, causing rendezvous circuit failures.
+
+**Solution**:
+```bash
+# Restart Tor service to re-establish fresh circuits
+systemctl restart tor@default
+
+# Wait for bootstrap to complete (watch for "Bootstrapped 100%")
+journalctl -u tor@default -f
+
+# Test .onion access through Tor SOCKS proxy
+curl --socks5-hostname 127.0.0.1:9050 -s -o /dev/null -w "%{http_code}" --max-time 30 http://<your-onion-address>.onion/
+```
+
+**Verification**:
+```bash
+# Check Tor bootstrap status (should show 100%)
+journalctl -u tor@default --since "5 minutes ago" | grep "Bootstrapped"
+
+# Test .onion accessibility (should return 200)
+curl --socks5-hostname 127.0.0.1:9050 -s -o /dev/null -w "%{http_code}" --max-time 30 http://<your-onion-address>.onion/
+```
+
+**Technical Details**:
+- Tor runs as a systemd service (`tor@default.service`)
+- Hidden service keys are stored in `/var/lib/tor/bisq-support/`
+- Tor proxies requests to nginx on `127.0.0.1:80`
+- Introduction point descriptors may take 1-2 minutes to propagate after restart
+- The "Giving up on launching a rendezvous circuit" error indicates Tor cannot establish the final hop to connect clients to the hidden service
+
+**Prevention**: Consider adding a weekly Tor service restart to the scheduler cron if this issue recurs frequently.
+
 ## Getting Help
 
 If you're still experiencing issues:

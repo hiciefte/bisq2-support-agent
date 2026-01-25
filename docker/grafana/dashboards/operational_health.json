@@ -96,7 +96,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "min({__name__=~\"faq_extraction_last_run_status|wiki_update_last_run_status|bisq2_api_health_status\"})",
+          "expr": "min({__name__=~\"training_sync_last_status|wiki_update_last_run_status|bisq2_api_health_status\"})",
           "refId": "A"
         }
       ],
@@ -123,11 +123,11 @@
               },
               {
                 "color": "yellow",
-                "value": 86400
+                "value": 3600
               },
               {
                 "color": "red",
-                "value": 172800
+                "value": 7200
               }
             ]
           },
@@ -137,7 +137,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
         "x": 6,
         "y": 0
       },
@@ -166,11 +166,81 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "time() - faq_extraction_last_success_timestamp",
+          "expr": "time() - training_sync_last_success_timestamp{source=\"bisq2\"}",
           "refId": "A"
         }
       ],
-      "title": "Last Successful FAQ Extraction",
+      "title": "Bisq Sync Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3600
+              },
+              {
+                "color": "red",
+                "value": 7200
+              }
+            ]
+          },
+          "unit": "dtdurations"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 0
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "time() - training_sync_last_success_timestamp{source=\"matrix\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Matrix Sync Age",
       "type": "stat"
     },
     {
@@ -253,7 +323,23 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "UNHEALTHY"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "HEALTHY"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -608,7 +694,38 @@
           },
           "unit": "none"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bisq2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "matrix"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -636,12 +753,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "faq_extraction_last_run_status",
-          "legendFormat": "FAQ Extraction Status",
+          "expr": "training_sync_last_status",
+          "legendFormat": "{{source}} Sync",
           "refId": "A"
         }
       ],
-      "title": "FAQ Extraction Status Timeline",
+      "title": "Training Sync Status Timeline",
       "type": "timeseries"
     },
     {
@@ -704,7 +821,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 8
       },
       "id": 6,
       "options": {
@@ -726,12 +843,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "faq_extraction_faqs_generated",
-          "legendFormat": "FAQs Generated",
+          "expr": "training_faqs_created_total",
+          "legendFormat": "FAQs Created",
           "refId": "A"
         }
       ],
-      "title": "FAQs Generated per Run",
+      "title": "FAQs Created from Training",
       "type": "timeseries"
     },
     {
@@ -788,13 +905,44 @@
           },
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bisq2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "matrix"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 16
       },
       "id": 7,
       "options": {
@@ -816,12 +964,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "faq_extraction_messages_processed",
-          "legendFormat": "Messages Processed",
+          "expr": "sum(rate(training_sync_pairs_processed_total[5m])) by (source)",
+          "legendFormat": "{{source}}",
           "refId": "A"
         }
       ],
-      "title": "Messages Processed per Run",
+      "title": "Pairs Processed by Source",
       "type": "timeseries"
     },
     {
@@ -876,23 +1024,54 @@
               },
               {
                 "color": "yellow",
-                "value": 300
+                "value": 60
               },
               {
                 "color": "red",
-                "value": 600
+                "value": 120
               }
             ]
           },
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bisq2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "matrix"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 16
       },
       "id": 8,
       "options": {
@@ -917,12 +1096,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, rate(faq_extraction_duration_seconds_bucket[5m]))",
-          "legendFormat": "P95 Duration",
+          "expr": "histogram_quantile(0.95, sum(rate(training_sync_duration_seconds_bucket[5m])) by (le, source))",
+          "legendFormat": "{{source}}",
           "refId": "A"
         }
       ],
-      "title": "FAQ Extraction Duration (P95)",
+      "title": "Sync Duration by Source (P95)",
       "type": "timeseries"
     },
     {
@@ -1005,7 +1184,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 20
+        "y": 24
       },
       "id": 9,
       "options": {
@@ -1095,7 +1274,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 20
+        "y": 24
       },
       "id": 10,
       "options": {
@@ -1193,7 +1372,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 32
       },
       "id": 11,
       "options": {
@@ -1306,7 +1485,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 32
       },
       "id": 12,
       "options": {
@@ -1362,6 +1541,182 @@
       ],
       "title": "Container Health Status",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 17,
+      "panels": [],
+      "title": "Container Resources (cAdvisor)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"docker-.*\"}[5m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Container CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "id": 19,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(container_memory_usage_bytes{name=~\"docker-.*\"} / container_spec_memory_limit_bytes{name=~\"docker-.*\"}) * 100 > 0",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Container Memory Usage %",
+      "type": "gauge"
     }
   ],
   "refresh": "30s",
@@ -1369,7 +1724,8 @@
   "tags": [
     "monitoring",
     "operational",
-    "background-tasks"
+    "background-tasks",
+    "training"
   ],
   "templating": {
     "list": []

@@ -2,6 +2,20 @@
 
 This directory contains Alertmanager configuration for routing Prometheus alerts to Matrix.
 
+## Architecture
+
+Alerts flow through the following path:
+
+```
+Prometheus → Alertmanager → API (/alertmanager/alerts) → Matrix Room
+```
+
+The API service handles Matrix notifications using password-based authentication with:
+- Session persistence (no token timeouts)
+- Automatic token refresh on auth failures
+- Circuit breaker protection to prevent account lockout
+- Unified auth system with Matrix Shadow Mode polling
+
 ## Matrix Integration Setup
 
 ### Prerequisites
@@ -16,11 +30,16 @@ Add the following to your `.env` file in `/docker/.env` (production) or `/docker
 
 ```bash
 # Matrix Configuration for Alert Notifications
+# These variables are used by both Shadow Mode polling AND alert notifications
 MATRIX_HOMESERVER=https://matrix.org
 MATRIX_USER=@bisq-alerts:matrix.org
 MATRIX_PASSWORD=your_secure_password
 MATRIX_ROOM=!RoomIdHere:matrix.org
 ```
+
+**Note**: The same Matrix credentials are used for both:
+- Shadow Mode (polling staff answers for FAQ extraction)
+- Alert notifications (forwarding Prometheus alerts)
 
 **Finding Room ID**:
 1. In Element (Matrix client), go to Room Settings → Advanced
@@ -56,6 +75,7 @@ Alerts are grouped by severity:
 - Routing rules by severity
 - Notification grouping and timing
 - Inhibition rules to prevent notification spam
+- Webhook URL: `http://api:8000/alertmanager/alerts`
 
 ### Testing Alerts
 
@@ -64,22 +84,45 @@ To test the Matrix integration:
 1. **Start services**:
 
    ```bash
-   docker compose up -d alertmanager matrix-alertmanager-webhook
+   docker compose up -d alertmanager api
    ```
 
-2. **Check Matrix webhook logs**:
+2. **Check API alertmanager health**:
 
    ```bash
-   docker compose logs -f matrix-alertmanager-webhook
+   curl http://localhost:8000/alertmanager/health
+   # Expected: {"status":"healthy"}
    ```
 
-3. **Trigger a test alert via Prometheus**:
+3. **Send a test alert directly to API**:
+
+   ```bash
+   curl -X POST http://localhost:8000/alertmanager/alerts \
+     -H "Content-Type: application/json" \
+     -d '{
+       "receiver": "matrix-notifications",
+       "status": "firing",
+       "alerts": [{
+         "status": "firing",
+         "labels": {
+           "alertname": "TestAlert",
+           "severity": "warning"
+         },
+         "annotations": {
+           "summary": "Test alert from manual trigger",
+           "description": "This is a test notification"
+         }
+       }]
+     }'
+   ```
+
+4. **Trigger a test alert via Prometheus**:
 
    ```bash
    # Access Alertmanager UI
    # Visit http://localhost:9093 (if exposed)
 
-   # Or send test alert via API
+   # Or send test alert via Alertmanager API
    curl -X POST http://localhost:9093/api/v1/alerts \
      -H "Content-Type: application/json" \
      -d '[{
@@ -94,25 +137,31 @@ To test the Matrix integration:
      }]'
    ```
 
-4. **Verify alert appears in Matrix room**
+5. **Verify alert appears in Matrix room**
 
 ### Troubleshooting
 
 #### Alerts not appearing in Matrix
 
-1. **Check Matrix webhook logs**:
+1. **Check API logs for alert processing**:
 
    ```bash
-   docker compose logs matrix-alertmanager-webhook
+   docker compose logs api | grep -i "alert"
    ```
 
-2. **Verify environment variables**:
+2. **Check alertmanager health endpoint**:
 
    ```bash
-   docker compose exec matrix-alertmanager-webhook env | grep MATRIX
+   curl http://localhost:8000/alertmanager/health
    ```
 
-3. **Test Matrix login manually**:
+3. **Verify Matrix Shadow Mode is enabled**:
+
+   ```bash
+   docker compose logs api | grep -i "matrix"
+   ```
+
+4. **Test Matrix login manually**:
 
    ```bash
    curl -X POST https://matrix.org/_matrix/client/r0/login \
@@ -124,11 +173,27 @@ To test the Matrix integration:
      }'
    ```
 
-4. **Check Alertmanager connectivity**:
+5. **Check Alertmanager connectivity to API**:
 
    ```bash
    # From Alertmanager container
-   docker compose exec alertmanager wget -O- http://matrix-alertmanager-webhook:3000/health
+   docker compose exec alertmanager wget -O- http://api:8000/alertmanager/health
+   ```
+
+6. **Send test alert and check response**:
+
+   ```bash
+   curl -v -X POST http://localhost:8000/alertmanager/alerts \
+     -H "Content-Type: application/json" \
+     -d '{
+       "receiver": "test",
+       "status": "firing",
+       "alerts": [{
+         "status": "firing",
+         "labels": {"alertname": "Test", "severity": "info"},
+         "annotations": {"summary": "Debug test"}
+       }]
+     }'
    ```
 
 #### Alert rule not firing
@@ -155,36 +220,51 @@ To test the Matrix integration:
    docker compose logs prometheus | grep -i "alert"
    ```
 
+#### Matrix service unavailable warning
+
+If you see `"warning": "matrix_service_unavailable"` in alert responses:
+
+1. **Check Matrix Shadow Mode is enabled**:
+   - Verify `MATRIX_HOMESERVER`, `MATRIX_USER`, `MATRIX_PASSWORD`, `MATRIX_ROOM` are set
+   - Check API startup logs for Matrix initialization
+
+2. **Check Matrix connection**:
+   ```bash
+   docker compose logs api | grep -i "shadow"
+   ```
+
+3. **Restart API to reinitialize Matrix connection**:
+   ```bash
+   docker compose restart api
+   ```
+
 ### Alert Notification Examples
 
 #### Critical Alert (RAG High Error Rate)
 
 ```markdown
-🚨 **CRITICAL ALERT**
-**RAG error rate above 5%**
-Error rate is 7.2%
-Immediate investigation required.
+🔥 **CRITICAL**: RAGHighErrorRate (rag)
+RAG error rate above 5%
 
-Labels:
-- alertname: RAGHighErrorRate
-- severity: critical
-- component: rag
-
-[View in Grafana](http://localhost:3001/d/rag-health)
+Error rate is 7.2%. Immediate investigation required.
 ```
 
 #### Warning Alert (High RAG Cost)
 
 ```markdown
-⚠️ **WARNING**
-**RAG cost per request above $0.02**
-Current average cost: $0.025
-Consider optimizing token usage.
+🔥 **WARNING**: HighRAGCost (rag)
+RAG cost per request above $0.02
 
-Labels:
-- alertname: HighRAGCost
-- severity: warning
-- component: rag
+Current average cost: $0.025. Consider optimizing token usage.
+```
+
+#### Resolved Alert
+
+```markdown
+✅ **WARNING**: HighRAGCost (rag)
+RAG cost per request above $0.02
+
+Alert resolved - cost is now within acceptable range.
 ```
 
 ### Security Best Practices
@@ -195,9 +275,49 @@ Labels:
 4. **Environment Variables**: Never commit Matrix credentials to git
 5. **Access Control**: Limit who can view/modify alertmanager configuration
 
+### API Endpoint Reference
+
+#### Health Check
+
+```
+GET /alertmanager/health
+Response: {"status": "healthy"}
+```
+
+#### Receive Alerts
+
+```
+POST /alertmanager/alerts
+Content-Type: application/json
+
+Request Body (Alertmanager webhook format):
+{
+  "receiver": "matrix-notifications",
+  "status": "firing" | "resolved",
+  "alerts": [
+    {
+      "status": "firing" | "resolved",
+      "labels": {
+        "alertname": "AlertName",
+        "severity": "critical" | "warning" | "info"
+      },
+      "annotations": {
+        "summary": "Brief description",
+        "description": "Detailed description"
+      }
+    }
+  ]
+}
+
+Response:
+{
+  "status": "ok",
+  "alerts_processed": 1
+}
+```
+
 ### Additional Resources
 
 - [Prometheus Alerting](https://prometheus.io/docs/alerting/latest/overview/)
 - [Alertmanager Configuration](https://prometheus.io/docs/alerting/latest/configuration/)
 - [Matrix Protocol](https://matrix.org/docs/guides/)
-- [matrix-alertmanager Docker Image](https://github.com/jaywink/matrix-alertmanager)

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from app.core.config import Settings
-from app.utils.task_metrics import (
+from app.metrics.task_metrics import (
     FAQ_EXTRACTION_FAQS_GENERATED,
     FAQ_EXTRACTION_LAST_RUN_STATUS,
     FAQ_EXTRACTION_MESSAGES_PROCESSED,

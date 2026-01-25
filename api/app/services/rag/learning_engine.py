@@ -6,6 +6,19 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+# Import shared threshold constants from central config
+from app.core.config import (
+    PIPELINE_AUTO_APPROVE_THRESHOLD,
+    PIPELINE_SPOT_CHECK_THRESHOLD,
+)
+
+# Import metrics for recording learning engine activity
+from app.metrics.training_metrics import (
+    learning_reviews_total,
+    learning_threshold_updates,
+    update_learning_thresholds,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,11 +32,25 @@ class LearningEngine:
     - Reject threshold (default 50%)
     """
 
-    def __init__(self):
-        """Initialize learning engine with default thresholds."""
-        # Current thresholds
-        self.auto_send_threshold = 0.95
-        self.queue_high_threshold = 0.70
+    def __init__(self, repository: Optional[Any] = None):
+        """Initialize learning engine with default thresholds.
+
+        Default thresholds are sourced from central config constants:
+        - auto_send_threshold: PIPELINE_AUTO_APPROVE_THRESHOLD (0.90)
+        - queue_high_threshold: PIPELINE_SPOT_CHECK_THRESHOLD (0.75)
+
+        Args:
+            repository: Optional repository for automatic state persistence.
+                        If provided, state is loaded on init and saved after
+                        each threshold update. Should have save_learning_state()
+                        and get_learning_state() methods.
+        """
+        # Store repository for auto-persistence
+        self._repository = repository
+
+        # Current thresholds - sourced from central config for consistency
+        self.auto_send_threshold = PIPELINE_AUTO_APPROVE_THRESHOLD
+        self.queue_high_threshold = PIPELINE_SPOT_CHECK_THRESHOLD
         self.reject_threshold = 0.50
 
         # Learning parameters
@@ -35,11 +62,16 @@ class LearningEngine:
         self._review_history: List[Dict[str, Any]] = []
         self._threshold_history: List[Dict[str, Any]] = []
 
-        # Save initial thresholds
-        self._save_threshold_snapshot("initial")
+        # Load state from repository if provided
+        if self._repository is not None:
+            self.load_state(self._repository)
+
+        # Save initial thresholds snapshot (if not loaded from repository)
+        if not self._threshold_history:
+            self._save_threshold_snapshot("initial")
 
     def _save_threshold_snapshot(self, reason: str) -> None:
-        """Save current thresholds to history."""
+        """Save current thresholds to history and persist to repository if available."""
         self._threshold_history.append(
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -49,6 +81,31 @@ class LearningEngine:
                 "reason": reason,
             }
         )
+
+        # Auto-persist to repository if available (skip for initial snapshot)
+        if self._repository is not None and reason != "initial":
+            self._auto_persist()
+
+    def _auto_persist(self) -> None:
+        """Automatically persist state to repository.
+
+        Called after threshold updates when a repository is configured.
+        Errors are logged but do not raise exceptions to prevent disruption.
+        """
+        if self._repository is None:
+            return
+
+        try:
+            self._repository.save_learning_state(
+                auto_send_threshold=self.auto_send_threshold,
+                queue_high_threshold=self.queue_high_threshold,
+                reject_threshold=self.reject_threshold,
+                review_history=self._review_history,
+                threshold_history=self._threshold_history,
+            )
+            logger.debug("LearningEngine state auto-persisted to repository")
+        except Exception as e:
+            logger.warning(f"Failed to auto-persist LearningEngine state: {e}")
 
     def record_review(
         self,
@@ -78,6 +135,9 @@ class LearningEngine:
         }
 
         self._review_history.append(review_record)
+
+        # Record metrics for admin review
+        learning_reviews_total.labels(admin_action=admin_action).inc()
 
         logger.debug(
             f"Recorded review: {question_id} - {admin_action} at {confidence:.2f}"
@@ -130,6 +190,7 @@ class LearningEngine:
                 self.auto_send_threshold * (1 - self.learning_rate)
                 + new_auto_send * self.learning_rate
             )
+            learning_threshold_updates.labels(threshold_type="auto_send").inc()
             logger.info(
                 f"Updated auto_send threshold: {old_auto_send:.3f} → "
                 f"{self.auto_send_threshold:.3f}"
@@ -141,6 +202,7 @@ class LearningEngine:
                 self.queue_high_threshold * (1 - self.learning_rate)
                 + new_queue_high * self.learning_rate
             )
+            learning_threshold_updates.labels(threshold_type="queue_high").inc()
             logger.info(
                 f"Updated queue_high threshold: {old_queue:.3f} → "
                 f"{self.queue_high_threshold:.3f}"
@@ -152,10 +214,18 @@ class LearningEngine:
                 self.reject_threshold * (1 - self.learning_rate)
                 + new_reject * self.learning_rate
             )
+            learning_threshold_updates.labels(threshold_type="reject").inc()
             logger.info(
                 f"Updated reject threshold: {old_reject:.3f} → "
                 f"{self.reject_threshold:.3f}"
             )
+
+        # Update threshold gauge metrics with current values
+        update_learning_thresholds(
+            auto_send=self.auto_send_threshold,
+            queue_high=self.queue_high_threshold,
+            reject=self.reject_threshold,
+        )
 
         self._save_threshold_snapshot("auto_update")
 
@@ -248,19 +318,21 @@ class LearningEngine:
             confidence: Model confidence score
 
         Returns:
-            Routing action: 'auto_send', 'queue_high', 'queue_low', or 'reject'
+            Routing action: 'AUTO_APPROVE', 'SPOT_CHECK', or 'FULL_REVIEW'
+            (matches pipeline routing constants)
         """
         if confidence >= self.auto_send_threshold:
-            return "auto_send"
+            return "AUTO_APPROVE"
         elif confidence >= self.queue_high_threshold:
-            return "queue_high"
-        elif confidence >= self.reject_threshold:
-            return "queue_low"
+            return "SPOT_CHECK"
         else:
-            return "reject"
+            return "FULL_REVIEW"
 
     def get_learning_metrics(self) -> Dict[str, Any]:
-        """Get learning metrics for dashboard display."""
+        """Get learning metrics for dashboard display.
+
+        P5: Added error handling for edge cases (empty arrays, NaN values).
+        """
         if not self._review_history:
             return {
                 "total_reviews": 0,
@@ -279,9 +351,40 @@ class LearningEngine:
             1 for r in self._review_history if r["admin_action"] == "rejected"
         )
 
-        # Calculate confidence distribution stats
-        confidences = [r["confidence"] for r in self._review_history]
-        conf_array = np.array(confidences)
+        # Calculate confidence distribution stats with error handling (P5)
+        try:
+            confidences = [
+                r["confidence"]
+                for r in self._review_history
+                if r.get("confidence") is not None
+            ]
+
+            if confidences:
+                conf_array = np.array(confidences, dtype=float)
+                # Filter out any NaN values
+                conf_array = conf_array[~np.isnan(conf_array)]
+
+                if len(conf_array) > 0:
+                    avg_confidence = float(np.mean(conf_array))
+                    std_confidence = float(np.std(conf_array))
+                    min_confidence = float(np.min(conf_array))
+                    max_confidence = float(np.max(conf_array))
+                else:
+                    avg_confidence = None
+                    std_confidence = None
+                    min_confidence = None
+                    max_confidence = None
+            else:
+                avg_confidence = None
+                std_confidence = None
+                min_confidence = None
+                max_confidence = None
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Error calculating confidence stats: {e}")
+            avg_confidence = None
+            std_confidence = None
+            min_confidence = None
+            max_confidence = None
 
         return {
             "total_reviews": total,
@@ -289,10 +392,10 @@ class LearningEngine:
             "edit_rate": edited / total if total > 0 else 0.0,
             "rejection_rate": rejected / total if total > 0 else 0.0,
             "threshold_updates": len(self._threshold_history),
-            "avg_confidence": float(np.mean(conf_array)),
-            "std_confidence": float(np.std(conf_array)),
-            "min_confidence": float(np.min(conf_array)),
-            "max_confidence": float(np.max(conf_array)),
+            "avg_confidence": avg_confidence,
+            "std_confidence": std_confidence,
+            "min_confidence": min_confidence,
+            "max_confidence": max_confidence,
         }
 
     def get_threshold_history(self) -> List[Dict[str, Any]]:
@@ -303,8 +406,8 @@ class LearningEngine:
         """Reset learning data and restore default thresholds."""
         self._review_history = []
         self._threshold_history = []
-        self.auto_send_threshold = 0.95
-        self.queue_high_threshold = 0.70
+        self.auto_send_threshold = PIPELINE_AUTO_APPROVE_THRESHOLD
+        self.queue_high_threshold = PIPELINE_SPOT_CHECK_THRESHOLD
         self.reject_threshold = 0.50
         self._save_threshold_snapshot("reset")
         logger.info("Learning engine reset to defaults")
@@ -318,6 +421,61 @@ class LearningEngine:
             "review_count": len(self._review_history),
             "exported_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def save_state(self, repository: Any) -> bool:
+        """Save learning engine state to database via repository.
+
+        Args:
+            repository: UnifiedFAQCandidateRepository with save_learning_state method
+
+        Returns:
+            True if save succeeded, False otherwise (P5: error handling)
+        """
+        try:
+            repository.save_learning_state(
+                auto_send_threshold=self.auto_send_threshold,
+                queue_high_threshold=self.queue_high_threshold,
+                reject_threshold=self.reject_threshold,
+                review_history=self._review_history,
+                threshold_history=self._threshold_history,
+            )
+            logger.info(
+                f"LearningEngine state saved: thresholds={self.get_current_thresholds()}, "
+                f"reviews={len(self._review_history)}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save LearningEngine state: {e}")
+            return False
+
+    def load_state(self, repository: Any) -> None:
+        """Load learning engine state from database via repository.
+
+        Args:
+            repository: UnifiedFAQCandidateRepository with get_learning_state method
+        """
+        state = repository.get_learning_state()
+        if state is None:
+            logger.info("No saved learning state found, using defaults")
+            return
+
+        # Load thresholds
+        self.auto_send_threshold = state.get(
+            "auto_send_threshold", self.auto_send_threshold
+        )
+        self.queue_high_threshold = state.get(
+            "queue_high_threshold", self.queue_high_threshold
+        )
+        self.reject_threshold = state.get("reject_threshold", self.reject_threshold)
+
+        # Load history
+        self._review_history = state.get("review_history", [])
+        self._threshold_history = state.get("threshold_history", [])
+
+        logger.info(
+            f"LearningEngine state loaded: thresholds={self.get_current_thresholds()}, "
+            f"reviews={len(self._review_history)}"
+        )
 
 
 class LaunchReadinessChecker:

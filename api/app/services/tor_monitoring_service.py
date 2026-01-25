@@ -12,7 +12,7 @@ from typing import Optional
 
 import httpx
 from app.core.config import Settings
-from app.core.tor_metrics import update_tor_connection_status
+from app.metrics.tor_metrics import update_tor_connection_status
 
 logger = logging.getLogger(__name__)
 

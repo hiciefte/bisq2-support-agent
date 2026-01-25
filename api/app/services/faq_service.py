@@ -23,7 +23,6 @@ from app.services.faq.conversation_processor import ConversationProcessor
 from app.services.faq.faq_extractor import FAQExtractor
 from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
-from app.services.faq.similar_faq_repository import SimilarFaqRepository
 from fastapi import Request
 from langchain_core.documents import Document
 
@@ -105,21 +104,6 @@ class FAQService:
             self._update_callbacks: List[
                 Callable[[bool, Optional[str], Optional[str], Optional[Dict]], None]
             ] = []
-
-            # Optional: Similar FAQ repository for review queue (Phase 7)
-            # Initialized lazily when needed or set externally for testing
-            self.similar_faq_repository: Optional[SimilarFaqRepository] = None
-            if (
-                hasattr(settings, "SIMILAR_FAQ_DB_PATH")
-                and settings.SIMILAR_FAQ_DB_PATH
-            ):
-                try:
-                    self.similar_faq_repository = SimilarFaqRepository(
-                        settings.SIMILAR_FAQ_DB_PATH
-                    )
-                    logger.info("Similar FAQ repository initialized for review queue")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Similar FAQ repository: {e}")
 
             self.initialized = True
             logger.info("FAQService initialized with SQLite storage backend.")
@@ -711,22 +695,6 @@ class FAQService:
         except Exception:
             logger.exception("Error saving processed message IDs")
 
-    # Backward compatibility aliases
-    def load_processed_conv_ids(self) -> Set[str]:
-        """Deprecated: Use load_processed_msg_ids() instead."""
-        logger.warning(
-            "load_processed_conv_ids() is deprecated, use load_processed_msg_ids()"
-        )
-        return self.load_processed_msg_ids()
-
-    def save_processed_conv_ids(self) -> None:
-        """Deprecated: Use save_processed_msg_ids() instead."""
-        logger.warning(
-            "save_processed_conv_ids() is deprecated, use save_processed_msg_ids()"
-        )
-        if hasattr(self, "processed_conv_ids"):
-            self.save_processed_msg_ids(self.processed_conv_ids)
-
     async def fetch_and_merge_messages(self, bisq_api=None):
         """Fetch latest messages from API and merge with existing ones.
 
@@ -1050,7 +1018,7 @@ class FAQService:
                         )
                     )
 
-                    # Persist similar FAQs to review queue (Phase 7)
+                    # Log similar FAQs found (duplicates not saved)
                     if similar_faqs:
                         logger.warning(
                             f"Found {len(similar_faqs)} extracted FAQs similar to existing ones. "
@@ -1063,32 +1031,6 @@ class FAQService:
                                 f"matches existing FAQ ID {similar_to.get('id')}: "
                                 f"'{similar_to.get('question', '')[:60]}...' "
                                 f"({similar_to.get('similarity', 0):.0%})"
-                            )
-
-                            # Persist to review queue if repository is available
-                            if self.similar_faq_repository:
-                                try:
-                                    self.similar_faq_repository.add_candidate(
-                                        extracted_question=faq.get("question", ""),
-                                        extracted_answer=faq.get("answer", ""),
-                                        matched_faq_id=similar_to.get("id"),
-                                        similarity=similar_to.get("similarity", 0.0),
-                                        extracted_category=faq.get("category"),
-                                        matched_question=similar_to.get("question"),
-                                        matched_answer=similar_to.get("answer"),
-                                        matched_category=similar_to.get("category"),
-                                    )
-                                    logger.debug(
-                                        f"Added similar FAQ to review queue: "
-                                        f"'{faq['question'][:40]}...'"
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to persist similar FAQ to review queue: {e}"
-                                    )
-                        if self.similar_faq_repository:
-                            logger.info(
-                                f"Added {len(similar_faqs)} similar FAQs to review queue"
                             )
                 else:
                     logger.debug(

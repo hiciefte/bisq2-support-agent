@@ -87,7 +87,7 @@ class QuestionValidator:
         if len(text) < self.min_question_length:
             return False, "too_short"
 
-        # Check confidence (secondary check, primary is in matrix_shadow_mode.py)
+        # Check confidence threshold
         if question.confidence < self.min_confidence:
             return False, "low_confidence"
 

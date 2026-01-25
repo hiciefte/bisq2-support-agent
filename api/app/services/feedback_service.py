@@ -9,12 +9,9 @@ This service handles all feedback-related functionality:
 """
 
 import asyncio
-import json
 import logging
 import math
 import os
-import re
-import shutil
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -400,121 +397,6 @@ class FeedbackService:
         except Exception as e:
             logger.error(f"Error applying feedback weights: {e!s}", exc_info=True)
             return False
-
-    def migrate_legacy_feedback(self) -> Dict[str, Any]:
-        """Migrate legacy feedback files to the current month-based convention.
-
-        Note: This function has been used to migrate existing legacy feedback files,
-        but is kept for historical purposes and in case additional legacy files are
-        discovered in the future. Under normal operation, this should not be needed
-        as all feedback now uses the standardized month-based naming convention.
-
-        This function:
-        1. Reads all feedback from legacy files (day-based and root feedback.jsonl)
-        2. Sorts them by timestamp
-        3. Writes them to appropriate month-based files
-        4. Backs up original files
-        5. Returns statistics about the migration
-
-        Returns:
-            Dict with migration statistics
-        """
-        # Explicitly type the dictionary values to help mypy
-        migration_stats: Dict[str, Any] = {
-            "total_entries_migrated": 0,
-            "legacy_files_processed": 0,
-            "entries_by_month": {},
-            "backed_up_files": [],
-        }
-
-        feedback_dir = self.settings.FEEDBACK_DIR_PATH
-        os.makedirs(feedback_dir, exist_ok=True)
-
-        # Setup backup directory
-        backup_dir = os.path.join(feedback_dir, "legacy_backup")
-        os.makedirs(backup_dir, exist_ok=True)
-
-        # Collect entries from legacy files
-        legacy_entries = []
-
-        # 1. Check day-based files
-        day_pattern = re.compile(r"feedback_\d{8}\.jsonl$")
-        day_files = [
-            os.path.join(feedback_dir, f)
-            for f in os.listdir(feedback_dir)
-            if day_pattern.match(f)
-        ]
-
-        for file_path in day_files:
-            try:
-                with open(file_path, "r") as f:
-                    for line in f:
-                        entry = json.loads(line.strip())
-                        legacy_entries.append(entry)
-
-                # Back up the file
-                backup_path = os.path.join(backup_dir, os.path.basename(file_path))
-                shutil.copy2(file_path, backup_path)
-                migration_stats["backed_up_files"].append(os.path.basename(file_path))
-                migration_stats["legacy_files_processed"] += 1
-            except Exception as e:
-                logger.error(f"Error processing legacy file {file_path}: {e!s}")
-
-        # 2. Check root feedback.jsonl
-        root_feedback = os.path.join(self.settings.DATA_DIR, "feedback.jsonl")
-        if os.path.exists(root_feedback):
-            try:
-                with open(root_feedback, "r") as f:
-                    for line in f:
-                        entry = json.loads(line.strip())
-                        legacy_entries.append(entry)
-
-                # Back up the file
-                backup_path = os.path.join(backup_dir, "feedback.jsonl")
-                shutil.copy2(root_feedback, backup_path)
-                migration_stats["backed_up_files"].append("feedback.jsonl")
-                migration_stats["legacy_files_processed"] += 1
-            except Exception as e:
-                logger.error(f"Error processing root feedback file: {e!s}")
-
-        # Sort entries by timestamp where available
-        for entry in legacy_entries:
-            if "timestamp" not in entry:
-                # Add a placeholder timestamp for entries without one
-                entry["timestamp"] = "2025-01-01T00:00:00"
-
-        legacy_entries.sort(key=lambda e: e.get("timestamp", ""))
-        migration_stats["total_entries_migrated"] = len(legacy_entries)
-
-        # Group by month and write to appropriate files
-        for entry in legacy_entries:
-            try:
-                # Extract month from timestamp
-                timestamp = entry.get("timestamp", "")
-                month = timestamp[:7] if timestamp else "2025-01"  # YYYY-MM format
-
-                # Ensure month is in proper format
-                if not re.match(r"^\d{4}-\d{2}$", month):
-                    month = "2025-01"  # Default if format is invalid
-
-                # Update stats
-                if month not in migration_stats["entries_by_month"]:
-                    migration_stats["entries_by_month"][month] = 0
-                migration_stats["entries_by_month"][month] += 1
-
-                # Write to month-based file
-                month_file = os.path.join(feedback_dir, f"feedback_{month}.jsonl")
-                with open(month_file, "a") as f:
-                    f.write(json.dumps(entry) + "\n")
-            except Exception as e:
-                logger.error(f"Error writing entry to month file: {e!s}")
-
-        logger.info(
-            f"Migration completed: {migration_stats['total_entries_migrated']} entries "
-            f"from {migration_stats['legacy_files_processed']} files"
-        )
-
-        return migration_stats
 
     def get_prompt_guidance(self) -> List[str]:
         """Get the current prompt guidance based on feedback.

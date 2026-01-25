@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def _record_bisq2_api_health(is_healthy: bool, response_time: Optional[float] = None):
     """Record Bisq2 API health metric (import lazily to avoid circular imports)."""
     try:
-        from app.utils.task_metrics import record_bisq2_api_health
+        from app.metrics.task_metrics import record_bisq2_api_health
 
         record_bisq2_api_health(is_healthy, response_time)
     except Exception as e:

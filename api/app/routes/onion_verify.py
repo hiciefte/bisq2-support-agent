@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Union
 
 from app.core.config import get_settings
-from app.core.tor_metrics import record_verification_request
+from app.metrics.tor_metrics import record_verification_request
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 

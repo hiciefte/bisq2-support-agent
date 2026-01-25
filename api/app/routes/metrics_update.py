@@ -9,7 +9,7 @@ This API provides HTTP endpoints that cron scripts can call to record task outco
 from typing import Literal, Optional
 
 from app.core.security import verify_admin_key
-from app.utils.task_metrics import (
+from app.metrics.task_metrics import (
     record_faq_extraction_failure,
     record_faq_extraction_success,
     record_feedback_processing_failure,

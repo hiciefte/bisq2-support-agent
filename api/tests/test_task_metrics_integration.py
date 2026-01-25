@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from app.core.config import Settings
-from app.utils.task_metrics import (
+from app.metrics.task_metrics import (
     BISQ2_API_HEALTH_STATUS,
     BISQ2_API_LAST_CHECK_TIMESTAMP,
     BISQ2_API_RESPONSE_TIME,

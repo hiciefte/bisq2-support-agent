@@ -177,3 +177,28 @@ class VersionDetector:
         Kept for backwards compatibility.
         """
         return self._generate_clarifying_question(question)
+
+    def detect_version_from_text(self, text: str) -> Tuple[str, float]:
+        """Detect Bisq version from any text (question, answer, or context).
+
+        This is a simpler version of detect_version() that only analyzes
+        text content without chat history. Useful for fallback detection
+        when the question alone doesn't reveal the version.
+
+        Args:
+            text: Any text to analyze for version indicators
+
+        Returns:
+            Tuple[str, float]: (version, confidence)
+                - version: "Bisq 1" | "Bisq 2" | "Unknown"
+                - confidence: 0.0-1.0
+        """
+        text_lower = text.lower()
+
+        # Check for explicit mentions first
+        explicit = self._check_explicit_mentions(text_lower)
+        if explicit:
+            return explicit
+
+        # Check for version-specific keywords
+        return self._check_keywords(text_lower)
