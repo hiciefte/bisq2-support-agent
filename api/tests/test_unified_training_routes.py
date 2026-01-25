@@ -264,12 +264,8 @@ class TestPendingReviewsEndpoint:
 
     def test_get_pending_reviews(self, client, mock_pipeline_service, sample_candidate):
         """Test GET /unified/queue/pending returns paginated list of candidates."""
-        mock_pipeline_service.get_pending_reviews.return_value = {
-            "items": [sample_candidate],
-            "total": 1,
-            "page": 1,
-            "page_size": 10,
-        }
+        # Service returns a list, route converts to paginated response
+        mock_pipeline_service.get_pending_reviews.return_value = [sample_candidate]
 
         response = client.get("/admin/training/unified/queue/pending")
 
@@ -281,21 +277,17 @@ class TestPendingReviewsEndpoint:
 
     def test_get_pending_reviews_with_pagination(self, client, mock_pipeline_service):
         """Test GET /unified/queue/pending with pagination parameters."""
-        mock_pipeline_service.get_pending_reviews.return_value = {
-            "items": [],
-            "total": 0,
-            "page": 2,
-            "page_size": 5,
-        }
+        # Service returns a list, route converts to paginated response
+        mock_pipeline_service.get_pending_reviews.return_value = []
 
         response = client.get(
             "/admin/training/unified/queue/pending?page=2&page_size=5"
         )
 
         assert response.status_code == 200
-        mock_pipeline_service.get_pending_reviews.assert_called_with(
-            page=2, page_size=5
-        )
+        # Route converts page/page_size to limit/offset for service API
+        # page=2, page_size=5 -> offset=5, limit=5
+        mock_pipeline_service.get_pending_reviews.assert_any_call(limit=5, offset=5)
 
 
 # =============================================================================

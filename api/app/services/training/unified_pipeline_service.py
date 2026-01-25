@@ -1625,8 +1625,9 @@ class UnifiedPipelineService:
             generation_confidence=generation_confidence,
         )
 
-        # Update calibration metrics if calibration sample
+        # Update calibration count and metrics if calibration sample
         if is_calibration:
+            self.repository.increment_calibration_count()
             update_calibration_metrics(self.repository.get_calibration_status())
 
         # Record metrics

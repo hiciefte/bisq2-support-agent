@@ -388,12 +388,21 @@ async def get_unified_pending_reviews(
     """Get paginated list of unified pending reviews."""
     logger.info(f"Admin request for unified pending reviews (page={page})")
     try:
-        result = pipeline_service.get_pending_reviews(page=page, page_size=page_size)
+        # Convert page/page_size to limit/offset for the service API
+        offset = (page - 1) * page_size
+        candidates = pipeline_service.get_pending_reviews(
+            limit=page_size, offset=offset
+        )
+
+        # Get total count for pagination (use large limit to count all)
+        all_pending = pipeline_service.get_pending_reviews(limit=10000, offset=0)
+        total = len(all_pending)
+
         return {
-            "items": [_candidate_to_dict(c) for c in result["items"]],
-            "total": result["total"],
-            "page": result["page"],
-            "page_size": result["page_size"],
+            "items": [_candidate_to_dict(c) for c in candidates],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
         }
     except Exception as e:
         logger.exception("Failed to get unified pending reviews")

@@ -102,7 +102,7 @@ class MessageNormalizer:
             source_id=event.get("event_id", ""),
             text=text,
             author=sender,
-            timestamp=self._parse_matrix_timestamp(event.get("origin_server_ts", 0)),
+            timestamp=self._parse_matrix_timestamp(event.get("origin_server_ts")),
             is_staff=sender.lower() in self.staff_ids,
             raw_data=event,
         )
@@ -172,15 +172,18 @@ class MessageNormalizer:
             ts_ms: Timestamp in milliseconds since Unix epoch (int, str, or None)
 
         Returns:
-            Parsed datetime in UTC, or current time if input is invalid
+            Parsed datetime in UTC, or current time if input is invalid/zero
         """
-        if ts_ms is None:
+        if ts_ms is None or ts_ms == 0:
             return datetime.now(timezone.utc)
         try:
             # Handle string input by converting to int/float
             if isinstance(ts_ms, str):
                 ts_ms = int(float(ts_ms))
             elif not isinstance(ts_ms, (int, float)):
+                return datetime.now(timezone.utc)
+            # Treat 0 as invalid (would result in epoch 1970-01-01)
+            if ts_ms == 0:
                 return datetime.now(timezone.utc)
             return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
         except (ValueError, TypeError, OSError):

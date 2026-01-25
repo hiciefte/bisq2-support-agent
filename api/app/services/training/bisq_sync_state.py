@@ -55,10 +55,9 @@ class BisqSyncStateManager:
                 data = json.load(f)
 
             # Restore timestamp
-            if "last_sync_timestamp" in data and data["last_sync_timestamp"]:
-                self.last_sync_timestamp = datetime.fromisoformat(
-                    data["last_sync_timestamp"]
-                )
+            last_sync = data.get("last_sync_timestamp")
+            if last_sync:
+                self.last_sync_timestamp = datetime.fromisoformat(last_sync)
 
             # Restore processed IDs (limit to most recent to prevent unbounded growth)
             processed_list = data.get("processed_message_ids", [])
@@ -69,8 +68,8 @@ class BisqSyncStateManager:
                 f"processed_ids={len(self.processed_message_ids)}"
             )
 
-        except (IOError, json.JSONDecodeError) as e:
-            logger.exception(f"Failed to load sync state from {self.state_file}: {e}")
+        except (IOError, json.JSONDecodeError):
+            logger.exception(f"Failed to load sync state from {self.state_file}")
 
     def save_state(self) -> None:
         """Atomically save state to disk.

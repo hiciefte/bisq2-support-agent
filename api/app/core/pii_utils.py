@@ -56,8 +56,8 @@ PII_LOGGING_PATTERNS: Dict[str, str] = {
     "ipv6_address": r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b",
     # API keys (generic pattern)
     "api_key": r"api[_-]?key[_-]?[:=]\s*['\"]?[\w\-]{20,}['\"]?",
-    # Passwords in URLs or config
-    "password": r"(password|passwd|pwd)[:=][^\s&]+",
+    # Passwords in URLs or config (handles optional spaces around separators)
+    "password": r"(password|passwd|pwd)\s*[:=]\s*[^\s&]+",
 }
 
 # =============================================================================

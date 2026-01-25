@@ -44,14 +44,14 @@ def parse_bisq2_timestamp(date_str: str) -> int:
 
 def load_bisq2_messages(filepath: Path) -> list[dict[str, Any]]:
     """Load Bisq 2 messages."""
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
     return data.get("messages", [])
 
 
 def load_matrix_messages(filepath: Path) -> list[dict[str, Any]]:
     """Load Matrix messages (only m.room.message type)."""
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
     return [
         msg for msg in data.get("messages", []) if msg.get("type") == "m.room.message"
@@ -239,8 +239,12 @@ def parse_args() -> argparse.Namespace:
     matrix_search_dirs = [
         data_dir,
         Path.home() / "Downloads",
-        Path(os.environ.get("MATRIX_EXPORT_DIR", "")),
     ]
+    # Only add MATRIX_EXPORT_DIR if it's set and non-empty
+    matrix_export_dir = os.environ.get("MATRIX_EXPORT_DIR", "").strip()
+    if matrix_export_dir:
+        matrix_search_dirs.append(Path(matrix_export_dir))
+
     for search_dir in matrix_search_dirs:
         if search_dir.exists():
             for f in search_dir.glob("*matrix*Support*.json"):
@@ -280,8 +284,19 @@ def main() -> None:
     matrix_path = args.matrix
 
     print(f"\nLoading Bisq 2 messages from: {bisq2_path}")
-    bisq2_msgs = load_bisq2_messages(bisq2_path)
-    bisq2_analysis = analyze_bisq2_timing(bisq2_msgs)
+    if not bisq2_path.exists():
+        print(f"Bisq 2 file not found: {bisq2_path}")
+        print("Skipping Bisq 2 analysis. Use --bisq2 to specify the file path.")
+        bisq2_msgs = []
+        bisq2_analysis = {
+            "total_messages": 0,
+            "linked_gaps": [],
+            "unlinked_staff_gaps": [],
+            "consecutive_same_author": [],
+        }
+    else:
+        bisq2_msgs = load_bisq2_messages(bisq2_path)
+        bisq2_analysis = analyze_bisq2_timing(bisq2_msgs)
 
     if matrix_path and matrix_path.exists():
         print(f"Loading Matrix messages from: {matrix_path}")
@@ -448,7 +463,8 @@ def main() -> None:
     print(f"\n{'=' * 70}")
     print("FINAL RECOMMENDATION")
     print(f"{'=' * 70}")
-    print("""
+    print(
+        """
 Based on the analysis:
 
 1. QUICK RESPONSE THRESHOLD (for immediate context):
@@ -470,7 +486,8 @@ RECOMMENDATION: Use 5 MINUTES (300 seconds) as default
 - Conservative threshold minimizes false groupings
 - Can be extended if context clearly indicates conversation
 - Aligns with typical chat conversation cadence
-""")
+"""
+    )
 
 
 if __name__ == "__main__":

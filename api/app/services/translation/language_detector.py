@@ -202,9 +202,18 @@ Language code:"""
 
         # Use LLM for non-English detection
         try:
+            import re
+
             prompt = self.DETECTION_PROMPT.format(text=text[:500])
             response = await self.llm.generate(prompt)
-            lang_code = response.strip().lower()
+
+            # Extract language code token from response
+            # Handles formats like "en", "Language: en", "The language is: en"
+            raw_response = response.strip().lower()
+
+            # Try to extract a 2-3 letter code from the response
+            code_match = re.search(r"\b([a-z]{2,3})\b", raw_response)
+            lang_code = code_match.group(1) if code_match else raw_response
 
             # Handle 3-letter ISO 639-2/3 codes by mapping to 2-letter ISO 639-1
             iso_639_3_to_1 = {
@@ -261,17 +270,19 @@ Language code:"""
                 "mar": "mr",
             }
 
-            # Try as-is first (2-letter code)
+            # First check exact match in SUPPORTED_LANGUAGES (handles both 2 and 3-letter codes)
+            if lang_code in SUPPORTED_LANGUAGES:
+                return (lang_code, 0.9)
+
+            # Try 3-letter code mapping to 2-letter
+            if lang_code in iso_639_3_to_1:
+                return (iso_639_3_to_1[lang_code], 0.85)
+
+            # Try first 2 characters as fallback (2-letter code)
             if len(lang_code) >= 2:
                 two_letter = lang_code[:2]
                 if two_letter in SUPPORTED_LANGUAGES:
-                    return (two_letter, 0.9)
-
-            # Try 3-letter code mapping
-            if len(lang_code) >= 3:
-                three_letter = lang_code[:3]
-                if three_letter in iso_639_3_to_1:
-                    return (iso_639_3_to_1[three_letter], 0.85)
+                    return (two_letter, 0.85)
 
             # Unknown language code, default to English
             return ("en", 0.5)

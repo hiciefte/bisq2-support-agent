@@ -127,20 +127,32 @@ Return JSON array with classification for each answer."""
                     substantive.extend(batch)
                     continue
 
+                # Track which indices were returned by LLM
+                processed_indices: set[int] = set()
+
                 # Process results
                 for result in results:
                     idx = result.get("answer_index", 0)
                     classification = result.get("classification", "trivial")
 
                     if idx < len(batch):
+                        processed_indices.add(idx)
                         pair = batch[idx]
                         if classification == "substantive":
                             substantive.append(pair)
                         else:
                             filtered.append((pair, classification))
 
-            except Exception as e:
-                logger.error(f"Filter batch failed: {e}")
+                # Include unprocessed pairs as substantive (conservative fallback)
+                for idx, pair in enumerate(batch):
+                    if idx not in processed_indices:
+                        logger.debug(
+                            f"LLM didn't classify index {idx}, defaulting to substantive"
+                        )
+                        substantive.append(pair)
+
+            except Exception:
+                logger.exception("Filter batch failed")
                 # On error, include all as substantive (conservative)
                 substantive.extend(batch)
 

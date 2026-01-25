@@ -260,13 +260,15 @@ class MatrixSyncService:
             staff_identifiers=self.trusted_staff_ids,
         )
 
-        # Count successfully processed candidates
+        # Mark all events as processed and count successful candidates
         for result in results:
+            # Always mark the source event as processed to avoid reprocessing
+            event_id = result.source_event_id.replace("matrix_", "")
+            self.polling_state.mark_processed(event_id)
+
+            # Count only successful candidate creations
             if result.candidate_id is not None:
                 processed_count += 1
-                # Mark the source event as processed
-                event_id = result.source_event_id.replace("matrix_", "")
-                self.polling_state.mark_processed(event_id)
                 logger.info(
                     f"Processed Matrix FAQ -> candidate {result.candidate_id} "
                     f"(routing: {result.routing})"

@@ -349,7 +349,7 @@ class TestSubstantiveAnswerFilter:
     async def test_filter_handles_missing_index(
         self, filter_instance, mock_ai_client, sample_qa_pairs
     ):
-        """Test that missing answer_index defaults to 0."""
+        """Test that missing answer_index defaults to 0, unprocessed default to substantive."""
         mock_response = MagicMock()
         mock_response.choices = [
             MagicMock(
@@ -367,15 +367,16 @@ class TestSubstantiveAnswerFilter:
 
         substantive, filtered = await filter_instance.filter_answers(sample_qa_pairs)
 
-        # Only first pair should be classified (index 0)
-        assert len(substantive) == 1
-        assert substantive[0].answer_event_id == "$a1"
+        # Index 0 classified by LLM, indices 1 and 2 default to substantive (conservative)
+        assert len(substantive) == 3
+        assert substantive[0].answer_event_id == "$a1"  # LLM classified
+        # Unprocessed indices become substantive (conservative fallback)
 
     @pytest.mark.asyncio
     async def test_filter_handles_out_of_range_index(
         self, filter_instance, mock_ai_client, sample_qa_pairs
     ):
-        """Test that out-of-range indices are safely ignored."""
+        """Test that out-of-range indices are safely ignored, unprocessed default to substantive."""
         mock_response = MagicMock()
         mock_response.choices = [
             MagicMock(
@@ -391,7 +392,7 @@ class TestSubstantiveAnswerFilter:
                                 "answer_index": 100,
                                 "classification": "substantive",
                                 "confidence": 0.9,
-                            },  # Out of range
+                            },  # Out of range - ignored
                         ]
                     )
                 )
@@ -401,22 +402,22 @@ class TestSubstantiveAnswerFilter:
 
         substantive, filtered = await filter_instance.filter_answers(sample_qa_pairs)
 
-        # Only valid index should be processed
-        assert len(substantive) == 1
+        # Index 0 classified, indices 1-2 default to substantive (conservative)
+        assert len(substantive) == 3
 
     @pytest.mark.asyncio
     async def test_filter_handles_empty_response(
         self, filter_instance, mock_ai_client, sample_qa_pairs
     ):
-        """Test that empty/null response content is handled."""
+        """Test that empty/null response content defaults all to substantive (conservative)."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock(message=MagicMock(content=None))]
         mock_ai_client.chat.completions.create.return_value = mock_response
 
         substantive, filtered = await filter_instance.filter_answers(sample_qa_pairs)
 
-        # Empty response parses as empty array, no pairs classified
-        assert len(substantive) == 0
+        # Empty response means no indices processed, all default to substantive
+        assert len(substantive) == 3
         assert len(filtered) == 0
 
 
