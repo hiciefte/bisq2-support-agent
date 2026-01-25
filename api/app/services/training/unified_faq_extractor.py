@@ -399,8 +399,11 @@ class UnifiedFAQExtractor:
                 _normalized_messages=normalized_messages,
             )
 
+        except asyncio.CancelledError:
+            # Re-raise cancellation to preserve async shutdown semantics
+            raise
         except Exception as e:
-            logger.error(f"FAQ extraction error: {e}")
+            logger.exception(f"FAQ extraction error: {e}")
             processing_time_ms = int((time.time() - start_time) * 1000)
 
             return FAQExtractionResult(

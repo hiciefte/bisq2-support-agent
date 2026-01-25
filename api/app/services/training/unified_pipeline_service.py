@@ -1817,7 +1817,9 @@ class UnifiedPipelineService:
             return 0
 
         # Create polling state manager
-        polling_state = PollingStateManager()
+        polling_state = PollingStateManager(
+            state_file=self.settings.get_data_path("matrix_polling_state.json")
+        )
 
         # Create and run sync service
         sync_service = MatrixSyncService(
