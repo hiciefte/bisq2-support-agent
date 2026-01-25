@@ -6,7 +6,7 @@ Uses fast heuristics for English detection and LLM fallback for other languages.
 import asyncio
 from typing import Any, Optional, Tuple
 
-# Supported languages (ISO 639-1 codes)
+# Supported languages (ISO 639-1 two-letter and ISO 639-2/3 three-letter codes)
 SUPPORTED_LANGUAGES = {
     "en": "English",
     "de": "German",
@@ -114,7 +114,7 @@ class LanguageDetector:
     Slow path: Use LLM for non-English language detection.
     """
 
-    DETECTION_PROMPT = """Detect the language of the following text. Return ONLY the ISO 639-1 two-letter language code (e.g., "en" for English, "de" for German, "es" for Spanish, "fr" for French).
+    DETECTION_PROMPT = """Detect the language of the following text. Return ONLY the ISO 639-1 or ISO 639-2/3 language code (2-3 letters, e.g., "en" for English, "de" for German, "es" for Spanish, "ceb" for Cebuano).
 
 Text: {text}
 
@@ -212,9 +212,22 @@ Language code:"""
             # Handles formats like "en", "Language: en", "The language is: en"
             raw_response = response.strip().lower()
 
-            # Try to extract a 2-3 letter code from the response
-            code_match = re.search(r"\b([a-z]{2,3})\b", raw_response)
-            lang_code = code_match.group(1) if code_match else raw_response
+            # Find all 2-3 letter tokens from the response
+            # Use findall to get all matches, then prefer one in SUPPORTED_LANGUAGES
+            code_matches = re.findall(r"\b([a-z]{2,3})\b", raw_response)
+
+            # Select the best match: prefer a token in SUPPORTED_LANGUAGES,
+            # otherwise use the last token (most likely to be the answer)
+            lang_code = raw_response  # fallback if no tokens found
+            if code_matches:
+                # First, check if any token is in supported languages
+                for token in code_matches:
+                    if token in SUPPORTED_LANGUAGES:
+                        lang_code = token
+                        break
+                else:
+                    # No match in supported languages, use the last token
+                    lang_code = code_matches[-1]
 
             # Handle 3-letter ISO 639-2/3 codes by mapping to 2-letter ISO 639-1
             iso_639_3_to_1 = {
