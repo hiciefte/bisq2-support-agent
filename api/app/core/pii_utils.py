@@ -100,7 +100,8 @@ def _get_compiled_patterns(
     """Get or create compiled regex patterns."""
     if not cache:
         for name, pattern in patterns.items():
-            flags = re.IGNORECASE if name == "api_key" else 0
+            # Apply case-insensitive matching for credential-related patterns
+            flags = re.IGNORECASE if name.lower() in {"api_key", "password"} else 0
             cache[name] = re.compile(pattern, flags)
     return cache
 

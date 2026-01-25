@@ -1753,10 +1753,19 @@ class UnifiedPipelineService:
         # Override staff users in settings if provided
         settings_to_use = self.settings
         if staff_users is not None:
-            from unittest.mock import MagicMock
+            # Create a simple wrapper that overrides BISQ_STAFF_USERS
+            # but delegates all other attribute access to original settings
+            class SettingsOverride:
+                def __init__(self, base_settings: Any, staff_override: List[str]):
+                    self._base = base_settings
+                    self._staff_users = staff_override
 
-            settings_to_use = MagicMock(wraps=self.settings)
-            settings_to_use.BISQ_STAFF_USERS = staff_users
+                def __getattr__(self, name: str) -> Any:
+                    if name == "BISQ_STAFF_USERS":
+                        return self._staff_users
+                    return getattr(self._base, name)
+
+            settings_to_use = SettingsOverride(self.settings, staff_users)
 
         # Create and run sync service
         sync_service = Bisq2SyncService(

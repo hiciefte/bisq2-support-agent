@@ -204,13 +204,77 @@ Language code:"""
         try:
             prompt = self.DETECTION_PROMPT.format(text=text[:500])
             response = await self.llm.generate(prompt)
-            lang_code = response.strip().lower()[:2]
+            lang_code = response.strip().lower()
 
-            if lang_code in SUPPORTED_LANGUAGES:
-                return (lang_code, 0.9)
-            else:
-                # Unknown language code, default to English
-                return ("en", 0.5)
+            # Handle 3-letter ISO 639-2/3 codes by mapping to 2-letter ISO 639-1
+            iso_639_3_to_1 = {
+                "eng": "en",
+                "deu": "de",
+                "ger": "de",
+                "spa": "es",
+                "fra": "fr",
+                "fre": "fr",
+                "ita": "it",
+                "por": "pt",
+                "nld": "nl",
+                "dut": "nl",
+                "pol": "pl",
+                "rus": "ru",
+                "zho": "zh",
+                "chi": "zh",
+                "jpn": "ja",
+                "kor": "ko",
+                "ara": "ar",
+                "hin": "hi",
+                "tur": "tr",
+                "vie": "vi",
+                "tha": "th",
+                "ind": "id",
+                "ces": "cs",
+                "cze": "cs",
+                "swe": "sv",
+                "dan": "da",
+                "fin": "fi",
+                "nor": "no",
+                "ell": "el",
+                "gre": "el",
+                "heb": "he",
+                "hun": "hu",
+                "ron": "ro",
+                "rum": "ro",
+                "ukr": "uk",
+                "bul": "bg",
+                "hrv": "hr",
+                "slk": "sk",
+                "slo": "sk",
+                "slv": "sl",
+                "est": "et",
+                "lav": "lv",
+                "lit": "lt",
+                "msa": "ms",
+                "may": "ms",
+                "fas": "fa",
+                "per": "fa",
+                "ben": "bn",
+                "tam": "ta",
+                "tel": "te",
+                "mar": "mr",
+            }
+
+            # Try as-is first (2-letter code)
+            if len(lang_code) >= 2:
+                two_letter = lang_code[:2]
+                if two_letter in SUPPORTED_LANGUAGES:
+                    return (two_letter, 0.9)
+
+            # Try 3-letter code mapping
+            if len(lang_code) >= 3:
+                three_letter = lang_code[:3]
+                if three_letter in iso_639_3_to_1:
+                    return (iso_639_3_to_1[three_letter], 0.85)
+
+            # Unknown language code, default to English
+            return ("en", 0.5)
         except Exception:
             # On error, default to English with low confidence
             return ("en", 0.3)

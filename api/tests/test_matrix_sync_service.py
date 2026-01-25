@@ -57,11 +57,14 @@ def mock_pipeline_service():
 def mock_polling_state():
     """Create mock PollingStateManager."""
     state = MagicMock()
-    state.since_token = None
+    state.since_token = None  # Kept for backward compatibility
+    state.room_tokens = {}  # Per-room pagination tokens
     state.processed_ids = set()
     state.is_processed = MagicMock(return_value=False)
     state.mark_processed = MagicMock()
-    state.update_since_token = MagicMock()
+    state.update_since_token = MagicMock()  # Kept for backward compatibility
+    state.get_room_token = MagicMock(return_value=None)  # Per-room token getter
+    state.update_room_token = MagicMock()  # Per-room token setter
     state.save_batch_processed = MagicMock()
     return state
 
@@ -248,17 +251,18 @@ class TestRoomPolling:
     """Tests for Matrix room polling functionality."""
 
     @pytest.mark.asyncio
-    async def test_sync_fetches_messages_using_since_token(
+    async def test_sync_fetches_messages_using_per_room_token(
         self,
         mock_settings,
         mock_pipeline_service,
         mock_polling_state,
         mock_error_handler,
     ):
-        """Sync should use since_token for incremental polling."""
+        """Sync should use per-room token for incremental polling."""
         from app.services.training.matrix_sync_service import MatrixSyncService
 
-        mock_polling_state.since_token = "s12345_previous"
+        # Configure per-room token (the new approach)
+        mock_polling_state.get_room_token = MagicMock(return_value="s12345_previous")
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -283,16 +287,18 @@ class TestRoomPolling:
 
         # Verify call_with_retry was called (which wraps room_messages)
         assert mock_error_handler.call_with_retry.called
+        # Verify get_room_token was called to fetch the per-room token
+        mock_polling_state.get_room_token.assert_called()
 
     @pytest.mark.asyncio
-    async def test_sync_updates_since_token_after_poll(
+    async def test_sync_updates_room_token_after_poll(
         self,
         mock_settings,
         mock_pipeline_service,
         mock_polling_state,
         mock_error_handler,
     ):
-        """Sync should update since_token after successful poll."""
+        """Sync should update per-room token after successful poll."""
         from app.services.training.matrix_sync_service import MatrixSyncService
 
         service = MatrixSyncService(
@@ -316,8 +322,8 @@ class TestRoomPolling:
         ):
             await service.sync_rooms()
 
-        # Verify since_token was updated
-        mock_polling_state.update_since_token.assert_called()
+        # Verify per-room token was updated (uses update_room_token, not update_since_token)
+        mock_polling_state.update_room_token.assert_called()
 
     @pytest.mark.asyncio
     async def test_sync_handles_empty_room_response(

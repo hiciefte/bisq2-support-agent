@@ -25,7 +25,10 @@ class BisqSyncStateManager:
         state_file: Path to JSON state persistence file
         last_sync_timestamp: Timestamp of last successful sync
         processed_message_ids: Set of already processed message IDs
+        max_processed_ids: Maximum number of processed IDs to retain (prevents unbounded growth)
     """
+
+    MAX_PROCESSED_IDS = 10000  # Keep only last 10K IDs
 
     def __init__(self, state_file: str = "/data/bisq_sync_state.json"):
         """Initialize state manager with persistence file.
@@ -57,8 +60,9 @@ class BisqSyncStateManager:
                     data["last_sync_timestamp"]
                 )
 
-            # Restore processed IDs
-            self.processed_message_ids = set(data.get("processed_message_ids", []))
+            # Restore processed IDs (limit to most recent to prevent unbounded growth)
+            processed_list = data.get("processed_message_ids", [])
+            self.processed_message_ids = set(processed_list[-self.MAX_PROCESSED_IDS :])
 
             logger.info(
                 f"Loaded sync state: timestamp={self.last_sync_timestamp}, "
@@ -83,13 +87,15 @@ class BisqSyncStateManager:
         # Atomic write: write to temp file, then rename
         temp_file = self.state_file.with_suffix(".tmp")
         try:
+            # Prune to max size before saving
+            processed_list = list(self.processed_message_ids)[-self.MAX_PROCESSED_IDS :]
             data = {
                 "last_sync_timestamp": (
                     self.last_sync_timestamp.isoformat()
                     if self.last_sync_timestamp
                     else None
                 ),
-                "processed_message_ids": list(self.processed_message_ids),
+                "processed_message_ids": processed_list,
             }
 
             with open(temp_file, "w") as f:

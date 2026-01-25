@@ -53,13 +53,14 @@ class MessageNormalizer:
         staff_ids: Set of staff user IDs (lowercased for case-insensitive matching)
     """
 
-    def __init__(self, staff_ids: Set[str]):
+    def __init__(self, staff_ids: Optional[Set[str]] = None):
         """Initialize the normalizer with staff IDs.
 
         Args:
-            staff_ids: Set of user IDs that should be marked as staff
+            staff_ids: Set of user IDs that should be marked as staff.
+                      Defaults to empty set if not provided.
         """
-        self.staff_ids = {s.lower() for s in staff_ids}
+        self.staff_ids = {s.lower() for s in (staff_ids or set())}
 
     def normalize_bisq2(self, msg: Dict[str, Any]) -> UnifiedMessage:
         """Convert Bisq2 message to unified format.
@@ -164,18 +165,26 @@ class MessageNormalizer:
         except (ValueError, AttributeError):
             return datetime.now(timezone.utc)
 
-    def _parse_matrix_timestamp(self, ts_ms: int) -> datetime:
+    def _parse_matrix_timestamp(self, ts_ms: Any) -> datetime:
         """Parse Matrix timestamp (milliseconds since epoch) to datetime.
 
         Args:
-            ts_ms: Timestamp in milliseconds since Unix epoch
+            ts_ms: Timestamp in milliseconds since Unix epoch (int, str, or None)
 
         Returns:
             Parsed datetime in UTC, or current time if input is invalid
         """
-        if not ts_ms:
+        if ts_ms is None:
             return datetime.now(timezone.utc)
-        return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+        try:
+            # Handle string input by converting to int/float
+            if isinstance(ts_ms, str):
+                ts_ms = int(float(ts_ms))
+            elif not isinstance(ts_ms, (int, float)):
+                return datetime.now(timezone.utc)
+            return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+        except (ValueError, TypeError, OSError):
+            return datetime.now(timezone.utc)
 
     def _anonymize_pii(self, text: str) -> str:
         """Anonymize PII in text using centralized PII patterns.

@@ -208,8 +208,8 @@ class MatrixSyncService:
         logger.debug(f"Syncing room {room_id}")
         processed_count = 0
 
-        # Fetch messages using since_token if available
-        since_token = self.polling_state.since_token
+        # Fetch messages using per-room since_token if available
+        since_token = self.polling_state.get_room_token(room_id)
 
         # Use error handler for retry logic
         response = await self._error_handler.call_with_retry(
@@ -228,9 +228,9 @@ class MatrixSyncService:
         logger.debug(f"Fetched {len(raw_messages)} messages from {room_id}")
 
         if not raw_messages:
-            # Update since token even if no messages
+            # Update per-room since token even if no messages
             if hasattr(response, "end") and response.end:
-                self.polling_state.update_since_token(response.end)
+                self.polling_state.update_room_token(room_id, response.end)
             return 0
 
         # Convert matrix-nio events to dict format
@@ -247,9 +247,9 @@ class MatrixSyncService:
         )
 
         if not new_messages:
-            # Update since token even if no new messages
+            # Update per-room since token even if no new messages
             if hasattr(response, "end") and response.end:
-                self.polling_state.update_since_token(response.end)
+                self.polling_state.update_room_token(room_id, response.end)
             return 0
 
         # Use LLM-based extraction via pipeline service
@@ -272,9 +272,9 @@ class MatrixSyncService:
                     f"(routing: {result.routing})"
                 )
 
-        # Update since token
+        # Update per-room since token
         if hasattr(response, "end") and response.end:
-            self.polling_state.update_since_token(response.end)
+            self.polling_state.update_room_token(room_id, response.end)
 
         return processed_count
 

@@ -5,7 +5,7 @@ technical accuracy in multilingual support.
 """
 
 import re
-from typing import Dict, Tuple
+from typing import ClassVar, Dict, Optional, Tuple
 
 
 class GlossaryManager:
@@ -16,7 +16,7 @@ class GlossaryManager:
     """
 
     # Bisq-specific terms that should NEVER be translated
-    PROTECTED_TERMS: Dict[str, str] = {
+    PROTECTED_TERMS: ClassVar[Dict[str, str]] = {
         # Core Bisq concepts
         "Bisq": "Bisq",
         "Bisq 2": "Bisq 2",
@@ -47,7 +47,7 @@ class GlossaryManager:
         "trade": "trade",
     }
 
-    def __init__(self, additional_terms: Dict[str, str] = None):
+    def __init__(self, additional_terms: Optional[Dict[str, str]] = None):
         """Initialize the GlossaryManager.
 
         Args:

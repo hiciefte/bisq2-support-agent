@@ -79,15 +79,15 @@ async def verify_answer_msg_ids():
     print("Running FAQ extraction...")
     print("=" * 60)
 
-    # Convert to Matrix format expected by extractor
+    # Pass messages in standard Matrix format (extractor expects content.body)
+    # Don't flatten the structure - the extractor handles nested content
     formatted_messages = []
     for msg in test_messages:
         formatted = {
             "event_id": msg.get("event_id"),
             "sender": msg.get("sender"),
-            "body": msg.get("content", {}).get("body", ""),
+            "content": msg.get("content", {}),  # Keep nested structure
             "origin_server_ts": msg.get("origin_server_ts"),
-            "relates_to": msg.get("content", {}).get("m.relates_to"),
         }
         formatted_messages.append(formatted)
 

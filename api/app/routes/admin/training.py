@@ -1278,7 +1278,13 @@ def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
     """
     # Parse sources JSON string to list if present
     sources_raw = getattr(candidate, "generated_answer_sources", None)
-    sources = json.loads(sources_raw) if sources_raw else None
+    sources = None
+    if sources_raw:
+        try:
+            sources = json.loads(sources_raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Failed to parse sources JSON for candidate {candidate.id}")
+            sources = None
 
     return {
         "id": candidate.id,

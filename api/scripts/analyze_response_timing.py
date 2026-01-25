@@ -9,12 +9,18 @@ This script examines:
 
 The goal is to find the optimal temporal proximity threshold for grouping
 staff responses with preceding user questions when no explicit link exists.
+
+Usage:
+    python analyze_response_timing.py
+    python analyze_response_timing.py --bisq2 /path/to/bisq2.json --matrix /path/to/matrix.json
 """
 
+import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # Known staff IDs
 BISQ2_STAFF_IDS = {"suddenwhipvapor", "strayorigin"}
@@ -222,28 +228,75 @@ def format_time(seconds: float) -> str:
         return f"{seconds/86400:.1f}d"
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    # Default paths
+    data_dir = Path(__file__).parent.parent / "data"
+    default_bisq2 = data_dir / "sample_bisq2_messages.json"
+
+    # Try to find a default Matrix export in common locations
+    default_matrix: Optional[Path] = None
+    matrix_search_dirs = [
+        data_dir,
+        Path.home() / "Downloads",
+        Path(os.environ.get("MATRIX_EXPORT_DIR", "")),
+    ]
+    for search_dir in matrix_search_dirs:
+        if search_dir.exists():
+            for f in search_dir.glob("*matrix*Support*.json"):
+                default_matrix = f
+                break
+        if default_matrix:
+            break
+
+    parser = argparse.ArgumentParser(
+        description="Analyze response timing patterns in support messages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--bisq2",
+        type=Path,
+        default=default_bisq2,
+        help=f"Path to Bisq 2 messages JSON (default: {default_bisq2})",
+    )
+    parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=default_matrix,
+        help="Path to Matrix export JSON (default: auto-detect from data or Downloads)",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Run the timing analysis."""
+    args = parse_args()
+
     print("=" * 70)
     print("TEMPORAL PROXIMITY ANALYSIS FOR SUPPORT MESSAGES")
     print("=" * 70)
 
-    # Load data
-    data_dir = Path(__file__).parent.parent / "data"
-    downloads_dir = Path.home() / "Downloads"
-
-    bisq2_path = data_dir / "sample_bisq2_messages.json"
-    matrix_path = (
-        downloads_dir / "matrix - Support - Chat Export - 2026-01-14T10-50-16.342Z.json"
-    )
+    bisq2_path = args.bisq2
+    matrix_path = args.matrix
 
     print(f"\nLoading Bisq 2 messages from: {bisq2_path}")
     bisq2_msgs = load_bisq2_messages(bisq2_path)
     bisq2_analysis = analyze_bisq2_timing(bisq2_msgs)
 
-    print(f"Loading Matrix messages from: {matrix_path}")
-    matrix_msgs = load_matrix_messages(matrix_path)
-    matrix_analysis = analyze_matrix_timing(matrix_msgs)
+    if matrix_path and matrix_path.exists():
+        print(f"Loading Matrix messages from: {matrix_path}")
+        matrix_msgs = load_matrix_messages(matrix_path)
+        matrix_analysis = analyze_matrix_timing(matrix_msgs)
+    else:
+        print(f"\nMatrix export not found at: {matrix_path}")
+        print("Skipping Matrix analysis. Use --matrix to specify the file path.")
+        matrix_msgs = []
+        matrix_analysis = {
+            "total_messages": 0,
+            "linked_gaps": [],
+            "unlinked_staff_gaps": [],
+            "consecutive_same_author": [],
+        }
 
     # Bisq 2 Results
     print(f"\n{'=' * 70}")

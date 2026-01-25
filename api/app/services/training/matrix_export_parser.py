@@ -118,7 +118,15 @@ class MatrixExportParser:
         # Check against allowed directory if configured
         if self.allowed_export_dir:
             allowed_real = os.path.realpath(self.allowed_export_dir)
-            if not real_path.startswith(allowed_real):
+            # Use commonpath to prevent prefix bypass (e.g., /allowed_evil/...)
+            try:
+                common = os.path.commonpath([allowed_real, real_path])
+                if common != allowed_real:
+                    raise ValueError(
+                        f"Path {real_path} is outside allowed directory {allowed_real}"
+                    )
+            except ValueError:
+                # commonpath raises ValueError for paths on different drives (Windows)
                 raise ValueError(
                     f"Path {real_path} is outside allowed directory {allowed_real}"
                 )

@@ -292,9 +292,12 @@ class TieredCache:
         l1_stats = self.l1.get_stats()
         l3_stats = self.l3.get_stats()
 
-        # Combined hit ratio: L1 hits + L3 hits that weren't in L1
+        # Combined hit ratio calculation:
+        # L3 cache doesn't track individual hits, only entry counts.
+        # L1 hit ratio represents the actual user-visible cache performance.
+        # For more accurate combined stats, L3 would need hit/miss tracking.
         total_requests = l1_stats["hits"] + l1_stats["misses"]
-        combined_hits = l1_stats["hits"]  # L1 hits are pure wins
+        combined_hits = l1_stats["hits"]
 
         return {
             "l1": l1_stats,

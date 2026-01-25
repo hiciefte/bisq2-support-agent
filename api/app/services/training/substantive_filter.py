@@ -229,5 +229,27 @@ Return JSON array with classification for each answer."""
 
         Returns:
             Tuple of (substantive_pairs, filtered_pairs_with_reasons)
+
+        Note:
+            This uses asyncio.get_event_loop() to safely run in both sync and
+            async contexts. If called from an async context, use filter_answers directly.
         """
-        return asyncio.run(self.filter_answers(qa_pairs, batch_size))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run()
+            return asyncio.run(self.filter_answers(qa_pairs, batch_size))
+
+        # There's an existing event loop - this shouldn't be called from async context
+        # Log a warning and run in a new thread to avoid nested event loop issues
+        import concurrent.futures
+
+        logger.warning(
+            "filter_answers_sync called from async context. "
+            "Consider using filter_answers directly."
+        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                asyncio.run, self.filter_answers(qa_pairs, batch_size)
+            )
+            return future.result()
