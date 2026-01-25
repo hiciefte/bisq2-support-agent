@@ -394,9 +394,8 @@ async def get_unified_pending_reviews(
             limit=page_size, offset=offset
         )
 
-        # Get total count for pagination (use large limit to count all)
-        all_pending = pipeline_service.get_pending_reviews(limit=10000, offset=0)
-        total = len(all_pending)
+        # Get total count for pagination using efficient COUNT(*) query
+        total = pipeline_service.count_pending_reviews()
 
         return {
             "items": [_candidate_to_dict(c) for c in candidates],

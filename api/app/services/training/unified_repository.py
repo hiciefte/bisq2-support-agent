@@ -229,7 +229,8 @@ class UnifiedFAQCandidateRepository:
         cursor = conn.cursor()
 
         # Create unified_faq_candidates table
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS unified_faq_candidates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source TEXT NOT NULL CHECK (source IN ('bisq2', 'matrix')),
@@ -260,7 +261,8 @@ class UnifiedFAQCandidateRepository:
                 edited_staff_answer TEXT,
                 category TEXT DEFAULT 'General'
             )
-            """)
+            """
+        )
 
         # Create indexes for performance
         cursor.execute(
@@ -277,7 +279,8 @@ class UnifiedFAQCandidateRepository:
         )
 
         # Create calibration_state table (singleton - only one row)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS calibration_state (
                 id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
                 samples_collected INTEGER DEFAULT 0,
@@ -287,17 +290,21 @@ class UnifiedFAQCandidateRepository:
                 calibration_complete BOOLEAN DEFAULT FALSE,
                 last_updated TEXT
             )
-            """)
+            """
+        )
 
         # Insert default calibration state if not exists
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR IGNORE INTO calibration_state
             (id, samples_collected, samples_required, auto_approve_threshold, spot_check_threshold, calibration_complete)
             VALUES (1, 0, 100, 0.90, 0.75, FALSE)
-            """)
+            """
+        )
 
         # Create learning_state table (for LearningEngine persistence)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS learning_state (
                 id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
                 auto_send_threshold REAL DEFAULT 0.90,
@@ -307,17 +314,21 @@ class UnifiedFAQCandidateRepository:
                 threshold_history TEXT,
                 last_updated TEXT
             )
-            """)
+            """
+        )
 
         # Insert default learning state if not exists
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR IGNORE INTO learning_state
             (id, auto_send_threshold, queue_high_threshold, reject_threshold, review_history, threshold_history)
             VALUES (1, 0.90, 0.75, 0.50, '[]', '[]')
-            """)
+            """
+        )
 
         # Create conversation_threads table for multi-poll conversation handling
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS conversation_threads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 thread_key TEXT UNIQUE NOT NULL,
@@ -332,10 +343,12 @@ class UnifiedFAQCandidateRepository:
                 correction_reason TEXT,
                 FOREIGN KEY (candidate_id) REFERENCES unified_faq_candidates(id)
             )
-            """)
+            """
+        )
 
         # Create thread_messages table for granular message tracking
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS thread_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 thread_id INTEGER NOT NULL,
@@ -348,10 +361,12 @@ class UnifiedFAQCandidateRepository:
                 FOREIGN KEY (thread_id) REFERENCES conversation_threads(id),
                 UNIQUE(thread_id, message_id)
             )
-            """)
+            """
+        )
 
         # Create conversation_state_transitions table for audit trail
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS conversation_state_transitions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 thread_id INTEGER NOT NULL,
@@ -362,7 +377,8 @@ class UnifiedFAQCandidateRepository:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (thread_id) REFERENCES conversation_threads(id)
             )
-            """)
+            """
+        )
 
         # Create indexes for thread tables
         cursor.execute(
@@ -706,6 +722,40 @@ class UnifiedFAQCandidateRepository:
             return None
 
         return self._row_to_candidate(row)
+
+    def count_pending(
+        self,
+        source: Optional[Literal["bisq2", "matrix"]] = None,
+        routing: Optional[str] = None,
+    ) -> int:
+        """Count pending candidates using efficient COUNT(*) query.
+
+        Args:
+            source: Filter by source (None for all sources)
+            routing: Filter by routing queue (None for all queues)
+
+        Returns:
+            Total count of matching pending candidates
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = "SELECT COUNT(*) FROM unified_faq_candidates WHERE review_status = 'pending'"
+        params: list = []
+
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+
+        if routing:
+            query += " AND routing = ?"
+            params.append(routing)
+
+        cursor.execute(query, params)
+        count = cursor.fetchone()[0]
+        conn.close()
+
+        return count
 
     def get_queue_counts(
         self, source: Optional[Literal["bisq2", "matrix"]] = None
@@ -1070,11 +1120,13 @@ class UnifiedFAQCandidateRepository:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT samples_collected, samples_required, calibration_complete,
                    auto_approve_threshold, spot_check_threshold
             FROM calibration_state WHERE id = 1
-            """)
+            """
+        )
         row = cursor.fetchone()
         conn.close()
 

@@ -15,6 +15,7 @@ Architecture:
 
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, cast
@@ -1167,7 +1168,7 @@ class UnifiedPipelineService:
                 try:
                     faq_service.delete_faq(faq_id)
                     logger.info(f"Deleted FAQ {faq_id} during undo")
-                except Exception as e:
+                except (ValueError, sqlite3.Error, OSError) as e:
                     logger.warning(f"Failed to delete FAQ {faq_id} during undo: {e}")
                     # Continue with reverting the candidate anyway
 
@@ -1458,6 +1459,23 @@ class UnifiedPipelineService:
             limit=limit,
             offset=offset,
         )
+
+    def count_pending_reviews(
+        self,
+        source: Optional[Literal["bisq2", "matrix"]] = None,
+        routing: Optional[str] = None,
+    ) -> int:
+        """
+        Count pending candidates using efficient COUNT(*) query.
+
+        Args:
+            source: Optional filter by source (bisq2/matrix)
+            routing: Optional filter by routing category
+
+        Returns:
+            Total count of matching pending candidates
+        """
+        return self.repository.count_pending(source=source, routing=routing)
 
     def get_current_item(
         self,

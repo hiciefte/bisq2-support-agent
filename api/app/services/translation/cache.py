@@ -92,6 +92,7 @@ class SQLiteCache:
 
     Stores translations in SQLite for persistence across restarts.
     Automatically expires entries based on TTL.
+    Tracks hits/misses for accurate combined cache statistics.
     """
 
     DEFAULT_TTL = 604800  # 7 days in seconds
@@ -103,6 +104,8 @@ class SQLiteCache:
             db_path: Path to SQLite database file.
         """
         self.db_path = db_path
+        self.hits = 0
+        self.misses = 0
         self._init_db()
 
     def _init_db(self) -> None:
@@ -114,18 +117,22 @@ class SQLiteCache:
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS translations (
                     cache_key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL
                 )
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_expires_at
                 ON translations(expires_at)
-            """)
+            """
+            )
             conn.commit()
         finally:
             conn.close()
@@ -148,7 +155,11 @@ class SQLiteCache:
                 (key, now),
             )
             row = cursor.fetchone()
-            return row[0] if row else None
+            if row:
+                self.hits += 1
+                return row[0]
+            self.misses += 1
+            return None
         finally:
             conn.close()
 
@@ -198,7 +209,7 @@ class SQLiteCache:
         """Get cache statistics.
 
         Returns:
-            Dict with total entries and expired count.
+            Dict with total entries, expired count, and hit/miss stats.
         """
         now = int(time.time())
         conn = sqlite3.connect(self.db_path)
@@ -210,10 +221,14 @@ class SQLiteCache:
                 "SELECT COUNT(*) FROM translations WHERE expires_at <= ?", (now,)
             )
             expired = cursor.fetchone()[0]
+            total_requests = self.hits + self.misses
             return {
                 "total_entries": total,
                 "expired_entries": expired,
                 "active_entries": total - expired,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_ratio": self.hits / total_requests if total_requests > 0 else 0,
             }
         finally:
             conn.close()
@@ -293,16 +308,17 @@ class TieredCache:
         l3_stats = self.l3.get_stats()
 
         # Combined hit ratio calculation:
-        # L3 cache doesn't track individual hits, only entry counts.
-        # L1 hit ratio represents the actual user-visible cache performance.
-        # For more accurate combined stats, L3 would need hit/miss tracking.
+        # A request is a "hit" if served by L1 OR promoted from L3.
+        # L1 misses that hit L3 are counted as L3 hits.
+        # Total requests = L1 hits + L1 misses (which includes L3 lookups)
         total_requests = l1_stats["hits"] + l1_stats["misses"]
-        combined_hits = l1_stats["hits"]
+        combined_hits = l1_stats["hits"] + l3_stats["hits"]
 
         return {
             "l1": l1_stats,
             "l3": l3_stats,
             "total_requests": total_requests,
+            "combined_hits": combined_hits,
             "combined_hit_ratio": (
                 combined_hits / total_requests if total_requests > 0 else 0
             ),

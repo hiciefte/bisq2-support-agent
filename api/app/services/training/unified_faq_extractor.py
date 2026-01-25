@@ -487,9 +487,18 @@ class UnifiedFAQExtractor:
             if author in user_mapping:
                 return user_mapping[author]
 
-            # Check if staff
+            # Check if staff using exact or local-part matching
+            # Extract local part (before @) for Matrix-style identifiers
+            author_lower = author.lower()
+            author_local = author_lower.split("@")[0].lstrip("@")  # Handle @user:server
+
             is_staff = any(
-                staff_id.lower() in author.lower()
+                # Exact match (case-insensitive)
+                staff_id.lower() == author_lower
+                # Or local-part match for Matrix IDs like @user:matrix.org
+                or staff_id.lower() == author_local
+                # Or the staff ID is a local part that matches author's local part
+                or staff_id.lower().split("@")[0].lstrip("@") == author_local
                 for staff_id in self.staff_identifiers
             )
 

@@ -76,13 +76,11 @@ def mock_pipeline_service():
     # Mock is_calibration_mode
     service.is_calibration_mode.return_value = True
 
-    # Mock get_pending_reviews - returns paginated result
-    service.get_pending_reviews.return_value = {
-        "items": [],
-        "total": 0,
-        "page": 1,
-        "page_size": 10,
-    }
+    # Mock get_pending_reviews - returns list of candidates
+    service.get_pending_reviews.return_value = []
+
+    # Mock count_pending_reviews - returns total count
+    service.count_pending_reviews.return_value = 0
 
     # Mock get_current_item (the actual method name used by route)
     service.get_current_item.return_value = None
@@ -266,6 +264,7 @@ class TestPendingReviewsEndpoint:
         """Test GET /unified/queue/pending returns paginated list of candidates."""
         # Service returns a list, route converts to paginated response
         mock_pipeline_service.get_pending_reviews.return_value = [sample_candidate]
+        mock_pipeline_service.count_pending_reviews.return_value = 1
 
         response = client.get("/admin/training/unified/queue/pending")
 
