@@ -32,9 +32,10 @@ from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
+from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
-from app.services.rag.version_detector import VersionDetector
+from app.services.translation import TranslationService
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -66,6 +67,7 @@ class SimplifiedRAGService:
         wiki_service=None,
         faq_service=None,
         bisq_mcp_service: Optional[Bisq2MCPService] = None,
+        translation_service: Optional[TranslationService] = None,
     ):
         """Initialize the RAG service.
 
@@ -75,6 +77,7 @@ class SimplifiedRAGService:
             wiki_service: Optional WikiService instance for wiki operations
             faq_service: Optional FAQService instance for FAQ operations
             bisq_mcp_service: Optional Bisq2MCPService for live data integration
+            translation_service: Optional TranslationService for multilingual support
         """
         if settings is None:
             settings = get_settings()
@@ -83,6 +86,7 @@ class SimplifiedRAGService:
         self.wiki_service = wiki_service
         self.faq_service = faq_service
         self.bisq_mcp_service = bisq_mcp_service
+        self.translation_service = translation_service
 
         # MCP is now handled via HTTP transport in LLM provider
         # The LLM wrapper connects to MCP server at mcp_url
@@ -142,7 +146,7 @@ class SimplifiedRAGService:
         self.auto_send_router = AutoSendRouter()
 
         # Initialize Phase 1 components
-        self.version_detector = VersionDetector()
+        self.version_detector = ProtocolDetector()
         self.empathy_detector = EmpathyDetector()
         self.conversation_state_manager = ConversationStateManager()
 
@@ -613,6 +617,25 @@ class SimplifiedRAGService:
             # Preprocess the question
             preprocessed_question = question.strip()
 
+            # Handle multilingual translation if service is available
+            original_language = "en"
+            was_translated = False
+            if self.translation_service:
+                try:
+                    translation_result = await self.translation_service.translate_query(
+                        preprocessed_question
+                    )
+                    original_language = translation_result.get("source_lang", "en")
+                    was_translated = not translation_result.get("skipped", True)
+                    if was_translated:
+                        preprocessed_question = translation_result["translated_text"]
+                        logger.info(
+                            f"Translated query from {original_language} to English"
+                        )
+                except Exception as e:
+                    logger.warning(f"Translation failed, using original: {e}")
+                    # Continue with original question on translation failure
+
             # Detect version from question and chat history (unless overridden)
             if override_version:
                 detected_version = override_version
@@ -900,11 +923,31 @@ class SimplifiedRAGService:
                 sources=docs,
             )
 
+            # Translate response back to user's language if needed
+            final_response = response_text
+            if (
+                self.translation_service
+                and was_translated
+                and original_language != "en"
+            ):
+                try:
+                    response_translation = (
+                        await self.translation_service.translate_response(
+                            response_text, target_lang=original_language
+                        )
+                    )
+                    if not response_translation.get("error"):
+                        final_response = response_translation["translated_text"]
+                        logger.info(f"Translated response to {original_language}")
+                except Exception as e:
+                    logger.warning(f"Response translation failed, using English: {e}")
+                    # Continue with English response on translation failure
+
             # Update error rate (success)
             update_error_rate(is_error=False)
 
             return {
-                "answer": response_text,
+                "answer": final_response,
                 "sources": sources,
                 "response_time": response_time,
                 "answered_from": "documents",  # Metadata flag
@@ -917,6 +960,8 @@ class SimplifiedRAGService:
                 "emotion": emotion,
                 "emotion_intensity": emotion_intensity,
                 "mcp_tools_used": mcp_tools_used,
+                "original_language": original_language,
+                "translated": was_translated,
             }
 
         except Exception as e:
