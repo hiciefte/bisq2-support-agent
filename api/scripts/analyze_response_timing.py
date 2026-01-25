@@ -60,8 +60,29 @@ def load_matrix_messages(filepath: Path) -> list[dict[str, Any]]:
 
 def analyze_bisq2_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze timing patterns in Bisq 2 messages."""
-    # Build index by messageId
-    by_id = {msg["messageId"]: msg for msg in messages}
+    # Filter valid messages that have required fields
+    valid_messages = []
+    malformed_count = 0
+    for msg in messages:
+        msg_id = msg.get("messageId")
+        date = msg.get("date")
+        if msg_id and date:
+            try:
+                # Verify date can be parsed
+                parse_bisq2_timestamp(date)
+                valid_messages.append(msg)
+            except (ValueError, TypeError):
+                malformed_count += 1
+        else:
+            malformed_count += 1
+
+    if malformed_count > 0:
+        print(
+            f"  Skipped {malformed_count} malformed Bisq2 messages (missing messageId/date)"
+        )
+
+    # Build index by messageId (only from valid messages)
+    by_id = {msg["messageId"]: msg for msg in valid_messages}
 
     # Stats containers
     linked_gaps = []  # Gaps for explicit reply chains
@@ -69,7 +90,7 @@ def analyze_bisq2_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
     consecutive_same_author = []
 
     # Sort by timestamp
-    sorted_msgs = sorted(messages, key=lambda m: parse_bisq2_timestamp(m["date"]))
+    sorted_msgs = sorted(valid_messages, key=lambda m: parse_bisq2_timestamp(m["date"]))
 
     for i, msg in enumerate(sorted_msgs):
         author = msg.get("author", "")
@@ -130,15 +151,21 @@ def analyze_bisq2_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
 
 def analyze_matrix_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze timing patterns in Matrix messages."""
-    # Build index by event_id
-    by_id = {msg["event_id"]: msg for msg in messages}
+    # Filter messages that have a valid event_id
+    valid_messages = [msg for msg in messages if msg.get("event_id")]
+    skipped = len(messages) - len(valid_messages)
+    if skipped > 0:
+        print(f"  Skipped {skipped} Matrix messages without event_id")
+
+    # Build index by event_id (only from valid messages)
+    by_id = {msg["event_id"]: msg for msg in valid_messages}
 
     linked_gaps = []
     unlinked_staff_gaps = []
     consecutive_same_author = []
 
     # Sort by timestamp
-    sorted_msgs = sorted(messages, key=lambda m: m.get("origin_server_ts", 0))
+    sorted_msgs = sorted(valid_messages, key=lambda m: m.get("origin_server_ts", 0))
 
     for i, msg in enumerate(sorted_msgs):
         sender = msg.get("sender", "")
@@ -463,7 +490,8 @@ def main() -> None:
     print(f"\n{'=' * 70}")
     print("FINAL RECOMMENDATION")
     print(f"{'=' * 70}")
-    print("""
+    print(
+        """
 Based on the analysis:
 
 1. QUICK RESPONSE THRESHOLD (for immediate context):
@@ -485,7 +513,8 @@ RECOMMENDATION: Use 5 MINUTES (300 seconds) as default
 - Conservative threshold minimizes false groupings
 - Can be extended if context clearly indicates conversation
 - Aligns with typical chat conversation cadence
-""")
+"""
+    )
 
 
 if __name__ == "__main__":
