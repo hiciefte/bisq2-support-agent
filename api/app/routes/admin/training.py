@@ -1018,7 +1018,7 @@ async def trigger_matrix_sync(
 
         # Check if matrix-nio is available
         try:
-            import nio
+            import nio  # noqa: F401
         except ImportError:
             logger.warning("matrix-nio not installed, skipping Matrix sync")
             return SyncResponse(
