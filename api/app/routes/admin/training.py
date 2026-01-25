@@ -78,6 +78,8 @@ ALLOWED_REJECT_REASONS = {
     "other",
 }
 MAX_REJECTION_REASON_LENGTH = 500
+MAX_PAGE_SIZE = 100
+MAX_BATCH_SIZE = 50
 
 
 class UnifiedRejectRequest(BaseModel):
@@ -387,6 +389,11 @@ async def get_unified_pending_reviews(
 ):
     """Get paginated list of unified pending reviews."""
     logger.info(f"Admin request for unified pending reviews (page={page})")
+
+    # Validate and clamp pagination parameters
+    page = max(1, page)
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+
     try:
         # Convert page/page_size to limit/offset for the service API
         offset = (page - 1) * page_size
@@ -429,8 +436,8 @@ async def get_batch_items(
     """
     logger.info(f"Admin request for batch items (routing={routing}, limit={limit})")
 
-    # Enforce limits
-    limit = min(limit, 50)
+    # Enforce limits: clamp to valid range 1..MAX_BATCH_SIZE
+    limit = max(1, min(limit, MAX_BATCH_SIZE))
 
     try:
         candidates = pipeline_service.repository.get_pending(
@@ -652,7 +659,7 @@ async def reject_candidate(
         await pipeline_service.reject_candidate(
             candidate_id=candidate_id,
             reviewer=request_body.reviewer,
-            reason=request_body.reason,
+            reason=reason,
         )
 
         # Record feedback to LearningEngine using generation_confidence (not final_score)
@@ -667,7 +674,7 @@ async def reject_candidate(
                     "source": candidate.source,
                     "comparison_score": candidate.final_score,  # Keep for analysis
                     "reviewer": request_body.reviewer,
-                    "rejection_reason": request_body.reason,
+                    "rejection_reason": reason,
                 },
             )
             logger.debug(
@@ -1017,9 +1024,9 @@ async def trigger_matrix_sync(
             )
 
         # Check if matrix-nio is available
-        try:
-            import nio  # noqa: F401
-        except ImportError:
+        import importlib.util
+
+        if importlib.util.find_spec("nio") is None:
             logger.warning("matrix-nio not installed, skipping Matrix sync")
             return SyncResponse(
                 status="skipped",
