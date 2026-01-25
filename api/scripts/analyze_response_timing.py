@@ -490,8 +490,7 @@ def main() -> None:
     print(f"\n{'=' * 70}")
     print("FINAL RECOMMENDATION")
     print(f"{'=' * 70}")
-    print(
-        """
+    print("""
 Based on the analysis:
 
 1. QUICK RESPONSE THRESHOLD (for immediate context):
@@ -513,8 +512,7 @@ RECOMMENDATION: Use 5 MINUTES (300 seconds) as default
 - Conservative threshold minimizes false groupings
 - Can be extended if context clearly indicates conversation
 - Aligns with typical chat conversation cadence
-"""
-    )
+""")
 
 
 if __name__ == "__main__":
