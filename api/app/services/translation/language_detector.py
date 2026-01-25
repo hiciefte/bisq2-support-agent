@@ -190,7 +190,7 @@ Language code:"""
 
         Returns:
             Tuple of (language_code, confidence) where:
-            - language_code: ISO 639-1 two-letter code
+            - language_code: ISO 639-1 (2-letter) or ISO 639-2/3 (3-letter) code
             - confidence: Float between 0 and 1
         """
         # Fast path: check for English
@@ -213,15 +213,17 @@ Language code:"""
             raw_response = response.strip().lower()
 
             # Find all 2-3 letter tokens from the response
-            # Use findall to get all matches, then prefer one in SUPPORTED_LANGUAGES
+            # Use findall to get all matches, then prefer the LAST one in SUPPORTED_LANGUAGES
+            # (to avoid misclassifying "It is English (en)" as Italian "it")
             code_matches = re.findall(r"\b([a-z]{2,3})\b", raw_response)
 
-            # Select the best match: prefer a token in SUPPORTED_LANGUAGES,
-            # otherwise use the last token (most likely to be the answer)
+            # Select the best match: prefer the LAST token in SUPPORTED_LANGUAGES,
+            # otherwise use the last token (most likely to be the actual answer)
             lang_code = raw_response  # fallback if no tokens found
             if code_matches:
-                # First, check if any token is in supported languages
-                for token in code_matches:
+                # Check tokens in REVERSE order to prefer the last supported match
+                # This handles "It is English (en)" -> "en" not "it"
+                for token in reversed(code_matches):
                     if token in SUPPORTED_LANGUAGES:
                         lang_code = token
                         break

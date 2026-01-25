@@ -151,11 +151,13 @@ def analyze_bisq2_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
 
 def analyze_matrix_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze timing patterns in Matrix messages."""
-    # Filter messages that have a valid event_id
-    valid_messages = [msg for msg in messages if msg.get("event_id")]
+    # Filter messages that have both a valid event_id and timestamp
+    valid_messages = [
+        msg for msg in messages if msg.get("event_id") and msg.get("origin_server_ts")
+    ]
     skipped = len(messages) - len(valid_messages)
     if skipped > 0:
-        print(f"  Skipped {skipped} Matrix messages without event_id")
+        print(f"  Skipped {skipped} Matrix messages without event_id or timestamp")
 
     # Build index by event_id (only from valid messages)
     by_id = {msg["event_id"]: msg for msg in valid_messages}
@@ -165,7 +167,7 @@ def analyze_matrix_timing(messages: list[dict[str, Any]]) -> dict[str, Any]:
     consecutive_same_author = []
 
     # Sort by timestamp
-    sorted_msgs = sorted(valid_messages, key=lambda m: m.get("origin_server_ts", 0))
+    sorted_msgs = sorted(valid_messages, key=lambda m: m["origin_server_ts"])
 
     for i, msg in enumerate(sorted_msgs):
         sender = msg.get("sender", "")
@@ -230,11 +232,17 @@ def compute_stats(gaps: list[float]) -> dict[str, float]:
     sorted_gaps = sorted(gaps)
     n = len(sorted_gaps)
 
+    # Compute true median: average of two middle values for even n
+    if n % 2 == 0:
+        median = (sorted_gaps[n // 2 - 1] + sorted_gaps[n // 2]) / 2
+    else:
+        median = sorted_gaps[n // 2]
+
     return {
         "count": n,
         "min_seconds": sorted_gaps[0],
         "max_seconds": sorted_gaps[-1],
-        "median_seconds": sorted_gaps[n // 2],
+        "median_seconds": median,
         "p25_seconds": sorted_gaps[n // 4] if n >= 4 else sorted_gaps[0],
         "p75_seconds": sorted_gaps[3 * n // 4] if n >= 4 else sorted_gaps[-1],
         "p90_seconds": sorted_gaps[int(0.9 * n)] if n >= 10 else sorted_gaps[-1],
@@ -490,7 +498,8 @@ def main() -> None:
     print(f"\n{'=' * 70}")
     print("FINAL RECOMMENDATION")
     print(f"{'=' * 70}")
-    print("""
+    print(
+        """
 Based on the analysis:
 
 1. QUICK RESPONSE THRESHOLD (for immediate context):
@@ -512,7 +521,8 @@ RECOMMENDATION: Use 5 MINUTES (300 seconds) as default
 - Conservative threshold minimizes false groupings
 - Can be extended if context clearly indicates conversation
 - Aligns with typical chat conversation cadence
-""")
+"""
+    )
 
 
 if __name__ == "__main__":
