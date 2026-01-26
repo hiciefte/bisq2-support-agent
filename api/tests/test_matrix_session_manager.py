@@ -145,6 +145,7 @@ class TestSessionManagerLogin:
         assert mock_client.device_id == "EXISTING_DEVICE"
         assert mock_client.user_id == "@test:matrix.org"
         mock_client.whoami.assert_called_once()
+        mock_client.login.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_login_failure(self, session_manager, mock_client):
