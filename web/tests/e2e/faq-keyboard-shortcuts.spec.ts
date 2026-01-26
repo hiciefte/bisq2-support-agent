@@ -25,7 +25,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
     // Setup: Login and navigate to FAQ management before each test
     // Handles both fresh login and already-logged-in scenarios
     test.beforeEach(async ({ page, context, request }) => {
-        // Clear all cookies and storage to ensure clean state
+        // Clear cookies to ensure clean authentication state
         await context.clearCookies();
 
         // Wait for API to be ready (important after container restart tests)
