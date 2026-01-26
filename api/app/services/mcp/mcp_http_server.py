@@ -104,7 +104,17 @@ TOOL_DEFINITIONS = [
         "name": "get_offerbook",
         "description": """Get current buy/sell offers from the Bisq 2 offerbook.
 
-IMPORTANT - Understanding the response:
+IMPORTANT - Currency parameter:
+- Use FIAT currency codes (EUR, USD, GBP, CHF, etc.), NOT "BTC"
+- Common payment method → currency mappings:
+  * Faster Payments, UK Bank Transfer → GBP
+  * SEPA, SEPA Instant → EUR
+  * Zelle, ACH, Cash App, Venmo, Strike → USD
+  * Revolut → EUR, USD, or GBP (check user's context)
+  * TWINT → CHF
+  * Bizum → EUR
+
+Understanding the response:
 - 'total_count' = ALL offers for this currency (e.g., 56 EUR offers total)
 - 'filtered_count' = subset matching direction filter (e.g., 14 offers user can buy from)
 - When user asks "how many offers?" → ALWAYS report the TOTAL count
@@ -124,7 +134,7 @@ Example: If there are 56 EUR offers total (42 sell-to, 14 buy-from):
             "properties": {
                 "currency": {
                     "type": "string",
-                    "description": "3-letter currency code to filter offers (e.g., EUR, USD). REQUIRED for useful results.",
+                    "description": "3-letter FIAT currency code (EUR, USD, GBP, CHF, etc.). NOT 'BTC'. REQUIRED for useful results.",
                 },
                 "direction": {
                     "type": "string",
