@@ -48,7 +48,10 @@ test.describe("FAQ Management", () => {
         }
     };
 
-    test.beforeEach(async ({ page, request }) => {
+    test.beforeEach(async ({ page, context, request }) => {
+        // Clear all cookies and storage to ensure clean state
+        await context.clearCookies();
+
         // Wait for API to be ready (important after container restart tests)
         await waitForApiReady(request);
 
@@ -86,7 +89,8 @@ test.describe("FAQ Management", () => {
                 await page.click('a[href="/admin/manage-faqs"]');
 
                 // Wait for FAQ management page to load - look for specific heading
-                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 15000 });
+                // Use longer timeout as Next.js may need to compile the page (8-15s first time)
+                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
 
                 // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
                 await Promise.race([
@@ -101,6 +105,8 @@ test.describe("FAQ Management", () => {
                 lastError = error as Error;
                 console.log(`Attempt ${attempt}/3 failed: ${lastError.message}`);
                 if (attempt < 3) {
+                    // Clear cookies between retries to ensure clean state
+                    await context.clearCookies();
                     // Wait before retry with exponential backoff
                     await new Promise(r => setTimeout(r, attempt * 2000));
                 }

@@ -59,6 +59,17 @@ services:
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
       - CHOKIDAR_USEPOLLING=true
+    healthcheck:
+      # Extended timeouts for local development - Next.js compilation can take 15-30s
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/" ]
+      interval: 30s
+      timeout: 60s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G  # Next.js dev compilation needs more than 1GB
 
 networks:
   bisq-support-network:
