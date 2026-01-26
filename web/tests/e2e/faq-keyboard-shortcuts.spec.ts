@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
 
 /**
  * FAQ Keyboard Shortcuts Tests
@@ -13,14 +13,77 @@ import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL } from "./uti
  */
 
 test.describe("FAQ Keyboard Shortcuts", () => {
-    // Increase timeout for tests that may run after container restart tests
+    // Match timeout from working faq-management.spec.ts
     test.setTimeout(90000);
 
     // Base selector for FAQ cards (without border-border since it changes when selected)
-    const FAQ_CARD_SELECTOR = ".bg-card.rounded-lg.border";
+    const FAQ_CARD_SELECTOR = ".bg-card.border.rounded-lg";
     // Selector for selected FAQ cards (has ring-2 when selected)
     const SELECTED_FAQ_CARD_SELECTOR = ".bg-card.rounded-lg.ring-2";
     const createdFaqQuestions: string[] = [];
+
+    // Setup: Login and navigate to FAQ management before each test
+    // Handles both fresh login and already-logged-in scenarios
+    test.beforeEach(async ({ page, context, request }) => {
+        // Clear cookies to ensure clean authentication state
+        await context.clearCookies();
+
+        // Wait for API to be ready (important after container restart tests)
+        await waitForApiReady(request);
+
+        // Retry navigation with exponential backoff for flaky server startup
+        let lastError: Error | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                // Navigate to admin page using domcontentloaded (more reliable than networkidle)
+                await page.goto(`${WEB_BASE_URL}/admin`, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 20000
+                });
+
+                // Wait for login form to appear
+                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+
+                // Login with admin API key
+                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.click('button:has-text("Login")');
+
+                // Wait for authenticated UI to appear (sidebar with navigation)
+                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
+
+                // Navigate to FAQ management
+                await page.click('a[href="/admin/manage-faqs"]');
+
+                // Wait for FAQ management page to load - look for specific heading
+                // Use longer timeout as Next.js may need to compile the page (8-15s first time)
+                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
+
+                // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
+                // Use Promise.any to ensure at least one selector is found (rejects only if all fail)
+                await Promise.any([
+                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
+                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
+                ]);
+
+                // Success - exit retry loop
+                lastError = null;
+                break;
+            } catch (error) {
+                lastError = error as Error;
+                console.log(`Attempt ${attempt}/3 failed: ${lastError.message}`);
+                if (attempt < 3) {
+                    // Clear cookies between retries to ensure clean state
+                    await context.clearCookies();
+                    // Wait before retry with exponential backoff
+                    await new Promise(r => setTimeout(r, attempt * 2000));
+                }
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
+    });
 
     // Helper to create FAQ via API for faster test setup
     const createFaqViaApi = async (
@@ -49,42 +112,6 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             return await response.json();
         }
         return null;
-    };
-
-    // Helper to login and navigate to FAQ management with retry logic
-    const loginAndNavigateToFaqs = async (page: Page, maxRetries: number = 5) => {
-        let lastError: Error | null = null;
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                await page.goto(`${WEB_BASE_URL}/admin`, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 20000
-                });
-                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-                await page.fill('input[type="password"]', ADMIN_API_KEY);
-                await page.click('button:has-text("Login")');
-                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
-                await page.click('a[href="/admin/manage-faqs"]');
-                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 15000 });
-
-                // Wait for FAQ cards or "Add New FAQ" button
-                await Promise.race([
-                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 }).catch(() => null),
-                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 10000 }),
-                ]);
-                return; // Success
-            } catch (error) {
-                lastError = error as Error;
-                console.log(`loginAndNavigateToFaqs attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
-                if (attempt < maxRetries) {
-                    const delay = attempt * 3000;
-                    console.log(`Waiting ${delay}ms before retry...`);
-                    await new Promise(r => setTimeout(r, delay));
-                }
-            }
-        }
-        if (lastError) throw lastError;
     };
 
     test.afterEach(async ({ request }) => {
@@ -117,9 +144,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Enter Edit Test ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer for edit mode");
 
-            await loginAndNavigateToFaqs(page);
-
-            // Wait for FAQ to appear and refresh page to ensure it's loaded
+            // Reload page to show the newly created FAQ (same pattern as faq-management.spec.ts)
             await page.reload();
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
@@ -139,8 +164,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `E Key Protocol Test ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer");
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Press J to select first FAQ
@@ -167,8 +193,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await createFaqViaApi(request, faq1Question, "First FAQ answer");
             await createFaqViaApi(request, faq2Question, "Second FAQ answer");
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQs
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Search to filter to our test FAQs
@@ -222,8 +249,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await createFaqViaApi(request, faq2Question, "Second FAQ - verified", { verified: true });
             await createFaqViaApi(request, faq3Question, "Third FAQ - unverified", { verified: false });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQs
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Filter to show only our test FAQs by searching
@@ -267,8 +295,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const faqQuestion = `Last Unverified Test - ${Date.now()}`;
             await createFaqViaApi(request, faqQuestion, "Only unverified FAQ", { verified: false });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Search to filter
@@ -308,8 +337,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Protocol 1 Test - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer for protocol");
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Search for the test FAQ
@@ -342,12 +372,13 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             // Start with a different protocol to verify change
             await createFaqViaApi(request, testQuestion, "Test answer", { protocol: "multisig_v1" });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Protocol E Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -369,12 +400,13 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Protocol M Test - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer");
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Protocol M Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -396,8 +428,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Protocol 0 Test - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer", { protocol: "bisq_easy" });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
@@ -424,8 +457,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Protocol Edit Mode Test - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer", { protocol: "bisq_easy" });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
@@ -465,8 +499,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Edit Protocol Dropdown Test - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer", { protocol: "bisq_easy" });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Search for the test FAQ
@@ -499,8 +534,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             const testQuestion = `Change Protocol via Dropdown - ${Date.now()}`;
             await createFaqViaApi(request, testQuestion, "Test answer for protocol change", { protocol: "bisq_easy" });
 
-            await loginAndNavigateToFaqs(page);
+            // Reload page to show the newly created FAQ
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
             // Search for the test FAQ
@@ -542,10 +578,12 @@ test.describe("FAQ Keyboard Shortcuts", () => {
 
             // Reload page to verify persistence
             await page.reload();
+            await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Search again
-            await searchInput.fill("Change Protocol via Dropdown");
+            // Search again - need to re-query the search input after reload
+            const searchInputAfterReload = page.locator('input[placeholder="Search FAQs... (/)"]');
+            await searchInputAfterReload.fill("Change Protocol via Dropdown");
             await page.waitForTimeout(1000);
 
             // Verify protocol is still Multisig after reload
