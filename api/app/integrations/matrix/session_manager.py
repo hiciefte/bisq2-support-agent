@@ -6,13 +6,15 @@ import os
 from pathlib import Path
 
 try:
-    from nio import AsyncClient, LoginResponse
+    from nio import AsyncClient, LoginResponse, WhoamiError, WhoamiResponse
 
     NIO_AVAILABLE = True
 except ImportError:
     NIO_AVAILABLE = False
     AsyncClient = None
     LoginResponse = None
+    WhoamiError = None
+    WhoamiResponse = None
 
 from app.metrics.matrix_metrics import (
     matrix_auth_total,
@@ -67,20 +69,34 @@ class SessionManager:
     async def login(self) -> None:
         """Login with password or restore from session file.
 
-        Attempts session restoration first for efficiency. Falls back to
-        password-based login if session file is missing or invalid.
+        Attempts session restoration first for efficiency. Validates
+        restored tokens against the homeserver to detect stale/revoked
+        tokens early. Falls back to password-based login if session file
+        is missing, invalid, or token has expired.
 
         Raises:
             Exception: If login fails after all attempts
         """
         # Try session restoration first
         if self._load_session():
-            matrix_auth_total.labels(result="success").inc()
-            matrix_session_restores_total.labels(result="success").inc()
-            logger.info(
-                f"Session restored from {self.session_file} for {self.client.user_id}"
-            )
-            return
+            # Validate the restored token against the homeserver
+            if await self._validate_token():
+                matrix_auth_total.labels(result="success").inc()
+                matrix_session_restores_total.labels(result="success").inc()
+                logger.info(
+                    f"Session restored and validated from {self.session_file} "
+                    f"for {self.client.user_id}"
+                )
+                return
+            else:
+                # Token invalid, clear credentials and fall through to fresh login
+                logger.warning(
+                    f"Restored token is invalid/expired for {self.client.user_id}, "
+                    f"performing fresh login"
+                )
+                matrix_session_restores_total.labels(result="failure").inc()
+                self.client.access_token = None
+                self.client.device_id = None
 
         # Fall back to password login
         logger.info(
@@ -101,6 +117,38 @@ class SessionManager:
             matrix_auth_total.labels(result="failure").inc()
             matrix_fresh_logins_total.labels(result="failure").inc()
             raise MatrixAuthenticationError(error_msg)
+
+    async def _validate_token(self) -> bool:
+        """Validate the current access token against the Matrix homeserver.
+
+        Uses the /account/whoami endpoint to verify the token is still valid.
+        This detects stale/revoked tokens that would otherwise cause
+        M_UNKNOWN_TOKEN errors on first API call.
+
+        Returns:
+            True if token is valid, False if invalid/expired/missing
+        """
+        if not self.client.access_token:
+            logger.debug("No access token set, cannot validate")
+            return False
+
+        try:
+            response = await self.client.whoami()
+
+            if isinstance(response, WhoamiResponse):
+                logger.debug(f"Token validated successfully for {response.user_id}")
+                return True
+            elif isinstance(response, WhoamiError):
+                logger.warning(f"Token validation failed: {response.message}")
+                return False
+            else:
+                # Unknown response type
+                logger.warning(f"Unexpected whoami response type: {type(response)}")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Token validation error: {e}")
+            return False
 
     def _load_session(self) -> bool:
         """Load session from disk if exists and valid.

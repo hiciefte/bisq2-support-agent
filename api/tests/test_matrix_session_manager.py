@@ -121,6 +121,8 @@ class TestSessionManagerLogin:
     @pytest.mark.asyncio
     async def test_login_session_restore(self, session_manager, mock_client):
         """Test successful session restoration from existing file."""
+        from nio import WhoamiResponse
+
         # Setup: Create existing session file
         session_data = {
             "access_token": "existing_token_123",
@@ -130,13 +132,19 @@ class TestSessionManagerLogin:
         with open(session_manager.session_file, "w") as f:
             json.dump(session_data, f)
 
+        # Setup: Mock successful whoami validation
+        whoami_response = MagicMock(spec=WhoamiResponse)
+        whoami_response.user_id = "@test:matrix.org"
+        mock_client.whoami = AsyncMock(return_value=whoami_response)
+
         # Execute
         await session_manager.login()
 
-        # Verify: Should NOT call login (session restored)
+        # Verify: Should NOT call login (session restored and validated)
         assert mock_client.access_token == "existing_token_123"
         assert mock_client.device_id == "EXISTING_DEVICE"
         assert mock_client.user_id == "@test:matrix.org"
+        mock_client.whoami.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_login_failure(self, session_manager, mock_client):
@@ -259,6 +267,140 @@ class TestSessionFileSaving:
 
             # Verify: Parent directories were created
             assert os.path.exists(nested_path)
+
+
+class TestTokenValidation:
+    """Test token validation against homeserver."""
+
+    @pytest.mark.asyncio
+    async def test_validate_token_success(self, session_manager, mock_client):
+        """Test successful token validation with whoami endpoint."""
+        from nio import WhoamiResponse
+
+        # Setup: Create session file with valid token
+        session_data = {
+            "access_token": "valid_token",
+            "device_id": "VALID_DEVICE",
+            "user_id": "@test:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        # Load the session first to set access_token on client
+        session_manager._load_session()
+
+        # Setup: Mock successful whoami response with proper spec
+        whoami_response = MagicMock(spec=WhoamiResponse)
+        whoami_response.user_id = "@test:matrix.org"
+        mock_client.whoami = AsyncMock(return_value=whoami_response)
+
+        # Execute
+        result = await session_manager._validate_token()
+
+        # Verify
+        assert result is True
+        mock_client.whoami.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_token_expired(self, session_manager, mock_client):
+        """Test token validation fails with M_UNKNOWN_TOKEN error."""
+        # Setup: Create session file
+        session_data = {
+            "access_token": "expired_token",
+            "device_id": "OLD_DEVICE",
+            "user_id": "@test:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        # Load the session first
+        session_manager._load_session()
+
+        # Setup: Mock M_UNKNOWN_TOKEN error response
+        from nio import WhoamiError
+
+        error_response = MagicMock(spec=WhoamiError)
+        error_response.message = "M_UNKNOWN_TOKEN: Token is not active"
+        mock_client.whoami = AsyncMock(return_value=error_response)
+
+        # Execute
+        result = await session_manager._validate_token()
+
+        # Verify
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_validate_token_no_access_token(self, session_manager, mock_client):
+        """Test token validation fails when no access token is set."""
+        # Setup: No access token
+        mock_client.access_token = None
+
+        # Execute
+        result = await session_manager._validate_token()
+
+        # Verify
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_login_validates_restored_session(
+        self, session_manager, mock_client, mock_login_response
+    ):
+        """Test that login validates restored sessions before accepting them."""
+        # Setup: Create session file
+        session_data = {
+            "access_token": "expired_token",
+            "device_id": "OLD_DEVICE",
+            "user_id": "@test:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        # Setup: Mock token validation failure (expired token)
+        from nio import WhoamiError
+
+        error_response = MagicMock(spec=WhoamiError)
+        error_response.message = "M_UNKNOWN_TOKEN"
+        mock_client.whoami = AsyncMock(return_value=error_response)
+
+        # Setup: Mock successful fresh login
+        mock_client.login = AsyncMock(return_value=mock_login_response)
+
+        # Execute
+        await session_manager.login()
+
+        # Verify: whoami was called to validate, then fresh login happened
+        mock_client.whoami.assert_called_once()
+        mock_client.login.assert_called_once_with(
+            "test_password", device_name="Bisq Support Bot (Shadow Mode)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_login_accepts_valid_restored_session(
+        self, session_manager, mock_client
+    ):
+        """Test that login accepts restored sessions with valid tokens."""
+        from nio import WhoamiResponse
+
+        # Setup: Create session file
+        session_data = {
+            "access_token": "valid_token",
+            "device_id": "VALID_DEVICE",
+            "user_id": "@test:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        # Setup: Mock successful whoami validation with proper spec
+        whoami_response = MagicMock(spec=WhoamiResponse)
+        whoami_response.user_id = "@test:matrix.org"
+        mock_client.whoami = AsyncMock(return_value=whoami_response)
+
+        # Execute
+        await session_manager.login()
+
+        # Verify: whoami was called, no fresh login needed
+        mock_client.whoami.assert_called_once()
+        assert not hasattr(mock_client, "login") or not mock_client.login.called
 
 
 class TestTokenRedaction:
