@@ -11,12 +11,12 @@ from typing import Dict, Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from app.core.config import get_settings  # noqa: E402
+from app.metrics.task_metrics import instrument_feedback_processing  # noqa: E402
 from app.services.feedback_service import FeedbackService  # noqa: E402
-from app.utils.task_metrics import instrument_feedback_processing  # noqa: E402
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)  # type: ignore[attr-defined]
-logger = logging.getLogger(__name__)  # type: ignore[attr-defined]
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 @instrument_feedback_processing

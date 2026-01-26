@@ -10,7 +10,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,8 @@ class PollingStateManager:
 
     Attributes:
         state_file: Path to state persistence file
-        since_token: Current pagination token
+        since_token: Current pagination token (deprecated, use per-room tokens)
+        room_tokens: Per-room pagination tokens
         processed_ids: Set of processed message event IDs
     """
 
@@ -34,7 +35,8 @@ class PollingStateManager:
             state_file: Path to state persistence file
         """
         self.state_file = Path(state_file)
-        self.since_token: Optional[str] = None
+        self.since_token: Optional[str] = None  # Kept for backward compatibility
+        self.room_tokens: Dict[str, str] = {}  # Per-room pagination tokens
         self.processed_ids: Set[str] = set()
 
         # Load existing state if available
@@ -54,8 +56,11 @@ class PollingStateManager:
             with open(self.state_file, "r") as f:
                 state = json.load(f)
 
-            # Load pagination token
+            # Load legacy pagination token (for backward compatibility)
             self.since_token = state.get("since_token")
+
+            # Load per-room tokens
+            self.room_tokens = state.get("room_tokens", {})
 
             # Load processed IDs (limited to most recent to prevent unbounded growth)
             processed_list = state.get("processed_ids", [])
@@ -64,7 +69,7 @@ class PollingStateManager:
 
             last_poll = state.get("last_poll", "unknown")
             logger.info(
-                f"Polling state restored: since_token={self.since_token[:20] if self.since_token else None}..., "
+                f"Polling state restored: rooms={len(self.room_tokens)}, "
                 f"processed_ids={len(self.processed_ids)}, last_poll={last_poll}"
             )
 
@@ -84,7 +89,8 @@ class PollingStateManager:
             Exception: If state save fails
         """
         state_data = {
-            "since_token": self.since_token,
+            "since_token": self.since_token,  # Kept for backward compatibility
+            "room_tokens": self.room_tokens,
             "processed_ids": list(self.processed_ids)[-10000:],  # Keep last 10K only
             "last_poll": datetime.now(timezone.utc).isoformat(),
         }
@@ -161,4 +167,27 @@ class PollingStateManager:
 
     def save_batch_processed(self) -> None:
         """Save state after batch processing messages."""
+        self.save_state()
+
+    def get_room_token(self, room_id: str) -> Optional[str]:
+        """Get pagination token for a specific room.
+
+        Args:
+            room_id: Matrix room ID
+
+        Returns:
+            Room-specific token, or None if not set
+        """
+        return self.room_tokens.get(room_id)
+
+    def update_room_token(self, room_id: str, token: str) -> None:
+        """Update pagination token for a specific room.
+
+        Args:
+            room_id: Matrix room ID
+            token: New pagination token from Matrix API
+        """
+        self.room_tokens[room_id] = token
+        # Also update legacy token for backward compatibility
+        self.since_token = token
         self.save_state()

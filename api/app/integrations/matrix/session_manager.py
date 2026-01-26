@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 try:
-    from nio import AsyncClient, LoginResponse  # type: ignore[import-untyped]
+    from nio import AsyncClient, LoginResponse
 
     NIO_AVAILABLE = True
 except ImportError:
@@ -14,7 +14,7 @@ except ImportError:
     AsyncClient = None
     LoginResponse = None
 
-from app.services.matrix_metrics import (
+from app.metrics.matrix_metrics import (
     matrix_auth_total,
     matrix_fresh_logins_total,
     matrix_session_restores_total,

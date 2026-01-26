@@ -14,9 +14,12 @@ from app.services.rag.evaluation import EvaluationResult, RAGEvaluator
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
+from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.rag.vectorstore_manager import VectorStoreManager
 from app.services.rag.vectorstore_state_manager import VectorStoreStateManager
-from app.services.rag.version_detector import VersionDetector
+
+# Backwards compatibility alias
+VersionDetector = ProtocolDetector
 
 __all__ = [
     "AutoSendRouter",
@@ -31,8 +34,9 @@ __all__ = [
     "LLMProvider",
     "NLIValidator",
     "PromptManager",
+    "ProtocolDetector",
     "RAGEvaluator",
     "VectorStoreManager",
     "VectorStoreStateManager",
-    "VersionDetector",
+    "VersionDetector",  # Deprecated alias
 ]

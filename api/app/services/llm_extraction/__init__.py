@@ -1,6 +1,6 @@
 """LLM extraction package for privacy-preserving question extraction."""
 
-from app.services.llm_extraction.metrics import (
+from app.metrics.llm_extraction_metrics import (
     extraction_confidence_score,
     extraction_processing_time,
     messages_filtered_total,
@@ -16,13 +16,11 @@ from app.services.llm_extraction.pre_filters import (
     SafeRegexMatcher,
     validate_message_input,
 )
-from app.services.llm_extraction.unified_batch_processor import UnifiedBatchProcessor
 from app.services.llm_extraction.validators import QuestionValidator
 
 __all__ = [
     "ExtractedQuestion",
     "ExtractionResult",
-    "UnifiedBatchProcessor",
     "MessagePreFilter",
     "MessageNormalizer",
     "SafeRegexMatcher",

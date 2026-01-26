@@ -89,10 +89,10 @@ test.describe("Similar FAQ Check", () => {
                 });
 
                 // Wait for login form
-                await page.waitForSelector('input[type="password"]', { timeout: 20000 });
+                await page.getByLabel('API Key').waitFor({ timeout: 20000 });
 
                 // Login with admin API key
-                await page.fill('input[type="password"]', ADMIN_API_KEY);
+                await page.getByLabel('API Key').fill(ADMIN_API_KEY);
                 await page.click('button:has-text("Login")');
 
                 // Wait for authenticated UI

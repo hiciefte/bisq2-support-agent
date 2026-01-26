@@ -112,14 +112,6 @@ class PromptManager:
                 )
                 if formatted:
                     formatted_history.append(formatted)
-            # Check if this is a dictionary with user/assistant keys (legacy format)
-            elif isinstance(exchange, dict):
-                user_msg = exchange.get("user", "")
-                ai_msg = exchange.get("assistant", "")
-                if user_msg:
-                    formatted_history.append(f"Human: {user_msg}")
-                if ai_msg:
-                    formatted_history.append(f"Assistant: {ai_msg}")
             else:
                 logger.warning(
                     f"Unknown exchange type in chat history: {type(exchange)}"

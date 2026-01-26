@@ -17,9 +17,9 @@ import logging
 import os
 from typing import Dict, Optional
 
+from app.metrics.task_metrics import instrument_wiki_update
 from app.scripts.download_bisq2_media_wiki import main as download_main
 from app.scripts.process_wiki_dump import WikiDumpProcessor
-from app.utils.task_metrics import instrument_wiki_update
 
 # Configure logging
 logging.basicConfig(

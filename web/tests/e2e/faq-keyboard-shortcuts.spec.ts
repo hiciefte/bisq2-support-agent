@@ -300,9 +300,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Search to filter
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Last Unverified Test");
+            await searchInput.fill(faqQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -342,9 +342,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Search for the test FAQ
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Protocol 1 Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -377,6 +377,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
@@ -405,6 +406,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
@@ -433,8 +435,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Protocol 0 Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -462,8 +465,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Protocol Edit Mode Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input by clicking on the page title
@@ -504,9 +508,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Search for the test FAQ
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Edit Protocol Dropdown Test");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             // Wait for FAQs to appear and blur the search input
@@ -539,9 +543,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Search for the test FAQ
+            // Search for the EXACT question to avoid matching leftover test data
             const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
-            await searchInput.fill("Change Protocol via Dropdown");
+            await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });

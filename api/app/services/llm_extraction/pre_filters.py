@@ -22,7 +22,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Tuple
 
 from app.core.config import get_settings
-from app.services.llm_extraction.metrics import messages_filtered_total
+from app.metrics.llm_extraction_metrics import messages_filtered_total
 
 logger = logging.getLogger(__name__)
 

@@ -3,14 +3,14 @@
 import logging
 
 try:
-    from nio import AsyncClient  # type: ignore[import-untyped]
+    from nio import AsyncClient
 
     NIO_AVAILABLE = True
 except ImportError:
     NIO_AVAILABLE = False
     AsyncClient = None
 
-from app.services.matrix_metrics import matrix_connection_status
+from app.metrics.matrix_metrics import matrix_connection_status
 
 logger = logging.getLogger(__name__)
 

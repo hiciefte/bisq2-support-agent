@@ -8,6 +8,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Pipeline Threshold Constants
+# =============================================================================
+# These constants are used by both UnifiedPipelineService and LearningEngine
+# to ensure consistent routing decisions across the training pipeline.
+#
+# - AUTO_APPROVE: High-confidence candidates that can be auto-approved
+# - SPOT_CHECK: Medium-confidence candidates that need quick human verification
+# - FULL_REVIEW: Low-confidence candidates requiring thorough human review
+# - DUPLICATE_FAQ: Semantic similarity threshold for duplicate detection
+
+PIPELINE_AUTO_APPROVE_THRESHOLD: float = 0.90
+PIPELINE_SPOT_CHECK_THRESHOLD: float = 0.75
+PIPELINE_DUPLICATE_FAQ_THRESHOLD: float = 0.85
+
 
 class Settings(BaseSettings):
     # API settings
@@ -238,6 +253,19 @@ class Settings(BaseSettings):
         description="Comma-separated list of support staff Matrix usernames (localparts only)",
     )
 
+    # Auto-Training Pipeline Settings
+    AUTO_TRAINING_ENABLED: bool = Field(
+        default=False,
+        description="Enable automatic training pipeline for staff answer ingestion",
+    )
+    # Trusted staff Matrix IDs for auto-training (full Matrix IDs like @user:matrix.org)
+    # SECURITY: Always use full Matrix IDs to prevent impersonation from other homeservers
+    # NOTE: No default - must be explicitly configured via TRUSTED_STAFF_IDS env var
+    TRUSTED_STAFF_IDS: str | list[str] = Field(
+        default="",
+        description="Comma-separated list of trusted staff full Matrix IDs for auto-training",
+    )
+
     # Environment settings
     ENVIRONMENT: str = "development"
 
@@ -287,11 +315,6 @@ class Settings(BaseSettings):
     def PROCESSED_MESSAGE_IDS_FILE_PATH(self) -> str:
         """Complete path to the processed message IDs file"""
         return os.path.join(self.DATA_DIR, "processed_message_ids.jsonl")
-
-    @property
-    def SIMILAR_FAQ_DB_PATH(self) -> str:
-        """Complete path to the SQLite Similar FAQ Candidates database file"""
-        return os.path.join(self.DATA_DIR, "similar_faqs.db")
 
     @property
     def MATRIX_SESSION_PATH(self) -> str:
@@ -607,6 +630,59 @@ class Settings(BaseSettings):
 
         # Fallback for unexpected types
         return []
+
+    @field_validator("TRUSTED_STAFF_IDS", mode="before")
+    @classmethod
+    def parse_trusted_staff_ids(cls, v: str | list[str]) -> list[str]:
+        """Normalize TRUSTED_STAFF_IDS to list of full Matrix IDs.
+
+        Accepts either a comma-separated string or a list of strings.
+        Handles trimming whitespace and ignores empty entries.
+        Preserves case for Matrix ID matching (Matrix IDs are case-sensitive).
+
+        Args:
+            v: Trusted staff Matrix IDs as string (comma-separated) or list of strings
+
+        Returns:
+            List of trusted staff Matrix IDs (trimmed, case preserved)
+        """
+        result = []
+
+        # Handle list input
+        if isinstance(v, list):
+            result = [
+                staff_id.strip()
+                for staff_id in v
+                if isinstance(staff_id, str) and staff_id.strip()
+            ]
+        # Handle string input
+        elif isinstance(v, str):
+            result = [staff_id.strip() for staff_id in v.split(",") if staff_id.strip()]
+
+        return result
+
+    @field_validator("TRUSTED_STAFF_IDS")
+    @classmethod
+    def validate_trusted_staff_ids(cls, v: list[str]) -> list[str]:
+        """Validate TRUSTED_STAFF_IDS entries are valid Matrix IDs.
+
+        Args:
+            v: List of trusted staff Matrix IDs
+
+        Returns:
+            Validated list of Matrix IDs
+
+        Raises:
+            ValueError: If any Matrix ID is malformed
+        """
+        for staff_id in v:
+            if not staff_id.startswith("@"):
+                raise ValueError(f"Invalid Matrix ID '{staff_id}': must start with @")
+            if ":" not in staff_id:
+                raise ValueError(
+                    f"Invalid Matrix ID '{staff_id}': must contain homeserver (e.g., @user:matrix.org)"
+                )
+        return v
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

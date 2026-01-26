@@ -8,10 +8,8 @@ import pytest
 # Skip entire module if matrix-nio is not installed
 nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-from app.integrations.matrix.error_handler import (  # noqa: E402
-    CircuitBreaker,
-    ErrorHandler,
-)
+from app.integrations.matrix.error_handler import CircuitBreaker  # noqa: E402
+from app.integrations.matrix.error_handler import ErrorHandler  # noqa: E402
 
 # Import nio classes after importorskip (ErrorResponse used in tests)
 from nio import ErrorResponse  # noqa: E402
@@ -65,6 +63,32 @@ class TestCallWithRetry:
         # Verify
         assert result == "success"
         mock_func.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_method_name_not_passed_to_underlying_function(self, error_handler):
+        """Test that method_name kwarg is NOT passed to the underlying function.
+
+        The method_name parameter is used for metrics/logging purposes only
+        and should be stripped before calling the actual Matrix API function.
+        This prevents 'got an unexpected keyword argument method_name' errors.
+        """
+        # Setup: Track what kwargs are passed to the function
+        received_kwargs = {}
+
+        async def mock_func(*args, **kwargs):
+            received_kwargs.update(kwargs)
+            return "success"
+
+        # Execute: Call with method_name in kwargs
+        result = await error_handler.call_with_retry(
+            mock_func, method_name="room_messages"
+        )
+
+        # Verify: method_name should NOT be in the kwargs passed to the function
+        assert result == "success"
+        assert (
+            "method_name" not in received_kwargs
+        ), "method_name should be stripped from kwargs before calling underlying function"
 
     @pytest.mark.asyncio
     async def test_retry_on_auth_error(self, error_handler, mock_session_manager):

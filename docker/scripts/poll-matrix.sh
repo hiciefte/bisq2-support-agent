@@ -1,6 +1,6 @@
 #!/bin/bash
-# Matrix Polling Script
-# Polls Matrix support channels for new questions via shadow mode endpoint
+# Unified Training Sync Script
+# Polls Bisq 2 and Matrix support conversations and processes them through the unified training pipeline
 #
 # Usage: ./poll-matrix.sh
 # Expected to run via cron every 30 minutes
@@ -10,9 +10,14 @@ set -euo pipefail
 # Configuration
 API_HOST="${API_HOST:-api}"
 API_PORT="${API_PORT:-8000}"
-API_ENDPOINT="http://${API_HOST}:${API_PORT}/admin/shadow-mode/poll"
-TIMEOUT="${POLL_TIMEOUT:-30}"
-LOG_PREFIX="[matrix-poll]"
+BISQ_SYNC_ENDPOINT="http://${API_HOST}:${API_PORT}/admin/training/sync/bisq"
+MATRIX_SYNC_ENDPOINT="http://${API_HOST}:${API_PORT}/admin/training/sync/matrix"
+TIMEOUT="${POLL_TIMEOUT:-60}"
+LOG_PREFIX="[training-sync]"
+ADMIN_API_KEY="${ADMIN_API_KEY:-}"
+
+# Track overall success
+SYNC_FAILED=0
 
 # Logging functions
 log_info() {
@@ -27,14 +32,22 @@ log_success() {
     echo "${LOG_PREFIX} SUCCESS: $*" >&2
 }
 
-# Main polling function
-poll_matrix() {
+# Generic sync function
+sync_source() {
+    local source_name="$1"
+    local endpoint="$2"
+
+    # Skip if no admin API key configured
+    if [[ -z "${ADMIN_API_KEY}" ]]; then
+        log_info "ADMIN_API_KEY not set, skipping ${source_name} sync"
+        return 0
+    fi
+
     local start_time
     start_time=$(date +%s)
 
-    log_info "Starting Matrix poll at $(date --iso-8601=seconds)"
+    log_info "Starting ${source_name} sync at $(date --iso-8601=seconds)"
 
-    # Call API endpoint with timeout and error handling
     local http_code
     local response
 
@@ -42,8 +55,9 @@ poll_matrix() {
         --max-time "${TIMEOUT}" \
         -X POST \
         -H "Content-Type: application/json" \
-        "${API_ENDPOINT}" 2>&1); then
-        log_error "curl failed: ${response}"
+        -H "X-API-Key: ${ADMIN_API_KEY}" \
+        "${endpoint}" 2>&1); then
+        log_error "${source_name} sync curl failed: ${response}"
         return 1
     fi
 
@@ -52,24 +66,46 @@ poll_matrix() {
     # Extract response body (everything except last line)
     response=$(echo "${response}" | head -n -1)
 
-    # Check HTTP status
     if [[ "${http_code}" -eq 200 ]]; then
         local end_time
         end_time=$(date +%s)
         local duration=$((end_time - start_time))
 
-        log_success "Poll completed in ${duration}s"
+        # Check for "skipped" status (Matrix not configured)
+        if echo "${response}" | grep -q '"status"[[:space:]]*:[[:space:]]*"skipped"'; then
+            log_info "${source_name} sync skipped: not configured"
+            return 0
+        fi
+
+        log_success "${source_name} sync completed in ${duration}s"
         log_info "Response: ${response}"
         return 0
+    elif [[ "${http_code}" -eq 503 ]]; then
+        log_info "Unified pipeline service not initialized yet"
+        return 0
     else
-        log_error "HTTP ${http_code}: ${response}"
+        log_error "${source_name} sync HTTP ${http_code}: ${response}"
         return 1
     fi
 }
 
-# Execute poll with error handling
-if poll_matrix; then
-    exit 0
-else
+# Execute syncs
+log_info "Starting unified training sync"
+
+# Sync Bisq conversations
+if ! sync_source "Bisq" "${BISQ_SYNC_ENDPOINT}"; then
+    SYNC_FAILED=1
+fi
+
+# Sync Matrix conversations
+if ! sync_source "Matrix" "${MATRIX_SYNC_ENDPOINT}"; then
+    SYNC_FAILED=1
+fi
+
+if [[ "${SYNC_FAILED}" -eq 1 ]]; then
+    log_error "One or more sync operations failed"
     exit 1
 fi
+
+log_success "Unified training sync complete"
+exit 0

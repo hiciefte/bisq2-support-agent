@@ -29,10 +29,10 @@ from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
 from app.integrations.bisq_api import Bisq2API
+from app.metrics.task_metrics import instrument_faq_extraction
 from app.services.faq_service import FAQService
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.wiki_service import WikiService
-from app.utils.task_metrics import instrument_faq_extraction
 from app.utils.task_metrics_persistence import init_persistence
 
 # Configure logging

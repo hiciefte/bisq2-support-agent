@@ -11,7 +11,7 @@ import time
 from typing import Callable
 
 from app.core.config import get_settings
-from app.core.tor_metrics import record_tor_request
+from app.metrics.tor_metrics import record_tor_request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response

@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Optional
 
 try:
-    from nio import ErrorResponse, RoomMessagesError  # type: ignore[import-untyped]
+    from nio import ErrorResponse, RoomMessagesError
 
     NIO_AVAILABLE = True
 except ImportError:
@@ -14,7 +14,7 @@ except ImportError:
     ErrorResponse = None
     RoomMessagesError = None
 
-from app.services.matrix_metrics import (
+from app.metrics.matrix_metrics import (
     matrix_api_calls_total,
     matrix_api_retry_total,
     matrix_auth_failures_total,
@@ -78,7 +78,8 @@ class ErrorHandler:
             Exception: If max retries exceeded or circuit breaker open
         """
         # Extract method name for metrics (default to "unknown")
-        method_name = kwargs.get(
+        # Use pop() to remove method_name from kwargs so it's not passed to the underlying function
+        method_name = kwargs.pop(
             "method_name", func.__name__ if hasattr(func, "__name__") else "unknown"
         )
 

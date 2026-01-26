@@ -10,18 +10,19 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 
+import aisuite  # type: ignore[import-untyped]
 from app.core.config import get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
-from app.core.tor_metrics import (
+from app.db.run_migrations import run_migrations
+from app.metrics.tor_metrics import (
     update_cookie_security_mode,
     update_tor_service_configured,
 )
-from app.db.run_migrations import run_migrations
-from app.integrations.matrix_shadow_mode import MatrixShadowModeService
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import (
+    alertmanager,
     chat,
     feedback_routes,
     health,
@@ -36,14 +37,17 @@ from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.public_faq_service import PublicFAQService
-from app.services.shadow_mode.repository import ShadowModeRepository
-from app.services.shadow_mode_processor import ShadowModeProcessor
+from app.services.rag.learning_engine import LearningEngine
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
+from app.services.training.comparison_engine import AnswerComparisonEngine
+from app.services.training.unified_pipeline_service import UnifiedPipelineService
+from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 from app.services.wiki_service import WikiService
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from langchain_openai import OpenAIEmbeddings
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
@@ -85,7 +89,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize task metrics persistence and restore values
     logger.info("Initializing task metrics persistence...")
-    from app.utils.task_metrics import restore_metrics_from_database
+    from app.metrics.task_metrics import restore_metrics_from_database
     from app.utils.task_metrics_persistence import init_persistence
 
     init_persistence(settings)
@@ -149,50 +153,41 @@ async def lifespan(app: FastAPI):
     await tor_monitoring_service.start()
     logger.info("Tor monitoring service started")
 
-    # Initialize Matrix shadow mode service if configured
-    # Accept either MATRIX_PASSWORD (recommended) or MATRIX_TOKEN (deprecated) for auth
-    if (
-        settings.MATRIX_HOMESERVER_URL
-        and (settings.MATRIX_PASSWORD or settings.MATRIX_TOKEN)
-        and settings.MATRIX_ROOMS
-    ):
-        logger.info("Initializing Matrix shadow mode service...")
+    # Initialize AnswerComparisonEngine for real LLM-based answer comparison
+    logger.info("Initializing AnswerComparisonEngine...")
+    ai_client = aisuite.Client()
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    comparison_engine = AnswerComparisonEngine(
+        ai_client=ai_client,
+        embeddings_model=embeddings_model,
+        judge_model="openai:gpt-4o-mini",
+    )
+    logger.info("AnswerComparisonEngine initialized")
 
-        # Initialize shadow mode repository for persistent storage
-        shadow_db_path = os.path.join(settings.DATA_DIR, "shadow_mode.db")
-        shadow_repository = ShadowModeRepository(shadow_db_path)
+    # Initialize Unified Pipeline Service for unified FAQ training
+    logger.info("Initializing UnifiedPipelineService...")
+    unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
+    unified_pipeline_service = UnifiedPipelineService(
+        settings=settings,
+        rag_service=rag_service,
+        faq_service=faq_service,
+        db_path=unified_db_path,
+        comparison_engine=comparison_engine,
+        aisuite_client=ai_client,
+    )
+    app.state.unified_pipeline_service = unified_pipeline_service
+    logger.info("UnifiedPipelineService initialized")
 
-        # Initialize shadow mode processor with repository and settings (for LLM classification)
-        shadow_processor = ShadowModeProcessor(
-            repository=shadow_repository, settings=settings
-        )
-
-        # Initialize Matrix service (uses first room for now)
-        room_id = settings.MATRIX_ROOMS[0] if settings.MATRIX_ROOMS else ""
-        matrix_service = MatrixShadowModeService(
-            homeserver=settings.MATRIX_HOMESERVER_URL,
-            user_id=settings.MATRIX_USER,
-            password=settings.MATRIX_PASSWORD or None,  # Recommended
-            access_token=settings.MATRIX_TOKEN or None,  # DEPRECATED fallback
-            session_file=settings.MATRIX_SESSION_PATH,
-            room_id=room_id,
-        )
-
-        # Store in app state
-        app.state.matrix_service = matrix_service
-        app.state.shadow_repository = shadow_repository
-        app.state.shadow_processor = shadow_processor
-
-        # Connect to Matrix (doesn't start polling automatically)
-        await matrix_service.connect()
-        logger.info(f"Matrix shadow mode service connected - monitoring room {room_id}")
-    else:
-        logger.info(
-            "Matrix shadow mode service not configured - skipping initialization"
-        )
-        app.state.matrix_service = None
-        app.state.shadow_repository = None
-        app.state.shadow_processor = None
+    # Initialize LearningEngine for adaptive threshold tuning
+    logger.info("Initializing LearningEngine...")
+    learning_engine = LearningEngine()
+    # Load persisted state from unified training database
+    unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
+    learning_engine.load_state(unified_repo)
+    app.state.learning_engine = learning_engine
+    logger.info(
+        f"LearningEngine initialized with thresholds: {learning_engine.get_current_thresholds()}"
+    )
 
     # Yield control to the application
     yield
@@ -200,13 +195,19 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Application shutdown...")
 
-    # Disconnect Matrix shadow mode service
-    if hasattr(app.state, "matrix_service") and app.state.matrix_service:
-        logger.info("Disconnecting Matrix shadow mode service...")
-        await app.state.matrix_service.disconnect()
-
-    # Shadow mode repository uses per-operation SQLite connections that auto-close.
-    # No explicit cleanup needed - connections are closed after each query.
+    # Save LearningEngine state before shutdown (P5: wrapped in try-catch)
+    if hasattr(app.state, "learning_engine") and app.state.learning_engine:
+        try:
+            logger.info("Saving LearningEngine state...")
+            unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
+            unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
+            if app.state.learning_engine.save_state(unified_repo):
+                logger.info("LearningEngine state saved successfully")
+            else:
+                logger.warning("LearningEngine state save returned False")
+        except Exception as e:
+            # P5: Log error but don't crash shutdown
+            logger.error(f"Failed to save LearningEngine state during shutdown: {e}")
 
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
@@ -428,6 +429,9 @@ app.include_router(onion_verify.router, tags=["Onion Verification"])
 app.include_router(
     mcp_router, tags=["MCP"]
 )  # MCP HTTP endpoint for AISuite integration
+app.include_router(
+    alertmanager.router, prefix="/alertmanager", tags=["Alertmanager"]
+)  # Alertmanager webhook for Matrix notifications
 
 
 @app.get("/healthcheck")

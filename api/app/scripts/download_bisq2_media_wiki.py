@@ -6,7 +6,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-import mwclient
+import mwclient  # type: ignore[import-untyped]
 
 # Set up logging to stdout with debug level
 logging.basicConfig(

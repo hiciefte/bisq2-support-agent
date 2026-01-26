@@ -2,6 +2,8 @@
 
 This module provides a LangChain-compatible embeddings implementation
 using LiteLLM for vendor-portable embedding support (100+ providers).
+
+For multilingual support, BGE-M3 embeddings can be used instead.
 """
 
 import logging
@@ -14,6 +16,42 @@ if TYPE_CHECKING:
     from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def get_multilingual_embeddings(model_name: str = "BAAI/bge-m3") -> Embeddings:
+    """Get multilingual embeddings using HuggingFace BGE-M3.
+
+    BGE-M3 supports 100+ languages and produces high-quality
+    multilingual embeddings suitable for cross-lingual retrieval.
+
+    Args:
+        model_name: HuggingFace model name (default: "BAAI/bge-m3")
+
+    Returns:
+        Embeddings instance configured for multilingual support
+
+    Note:
+        This requires langchain-huggingface and sentence-transformers packages.
+        The model will be downloaded on first use (~2GB).
+    """
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+
+        embeddings = HuggingFaceEmbeddings(
+            model_name=model_name,
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        logger.info(f"Multilingual embeddings initialized: {model_name}")
+        return embeddings
+    except ImportError as e:
+        logger.error(
+            f"Failed to load HuggingFace embeddings: {e}. "
+            "Install with: pip install langchain-huggingface sentence-transformers"
+        )
+        raise
+    except Exception as e:
+        logger.error(f"Failed to initialize multilingual embeddings: {e}")
+        raise
 
 
 class LiteLLMEmbeddings(Embeddings):

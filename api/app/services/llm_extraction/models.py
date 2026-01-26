@@ -1,6 +1,6 @@
 """Pydantic models for LLM question extraction.
 
-Validated data models for UnifiedBatchProcessor output.
+Validated data models for LLM extraction output.
 """
 
 from typing import Any, Dict, List, Literal

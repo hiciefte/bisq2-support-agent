@@ -143,18 +143,14 @@ services:
       - ENABLE_PRIVACY_MODE=${ENABLE_PRIVACY_MODE:-true}
       - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Matrix shadow mode configuration
+      # Matrix integration configuration (for unified training pipeline)
       - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL:-}
       - MATRIX_USER=${MATRIX_USER:-}
       - MATRIX_PASSWORD=${MATRIX_PASSWORD:-}
       - MATRIX_TOKEN=${MATRIX_TOKEN:-}
       - MATRIX_ROOMS=${MATRIX_ROOMS:-}
       - MATRIX_SESSION_FILE=${MATRIX_SESSION_FILE:-/data/matrix_session.json}
-      # LLM classification configuration (Shadow Mode)
-      - ENABLE_LLM_CLASSIFICATION=${ENABLE_LLM_CLASSIFICATION:-false}
-      - LLM_CLASSIFICATION_MODEL=${LLM_CLASSIFICATION_MODEL:-openai:gpt-4o-mini}
-      - LLM_PATTERN_CONFIDENCE_THRESHOLD=${LLM_PATTERN_CONFIDENCE_THRESHOLD:-0.85}
-      - LLM_CLASSIFICATION_THRESHOLD=${LLM_CLASSIFICATION_THRESHOLD:-0.75}
+      - TRUSTED_STAFF_IDS=${TRUSTED_STAFF_IDS:-}
       - LLM_CLASSIFICATION_CACHE_SIZE=${LLM_CLASSIFICATION_CACHE_SIZE:-1000}
       - LLM_CLASSIFICATION_CACHE_TTL_HOURS=${LLM_CLASSIFICATION_CACHE_TTL_HOURS:-1}
       - LLM_CLASSIFICATION_MAX_CONCURRENT=${LLM_CLASSIFICATION_MAX_CONCURRENT:-2}
@@ -410,36 +406,9 @@ services:
           cpus: '0.3'
           memory: 256M
 
-  # Matrix webhook for alert notifications
-  matrix-alertmanager-webhook:
-    image: jaywink/matrix-alertmanager:v0.9.0
-    restart: always
-    environment:
-      - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL}
-      - MATRIX_USER=${MATRIX_USER}
-      - MATRIX_TOKEN=${MATRIX_TOKEN}
-      - MATRIX_ROOMS=${MATRIX_ROOMS}
-      - APP_PORT=3000
-    expose:
-      - "3000"
-    networks:
-      - bisq-support-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.2'
-          memory: 128M
+  # NOTE: matrix-alertmanager-webhook service removed (Phase 9)
+  # Alerts are now forwarded via API: /alertmanager/alerts
+  # Uses password-based Matrix auth with automatic session refresh
 
   # Scheduler for periodic tasks
   scheduler:

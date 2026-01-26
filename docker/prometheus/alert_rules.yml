@@ -114,3 +114,67 @@ groups:
         annotations:
           summary: "RAG cost per request above $0.02"
           description: "Current average cost: ${{ $value }}. Consider optimizing token usage."
+
+  - name: training_sync_alerts
+    interval: 30s
+    rules:
+      # ========================================
+      # Training Sync Alerts
+      # ========================================
+
+      - alert: TrainingSyncFailed
+        expr: training_sync_last_status == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: training
+        annotations:
+          summary: "Training sync failed for {{ $labels.source }}"
+          description: "The {{ $labels.source }} sync operation has failed. Q&A pairs may not be processed."
+
+      - alert: TrainingSyncStale
+        expr: (time() - training_sync_last_success_timestamp) > 7200  # 2 hours
+        for: 10m
+        labels:
+          severity: warning
+          component: training
+        annotations:
+          summary: "Training sync stale for {{ $labels.source }} (>2h)"
+          description: "Last successful sync for {{ $labels.source }} was {{ $value | humanizeDuration }} ago."
+
+      - alert: TrainingQueueBacklog
+        expr: sum(training_queue_size{routing="FULL_REVIEW"}) > 50
+        for: 1h
+        labels:
+          severity: warning
+          component: training
+        annotations:
+          summary: "Training review queue backlog: {{ $value }} items"
+          description: "The FULL_REVIEW queue has {{ $value }} items pending. Consider reviewing and clearing the backlog."
+
+  - name: container_resource_alerts
+    interval: 30s
+    rules:
+      # ========================================
+      # Container Resource Alerts (cAdvisor)
+      # ========================================
+
+      - alert: ContainerHighMemory
+        expr: (container_memory_usage_bytes{name=~"docker-.*"} / container_spec_memory_limit_bytes{name=~"docker-.*"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.name }} memory usage >85%"
+          description: "Container {{ $labels.name }} is using {{ $value | humanizePercentage }} of its memory limit."
+
+      - alert: ContainerHighCPU
+        expr: rate(container_cpu_usage_seconds_total{name=~"docker-.*"}[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.name }} CPU usage >90%"
+          description: "Container {{ $labels.name }} has sustained high CPU usage."
