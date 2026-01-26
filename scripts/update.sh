@@ -314,6 +314,13 @@ apply_updates() {
             rollback_update "Health check failed after rebuild"
         fi
 
+        # Explicitly verify nginx is routing correctly before chat test
+        # This ensures nginx proxy_pass to API is working after full rebuild
+        log_info "Verifying nginx routing after full rebuild..."
+        if ! wait_for_healthy "nginx" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+            rollback_update "Nginx health check failed after full rebuild"
+        fi
+
         # Test chat functionality
         if ! test_chat_endpoint; then
             rollback_update "Chat endpoint test failed"
@@ -343,6 +350,13 @@ apply_updates() {
                 rollback_update "API health check failed after rebuild"
             fi
 
+            # Ensure nginx is healthy and routing to the new API
+            # This prevents HTTP 405 errors during chat endpoint test
+            log_info "Verifying nginx routing to rebuilt API..."
+            if ! wait_for_healthy "nginx" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Nginx health check failed after API rebuild"
+            fi
+
             # Test chat functionality after API rebuild
             if ! test_chat_endpoint; then
                 rollback_update "Chat functionality test failed after API rebuild"
@@ -361,6 +375,13 @@ apply_updates() {
             sleep 95
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after restart"
+            fi
+
+            # Ensure nginx is healthy and routing to the restarted API
+            # This prevents HTTP 405 errors during chat endpoint test
+            log_info "Verifying nginx routing to restarted API..."
+            if ! wait_for_healthy "nginx" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Nginx health check failed after API restart"
             fi
 
             # Test chat functionality after API restart
