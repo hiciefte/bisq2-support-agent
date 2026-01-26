@@ -93,8 +93,9 @@ test.describe("FAQ Management", () => {
                 await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
 
                 // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
-                await Promise.race([
-                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }).catch(() => null),
+                // Use Promise.any to ensure at least one selector is found (rejects only if all fail)
+                await Promise.any([
+                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
                     page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
                 ]);
 
