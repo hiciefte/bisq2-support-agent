@@ -3,7 +3,7 @@
 # Polls Bisq 2 and Matrix support conversations and processes them through the unified training pipeline
 #
 # Usage: ./poll-matrix.sh
-# Expected to run via cron every 30 minutes
+# Expected to run via cron every 12 hours (shadow mode - allows conversations to complete)
 
 set -euo pipefail
 

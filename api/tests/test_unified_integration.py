@@ -188,7 +188,7 @@ class TestMatrixIntegration:
     async def test_matrix_answer_with_source_preservation(
         self, unified_pipeline, mock_faq_service
     ):
-        """Test that approved Matrix candidate preserves source as Extracted:matrix."""
+        """Test that approved Matrix candidate uses human-readable source name."""
         # Process answer
         result = await unified_pipeline.process_matrix_answer(
             event_id="$answer_event:matrix.org",
@@ -205,11 +205,11 @@ class TestMatrixIntegration:
             reviewer="admin",
         )
 
-        # Verify FAQ was created with correct source (FAQItem as positional arg)
+        # Verify FAQ was created with human-readable source name
         mock_faq_service.add_faq.assert_called_once()
         call_args = mock_faq_service.add_faq.call_args
         faq_item = call_args[0][0]  # First positional argument
-        assert faq_item.source == "Extracted:matrix"
+        assert faq_item.source == "Matrix Support"
         assert faq_item.verified is True
 
     @pytest.mark.asyncio
@@ -303,7 +303,7 @@ class TestCrossSourceIntegration:
     async def test_source_preserved_in_approved_faq(
         self, unified_pipeline, mock_faq_service, sample_bisq_conversation
     ):
-        """Test that source is correctly preserved when FAQ is created."""
+        """Test that source uses human-readable name when FAQ is created."""
         # Process and approve Bisq candidate
         bisq_result = await unified_pipeline.process_bisq_conversation(
             sample_bisq_conversation
@@ -314,10 +314,10 @@ class TestCrossSourceIntegration:
             reviewer="admin",
         )
 
-        # Verify Bisq source preserved (FAQItem as positional arg)
+        # Verify Bisq source uses human-readable name (FAQItem as positional arg)
         call_args = mock_faq_service.add_faq.call_args
         faq_item = call_args[0][0]  # First positional argument
-        assert faq_item.source == "Extracted:bisq2"
+        assert faq_item.source == "Bisq Support Chat"
 
 
 # =============================================================================

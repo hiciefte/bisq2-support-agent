@@ -604,8 +604,8 @@ class TestReviewActions:
         call_args = mock_faq_service.add_faq.call_args
         faq_item = call_args[0][0]  # First positional argument
 
-        # Verify source preservation
-        assert faq_item.source == "Extracted:matrix"
+        # Verify human-readable source name
+        assert faq_item.source == "Matrix Support"
 
         # Verify auto-verification (pipeline approval = admin verification)
         assert faq_item.verified is True
@@ -618,7 +618,7 @@ class TestReviewActions:
     async def test_approve_preserves_bisq2_source(
         self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
     ):
-        """Cycle 2.6.1: Test approve preserves bisq2 source."""
+        """Cycle 2.6.1: Test approve uses human-readable source for bisq2."""
         service = UnifiedPipelineService(
             settings=mock_settings,
             rag_service=mock_rag_service,
@@ -642,8 +642,56 @@ class TestReviewActions:
         # Assert - add_faq is called with FAQItem as positional argument
         call_args = mock_faq_service.add_faq.call_args
         faq_item = call_args[0][0]  # First positional argument
-        assert faq_item.source == "Extracted:bisq2"
+        # Source should be human-readable, not "Extracted:bisq2"
+        assert faq_item.source == "Bisq Support Chat"
         assert faq_item.verified is True
+
+    @pytest.mark.asyncio
+    async def test_approve_preserves_matrix_source(
+        self, temp_db_path, mock_settings, mock_rag_service, mock_faq_service
+    ):
+        """Test approve uses human-readable source for matrix."""
+        service = UnifiedPipelineService(
+            settings=mock_settings,
+            rag_service=mock_rag_service,
+            faq_service=mock_faq_service,
+            db_path=str(temp_db_path),
+        )
+
+        # Create matrix candidate
+        candidate = service.repository.create(
+            source="matrix",
+            source_event_id="$matrix_msg_123",
+            source_timestamp="2025-01-15T10:00:00Z",
+            question_text="Matrix question",
+            staff_answer="Matrix answer",
+            routing="FULL_REVIEW",
+        )
+
+        # Act
+        await service.approve_candidate(candidate.id, reviewer="admin")
+
+        # Assert - add_faq is called with FAQItem as positional argument
+        call_args = mock_faq_service.add_faq.call_args
+        faq_item = call_args[0][0]  # First positional argument
+        # Source should be human-readable, not "Extracted:matrix"
+        assert faq_item.source == "Matrix Support"
+        assert faq_item.verified is True
+
+    def test_source_display_name_helper_function(self):
+        """Test get_faq_source_display_name helper function."""
+        from app.services.training.unified_pipeline_service import (
+            get_faq_source_display_name,
+        )
+
+        # Known sources return human-readable names
+        assert get_faq_source_display_name("bisq2") == "Bisq Support Chat"
+        assert get_faq_source_display_name("matrix") == "Matrix Support"
+
+        # Unknown sources fall back to "Extracted:source" format
+        # (Database CHECK constraint prevents unknown sources, but function handles it)
+        assert get_faq_source_display_name("telegram") == "Extracted:telegram"
+        assert get_faq_source_display_name("unknown") == "Extracted:unknown"
 
     @pytest.mark.asyncio
     async def test_reject_candidate_updates_status(self, service_with_candidate):

@@ -62,6 +62,25 @@ AUTO_APPROVE_THRESHOLD = PIPELINE_AUTO_APPROVE_THRESHOLD
 SPOT_CHECK_THRESHOLD = PIPELINE_SPOT_CHECK_THRESHOLD
 DUPLICATE_FAQ_THRESHOLD = PIPELINE_DUPLICATE_FAQ_THRESHOLD
 
+# Human-readable source names for FAQ display
+# Maps internal source identifiers to user-friendly names
+SOURCE_DISPLAY_NAMES: Dict[str, str] = {
+    "bisq2": "Bisq Support Chat",
+    "matrix": "Matrix Support",
+}
+
+
+def get_faq_source_display_name(source: str) -> str:
+    """Get human-readable display name for a FAQ source.
+
+    Args:
+        source: Internal source identifier (e.g., "bisq2", "matrix")
+
+    Returns:
+        Human-readable source name for display
+    """
+    return SOURCE_DISPLAY_NAMES.get(source, f"Extracted:{source}")
+
 
 @dataclass
 class ComparisonResult:
@@ -945,8 +964,8 @@ class UnifiedPipelineService:
                     candidate_id=candidate_id,
                 )
 
-        # Preserve extraction channel in FAQ source
-        faq_source = f"Extracted:{candidate.source}"
+        # Use human-readable source name for FAQ display
+        faq_source = get_faq_source_display_name(candidate.source)
         now = datetime.now(timezone.utc)
 
         # Use edited_staff_answer if available, otherwise use original staff_answer
