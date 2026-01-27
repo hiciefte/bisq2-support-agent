@@ -250,36 +250,6 @@ class TestProtocolDetectorSourceDefaults:
         assert confidence >= 0.7
 
 
-class TestPipelineSourceDefaultIntegration:
-    """Test that the pipeline correctly uses source-based defaults."""
-
-    @pytest.fixture
-    def mock_protocol_detector(self):
-        """Create a mock protocol detector."""
-        detector = MagicMock(spec=ProtocolDetector)
-        return detector
-
-    def test_pipeline_detect_protocol_uses_source(self, mock_protocol_detector):
-        """_detect_protocol_with_fallback should pass source to detector.
-
-        This test verifies the integration point - the pipeline method
-        should call the detector with the source parameter.
-        """
-        # Configure mock to return bisq_easy for bisq2 source
-        mock_protocol_detector.detect_protocol_with_source_default.return_value = (
-            "bisq_easy"
-        )
-
-        # Call the method (this is what we'll update in the pipeline)
-        result = mock_protocol_detector.detect_protocol_with_source_default(
-            text="How do I trade?",
-            source="bisq2",
-        )
-
-        assert result == "bisq_easy"
-        mock_protocol_detector.detect_protocol_with_source_default.assert_called_once()
-
-
 class TestPipelineDetectProtocolWithFallback:
     """Test the pipeline's _detect_protocol_with_fallback method."""
 

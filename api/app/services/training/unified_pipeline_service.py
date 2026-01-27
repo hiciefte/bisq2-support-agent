@@ -44,7 +44,7 @@ from app.metrics.training_metrics import (
     update_queue_metrics,
 )
 from app.models.faq import FAQItem
-from app.services.rag.protocol_detector import ProtocolDetector
+from app.services.rag.protocol_detector import ProtocolDetector, Source
 from app.services.training.bisq2_sync_service import Bisq2SyncService
 from app.services.training.bisq_sync_state import BisqSyncStateManager
 from app.services.training.matrix_sync_service import MatrixSyncService
@@ -207,7 +207,7 @@ class UnifiedPipelineService:
         self,
         question_text: str,
         staff_answer: str,
-        source: Optional[str] = None,
+        source: Optional[Source] = None,
     ) -> Optional[str]:
         """Detect Bisq protocol from question, with staff answer and source fallback.
 
@@ -359,8 +359,9 @@ class UnifiedPipelineService:
         # ===== End Thread Management =====
 
         # Detect protocol directly from question, with staff answer as fallback
+        # Pass source="matrix" for Matrix messages
         detected_protocol = self._detect_protocol_with_fallback(
-            question_text, staff_answer
+            question_text, staff_answer, source="matrix"
         )
 
         # Convert protocol to version string for RAG service (backwards compat)
@@ -753,8 +754,9 @@ class UnifiedPipelineService:
         # ===== End Thread Management =====
 
         # Detect protocol directly from question, with staff answer as fallback
+        # Pass source="bisq2" for Bisq 2 Support API messages
         detected_protocol = self._detect_protocol_with_fallback(
-            question_text, staff_answer
+            question_text, staff_answer, source="bisq2"
         )
 
         # Convert protocol to version string for RAG service (backwards compat)
@@ -1634,8 +1636,10 @@ class UnifiedPipelineService:
             )
 
         # Detect protocol directly from question, with staff answer as fallback
+        # Pass the source parameter to enable source-based defaults
+        # Cast source to Source type (it should always be "bisq2" or "matrix")
         detected_protocol = self._detect_protocol_with_fallback(
-            question_text, staff_answer
+            question_text, staff_answer, source=cast(Optional[Source], source)
         )
 
         # Convert protocol to version string for RAG service (backwards compat)

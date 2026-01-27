@@ -127,7 +127,7 @@ class ProtocolDetector:
     def detect_protocol_with_source_default(
         self,
         text: str,
-        source: Optional[str] = None,
+        source: Optional[Source] = None,
         *,
         return_confidence: Literal[False] = False,
     ) -> Optional[Protocol]: ...
@@ -136,7 +136,7 @@ class ProtocolDetector:
     def detect_protocol_with_source_default(
         self,
         text: str,
-        source: Optional[str] = None,
+        source: Optional[Source] = None,
         *,
         return_confidence: Literal[True],
     ) -> Tuple[Optional[Protocol], float]: ...
@@ -144,7 +144,7 @@ class ProtocolDetector:
     def detect_protocol_with_source_default(
         self,
         text: str,
-        source: Optional[str] = None,
+        source: Optional[Source] = None,
         *,
         return_confidence: bool = False,
     ) -> Union[Optional[Protocol], Tuple[Optional[Protocol], float]]:
