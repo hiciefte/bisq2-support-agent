@@ -330,7 +330,7 @@ para==0.0.8
     # via
     #   mwcli
     #   mwxml
-pathspec==1.0.3
+pathspec==1.0.4
     # via
     #   black
     #   mypy
