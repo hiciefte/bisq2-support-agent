@@ -212,7 +212,7 @@ langchain-openai==1.1.7
     # via -r api/requirements.in
 langchain-text-splitters==1.1.0
     # via -r api/requirements.in
-langsmith==0.6.5
+langsmith==0.6.6
     # via langchain-core
 librt==0.7.8
     # via mypy
