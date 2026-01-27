@@ -204,39 +204,65 @@ class UnifiedPipelineService:
             raise ValueError("Either repository or db_path must be provided")
 
     def _detect_protocol_with_fallback(
-        self, question_text: str, staff_answer: str
+        self,
+        question_text: str,
+        staff_answer: str,
+        source: Optional[str] = None,
     ) -> Optional[str]:
-        """Detect Bisq protocol from question, with staff answer as fallback.
+        """Detect Bisq protocol from question, with staff answer and source fallback.
 
-        First tries to detect protocol from the question. If that returns
-        None, tries to detect from the staff answer.
+        Detection priority:
+        1. Question text with explicit protocol keywords -> detected protocol
+        2. Staff answer with explicit protocol keywords -> detected protocol
+        3. Source-based default (bisq2 -> bisq_easy) if no explicit detection
+        4. None if no detection and no source default
+
+        The source provides a default when content detection is ambiguous.
+        For example, messages from bisq2 source default to bisq_easy,
+        since the Bisq 2 Support API is primarily for Bisq Easy questions.
+        However, if the content clearly indicates Bisq 1 (DAO, BSQ, etc.),
+        the detection will override the source default.
 
         Args:
             question_text: The user's question
             staff_answer: The staff member's answer
+            source: Message source ("bisq2", "matrix", or None)
 
         Returns:
             Protocol string ("bisq_easy", "multisig_v1") if detected with
-            sufficient confidence, None otherwise.
+            sufficient confidence or from source default, None otherwise.
         """
-        # First try detecting from question
+        # First try detecting from question content (without source default)
+        # This ensures explicit protocol keywords in content take priority
         protocol, confidence = self.protocol_detector.detect_protocol_from_text(
             question_text
         )
         if protocol is not None and confidence >= 0.6:
             logger.debug(
-                f"Protocol detected from question: {protocol} (confidence: {confidence})"
+                f"Protocol detected from question: {protocol} "
+                f"(confidence: {confidence})"
             )
             return protocol
 
-        # Fallback: try detecting from staff answer
+        # Fallback: try detecting from staff answer content (without source default)
+        # Staff answers often contain protocol-specific terms like "DAO", "BSQ"
         protocol, confidence = self.protocol_detector.detect_protocol_from_text(
             staff_answer
         )
         if protocol is not None and confidence >= 0.6:
             logger.debug(
-                f"Protocol detected from staff answer: {protocol} (confidence: {confidence})"
+                f"Protocol detected from staff answer: {protocol} "
+                f"(confidence: {confidence})"
             )
+            return protocol
+
+        # No explicit detection - apply source-based default if available
+        # This is the fallback for truly ambiguous content
+        protocol = self.protocol_detector.detect_protocol_with_source_default(
+            text=question_text, source=source
+        )
+        if protocol is not None:
+            logger.debug(f"Using source default protocol: {protocol}")
             return protocol
 
         return None
