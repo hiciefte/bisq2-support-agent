@@ -252,6 +252,16 @@ class MatrixSyncService:
                 self.polling_state.update_room_token(room_id, response.end)
             return 0
 
+        # Mark ALL input messages as processed BEFORE sending to LLM
+        # This prevents duplicate processing on subsequent polls, regardless
+        # of whether the LLM extracts any FAQs from them
+        for msg in new_messages:
+            event_id = msg.get("event_id", "")
+            if event_id:
+                self.polling_state.mark_processed(event_id)
+
+        logger.debug(f"Marked {len(new_messages)} input messages as processed")
+
         # Use LLM-based extraction via pipeline service
         # This sends all messages to UnifiedFAQExtractor for single-pass extraction
         results = await self.pipeline_service.extract_faqs_batch(
@@ -260,13 +270,8 @@ class MatrixSyncService:
             staff_identifiers=self.trusted_staff_ids,
         )
 
-        # Mark all events as processed and count successful candidates
+        # Count successful candidates
         for result in results:
-            # Always mark the source event as processed to avoid reprocessing
-            event_id = result.source_event_id.replace("matrix_", "")
-            self.polling_state.mark_processed(event_id)
-
-            # Count only successful candidate creations
             if result.candidate_id is not None:
                 processed_count += 1
                 logger.info(

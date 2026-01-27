@@ -11,12 +11,25 @@ Legacy API uses version strings for backwards compatibility with RAG chatbot.
 """
 
 import logging
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple, Union, overload
 
 logger = logging.getLogger(__name__)
 
 # Protocol type alias
 Protocol = Literal["multisig_v1", "bisq_easy", "musig", "all"]
+
+# Source type alias (for FAQ candidate sources)
+Source = Literal["bisq2", "matrix"]
+
+# Source to default protocol mapping
+# Bisq 2 Support API is primarily for Bisq Easy questions
+SOURCE_DEFAULT_PROTOCOLS: Dict[str, Protocol] = {
+    "bisq2": "bisq_easy",
+    # "matrix" has no default - it serves both Bisq 1 and Bisq 2 users
+}
+
+# Confidence level for source-based defaults (moderate - can be overridden)
+SOURCE_DEFAULT_CONFIDENCE = 0.6
 
 
 class ProtocolDetector:
@@ -109,6 +122,97 @@ class ProtocolDetector:
             question, chat_history
         )
         return self._version_to_protocol(version), confidence, clarifying
+
+    @overload
+    def detect_protocol_with_source_default(
+        self,
+        text: str,
+        source: Optional[Source] = None,
+        *,
+        return_confidence: Literal[False] = False,
+    ) -> Optional[Protocol]: ...
+
+    @overload
+    def detect_protocol_with_source_default(
+        self,
+        text: str,
+        source: Optional[Source] = None,
+        *,
+        return_confidence: Literal[True],
+    ) -> Tuple[Optional[Protocol], float]: ...
+
+    def detect_protocol_with_source_default(
+        self,
+        text: str,
+        source: Optional[Source] = None,
+        *,
+        return_confidence: bool = False,
+    ) -> Union[Optional[Protocol], Tuple[Optional[Protocol], float]]:
+        """Detect protocol with source-based defaults.
+
+        This method combines content-based detection with source-based defaults.
+        The source provides a default protocol when content detection is ambiguous.
+
+        For example, messages from the Bisq 2 Support API ("bisq2" source) default
+        to "bisq_easy" protocol, since that's the primary use case. However, if
+        the content clearly indicates Bisq 1 (e.g., DAO, BSQ, arbitration keywords),
+        the detection will override the source default.
+
+        Args:
+            text: Text content to analyze for protocol indicators
+            source: Message source ("bisq2", "matrix", or None)
+            return_confidence: If True, return (protocol, confidence) tuple
+
+        Returns:
+            If return_confidence=False: Protocol enum or None
+            If return_confidence=True: Tuple[Protocol, confidence]
+
+        Examples:
+            # Bisq2 source defaults to bisq_easy for ambiguous questions
+            >>> detector.detect_protocol_with_source_default(
+            ...     "How do I complete my trade?", source="bisq2"
+            ... )
+            "bisq_easy"
+
+            # But Bisq 1 keywords override the source default
+            >>> detector.detect_protocol_with_source_default(
+            ...     "How does DAO voting work?", source="bisq2"
+            ... )
+            "multisig_v1"
+
+            # Matrix has no default - ambiguous returns None
+            >>> detector.detect_protocol_with_source_default(
+            ...     "How do I complete my trade?", source="matrix"
+            ... )
+            None
+        """
+        # First, try content-based detection
+        detected_protocol, detected_confidence = self.detect_protocol_from_text(text)
+
+        # If detection found something with sufficient confidence, use it
+        if detected_protocol is not None and detected_confidence >= 0.6:
+            logger.debug(
+                f"Protocol detected from content: {detected_protocol} "
+                f"(confidence: {detected_confidence})"
+            )
+            if return_confidence:
+                return detected_protocol, detected_confidence
+            return detected_protocol
+
+        # Fall back to source default if available
+        if source is not None and source in SOURCE_DEFAULT_PROTOCOLS:
+            default_protocol = SOURCE_DEFAULT_PROTOCOLS[source]
+            logger.debug(
+                f"Using source default: {default_protocol} for source={source}"
+            )
+            if return_confidence:
+                return default_protocol, SOURCE_DEFAULT_CONFIDENCE
+            return default_protocol
+
+        # No detection and no source default
+        if return_confidence:
+            return None, 0.0
+        return None
 
     # =========================================================================
     # CONVERSION HELPERS
