@@ -300,6 +300,8 @@ services:
       # Grafana handles subpath (receives /grafana/ prefix, serves from subpath)
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Extended timeout for large HTML responses with inline JSON (~63KB)
+      - GF_SERVER_REQUEST_TIMEOUT=120
     ports:
       - "${EXPOSE_GRAFANA_PORT:-3001}:3000"
     depends_on:
