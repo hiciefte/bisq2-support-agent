@@ -321,6 +321,14 @@ apply_updates() {
             rollback_update "Nginx health check failed after full rebuild"
         fi
 
+        # Reload nginx to force DNS refresh for the new API container
+        # Docker's embedded DNS (127.0.0.11) may cache old container IPs
+        log_info "Reloading nginx to refresh API upstream DNS..."
+        if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+            log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
+            sleep 15
+        fi
+
         # Test chat functionality
         if ! test_chat_endpoint; then
             rollback_update "Chat endpoint test failed"
@@ -357,6 +365,14 @@ apply_updates() {
                 rollback_update "Nginx health check failed after API rebuild"
             fi
 
+            # Reload nginx to force DNS refresh for the new API container
+            # Docker's embedded DNS (127.0.0.11) may cache old container IPs
+            log_info "Reloading nginx to refresh API upstream DNS..."
+            if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+                log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
+                sleep 15
+            fi
+
             # Test chat functionality after API rebuild
             if ! test_chat_endpoint; then
                 rollback_update "Chat functionality test failed after API rebuild"
@@ -382,6 +398,14 @@ apply_updates() {
             log_info "Verifying nginx routing to restarted API..."
             if ! wait_for_healthy "nginx" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "Nginx health check failed after API restart"
+            fi
+
+            # Reload nginx to force DNS refresh for the restarted API container
+            # Docker's embedded DNS (127.0.0.11) may cache old container IPs
+            log_info "Reloading nginx to refresh API upstream DNS..."
+            if ! docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload; then
+                log_warning "Nginx reload failed, waiting for DNS cache expiry instead..."
+                sleep 15
             fi
 
             # Test chat functionality after API restart
