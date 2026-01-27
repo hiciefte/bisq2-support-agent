@@ -26,7 +26,6 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Loader2, ChevronsUpDown, Check, AlertCircle } from "lucide-react";
 import { makeAuthenticatedRequest } from "@/lib/auth";
-import { API_BASE_URL } from "@/lib/config";
 import debounce from "lodash.debounce";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +103,7 @@ export const InlineEditFAQ = memo(
                     setIsCheckingEditSimilar(true);
                     try {
                         const response = await makeAuthenticatedRequest(
-                            `${API_BASE_URL}/admin/faqs/check-similar`,
+                            `/admin/faqs/check-similar`,
                             {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },

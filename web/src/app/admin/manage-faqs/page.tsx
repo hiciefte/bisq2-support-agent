@@ -10,10 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { VectorStoreStatusBanner } from "@/components/admin/VectorStoreStatusBanner";
 import { SimilarFaqsPanel, SimilarFAQItem } from "@/components/admin/SimilarFaqsPanel";
 import {
-    SimilarFaqReviewQueue,
-    SimilarFaqCandidate,
-} from "@/components/admin/SimilarFaqReviewQueue";
-import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
@@ -187,10 +183,6 @@ export default function ManageFaqsPage() {
     // Similar FAQ check state
     const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([]);
     const [isCheckingSimilar, setIsCheckingSimilar] = useState(false);
-
-    // Similar FAQ review queue state (Phase 7)
-    const [pendingReviewItems, setPendingReviewItems] = useState<SimilarFaqCandidate[]>([]);
-    const [isLoadingPendingReview, setIsLoadingPendingReview] = useState(true);
 
     // Inline editing state
     const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
@@ -392,154 +384,6 @@ export default function ManageFaqsPage() {
         // Cleanup interval on unmount
         return () => clearInterval(intervalId);
     }, [fetchFaqs]); // Include fetchFaqs so interval uses latest version with current filters
-
-    // Fetch pending similar FAQ review items (Phase 7)
-    const fetchPendingReviewItems = useCallback(async () => {
-        try {
-            const response = await makeAuthenticatedRequest("/admin/similar-faqs/pending");
-            if (response.ok) {
-                const data = await response.json();
-                setPendingReviewItems(data.items || []);
-            } else {
-                console.error("Failed to fetch pending review items:", response.status);
-            }
-        } catch (error) {
-            console.error("Error fetching pending review items:", error);
-        } finally {
-            setIsLoadingPendingReview(false);
-        }
-    }, []);
-
-    // Fetch pending review items on mount and poll every 30s
-    useEffect(() => {
-        fetchPendingReviewItems();
-        const intervalId = setInterval(fetchPendingReviewItems, 30000);
-        return () => clearInterval(intervalId);
-    }, [fetchPendingReviewItems]);
-
-    // Similar FAQ review queue action handlers (Phase 7)
-    const handleApproveReviewItem = useCallback(
-        async (id: string) => {
-            // Optimistic UI update
-            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
-            try {
-                const response = await makeAuthenticatedRequest(
-                    `/admin/similar-faqs/${id}/approve`,
-                    { method: "POST" }
-                );
-                if (response.ok) {
-                    toast({
-                        title: "FAQ approved",
-                        description: "The FAQ has been added to the knowledge base.",
-                    });
-                    // Refresh FAQ list to show the new FAQ
-                    await fetchFaqs(currentPage);
-                } else {
-                    // Rollback on error
-                    await fetchPendingReviewItems();
-                    toast({
-                        title: "Failed to approve",
-                        description: "An error occurred while approving the FAQ.",
-                        variant: "destructive",
-                    });
-                }
-            } catch {
-                // Rollback on error
-                await fetchPendingReviewItems();
-                toast({
-                    title: "Failed to approve",
-                    description: "An error occurred while approving the FAQ.",
-                    variant: "destructive",
-                });
-            }
-        },
-        [fetchFaqs, fetchPendingReviewItems, toast, currentPage]
-    );
-
-    const handleMergeReviewItem = useCallback(
-        async (id: string, mode: "replace" | "append") => {
-            // Optimistic UI update
-            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
-            try {
-                const response = await makeAuthenticatedRequest(
-                    `/admin/similar-faqs/${id}/merge`,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ mode }),
-                    }
-                );
-                if (response.ok) {
-                    toast({
-                        title: "FAQ merged",
-                        description:
-                            mode === "replace"
-                                ? "The existing FAQ has been replaced."
-                                : "The content has been appended to the existing FAQ.",
-                    });
-                    // Refresh FAQ list to show the updated FAQ
-                    await fetchFaqs(currentPage);
-                } else {
-                    // Rollback on error
-                    await fetchPendingReviewItems();
-                    toast({
-                        title: "Failed to merge",
-                        description: "An error occurred while merging the FAQ.",
-                        variant: "destructive",
-                    });
-                }
-            } catch {
-                // Rollback on error
-                await fetchPendingReviewItems();
-                toast({
-                    title: "Failed to merge",
-                    description: "An error occurred while merging the FAQ.",
-                    variant: "destructive",
-                });
-            }
-        },
-        [fetchFaqs, fetchPendingReviewItems, toast, currentPage]
-    );
-
-    const handleDismissReviewItem = useCallback(
-        async (id: string, reason?: string) => {
-            // Optimistic UI update
-            setPendingReviewItems((prev) => prev.filter((item) => item.id !== id));
-            try {
-                const response = await makeAuthenticatedRequest(
-                    `/admin/similar-faqs/${id}/dismiss`,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ reason }),
-                    }
-                );
-                if (response.ok) {
-                    toast({
-                        title: "FAQ dismissed",
-                        description: "The candidate has been removed from the review queue.",
-                    });
-                } else {
-                    // Rollback on error
-                    await fetchPendingReviewItems();
-                    toast({
-                        title: "Failed to dismiss",
-                        description: "An error occurred while dismissing the FAQ.",
-                        variant: "destructive",
-                    });
-                }
-            } catch {
-                // Rollback on error
-                await fetchPendingReviewItems();
-                toast({
-                    title: "Failed to dismiss",
-                    description: "An error occurred while dismissing the FAQ.",
-                    variant: "destructive",
-                });
-            }
-        },
-        [fetchPendingReviewItems, toast]
-    );
 
     const handleFormSubmit = async (e: FormEvent) => {
         e.preventDefault();
@@ -1556,20 +1400,6 @@ export default function ManageFaqsPage() {
             <div className="min-h-screen bg-background">
                 {/* Persistent banner at top */}
                 <VectorStoreStatusBanner />
-
-                {/* Similar FAQ Review Queue (Phase 7) */}
-                {(pendingReviewItems.length > 0 || isLoadingPendingReview) && (
-                    <div className="px-8 pt-4">
-                        <SimilarFaqReviewQueue
-                            items={pendingReviewItems}
-                            isLoading={isLoadingPendingReview}
-                            onApprove={handleApproveReviewItem}
-                            onMerge={handleMergeReviewItem}
-                            onDismiss={handleDismissReviewItem}
-                            onRefresh={fetchPendingReviewItems}
-                        />
-                    </div>
-                )}
 
                 <div className="p-8 space-y-8 pt-16 lg:pt-8">
                     {/* Header with persistent search */}
