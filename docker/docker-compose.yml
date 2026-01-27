@@ -297,7 +297,8 @@ services:
       - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
       - ADMIN_API_KEY_FOR_GRAFANA=${ADMIN_API_KEY}
       # Subpath configuration for nginx reverse proxy at /grafana/
-      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      # Uses env var with fallback to auto-detect protocol/domain
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
     ports:
       - "${EXPOSE_GRAFANA_PORT:-3001}:3000"
