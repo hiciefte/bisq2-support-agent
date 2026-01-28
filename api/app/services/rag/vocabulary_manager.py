@@ -47,12 +47,14 @@ class VocabularyManager:
         self.vocab_path = Path(vocab_path)
         self.backup_on_save = backup_on_save
         self.max_backups = max_backups
-        self._lock = threading.Lock()
+        # Use RLock to allow reentrant locking (e.g., update_and_save calling save)
+        self._lock = threading.RLock()
 
     def save(self, tokenizer: "BM25SparseTokenizer") -> bool:
         """Save vocabulary to file atomically.
 
         Uses write-to-temp-then-rename pattern for atomic updates.
+        Uses both in-process lock (_lock) and cross-process file lock (portalocker).
 
         Args:
             tokenizer: BM25SparseTokenizer with vocabulary to save
@@ -61,27 +63,33 @@ class VocabularyManager:
             True if save successful, False otherwise
         """
         with self._lock:
+            tmp_path: Optional[Path] = None
             try:
-                # Create backup if file exists and backup enabled
-                if self.backup_on_save and self.vocab_path.exists():
-                    self._create_backup()
-
                 # Ensure parent directory exists
                 self.vocab_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Write to temp file first, then rename (atomic)
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    dir=self.vocab_path.parent,
-                    suffix=".tmp",
-                    delete=False,
-                ) as tmp_file:
-                    vocab_json = tokenizer.export_vocabulary()
-                    tmp_file.write(vocab_json)
-                    tmp_path = Path(tmp_file.name)
+                # Use file locking for cross-process safety
+                # Create a lock file to coordinate writes (since vocab_path may not exist yet)
+                lock_path = self.vocab_path.with_suffix(".json.lock")
+                with portalocker.Lock(lock_path, "w", timeout=10):
+                    # Create backup if file exists and backup enabled
+                    if self.backup_on_save and self.vocab_path.exists():
+                        self._create_backup()
 
-                # Atomic rename
-                tmp_path.replace(self.vocab_path)
+                    # Write to temp file first, then rename (atomic)
+                    with tempfile.NamedTemporaryFile(
+                        mode="w",
+                        dir=self.vocab_path.parent,
+                        suffix=".tmp",
+                        delete=False,
+                    ) as tmp_file:
+                        vocab_json = tokenizer.export_vocabulary()
+                        tmp_file.write(vocab_json)
+                        tmp_path = Path(tmp_file.name)
+
+                    # Atomic rename
+                    tmp_path.replace(self.vocab_path)
+
                 logger.info(
                     f"Saved vocabulary to {self.vocab_path} "
                     f"({tokenizer.vocabulary_size} tokens)"
@@ -91,7 +99,7 @@ class VocabularyManager:
             except Exception as e:
                 logger.error(f"Failed to save vocabulary: {e}")
                 # Clean up temp file if it exists
-                if "tmp_path" in locals() and tmp_path.exists():
+                if tmp_path is not None and tmp_path.exists():
                     tmp_path.unlink()
                 return False
 

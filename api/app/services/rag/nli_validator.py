@@ -56,6 +56,10 @@ class NLIValidator:
         # NLI expects premise-hypothesis pairs
         result = self.nli_pipeline(f"{context} [SEP] {answer}", top_k=3)
 
+        # Handle transformers v5 which can return nested list [[{...}, ...]]
+        if result and isinstance(result[0], list):
+            result = result[0]
+
         # Extract entailment probability
         scores = {r["label"]: r["score"] for r in result}
         entailment = scores.get("ENTAILMENT", 0)
@@ -86,6 +90,16 @@ class NLIValidator:
 
         pairs = [f"{c} [SEP] {a}" for c, a in zip(contexts, answers)]
         results = self.nli_pipeline(pairs, top_k=3, batch_size=8)
+
+        # Handle transformers v5 which can return nested list [[[{...}], ...]]
+        # Normalize to flat list of result lists: [[{...}, ...], [{...}, ...], ...]
+        if (
+            results
+            and isinstance(results[0], list)
+            and results[0]
+            and isinstance(results[0][0], list)
+        ):
+            results = [r[0] for r in results]
 
         scores = []
         for result in results:

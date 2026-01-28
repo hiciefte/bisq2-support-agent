@@ -188,8 +188,8 @@ class BM25SparseTokenizer:
         self._total_doc_length: int = 0
         self._next_index: int = 0
 
-        # Thread safety lock for vocabulary updates
-        self._update_lock = threading.Lock()
+        # Thread safety lock for vocabulary updates (RLock for reentrant access)
+        self._update_lock = threading.RLock()
 
         # Build vocabulary from corpus if provided
         if corpus:
@@ -217,19 +217,22 @@ class BM25SparseTokenizer:
     def _add_token_to_vocabulary(self, token: str) -> int:
         """Add a token to the vocabulary if not already present.
 
+        Thread-safe: acquires _update_lock to make check-and-insert atomic.
+
         Args:
             token: Token to add
 
         Returns:
             Index of the token in vocabulary
         """
-        if token not in self._token_to_index:
-            idx = self._next_index
-            self._token_to_index[token] = idx
-            self._index_to_token[idx] = token
-            self._next_index += 1
-            return idx
-        return self._token_to_index[token]
+        with self._update_lock:
+            if token not in self._token_to_index:
+                idx = self._next_index
+                self._token_to_index[token] = idx
+                self._index_to_token[idx] = token
+                self._next_index += 1
+                return idx
+            return self._token_to_index[token]
 
     def _extract_tokens(self, text: str) -> List[str]:
         """Extract tokens from text with preprocessing.
@@ -325,6 +328,10 @@ class BM25SparseTokenizer:
     def tokenize_document(self, text: str) -> Tuple[List[int], List[float]]:
         """Tokenize a document for indexing.
 
+        Note: This method has side effects - it updates vocabulary, document
+        frequencies, and corpus statistics (_num_documents, _total_doc_length).
+        Each call is treated as indexing a new document.
+
         Args:
             text: Document text
 
@@ -344,16 +351,16 @@ class BM25SparseTokenizer:
         indices = []
         values = []
 
+        # Track which tokens we've already incremented DF for in this document
+        # (term_counts already gives us unique tokens per document)
         for token, count in term_counts.items():
             # Add to vocabulary if new
             idx = self._add_token_to_vocabulary(token)
 
-            # Update document frequency
-            if (
-                token not in self._document_frequencies
-                or self._document_frequencies[token] == 0
-            ):
-                self._document_frequencies[token] = 1
+            # Increment document frequency once per document for each token
+            self._document_frequencies[token] = (
+                self._document_frequencies.get(token, 0) + 1
+            )
 
             # Calculate BM25 weight
             tf = count
@@ -376,7 +383,9 @@ class BM25SparseTokenizer:
     def tokenize_query(self, text: str) -> Tuple[List[int], List[float]]:
         """Tokenize a query for searching.
 
-        Uses only tokens that exist in the vocabulary.
+        Tokens not in the vocabulary are added for query-side expansion,
+        allowing the query to potentially match future documents containing
+        these terms.
 
         Args:
             text: Query text
@@ -396,7 +405,7 @@ class BM25SparseTokenizer:
         values = []
 
         for token, count in term_counts.items():
-            # Only include tokens in vocabulary
+            # Get or create vocabulary entry for token
             if token not in self._token_to_index:
                 # Add unknown tokens for query-side vocabulary expansion
                 idx = self._add_token_to_vocabulary(token)

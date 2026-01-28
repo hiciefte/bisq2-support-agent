@@ -398,7 +398,7 @@ class TestVocabularyUpdateIntegration:
 
             mock_manager.update_and_save.assert_called_once()
 
-    def test_batch_faq_import_efficient_update(self):
+    def test_batch_faq_import_efficient_update(self, tmp_path: Path, monkeypatch):
         """Batch FAQ import should update vocabulary once, not per-FAQ."""
         from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
         from app.services.rag.vocabulary_manager import VocabularyManager
@@ -411,15 +411,23 @@ class TestVocabularyUpdateIntegration:
             mock_save_count += 1
             return original_save(self, tokenizer)
 
+        # Monkeypatch VocabularyManager.save with counting_save
+        monkeypatch.setattr(VocabularyManager, "save", counting_save)
+
+        # Create a manager and tokenizer
+        vocab_path = tmp_path / "bm25_vocab.json"
+        manager = VocabularyManager(vocab_path)
+        tokenizer = BM25SparseTokenizer()
+
         # Simulate batch import of 100 FAQs
         faqs = [f"FAQ {i} about topic {i}" for i in range(100)]
 
-        tokenizer = BM25SparseTokenizer()
+        # Batch update via manager should result in a single save
+        manager.update_and_save(tokenizer, faqs)
 
-        # Batch update should be a single call
-        tokenizer.update_vocabulary(faqs)
-
-        # Only one vocabulary state change (not 100)
+        # Only one save call (not 100)
+        assert mock_save_count == 1
+        # All 100 documents should be processed
         assert tokenizer._num_documents == 100
 
 
