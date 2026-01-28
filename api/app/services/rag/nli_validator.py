@@ -140,14 +140,15 @@ class NLIValidator:
         Returns:
             float: Entailment score (0-1)
         """
-        # Return neutral score if pipeline not available
-        if self.nli_pipeline is None:
-            return 0.5
-
-        # Check cache first
+        # Check cache first (even for fallback scores)
         cached = self._get_from_cache(answer, source_text)
         if cached is not None:
             return cached
+
+        # Return and cache neutral score if pipeline not available
+        if self.nli_pipeline is None:
+            self._add_to_cache(answer, source_text, 0.5)
+            return 0.5
 
         # Run inference
         score = self._run_inference(source_text, answer)
@@ -171,14 +172,15 @@ class NLIValidator:
             - 0.5 = neutral/partially supported
             - 0.0 = contradicts context
         """
-        # Return neutral score if pipeline not available
-        if self.nli_pipeline is None:
-            return 0.5
-
-        # Check cache first
+        # Check cache first (even for fallback scores)
         cached = self._get_from_cache(answer, context)
         if cached is not None:
             return cached
+
+        # Return and cache neutral score if pipeline not available
+        if self.nli_pipeline is None:
+            self._add_to_cache(answer, context, 0.5)
+            return 0.5
 
         # Run inference
         score = self._run_inference(context, answer)
