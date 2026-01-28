@@ -47,7 +47,7 @@ class ConfidenceScorer:
 
         # 1. NLI Entailment Score (40%)
         combined_context = "\n".join([doc.page_content for doc in sources[:5]])
-        nli_score = await self.nli.validate_answer(combined_context, answer)
+        nli_score = await self.nli.validate_answer_async(combined_context, answer)
 
         # 2. Source Quality Score (30%)
         source_scores = [doc.metadata.get("source_weight", 0.5) for doc in sources]

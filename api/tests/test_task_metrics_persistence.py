@@ -4,6 +4,7 @@ Tests for task metrics persistence layer.
 Following TDD approach - these tests drive the implementation requirements.
 """
 
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -387,10 +388,11 @@ class TestErrorHandling:
             persistence = TaskMetricsPersistence(settings)
             persistence.save_metric("test", 42.0)
 
+    @pytest.mark.skipif(
+        os.geteuid() == 0, reason="Root user bypasses file permission checks"
+    )
     def test_readonly_database(self, persistence, test_settings):
         """Should handle readonly database appropriately."""
-        import os
-
         persistence.save_metric("test", 42.0)
 
         # Make database readonly

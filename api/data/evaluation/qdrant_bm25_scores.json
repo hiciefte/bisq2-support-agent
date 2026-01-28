@@ -1,0 +1,148 @@
+{
+  "timestamp": "2026-01-28T12:23:35.906250",
+  "system": "qdrant",
+  "samples_count": 10,
+  "metrics": {
+    "context_precision": 0.6833333332758333,
+    "context_recall": 0.6333333333333333,
+    "faithfulness": 0.5916666666666667,
+    "answer_relevancy": 0.0
+  },
+  "avg_response_time": 5.49144983291626,
+  "individual_results": [
+    {
+      "question": "Can using Bisq cause my Wise account to be canceled?",
+      "ground_truth": "Any fiat institution is known to use its own undisclosed parameters to raise red flag about its users, leading to account limitations, freezing, or up to cancellation. Usually the risk goes up with the volume (quantity and amount) of transactions.",
+      "answer": "Yes, in theory, using Bisq 2 could lead to the cancellation of your Wise account if a high volume of transactions raises scrutiny on your account. Wise typically looks for suspicious activity, and frequent transactions may trigger their review process. It's advisable to keep your transaction volume moderate to avoid any issues.",
+      "contexts": [
+        "Question: Can using Bisq 2 cause my Wise account to be canceled?\nAnswer: Yes, in theory a Wise account could be canceled if numerous transactions trigger their scrutiny, though it typically happens with high-volume activity.",
+        "Question: Should I use both Bisq1 and Bisq2?\nAnswer: Use Bisq1 to buy BTC cheaper; use Bisq2 to sell BTC at higher prices after burning BSQ for reputation.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "**Wise**, formally TransferWise, was added as a distinct payment method to Bisq in v1.5.0.\n\nWise can be used in SEPA trades as well, where one peer uses SEPA and another uses TransferWise. This article discusses Wise-to-Wise trades, where both peers use Wise.\n\nWise is a web- and app-based money transfer service that supports multiple currencies. Wise to Wise payments allow users to send payment from any supported currency to any other supported currency. Payments utilize the Wise multi-currency ...",
+        "## How to stay safe on Bisq Easy\n\nHere are some tips for keeping safe when trading on Bisq Easy and avoiding any scams.\n\n## = Tips for bitcoin buyers\n=\n\nBitcoin buyers send the fiat payment before sending any bitcoin. For this reason they should take steps to ensure their trades are successful.\n\n# Start with a small amount as a test trade\n# Start chatting with the seller before sending the fiat payment to check that they are still active\n# Choose a seller with a high reputation. The higher the r..."
+      ],
+      "response_time": 5.792052984237671,
+      "error": null
+    },
+    {
+      "question": "Is exporting account age or signed witness for Bisq 2 only for reputation?",
+      "ground_truth": "Yes, it is only for reputation purposes and not for payment account transfers.",
+      "answer": "Yes, exporting account age or a signed witness on Bisq 2 is solely for reputation purposes. It allows users to leverage the history of their signed accounts from Bisq 1 to enhance their reputation score in Bisq 2.",
+      "contexts": [
+        "Question: Is exporting account age or signed witness on Bisq 2 only for reputation purposes?\nAnswer: Yes, it's only for reputation as the trade protocols differ between Bisq 1 and Bisq 2.",
+        "## = Method 4: Importing Bisq 1 Signed Account Age\n=\n\nLeverage the history of fiat accounts that completed the older signing process in Bisq 1. The older the signed account, the more trustworthy the user is assumed to be (though still considered a weaker form of reputation than BSQ burn/bond). Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed....",
+        "## = Importing the Signed Account Age from Bisq 1\n=\n\nUsers of Bisq 1 can gain reputation by importing their signed account age from Bisq 1 into Bisq 2.\n\nAny signed account from Bisq 1 can be used.\n\nThe older the user's signed account age the more trustworthy the user will be assumed to be.\n\nIn case of repeated registrations the oldest signed account will be used (as it has the highest value). Multiple accounts do not get accumulated. account will be used (as it has the highest value). Multiple a..."
+      ],
+      "response_time": 5.653666973114014,
+      "error": null
+    },
+    {
+      "question": "How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?",
+      "ground_truth": "Restore your profile by using a copy of the Bisq2/db folder from your data directory.",
+      "answer": "To recover your Bisq 2 profile after formatting your computer, you need to restore your profile using a copy of the `Bisq2/db` folder from your data directory. This folder contains all the necessary files related to your Bisq account. Make sure to locate your old data directory, which is typically found at:\n\n- **Windows**: `C:\\Users\\AppData\\Roaming\\Bisq2`\n- **Linux**: `~/.local/share/Bisq2`\n\nOnce you have the `db` folder, copy it back to the same location in your new installation. This should restore your profile and account settings.",
+      "contexts": [
+        "Question: How do I restore an old account?\nAnswer: Verify whether the account is from Bisq 2 or Bisq 1, as the restoration process differs between versions. For Bisq 1 accounts, use the Bisq 1 application. For Bisq 2, restore your profile using a copy of the Bisq2/db folder from your data directory.",
+        "Question: Can I get back into my old identity after creating a new one in Bisq?\nAnswer: Users can restore their old identity by locating the previous identity folder. Ensure to navigate to the identity folder where the old profile is stored.",
+        "[1] Application directory (contains application installation files): C:\\Users\\AppData\\Local\\Bisq2\n\n[2] Data directory (contains all Bisq data): C:\\Users\\AppData\\Roaming\\Bisq2\n\n**Linux**\n\nDebian users: if you have issues starting Bisq, run /opt/bisq2/bin/Bisq2\n\nIf your Linux distribution does not support .deb files please follow these instructions:\n\ncd ~/Downloads\n\nmkdir tmp\n\ncd tmp\n\nar x ../Bisq-64bit-2.1.2.deb\n\nsudo tar Jxvf data.tar.xz\n\nsudo cp -rp opt/Bisq2 /opt/\n\nThe above is not tested in a...",
+        "Question: How can I update my Bisq software?\nAnswer: Download the latest version from GitHub and install it to replace the older version.",
+        "## = Bisq2 specific instructions\n=\n\nBisq2 can be downloaded [https://bisq.network/downloads/ here]. Before installing software that manages your funds, you should always verify the installer has not been tampered with, to avoid the risk of losing funds due to a compromised download.\n\nUsually, installation binaries are signed by Alejandro Garc\u00eda (key ID: E222AA02, primary release manager). However, since this key has expired \u2014 and the expired key was included in previous versions of the Bisq2 app..."
+      ],
+      "response_time": 6.583824634552002,
+      "error": null
+    },
+    {
+      "question": "Can buyers restrict their offers to only signed accounts on Bisq1?",
+      "ground_truth": "No, it's not possible to restrict offers to only signed sellers.",
+      "answer": "In Bisq Easy (Bisq 2), it is not possible for buyers to restrict their offers to only signed accounts. All buyers can participate in the buying process regardless of whether their accounts are signed or unsigned.",
+      "contexts": [
+        "Question: Is it possible to only allow signed accounts to take my buy offer on Bisq?\nAnswer: No, you cannot restrict your buy offers to only signed sellers.\n\n---\n\nNo, it is not possible to allow only signed sellers to take your buy offer if your account is unsigned.",
+        "Question: Can I change the bank account used to send money in Bisq after a trade has started?\nAnswer: Changing the bank account is generally not allowed, but you can ask the seller for permission, especially if both accounts are under the same name.",
+        "Question: Is there an escrow service built into Bisq for trades?\nAnswer: There is no escrow service in Bisq, but sellers must build a reputation which discourages scamming.",
+        "Question: Is exporting account age or signed witness on Bisq 2 only for reputation purposes?\nAnswer: Yes, it's only for reputation as the trade protocols differ between Bisq 1 and Bisq 2.",
+        "## = Tips for bitcoin sellers\n=\n\nAlthough bitcoin buyers send the fiat payment before bitcoin sellers send them any bitcoin, sellers should still be aware of buyers attempting any charge-back scams. There is almost no cost for a bitcoin buyer to create an account and start making trades, therefore, there is little for a buyer to lose by attempting a scam. Almost all buyers on Bisq Easy will be honest but it is still good to be cautious.\n\nFor this reason they should take steps to ensure their tra..."
+      ],
+      "response_time": 3.9963698387145996,
+      "error": null
+    },
+    {
+      "question": "Can I change my BTC address after sending it to the seller in Bisq Easy?",
+      "ground_truth": "Yes, just inform the seller in the trader chat.",
+      "answer": "Yes, you can change your BTC address after sending it to the seller in Bisq Easy. Just inform the seller in the trader chat about the new address.",
+      "contexts": [
+        "Question: Can I change my BTC address after sending it to the seller?\nAnswer: Yes, just inform them in the trader chat.",
+        "Question: Can I change the bank account used to send money in Bisq after a trade has started?\nAnswer: Changing the bank account is generally not allowed, but you can ask the seller for permission, especially if both accounts are under the same name.",
+        "## How to sell bitcoin on Bisq Easy\n\nUsers of Bisq Easy can both make an offer to sell bitcoin, or take an offer from a user looking to buy bitcoin.\n\nSeller's on Bisq Easy will usually be experienced Bisq users. It is expected they will be helpful and supportive to buyers who are new to Bitcoin and/or Bisq.\u00a0Bisq Easy seller's should be passionate about helping new Bisq users smoothly acquire no KYC bitcoin in a peer to peer manner.\n\nAs building reputation incurs costs for the bitcoin sellers. It...",
+        "Question: Is it possible to send fiat currency to Bisq in order to buy stablecoins and then use them to make a transaction with someone else?\nAnswer: Users can only trade fiat for BTC on Bisq, sending the fiat directly to the BTC seller rather than to Bisq.",
+        "Question: How do I sell BTC if I don't have Bisq1 installed?\nAnswer: You should install Bisq1 in order to sell BTC.",
+        "Question: What is the easiest way to buy BTC on Bisq without undergoing KYC?\nAnswer: You could use methods like cash by mail or Amazon gift cards, although these options are less common and often carry a premium."
+      ],
+      "response_time": 3.9991719722747803,
+      "error": null
+    },
+    {
+      "question": "Why is my backup folder being ignored by the application?",
+      "ground_truth": "The contents of the backup folder need to be placed in the correct data directory path to be used by Bisq.",
+      "answer": "If your backup folder is being ignored by the Bisq application, it may be due to the folder not being set correctly in the application's configuration. Make sure you are using the default data directory for backups, which is typically located at `C:\\Users\\AppData\\Roaming\\Bisq2` on Windows or `~/.local/share/Bisq2` on Linux. You can verify the location directly in the Bisq application by going to the `Account` tab, selecting the `Backup` sub-tab, and clicking the **`OPEN DIRECTORY`** button to ensure the paths match.",
+      "contexts": [
+        "## Default locations\n\nThe default location of the main Bisq data directory varies by operating system. The exact path can usually be found easily from within the application itself (see below), but the standard defaults are listed by the template:\n\n## = Opening Directory from Bisq\n=\n\nThe easiest way to find and open your specific data directory is directly through the Bisq application:\n# Go to the `Account` tab.\n# Select the `Backup` sub-tab.\n# Click the button labeled **`OPEN DIRECTORY`**.\n\nthu...",
+        "# ============================\n\nARCHIVE_ROOT=\"bisq1_backup_\"\nBACKUP_FILE=\"${ARCHIVE_ROOT}$(date +%Y%m%d_%H%M%S).7z\"\nARCHIVE_PATH=\"${TARGET_FOLDER}/${BACKUP_FILE}\"\nSELECTED_FILES=(\n\"BsqSwapTrades\"\n\"BallotList\"\n\"DisputeList\"\n\"RefundDisputeList\"\n\"SequenceNumberMap\"\n\"MyVoteList\"\n\"OpenOffers\"\n\"MyBlindVoteList\"\n\"ClosedTrades\"\n\"MediationDisputeList\"\n\"MyProposalList\"\n\"MailboxMessageList\"\n\"AccountAgeWitnessStore\"\n\"PendingTrades\"\n\"MyProofOfBurnList\"\n\"PreferencesPayload\"\n\"UserPayload\"\n\"AddressEntryList\"\n\"F...",
+        "[1] Application directory (contains application installation files): C:\\Users\\AppData\\Local\\Bisq2\n\n[2] Data directory (contains all Bisq data): C:\\Users\\AppData\\Roaming\\Bisq2\n\n**Linux**\n\nDebian users: if you have issues starting Bisq, run /opt/bisq2/bin/Bisq2\n\nIf your Linux distribution does not support .deb files please follow these instructions:\n\ncd ~/Downloads\n\nmkdir tmp\n\ncd tmp\n\nar x ../Bisq-64bit-2.1.2.deb\n\nsudo tar Jxvf data.tar.xz\n\nsudo cp -rp opt/Bisq2 /opt/\n\nThe above is not tested in a..."
+      ],
+      "response_time": 7.498572587966919,
+      "error": null
+    },
+    {
+      "question": "Can I change the bank account used to send money after collateral has been sent in Bisq?",
+      "ground_truth": "Changing the account is not allowed, but you can ask the seller for approval; if they don't agree, you can open mediation before the trade expires, knowing that  you could incur a penalty if you are unable to use the account defined in the trade contract.",
+      "answer": "In Bisq Easy (Bisq 2), changing the bank account used to send money after the collateral has been sent is generally not allowed. However, you can request permission from the seller to make this change, especially if both accounts are under the same name.",
+      "contexts": [
+        "Question: Can I change the bank account used to send money in Bisq after a trade has started?\nAnswer: Changing the bank account is generally not allowed, but you can ask the seller for permission, especially if both accounts are under the same name.",
+        "Question: How do I link my Revolut wallet on Bisq 2?\nAnswer: You need to create a 'Revolut' payment account in Bisq and set your revtag there; IBAN is not used for the Revolut method.",
+        "Question: Can I change my BTC address after sending it to the seller?\nAnswer: Yes, just inform them in the trader chat.",
+        "Question: Is it possible to send fiat currency to Bisq in order to buy stablecoins and then use them to make a transaction with someone else?\nAnswer: Users can only trade fiat for BTC on Bisq, sending the fiat directly to the BTC seller rather than to Bisq.",
+        "## Sending Bitcoin to your Bisq wallet\n\nOnce you\u2019ve gotten enough bitcoin for your security deposit and fees, you can move it into Bisq\u2019s built-in wallet. This isn\u2019t strictly required, but it\u2019ll make trading more convenient since the funds you need to accept an offer will be readily available when you need them.\n\nTo send bitcoin to your Bisq wallet, you'll need an address. You'll find one on Funds > Receive Funds.\n\nYou might see many addresses listed. Pick the address on the bottom next to the Q..."
+      ],
+      "response_time": 4.906755208969116,
+      "error": null
+    },
+    {
+      "question": "Do Bitcoin addresses ever expire?",
+      "ground_truth": "No, Bitcoin addresses do not expire.",
+      "answer": "No, Bitcoin addresses do not expire. They remain valid as long as the private key associated with them is accessible.",
+      "contexts": [
+        "Question: Do Bitcoin addresses ever expire?\nAnswer: No, Bitcoin addresses do not expire.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: Will Bisq 1 applications eventually move to Bisq 2, especially for DAO and wallet features?\nAnswer: For now, Bisq1 will be maintained as a legacy entrypoint for BSQ and DAO, and any migration (such as multisig trading) may take time.",
+        "## Sending Bitcoin to your Bisq wallet\n\nOnce you\u2019ve gotten enough bitcoin for your security deposit and fees, you can move it into Bisq\u2019s built-in wallet. This isn\u2019t strictly required, but it\u2019ll make trading more convenient since the funds you need to accept an offer will be readily available when you need them.\n\nTo send bitcoin to your Bisq wallet, you'll need an address. You'll find one on Funds > Receive Funds.\n\nYou might see many addresses listed. Pick the address on the bottom next to the Q...",
+        "Question: Will Bisq2 eventually replace Bisq1, and what trading options will it have?\nAnswer: Bisq2 will replace Bisq1 in the future, but currently, it only supports trading BTC, while Bisq1 allows trading of various cryptocurrencies.",
+        "Question: Should I use both Bisq1 and Bisq2?\nAnswer: Use Bisq1 to buy BTC cheaper; use Bisq2 to sell BTC at higher prices after burning BSQ for reputation."
+      ],
+      "response_time": 4.884291887283325,
+      "error": null
+    },
+    {
+      "question": "Is it possible to run Bisq2 on Tails OS?",
+      "ground_truth": "Tails is not directly supported by Bisq, there are a few user-provided guides on the internet to run Bisq on Tails, but they could stop working when new Tails versions are released.",
+      "answer": "Yes, you can run Bisq 2 on Tails OS. For detailed instructions on downloading, installing, and configuring Bisq on Tails, please refer to the specific section titled \"Running Bisq on Tails\" in the Bisq documentation.",
+      "contexts": [
+        "## = Arch Linux\n=\n\nThe Bisq [https://bisq.network/downloads/ downloads page] includes a link to the Arch User Repository (AUR) page for the [https://aur.archlinux.org/packages/bisq/ bisq package].\n\n# From the command line, clone the repository from AUR.\n# Then from the cloned directory, run makepkg -si. This will read the PKGBUILD file to download, verify, build, and install the various tools necessary to install Bisq.\n\nIf the version found on AUR is not up to date, you can read Fix_Arch_release...",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Bisq 2 is the successor to the original Bisq (Bisq v1). It has been developed from the ground up to allow for multiple trade protocols to be accessed via a single decentralized exchange platform.\n\nAt the initial launch of Bisq 2 will support only one trading protocol 'Bisq Easy'. Over time more trading protocols will be added.\n\nOnce the Bisq Multisig protocol is implemented in Bisq 2, the old version of Bisq can fade out. Bisq 1 will still find its usage as Bisq DAO management tool and for BSQ-B..."
+      ],
+      "response_time": 6.3837127685546875,
+      "error": null
+    },
+    {
+      "question": "Is it possible to run Bisq 2 on Tails, and are there any guides available?",
+      "ground_truth": "There are no known tutorials for running Bisq 2 on Tails.",
+      "answer": "Yes, you can run Bisq 2 on Tails. For detailed instructions on downloading, installing, and configuring Bisq on Tails, please refer to the guide titled \"Running Bisq on Tails\" in the Bisq documentation.",
+      "contexts": [
+        "## = Arch Linux\n=\n\nThe Bisq [https://bisq.network/downloads/ downloads page] includes a link to the Arch User Repository (AUR) page for the [https://aur.archlinux.org/packages/bisq/ bisq package].\n\n# From the command line, clone the repository from AUR.\n# Then from the cloned directory, run makepkg -si. This will read the PKGBUILD file to download, verify, build, and install the various tools necessary to install Bisq.\n\nIf the version found on AUR is not up to date, you can read Fix_Arch_release...",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "## How Bisq 2 keeps data private\n\nBisq 2 achieves data privacy for users in the same way as Bisq 1:\n\n* Using Bisq requires no registration or centralized identity verification\n* Every Bisq application connects to the Bisq network with a Tor hidden service (as well as I2P in future)\n* Bisq has no central servers or databases to record data\n* Data is encrypted such that trade details are readable only by counter-parties\n\n## How Bisq 2 resists censorship\n\nBisq 2 achieves censorship resistance in th..."
+      ],
+      "response_time": 5.216079473495483,
+      "error": null
+    }
+  ]
+}
