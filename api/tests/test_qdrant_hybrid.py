@@ -4,6 +4,7 @@ Tests for Qdrant Hybrid Retriever.
 Tests the hybrid search functionality with mocked Qdrant client.
 """
 
+import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 # Skip tests if qdrant_client is not installed
 pytest.importorskip("qdrant_client")
 
+from app.services.rag.bm25_tokenizer import BM25SparseTokenizer  # noqa: E402
 from app.services.rag.interfaces import RetrievedDocument  # noqa: E402
 from app.services.rag.qdrant_hybrid_retriever import QdrantHybridRetriever  # noqa: E402
 
@@ -180,3 +182,185 @@ class TestQdrantHybridRetriever:
         assert info["points_count"] == 500
         assert info["status"] == "green"
         assert info["name"] == "test_collection"
+
+
+class TestBM25TokenizerIntegration:
+    """Test suite for BM25 tokenizer integration with QdrantHybridRetriever."""
+
+    @pytest.fixture
+    def mock_settings(self, tmp_path):
+        """Create mock settings with vocabulary path."""
+        settings = MagicMock()
+        settings.QDRANT_HOST = "localhost"
+        settings.QDRANT_PORT = 6333
+        settings.QDRANT_COLLECTION = "test_collection"
+        settings.HYBRID_SEMANTIC_WEIGHT = 0.7
+        settings.HYBRID_KEYWORD_WEIGHT = 0.3
+        settings.OPENAI_API_KEY = "test-api-key"
+        settings.OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+        settings.DATA_DIR = str(tmp_path)
+        settings.BM25_VOCABULARY_FILE = "bm25_vocabulary.json"
+        return settings
+
+    @pytest.fixture
+    def sample_vocabulary(self, tmp_path):
+        """Create a sample vocabulary file."""
+        tokenizer = BM25SparseTokenizer()
+        # Build vocabulary from sample documents
+        docs = [
+            "How do I buy bitcoin on Bisq Easy?",
+            "What is the reputation system in Bisq 2?",
+            "Can I use SEPA for payments on Bisq?",
+            "How do I restore my Bisq wallet backup?",
+            "What is BSQ and how do I burn it for reputation?",
+        ]
+        for doc in docs:
+            tokenizer.tokenize_document(doc)
+
+        vocab_path = tmp_path / "bm25_vocabulary.json"
+        vocab_path.write_text(tokenizer.export_vocabulary())
+        return vocab_path, tokenizer
+
+    @pytest.fixture
+    def mock_qdrant_client(self):
+        """Create mock Qdrant client."""
+        with patch("app.services.rag.qdrant_hybrid_retriever.QdrantClient") as mock:
+            client = MagicMock()
+            mock.return_value = client
+            yield client
+
+    @pytest.fixture
+    def mock_embeddings(self):
+        """Create mock embeddings."""
+        with patch("langchain_openai.OpenAIEmbeddings") as mock:
+            embeddings = MagicMock()
+            embeddings.embed_query.return_value = [0.1] * 1536
+            mock.return_value = embeddings
+            yield embeddings
+
+    def test_retriever_loads_vocabulary_on_init(
+        self, mock_settings, sample_vocabulary, mock_qdrant_client, mock_embeddings
+    ):
+        """Test that retriever loads BM25 vocabulary from file on initialization."""
+        vocab_path, original_tokenizer = sample_vocabulary
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Verify vocabulary was loaded
+        assert retriever._bm25_tokenizer is not None
+        assert (
+            retriever._bm25_tokenizer.vocabulary_size
+            == original_tokenizer.vocabulary_size
+        )
+
+    def test_retriever_uses_vocabulary_based_tokenization(
+        self, mock_settings, sample_vocabulary, mock_qdrant_client, mock_embeddings
+    ):
+        """Test that retriever uses vocabulary-based tokenization, not hash-based."""
+        vocab_path, original_tokenizer = sample_vocabulary
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Tokenize a query that contains vocabulary words
+        indices = retriever._tokenize_query("bisq bitcoin wallet")
+
+        # Indices should match vocabulary (not random hashes)
+        # "bisq", "bitcoin", "wallet" should all be in vocabulary
+        assert len(indices) > 0
+        for idx in indices:
+            assert retriever._bm25_tokenizer.has_token(idx)
+
+    def test_retriever_returns_idf_weights_not_uniform(
+        self, mock_settings, sample_vocabulary, mock_qdrant_client, mock_embeddings
+    ):
+        """Test that retriever returns IDF-weighted values, not uniform 1.0."""
+        vocab_path, _ = sample_vocabulary
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Get weights for a query
+        weights = retriever._get_bm25_weights("bisq bitcoin reputation")
+
+        # Weights should NOT all be 1.0 (which is the placeholder behavior)
+        assert len(weights) > 0
+        # At least one weight should differ from 1.0
+        assert not all(w == 1.0 for w in weights)
+
+    def test_retriever_handles_missing_vocabulary_file(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """Test graceful handling when vocabulary file doesn't exist."""
+        # Ensure no vocabulary file exists
+        mock_settings.DATA_DIR = tempfile.mkdtemp()
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Should still work, creating empty tokenizer
+        assert retriever._bm25_tokenizer is not None
+        # Tokenization should still work (query expansion)
+        indices = retriever._tokenize_query("test query")
+        assert isinstance(indices, list)
+
+    def test_hybrid_search_uses_proper_sparse_vectors(
+        self, mock_settings, sample_vocabulary, mock_qdrant_client, mock_embeddings
+    ):
+        """Test that hybrid search passes proper BM25 sparse vectors to Qdrant."""
+        vocab_path, _ = sample_vocabulary
+
+        # Setup mock response
+        mock_result = MagicMock()
+        mock_result.id = "doc1"
+        mock_result.score = 0.9
+        mock_result.payload = {"content": "Test content", "source": "test.md"}
+        mock_query_response = MagicMock()
+        mock_query_response.points = [mock_result]
+        mock_qdrant_client.query_points.return_value = mock_query_response
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        retriever.retrieve_with_scores("How do I buy bitcoin?", k=5)
+
+        # Verify query_points was called
+        mock_qdrant_client.query_points.assert_called_once()
+
+        # Get the call arguments
+        call_kwargs = mock_qdrant_client.query_points.call_args[1]
+        prefetch_list = call_kwargs.get("prefetch", [])
+
+        # Should have 2 prefetch queries: dense and sparse
+        assert len(prefetch_list) == 2
+
+        # Find the sparse prefetch (the one with SparseVector query)
+        sparse_prefetch = None
+        for pf in prefetch_list:
+            if hasattr(pf.query, "indices"):
+                sparse_prefetch = pf
+                break
+
+        assert sparse_prefetch is not None, "No sparse vector prefetch found"
+
+        # Verify sparse vector has proper indices (from vocabulary, not hashes)
+        sparse_indices = sparse_prefetch.query.indices
+        sparse_values = sparse_prefetch.query.values
+
+        assert len(sparse_indices) > 0
+        assert len(sparse_values) == len(sparse_indices)
+        # Values should not all be 1.0
+        assert not all(v == 1.0 for v in sparse_values)
+
+    def test_tokenizer_vocabulary_alignment(
+        self, mock_settings, sample_vocabulary, mock_qdrant_client, mock_embeddings
+    ):
+        """Test that query tokenization aligns with document vocabulary."""
+        vocab_path, original_tokenizer = sample_vocabulary
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Query with words from the vocabulary
+        query = "bisq reputation"
+        indices = retriever._tokenize_query(query)
+
+        # Each index should map back to a known token
+        for idx in indices:
+            token = retriever._bm25_tokenizer.get_token(idx)
+            assert token is not None
+            assert token in ["bisq", "reputation"]

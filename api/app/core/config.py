@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     HYBRID_SEMANTIC_WEIGHT: float = 0.7  # Weight for dense/semantic vectors
     HYBRID_KEYWORD_WEIGHT: float = 0.3  # Weight for sparse/BM25 vectors
 
+    # BM25 Tokenizer Settings
+    BM25_VOCABULARY_FILE: str = "bm25_vocabulary.json"  # Vocabulary file in DATA_DIR
+
     # LLM Message Classification Settings (Provider-Agnostic)
     # Supports multiple LLM providers via AISuite: openai, anthropic, ollama
     ENABLE_LLM_CLASSIFICATION: bool = False  # Enable LLM-based message classification

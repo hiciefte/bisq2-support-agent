@@ -10,15 +10,15 @@ especially for queries with specific technical terms or exact matches.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import Settings
+from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
 from app.services.rag.interfaces import HybridRetrieverProtocol, RetrievedDocument
-from qdrant_client import QdrantClient  # type: ignore[import-not-found]
-from qdrant_client.http import models as rest  # type: ignore[import-not-found]
-from qdrant_client.http.exceptions import (  # type: ignore[import-not-found]
-    ResponseHandlingException,
-)
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as rest
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         settings: Settings,
         client: Optional[QdrantClient] = None,
         embeddings=None,
+        bm25_tokenizer: Optional[BM25SparseTokenizer] = None,
     ):
         """Initialize the Qdrant hybrid retriever.
 
@@ -54,6 +55,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             settings: Application settings with Qdrant configuration
             client: Optional pre-configured QdrantClient (for testing)
             embeddings: Optional embedding model (defaults to OpenAI)
+            bm25_tokenizer: Optional BM25 tokenizer (defaults to loading from file)
         """
         self.settings = settings
         self.collection_name = settings.QDRANT_COLLECTION
@@ -69,6 +71,12 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             self._embeddings = embeddings
         else:
             self._embeddings = self._create_embeddings()
+
+        # Initialize BM25 tokenizer (use provided or load from file)
+        if bm25_tokenizer is not None:
+            self._bm25_tokenizer = bm25_tokenizer
+        else:
+            self._bm25_tokenizer = self._load_bm25_tokenizer()
 
         self._is_healthy: Optional[bool] = None
 
@@ -100,6 +108,39 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             model=self.settings.OPENAI_EMBEDDING_MODEL,
             openai_api_key=self.settings.OPENAI_API_KEY,
         )
+
+    def _load_bm25_tokenizer(self) -> BM25SparseTokenizer:
+        """Load BM25 tokenizer from vocabulary file.
+
+        Returns:
+            BM25SparseTokenizer with loaded vocabulary, or empty tokenizer if not found
+        """
+        tokenizer = BM25SparseTokenizer()
+
+        # Get vocabulary file path from settings
+        data_dir = Path(self.settings.DATA_DIR)
+        vocab_filename = getattr(
+            self.settings, "BM25_VOCABULARY_FILE", "bm25_vocabulary.json"
+        )
+        vocab_path = data_dir / vocab_filename
+
+        if vocab_path.exists():
+            try:
+                vocab_json = vocab_path.read_text()
+                tokenizer.load_vocabulary(vocab_json)
+                logger.info(
+                    f"Loaded BM25 vocabulary from {vocab_path} "
+                    f"({tokenizer.vocabulary_size} tokens, {tokenizer._num_documents} documents)"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load BM25 vocabulary from {vocab_path}: {e}")
+        else:
+            logger.info(
+                f"BM25 vocabulary file not found at {vocab_path}, "
+                "using empty tokenizer (query expansion mode)"
+            )
+
+        return tokenizer
 
     @property
     def client(self) -> QdrantClient:
@@ -187,7 +228,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
                     )
                 )
 
-        return rest.Filter(must=conditions)
+        return rest.Filter(must=conditions)  # type: ignore[arg-type]
 
     def retrieve(
         self,
@@ -269,7 +310,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             # Perform hybrid search using Qdrant's query API
             # For pure semantic search (keyword_weight=0), use standard search
             if keyword_weight == 0:
-                results = self._client.search(
+                results = self._client.search(  # type: ignore[attr-defined]
                     collection_name=self.collection_name,
                     query_vector=query_vector,
                     limit=k,
@@ -332,7 +373,8 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     def _tokenize_query(self, query: str) -> List[int]:
         """Tokenize query for sparse vector search.
 
-        Simple whitespace tokenization with hashing for BM25-style search.
+        Uses BM25SparseTokenizer for vocabulary-based tokenization with
+        proper IDF weighting.
 
         Args:
             query: Query text
@@ -340,14 +382,14 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         Returns:
             List of token indices
         """
-        tokens = query.lower().split()
-        # Simple hash-based indexing (production would use proper vocabulary)
-        return [hash(token) % 30000 for token in tokens]
+        indices, _ = self._bm25_tokenizer.tokenize_query(query)
+        return indices
 
     def _get_bm25_weights(self, query: str) -> List[float]:
         """Get BM25-style weights for query tokens.
 
-        Simple IDF-like weighting (production would use corpus statistics).
+        Uses BM25SparseTokenizer for proper IDF-based weighting from
+        corpus statistics.
 
         Args:
             query: Query text
@@ -355,9 +397,8 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         Returns:
             List of token weights
         """
-        tokens = query.lower().split()
-        # Simple uniform weighting (production would use actual IDF)
-        return [1.0] * len(tokens)
+        _, values = self._bm25_tokenizer.tokenize_query(query)
+        return values
 
     def collection_exists(self) -> bool:
         """Check if the collection exists in Qdrant.
@@ -383,7 +424,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             return {
                 "name": self.collection_name,
                 "points_count": info.points_count,
-                "vectors_count": info.vectors_count,
+                "indexed_vectors_count": info.indexed_vectors_count,
                 "status": info.status,
             }
         except Exception as e:
