@@ -97,8 +97,12 @@ def compute_ragas_metrics(
         # Import metrics - handle both old and new API
         try:
             # New API (ragas >= 0.2)
-            from ragas.metrics import (AnswerRelevancy, ContextPrecision, ContextRecall,
-                                       Faithfulness)
+            from ragas.metrics import (
+                AnswerRelevancy,
+                ContextPrecision,
+                ContextRecall,
+                Faithfulness,
+            )
 
             metrics = [
                 ContextPrecision(),
@@ -108,8 +112,12 @@ def compute_ragas_metrics(
             ]
         except ImportError:
             # Old API (ragas < 0.2)
-            from ragas.metrics import (answer_relevancy, context_precision,
-                                       context_recall, faithfulness)
+            from ragas.metrics import (
+                answer_relevancy,
+                context_precision,
+                context_recall,
+                faithfulness,
+            )
 
             metrics = [
                 context_precision,
