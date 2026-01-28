@@ -12,6 +12,7 @@ Features:
 """
 
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -61,6 +62,7 @@ class ResilientRetriever(ResilientRetrieverProtocol):
         self._last_reset_attempt = 0.0
         self._fallback_count = 0
         self._primary_failures = 0
+        self._lock = threading.Lock()  # Protects state mutations
 
     @property
     def primary_retriever(self) -> RetrieverProtocol:
@@ -85,15 +87,23 @@ class ResilientRetriever(ResilientRetrieverProtocol):
         Returns:
             The active retriever (primary or fallback)
         """
-        if self._using_fallback and self._auto_reset:
-            # Check if we should try resetting to primary
-            now = time.time()
-            if now - self._last_reset_attempt >= self._reset_interval:
-                self._last_reset_attempt = now
-                if self.reset_to_primary():
-                    logger.info("Successfully reset to primary retriever")
+        with self._lock:
+            using_fallback = self._using_fallback
+            should_try_reset = False
+            if using_fallback and self._auto_reset:
+                # Check if we should try resetting to primary
+                now = time.time()
+                if now - self._last_reset_attempt >= self._reset_interval:
+                    self._last_reset_attempt = now
+                    should_try_reset = True
 
-        return self._fallback if self._using_fallback else self._primary
+        # Perform reset outside lock to avoid holding lock during I/O
+        if should_try_reset:
+            if self.reset_to_primary():
+                logger.info("Successfully reset to primary retriever")
+
+        with self._lock:
+            return self._fallback if self._using_fallback else self._primary
 
     def _switch_to_fallback(self, error: Exception) -> None:
         """Switch to fallback retriever after primary failure.
@@ -101,14 +111,18 @@ class ResilientRetriever(ResilientRetrieverProtocol):
         Args:
             error: The error that caused the switch
         """
-        if not self._using_fallback:
-            self._using_fallback = True
-            self._fallback_count += 1
-            self._primary_failures += 1
-            logger.warning(
-                f"Switching to fallback retriever due to primary failure: {error}. "
-                f"Total fallbacks: {self._fallback_count}"
-            )
+        with self._lock:
+            if not self._using_fallback:
+                self._using_fallback = True
+                self._fallback_count += 1
+                self._primary_failures += 1
+                fallback_count = self._fallback_count
+
+        # Log outside lock
+        logger.warning(
+            f"Switching to fallback retriever due to primary failure: {error}. "
+            f"Total fallbacks: {fallback_count}"
+        )
 
     def reset_to_primary(self) -> bool:
         """Attempt to reset to primary retriever.
@@ -117,8 +131,11 @@ class ResilientRetriever(ResilientRetrieverProtocol):
             True if successfully reset to primary, False if primary unhealthy
         """
         try:
-            if self._primary.health_check():
-                self._using_fallback = False
+            # Health check outside lock (I/O operation)
+            is_healthy = self._primary.health_check()
+            if is_healthy:
+                with self._lock:
+                    self._using_fallback = False
                 logger.info("Reset to primary retriever successful")
                 return True
             else:
@@ -172,8 +189,9 @@ class ResilientRetriever(ResilientRetrieverProtocol):
         try:
             docs = retriever.retrieve(query, k, filter_dict)
             # If using primary and it succeeds, reset failure count
-            if not self._using_fallback:
-                self._primary_failures = 0
+            with self._lock:
+                if not self._using_fallback:
+                    self._primary_failures = 0
             return docs
         except Exception as e:
             if not self._using_fallback:
@@ -211,8 +229,9 @@ class ResilientRetriever(ResilientRetrieverProtocol):
 
         try:
             docs = retriever.retrieve_with_scores(query, k, filter_dict)
-            if not self._using_fallback:
-                self._primary_failures = 0
+            with self._lock:
+                if not self._using_fallback:
+                    self._primary_failures = 0
             return docs
         except Exception as e:
             if not self._using_fallback:

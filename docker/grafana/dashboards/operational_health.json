@@ -123,11 +123,11 @@
               },
               {
                 "color": "yellow",
-                "value": 3600
+                "value": 21600
               },
               {
                 "color": "red",
-                "value": 7200
+                "value": 90000
               }
             ]
           },
@@ -193,11 +193,11 @@
               },
               {
                 "color": "yellow",
-                "value": 3600
+                "value": 36000
               },
               {
                 "color": "red",
-                "value": 7200
+                "value": 50400
               }
             ]
           },

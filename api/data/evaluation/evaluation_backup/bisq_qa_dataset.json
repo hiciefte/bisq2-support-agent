@@ -320,7 +320,7 @@
   },
   {
     "question": "What should I do if the Bisq app on macOS reports it is damaged and won't open?",
-    "ground_truth": "This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Downloading_and_installing#macOS.",
+    "ground_truth": "This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Doknownloading_and_installing#macOS.",
     "contexts": [],
     "metadata": {
       "faq_id": 3,

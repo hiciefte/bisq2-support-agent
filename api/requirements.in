@@ -19,8 +19,8 @@ qdrant-client>=1.12.0
 # Install manually: pip install ragatouille if needed
 
 # RAGAS evaluation framework
-ragas>=0.1.0
-datasets>=2.14.0
+ragas>=0.1.21
+datasets>=2.21.0
 
 # NLI and ML models (for confidence scoring via DeBERTa)
 # NOTE: torch is installed separately as CPU-only in Dockerfile/CI
@@ -37,7 +37,9 @@ aisuite[mcp]>=0.1.14
 # LiteLLM for vendor-portable embeddings (100+ providers)
 litellm>=1.30.0
 # MCP SDK for building Model Context Protocol servers
-mcp[cli]>=1.23.0  # Security fix for CVE-2025-53365, CVE-2025-53366, CVE-2025-66416
+# Note: Using mcp without [cli] extra due to typer version conflict between
+# instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0
+mcp>=1.23.0  # Security fix for CVE-2025-53365, CVE-2025-53366, CVE-2025-66416
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
 # 2.0.0 changes Response tool-call output schema (breaking change)
 openai<2.0.0

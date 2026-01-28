@@ -290,6 +290,9 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     ) -> List[RetrievedDocument]:
         """Retrieve using hybrid search (semantic + keyword).
 
+        Uses true weighted combination of dense and sparse search scores
+        rather than RRF fusion, allowing precise control over the balance.
+
         Args:
             query: Search query text
             k: Maximum number of documents to retrieve
@@ -301,74 +304,205 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             List of RetrievedDocument objects with combined scores
         """
         try:
-            # Get query embedding for dense search
-            query_vector = self._get_query_embedding(query)
-
             # Build filter
             qdrant_filter = self._build_filter(filter_dict)
 
-            # Perform hybrid search using Qdrant's query API
-            # For pure semantic search (keyword_weight=0), use standard search
+            # Pure semantic search (no BM25)
             if keyword_weight == 0:
+                query_vector = self._get_query_embedding(query)
                 results = self._client.search(  # type: ignore[attr-defined]
                     collection_name=self.collection_name,
-                    query_vector=query_vector,
+                    query_vector=("dense", query_vector),
                     limit=k,
                     query_filter=qdrant_filter,
                     with_payload=True,
                 )
-            else:
-                # Use hybrid search with sparse vectors
-                # Qdrant supports hybrid search via prefetch + fusion
-                results = self._client.query_points(
+                return self._results_to_documents(results)
+
+            # Pure keyword/BM25 search (no semantic)
+            if semantic_weight == 0:
+                sparse_indices = self._tokenize_query(query)
+                sparse_values = self._get_bm25_weights(query)
+                results = self._client.search(  # type: ignore[attr-defined]
                     collection_name=self.collection_name,
-                    prefetch=[
-                        # Dense vector search
-                        rest.Prefetch(
-                            query=query_vector,
-                            using="dense",
-                            limit=k * 2,
-                            filter=qdrant_filter,
-                        ),
-                        # Sparse vector search (BM25)
-                        rest.Prefetch(
-                            query=rest.SparseVector(
-                                indices=self._tokenize_query(query),
-                                values=self._get_bm25_weights(query),
-                            ),
-                            using="sparse",
-                            limit=k * 2,
-                            filter=qdrant_filter,
-                        ),
-                    ],
-                    query=rest.FusionQuery(fusion=rest.Fusion.RRF),
+                    query_vector=(
+                        "sparse",
+                        rest.SparseVector(indices=sparse_indices, values=sparse_values),
+                    ),
                     limit=k,
+                    query_filter=qdrant_filter,
                     with_payload=True,
-                ).points
-
-            # Convert to RetrievedDocument objects
-            documents = []
-            for result in results:
-                payload = result.payload or {}
-                doc = RetrievedDocument(
-                    content=payload.get("content", payload.get("text", "")),
-                    metadata={
-                        k: v for k, v in payload.items() if k not in ("content", "text")
-                    },
-                    score=result.score if hasattr(result, "score") else 0.0,
-                    id=str(result.id) if result.id else None,
                 )
-                documents.append(doc)
+                return self._results_to_documents(results)
 
-            logger.info(
-                f"Qdrant hybrid search returned {len(documents)} documents "
-                f"(semantic_weight={semantic_weight}, keyword_weight={keyword_weight})"
+            # True weighted hybrid search
+            return self._weighted_hybrid_search(
+                query=query,
+                k=k,
+                semantic_weight=semantic_weight,
+                keyword_weight=keyword_weight,
+                qdrant_filter=qdrant_filter,
             )
-            return documents
 
         except Exception as e:
             logger.error(f"Qdrant hybrid search failed: {e}", exc_info=True)
             return []
+
+    def _weighted_hybrid_search(
+        self,
+        query: str,
+        k: int,
+        semantic_weight: float,
+        keyword_weight: float,
+        qdrant_filter: Optional[rest.Filter],
+    ) -> List[RetrievedDocument]:
+        """Perform true weighted hybrid search.
+
+        Runs dense and sparse searches separately, normalizes scores,
+        applies weights, and merges results by document ID.
+
+        Args:
+            query: Search query text
+            k: Maximum number of documents to retrieve
+            semantic_weight: Weight for semantic scores
+            keyword_weight: Weight for keyword scores
+            qdrant_filter: Pre-built Qdrant filter
+
+        Returns:
+            List of RetrievedDocument objects with weighted combined scores
+        """
+        # Fetch more candidates than needed for better coverage
+        fetch_limit = k * 3
+
+        # Get query vectors
+        query_vector = self._get_query_embedding(query)
+        sparse_indices = self._tokenize_query(query)
+        sparse_values = self._get_bm25_weights(query)
+
+        # Run dense search
+        dense_results = self._client.search(  # type: ignore[attr-defined]
+            collection_name=self.collection_name,
+            query_vector=("dense", query_vector),
+            limit=fetch_limit,
+            query_filter=qdrant_filter,
+            with_payload=True,
+        )
+
+        # Run sparse search
+        sparse_results = self._client.search(  # type: ignore[attr-defined]
+            collection_name=self.collection_name,
+            query_vector=(
+                "sparse",
+                rest.SparseVector(indices=sparse_indices, values=sparse_values),
+            ),
+            limit=fetch_limit,
+            query_filter=qdrant_filter,
+            with_payload=True,
+        )
+
+        # Normalize scores to [0, 1] range using min-max normalization
+        dense_scores = self._normalize_scores(
+            {str(r.id): r.score for r in dense_results}
+        )
+        sparse_scores = self._normalize_scores(
+            {str(r.id): r.score for r in sparse_results}
+        )
+
+        # Combine payloads from both result sets
+        payloads: Dict[str, Dict[str, Any]] = {}
+        for r in dense_results:
+            payloads[str(r.id)] = r.payload or {}
+        for r in sparse_results:
+            if str(r.id) not in payloads:
+                payloads[str(r.id)] = r.payload or {}
+
+        # Compute weighted combined scores
+        all_ids = set(dense_scores.keys()) | set(sparse_scores.keys())
+        combined_scores: Dict[str, float] = {}
+
+        for doc_id in all_ids:
+            dense_score = dense_scores.get(doc_id, 0.0)
+            sparse_score = sparse_scores.get(doc_id, 0.0)
+            combined_scores[doc_id] = (
+                semantic_weight * dense_score + keyword_weight * sparse_score
+            )
+
+        # Sort by combined score and take top k
+        sorted_ids = sorted(
+            combined_scores.keys(), key=lambda x: combined_scores[x], reverse=True
+        )[:k]
+
+        # Build result documents
+        documents = []
+        for doc_id in sorted_ids:
+            payload = payloads.get(doc_id, {})
+            doc = RetrievedDocument(
+                content=payload.get("content", payload.get("text", "")),
+                metadata={
+                    key: val
+                    for key, val in payload.items()
+                    if key not in ("content", "text")
+                },
+                score=combined_scores[doc_id],
+                id=doc_id,
+            )
+            documents.append(doc)
+
+        logger.info(
+            f"Qdrant weighted hybrid search returned {len(documents)} documents "
+            f"(semantic_weight={semantic_weight}, keyword_weight={keyword_weight})"
+        )
+        return documents
+
+    def _normalize_scores(self, scores: Dict[str, float]) -> Dict[str, float]:
+        """Normalize scores to [0, 1] range using min-max normalization.
+
+        Args:
+            scores: Dictionary mapping document IDs to scores
+
+        Returns:
+            Dictionary with normalized scores
+        """
+        if not scores:
+            return {}
+
+        values = list(scores.values())
+        min_score = min(values)
+        max_score = max(values)
+
+        # Avoid division by zero when all scores are the same
+        if max_score == min_score:
+            return {doc_id: 1.0 for doc_id in scores}
+
+        return {
+            doc_id: (score - min_score) / (max_score - min_score)
+            for doc_id, score in scores.items()
+        }
+
+    def _results_to_documents(self, results) -> List[RetrievedDocument]:
+        """Convert Qdrant search results to RetrievedDocument objects.
+
+        Args:
+            results: Qdrant search results
+
+        Returns:
+            List of RetrievedDocument objects
+        """
+        documents = []
+        for result in results:
+            payload = result.payload or {}
+            doc = RetrievedDocument(
+                content=payload.get("content", payload.get("text", "")),
+                metadata={
+                    key: val
+                    for key, val in payload.items()
+                    if key not in ("content", "text")
+                },
+                score=result.score if hasattr(result, "score") else 0.0,
+                id=str(result.id) if result.id else None,
+            )
+            documents.append(doc)
+        return documents
 
     def _tokenize_query(self, query: str) -> List[int]:
         """Tokenize query for sparse vector search.

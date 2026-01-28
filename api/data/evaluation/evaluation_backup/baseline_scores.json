@@ -383,7 +383,7 @@
     },
     {
       "question": "What should I do if the Bisq app on macOS reports it is damaged and won't open?",
-      "ground_truth": "This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Downloading_and_installing#macOS.",
+      "ground_truth": "This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Doknownloading_and_installing#macOS.",
       "answer": "If the Bisq app on macOS reports that it is damaged and won't open, you should follow these steps:\n\n1. **Open Terminal** and run the following command to remove the quarantine attribute:\n   ```bash\n   sudo xattr -rd com.apple.quarantine /Applications/Bisq2.app\n   ```\n   You will need to enter your password to execute this command as a super user.\n\n2. If you continue to have issues, refer to the guide provided by Apple on how to open apps from unidentified developers: [Apple Support](https://support.apple.com/en-us/HT202491).\n\nThese steps should help you start the Bisq 2 application normally.",
       "contexts": [
         "Question: What should I do if I get a 'Connection to the Bitcoin network failed' error?\nAnswer: Make sure you are using the latest version of Bisq; if the problem persists, refer to the Last Resort Restore guide on the Bisq WIki.",

@@ -258,8 +258,10 @@ services:
     networks:
       - bisq-support-network
     # No external ports - internal only for security
+    # Note: qdrant/qdrant image doesn't include curl/wget
+    # Use wget from busybox or check TCP connection as alternative
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD-SHELL", "timeout 5 sh -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -156,7 +156,8 @@ class TestColBERTFeatureFlag:
         with patch.dict("os.environ", {"ENABLE_COLBERT_RERANK": "false"}):
             from app.core.config import Settings
 
-            _ = Settings()  # noqa: F841 - verify settings load without error
+            settings = Settings()
+            assert settings.ENABLE_COLBERT_RERANK is False
 
     def test_colbert_model_configurable(self):
         """Test that ColBERT model can be configured."""
@@ -165,7 +166,8 @@ class TestColBERTFeatureFlag:
         with patch.dict("os.environ", {"COLBERT_MODEL": custom_model}):
             from app.core.config import Settings
 
-            _ = Settings()  # noqa: F841 - verify settings load without error
+            settings = Settings()
+            assert settings.COLBERT_MODEL == custom_model
 
 
 class TestGracefulDegradation:

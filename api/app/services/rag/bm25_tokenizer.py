@@ -285,7 +285,8 @@ class BM25SparseTokenizer:
         df = self._document_frequencies.get(token, 0)
         if df == 0:
             # Unseen token - assign high IDF (rare)
-            return math.log((self._num_documents + 1) / 1 + 1)
+            # Use smoothed IDF: log(N + 1) + 1 to ensure positive value
+            return math.log(self._num_documents + 1) + 1
 
         # BM25 IDF formula
         idf = math.log((self._num_documents - df + 0.5) / (df + 0.5) + 1)

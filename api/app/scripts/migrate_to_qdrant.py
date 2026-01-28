@@ -17,10 +17,11 @@ Options:
 """
 
 import argparse
+import hashlib
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
@@ -59,10 +60,13 @@ class ChromaToQdrantMigrator:
         self.force = force
 
         # Qdrant client
-        self._qdrant_client = None
+        self._qdrant_client: Optional[QdrantClient] = None
 
         # Embedding model
-        self._embeddings = None
+        self._embeddings: Optional[Any] = None
+
+        # BM25 tokenizer for sparse vectors
+        self._bm25_tokenizer: Optional[Any] = None  # BM25SparseTokenizer - lazy loaded
 
     @property
     def qdrant_client(self) -> QdrantClient:
@@ -77,23 +81,28 @@ class ChromaToQdrantMigrator:
 
     @property
     def embeddings(self):
-        """Get or create embeddings model."""
+        """Get or create embeddings model.
+
+        Uses LiteLLMEmbeddings for consistency with load_chromadb_documents.
+        """
         if self._embeddings is None:
-            try:
-                from llama_index.embeddings.openai import OpenAIEmbedding
+            from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 
-                self._embeddings = OpenAIEmbedding(
-                    model=self.settings.OPENAI_EMBEDDING_MODEL,
-                    api_key=self.settings.OPENAI_API_KEY,
-                )
-            except ImportError:
-                from langchain_openai import OpenAIEmbeddings
-
-                self._embeddings = OpenAIEmbeddings(
-                    model=self.settings.OPENAI_EMBEDDING_MODEL,
-                    openai_api_key=self.settings.OPENAI_API_KEY,
-                )
+            # Get model from settings (format: "openai/text-embedding-3-small")
+            model = getattr(self.settings, "EMBEDDING_MODEL", None)
+            if not model:
+                model = f"openai/{self.settings.OPENAI_EMBEDDING_MODEL}"
+            self._embeddings = LiteLLMEmbeddings(model=model)
         return self._embeddings
+
+    @property
+    def bm25_tokenizer(self):
+        """Get or create BM25 tokenizer for sparse vectors."""
+        if self._bm25_tokenizer is None:
+            from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
+
+            self._bm25_tokenizer = BM25SparseTokenizer()
+        return self._bm25_tokenizer
 
     def load_chromadb_documents(self) -> List[Dict[str, Any]]:
         """Load all documents from ChromaDB.
@@ -114,7 +123,11 @@ class ChromaToQdrantMigrator:
         # Initialize ChromaDB
         from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 
-        embeddings = LiteLLMEmbeddings(self.settings)
+        # Get model from settings
+        model = getattr(self.settings, "EMBEDDING_MODEL", None)
+        if not model:
+            model = f"openai/{self.settings.OPENAI_EMBEDDING_MODEL}"
+        embeddings = LiteLLMEmbeddings(model=model)
         vectorstore = Chroma(
             persist_directory=vectorstore_path,
             embedding_function=embeddings,
@@ -222,29 +235,35 @@ class ChromaToQdrantMigrator:
     def _tokenize_for_sparse(self, text: str) -> Tuple[List[int], List[float]]:
         """Tokenize text for sparse (BM25-style) vector.
 
+        Uses BM25SparseTokenizer for deterministic vocabulary-based indexing
+        and proper BM25 weighting.
+
         Args:
             text: Document text
 
         Returns:
             Tuple of (indices, values) for sparse vector
         """
-        # Simple whitespace tokenization with hash-based indexing
-        # Production would use proper vocabulary and TF-IDF/BM25 weighting
-        tokens = text.lower().split()
-        token_counts: Dict[int, int] = {}
-
-        for token in tokens:
-            # Skip very short tokens
-            if len(token) < 2:
-                continue
-            idx = hash(token) % 30000
-            token_counts[idx] = token_counts.get(idx, 0) + 1
-
-        indices = list(token_counts.keys())
-        # Simple TF weighting (production would use proper BM25)
-        values = [float(count) for count in token_counts.values()]
-
+        # Use BM25SparseTokenizer for deterministic indexing and proper weighting
+        indices, values = self.bm25_tokenizer.tokenize_document(text)
         return indices, values
+
+    def _generate_deterministic_id(self, doc_id: str) -> int:
+        """Generate a deterministic integer ID from a string document ID.
+
+        Uses SHA256 hash truncated to fit within 63-bit signed integer range.
+
+        Args:
+            doc_id: Original string document ID
+
+        Returns:
+            Deterministic integer ID for Qdrant
+        """
+        # Use SHA256 for deterministic hashing
+        hash_bytes = hashlib.sha256(doc_id.encode("utf-8")).digest()
+        # Take first 8 bytes and convert to int, mask to 63 bits for signed int
+        hash_int = int.from_bytes(hash_bytes[:8], byteorder="big") & ((1 << 63) - 1)
+        return hash_int
 
     def _get_embedding(self, text: str) -> List[float]:
         """Get embedding for text.
@@ -295,9 +314,10 @@ class ChromaToQdrantMigrator:
                 # Compute sparse vector
                 sparse_indices, sparse_values = self._tokenize_for_sparse(content)
 
-                # Create point
+                # Create point with deterministic ID
+                point_id = self._generate_deterministic_id(doc_id)
                 point = rest.PointStruct(
-                    id=hash(doc_id) % (2**63),  # Convert string ID to int
+                    id=point_id,
                     vector={
                         "dense": dense_vector,
                         "sparse": rest.SparseVector(

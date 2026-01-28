@@ -210,6 +210,7 @@ class HybridRetrieverProtocol(RetrieverProtocol, Protocol):
         ...
 
 
+@runtime_checkable
 class ResilientRetrieverProtocol(RetrieverProtocol, Protocol):
     """Protocol for retriever with fallback capability.
 

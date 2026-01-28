@@ -105,9 +105,11 @@ class ChromaDBRetrieverAdapter(RetrieverProtocol):
             # ChromaDB returns (doc, distance) where lower distance = more similar
             documents = []
             for doc, distance in results:
-                # Convert distance to similarity score (0-1)
-                # ChromaDB uses L2 distance, so we normalize
-                similarity = max(0.0, 1.0 - (distance / 2.0))
+                # Convert L2 distance to similarity score (0-1)
+                # For normalized vectors, L2 distance ranges 0 to 2
+                # similarity = 1 - (distance / 2) maps [0,2] to [1,0]
+                # Clamp to [0, 1] to handle any edge cases
+                similarity = max(0.0, min(1.0, 1.0 - (distance / 2.0)))
                 documents.append(
                     RetrievedDocument.from_langchain_document(doc, score=similarity)
                 )

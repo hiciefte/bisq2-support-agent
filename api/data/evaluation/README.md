@@ -13,6 +13,7 @@ This directory contains evaluation data and results for comparing the RAG retrie
 ### Prerequisites
 
 1. API service running with desired backend:
+
    ```bash
    # For ChromaDB (baseline):
    RETRIEVER_BACKEND=chromadb docker compose up -d api
@@ -22,6 +23,7 @@ This directory contains evaluation data and results for comparing the RAG retrie
    ```
 
 2. Qdrant collection populated (if using Qdrant):
+
    ```bash
    docker compose exec api python -m api.app.scripts.migrate_to_qdrant
    ```
