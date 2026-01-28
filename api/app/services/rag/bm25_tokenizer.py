@@ -26,6 +26,7 @@ import json
 import logging
 import math
 import re
+import threading
 from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -186,6 +187,9 @@ class BM25SparseTokenizer:
         self._num_documents: int = 0
         self._total_doc_length: int = 0
         self._next_index: int = 0
+
+        # Thread safety lock for vocabulary updates
+        self._update_lock = threading.Lock()
 
         # Build vocabulary from corpus if provided
         if corpus:
@@ -507,4 +511,120 @@ class BM25SparseTokenizer:
             "num_documents": self._num_documents,
             "avg_doc_length": self._get_avg_doc_length(),
             "total_tokens_processed": self._total_doc_length,
+        }
+
+    # ==========================================================================
+    # Incremental Vocabulary Update Methods
+    # ==========================================================================
+
+    def update_vocabulary(
+        self, documents: List[str], return_stats: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Incrementally update vocabulary with new documents.
+
+        This method adds new documents to the existing vocabulary without
+        requiring a full rebuild. It updates document frequencies and IDF
+        values for all terms.
+
+        Args:
+            documents: List of new document texts to add
+            return_stats: If True, return statistics about the update
+
+        Returns:
+            Update statistics if return_stats=True, else None
+        """
+        if not documents:
+            if return_stats:
+                return {
+                    "new_tokens_added": 0,
+                    "documents_added": 0,
+                    "vocabulary_size": self.vocabulary_size,
+                }
+            return None
+
+        initial_vocab_size = self.vocabulary_size
+        docs_added = 0
+
+        for doc in documents:
+            if not doc or not doc.strip():
+                continue
+            self._add_document_to_vocabulary(doc)
+            docs_added += 1
+
+        if return_stats:
+            return {
+                "new_tokens_added": self.vocabulary_size - initial_vocab_size,
+                "documents_added": docs_added,
+                "vocabulary_size": self.vocabulary_size,
+            }
+        return None
+
+    def _add_document_to_vocabulary(self, doc: str) -> List[str]:
+        """Add a single document to vocabulary.
+
+        Thread-safe method that acquires lock before modifying vocabulary.
+
+        Args:
+            doc: Document text
+
+        Returns:
+            List of newly added tokens
+        """
+        tokens = self._extract_tokens(doc)
+        if not tokens:
+            return []
+
+        unique_tokens = set(tokens)
+        new_tokens = []
+
+        # Thread-safe vocabulary modification
+        with self._update_lock:
+            # Update document frequencies
+            for token in unique_tokens:
+                self._document_frequencies[token] += 1
+                if token not in self._token_to_index:
+                    self._add_token_to_vocabulary(token)
+                    new_tokens.append(token)
+
+            self._num_documents += 1
+            self._total_doc_length += len(tokens)
+
+        return new_tokens
+
+    def update_single_document(self, doc: str) -> List[str]:
+        """Add a single document and return newly added tokens.
+
+        This is an efficient method for adding one document at a time,
+        useful for real-time FAQ additions.
+
+        Args:
+            doc: Document text to add
+
+        Returns:
+            List of newly added tokens (tokens not previously in vocabulary)
+        """
+        if not doc or not doc.strip():
+            return []
+        return self._add_document_to_vocabulary(doc)
+
+    def get_vocabulary_drift_metrics(self, original_size: int) -> Dict[str, Any]:
+        """Calculate metrics showing vocabulary drift from original.
+
+        Useful for monitoring vocabulary growth over time.
+
+        Args:
+            original_size: Original vocabulary size for comparison
+
+        Returns:
+            Dictionary with drift metrics
+        """
+        current_size = self.vocabulary_size
+        tokens_added = current_size - original_size
+        growth_pct = (tokens_added / original_size * 100) if original_size > 0 else 0
+
+        return {
+            "original_size": original_size,
+            "current_size": current_size,
+            "tokens_added": tokens_added,
+            "growth_percentage": round(growth_pct, 2),
         }
