@@ -247,6 +247,37 @@ services:
       - /tmp
       - /app/.next/cache
 
+  # Qdrant vector database for hybrid search (semantic + BM25)
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    expose:
+      - "6333"
+    networks:
+      - bisq-support-network
+    # No external ports - internal only for security
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
   # Monitoring - Prometheus
   prometheus:
     image: prom/prometheus:latest
@@ -464,6 +495,8 @@ volumes:
   prometheus-data:
   grafana-data:
   alertmanager-data:
+  qdrant-data:
+    name: bisq2-qdrant-data
   web_node_modules:
     name: bisq2-web-node-modules
   bisq2-data:

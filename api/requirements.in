@@ -12,6 +12,19 @@ langchain-chroma
 chromadb
 langchain-text-splitters
 
+# Qdrant + LlamaIndex for hybrid search
+qdrant-client>=1.12.0
+llama-index-core>=0.10.0
+llama-index-vector-stores-qdrant>=0.2.0
+llama-index-embeddings-openai>=0.1.0
+
+# ColBERT reranking via RAGatouille
+ragatouille>=0.0.8
+
+# RAGAS evaluation framework
+ragas>=0.1.0
+datasets>=2.14.0
+
 # NLI and ML models (for confidence scoring via DeBERTa)
 # NOTE: torch is installed separately as CPU-only in Dockerfile/CI
 # to avoid ~5GB of unnecessary NVIDIA CUDA libraries

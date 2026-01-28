@@ -114,6 +114,25 @@ class Settings(BaseSettings):
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
+    # Retrieval Backend Configuration
+    # Options: "chromadb" (default), "qdrant", "hybrid" (Qdrant with ChromaDB fallback)
+    RETRIEVER_BACKEND: str = "chromadb"
+
+    # Qdrant Vector Database Settings
+    QDRANT_HOST: str = "qdrant"  # Docker service name
+    QDRANT_PORT: int = 6333
+    QDRANT_COLLECTION: str = "bisq_docs"
+    QDRANT_GRPC_PORT: int = 6334  # Optional gRPC port for performance
+
+    # ColBERT Reranking Settings
+    COLBERT_MODEL: str = "colbert-ir/colbertv2.0"
+    COLBERT_TOP_N: int = 5  # Number of documents to return after reranking
+    ENABLE_COLBERT_RERANK: bool = True  # Enable/disable ColBERT reranking
+
+    # Hybrid Search Weights (must sum to 1.0)
+    HYBRID_SEMANTIC_WEIGHT: float = 0.7  # Weight for dense/semantic vectors
+    HYBRID_KEYWORD_WEIGHT: float = 0.3  # Weight for sparse/BM25 vectors
+
     # LLM Message Classification Settings (Provider-Agnostic)
     # Supports multiple LLM providers via AISuite: openai, anthropic, ollama
     ENABLE_LLM_CLASSIFICATION: bool = False  # Enable LLM-based message classification
