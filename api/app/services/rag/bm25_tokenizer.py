@@ -175,6 +175,10 @@ class BM25SparseTokenizer:
     K1 = 1.5  # Term frequency saturation parameter
     B = 0.75  # Document length normalization parameter
 
+    # Security limits to prevent DoS attacks
+    MAX_VOCABULARY_SIZE = 500_000  # Maximum number of unique tokens
+    MAX_INPUT_SIZE = 1_000_000  # Maximum input text size in characters (1MB)
+
     def __init__(self, corpus: Optional[List[str]] = None):
         """Initialize the tokenizer.
 
@@ -218,21 +222,45 @@ class BM25SparseTokenizer:
         """Add a token to the vocabulary if not already present.
 
         Thread-safe: acquires _update_lock to make check-and-insert atomic.
+        Enforces MAX_VOCABULARY_SIZE limit to prevent unbounded growth.
 
         Args:
             token: Token to add
 
         Returns:
-            Index of the token in vocabulary
+            Index of the token in vocabulary, or -1 if vocabulary is at limit
         """
         with self._update_lock:
             if token not in self._token_to_index:
+                # Enforce vocabulary size limit
+                if len(self._token_to_index) >= self.MAX_VOCABULARY_SIZE:
+                    logger.warning(
+                        f"Vocabulary at limit ({self.MAX_VOCABULARY_SIZE}), "
+                        f"rejecting new token: {token[:20]}..."
+                    )
+                    return -1
+
                 idx = self._next_index
                 self._token_to_index[token] = idx
                 self._index_to_token[idx] = token
                 self._next_index += 1
                 return idx
             return self._token_to_index[token]
+
+    def _validate_input_size(self, text: str) -> None:
+        """Validate input text size to prevent memory exhaustion.
+
+        Args:
+            text: Input text to validate
+
+        Raises:
+            ValueError: If input exceeds MAX_INPUT_SIZE
+        """
+        if text and len(text) > self.MAX_INPUT_SIZE:
+            raise ValueError(
+                f"Input size ({len(text)} chars) exceeds maximum allowed "
+                f"({self.MAX_INPUT_SIZE} chars)"
+            )
 
     def _extract_tokens(self, text: str) -> List[str]:
         """Extract tokens from text with preprocessing.
@@ -242,9 +270,15 @@ class BM25SparseTokenizer:
 
         Returns:
             List of cleaned, filtered tokens
+
+        Raises:
+            ValueError: If input exceeds MAX_INPUT_SIZE
         """
         if not text:
             return []
+
+        # Validate input size
+        self._validate_input_size(text)
 
         # Lowercase
         text = text.lower()
@@ -360,6 +394,10 @@ class BM25SparseTokenizer:
                 # Add to vocabulary if new
                 idx = self._add_token_to_vocabulary(token)
 
+                # Skip token if vocabulary is at limit (-1 returned)
+                if idx == -1:
+                    continue
+
                 # Increment document frequency once per document for each token
                 self._document_frequencies[token] = (
                     self._document_frequencies.get(token, 0) + 1
@@ -414,6 +452,9 @@ class BM25SparseTokenizer:
             if token not in self._token_to_index:
                 # Add unknown tokens for query-side vocabulary expansion
                 idx = self._add_token_to_vocabulary(token)
+                # Skip if vocabulary is at limit
+                if idx == -1:
+                    continue
             else:
                 idx = self._token_to_index[token]
 
@@ -493,17 +534,20 @@ class BM25SparseTokenizer:
     def load_vocabulary(self, vocab_json: str) -> None:
         """Load vocabulary from JSON string.
 
+        Thread-safe: acquires _update_lock to prevent concurrent modifications.
+
         Args:
             vocab_json: JSON string with vocabulary data
         """
         data = json.loads(vocab_json)
 
-        self._token_to_index = data.get("token_to_index", {})
-        self._index_to_token = {int(v): k for k, v in self._token_to_index.items()}
-        self._document_frequencies = Counter(data.get("document_frequencies", {}))
-        self._num_documents = data.get("num_documents", 0)
-        self._total_doc_length = data.get("total_doc_length", 0)
-        self._next_index = data.get("next_index", len(self._token_to_index))
+        with self._update_lock:
+            self._token_to_index = data.get("token_to_index", {})
+            self._index_to_token = {int(v): k for k, v in self._token_to_index.items()}
+            self._document_frequencies = Counter(data.get("document_frequencies", {}))
+            self._num_documents = data.get("num_documents", 0)
+            self._total_doc_length = data.get("total_doc_length", 0)
+            self._next_index = data.get("next_index", len(self._token_to_index))
 
     @property
     def vocabulary_size(self) -> int:
@@ -520,11 +564,14 @@ class BM25SparseTokenizer:
         Returns:
             Dictionary with tokenizer stats
         """
+        vocab_size = self.vocabulary_size
         return {
-            "vocabulary_size": self.vocabulary_size,
+            "vocabulary_size": vocab_size,
             "num_documents": self._num_documents,
             "avg_doc_length": self._get_avg_doc_length(),
             "total_tokens_processed": self._total_doc_length,
+            "vocabulary_at_limit": vocab_size >= self.MAX_VOCABULARY_SIZE,
+            "max_vocabulary_size": self.MAX_VOCABULARY_SIZE,
         }
 
     # ==========================================================================
@@ -597,8 +644,10 @@ class BM25SparseTokenizer:
             for token in unique_tokens:
                 self._document_frequencies[token] += 1
                 if token not in self._token_to_index:
-                    self._add_token_to_vocabulary(token)
-                    new_tokens.append(token)
+                    idx = self._add_token_to_vocabulary(token)
+                    # Only track as new if actually added (not rejected due to limit)
+                    if idx != -1:
+                        new_tokens.append(token)
 
             self._num_documents += 1
             self._total_doc_length += len(tokens)

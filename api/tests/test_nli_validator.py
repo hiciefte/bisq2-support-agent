@@ -36,7 +36,7 @@ class TestNLIValidator:
         context = "Bisq Easy allows trading up to $600 without security deposits."
         answer = "The trade limit in Bisq Easy is $600."
 
-        score = await validator.validate_answer(context, answer)
+        score = await validator.validate_answer_async(context, answer)
 
         # Should be high entailment: 0.5 + (0.95 * 0.5) = 0.975
         assert score > 0.7
@@ -56,7 +56,7 @@ class TestNLIValidator:
         context = "Bisq Easy uses reputation-based security."
         answer = "Bisq Easy requires security deposits for all trades."
 
-        score = await validator.validate_answer(context, answer)
+        score = await validator.validate_answer_async(context, answer)
 
         # Should be low score: 0.5 - (0.90 * 0.5) = 0.05
         assert score < 0.3
@@ -71,7 +71,7 @@ class TestNLIValidator:
             {"label": "CONTRADICTION", "score": 0.10},
         ]
 
-        score = await validator.validate_answer("Some context", "Some answer")
+        score = await validator.validate_answer_async("Some context", "Some answer")
 
         # Equal entailment/contradiction → score around 0.5
         assert 0.4 <= score <= 0.6
@@ -85,7 +85,7 @@ class TestNLIValidator:
             {"label": "CONTRADICTION", "score": 0.0},
         ]
 
-        score = await validator.validate_answer("context", "answer")
+        score = await validator.validate_answer_async("context", "answer")
 
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0
@@ -133,7 +133,7 @@ class TestNLIValidator:
             {"label": "ENTAILMENT", "score": 0.8},
         ]
 
-        score = await validator.validate_answer("context", "answer")
+        score = await validator.validate_answer_async("context", "answer")
 
         # Should still return valid score
         assert isinstance(score, float)
@@ -161,7 +161,7 @@ class TestNLIValidator:
             {"label": "CONTRADICTION", "score": 0.05},
         ]
 
-        score = await validator.validate_answer("", "Some answer")
+        score = await validator.validate_answer_async("", "Some answer")
 
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0
@@ -175,7 +175,7 @@ class TestNLIValidator:
             {"label": "CONTRADICTION", "score": 0.05},
         ]
 
-        score = await validator.validate_answer("Some context", "")
+        score = await validator.validate_answer_async("Some context", "")
 
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0

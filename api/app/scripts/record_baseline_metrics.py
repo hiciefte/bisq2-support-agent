@@ -92,8 +92,8 @@ def compute_ragas_metrics(
         Dict with metric scores
     """
     try:
-        from datasets import Dataset
-        from ragas import evaluate
+        from datasets import Dataset  # type: ignore[import-not-found]
+        from ragas import evaluate  # type: ignore[import-not-found]
 
         # Import metrics - handle both old and new API
         try:
@@ -113,7 +113,7 @@ def compute_ragas_metrics(
             ]
         except ImportError:
             # Old API (ragas < 0.2)
-            from ragas.metrics import (
+            from ragas.metrics import (  # type: ignore[import-not-found]
                 answer_relevancy,
                 context_precision,
                 context_recall,
@@ -302,7 +302,7 @@ async def run_evaluation(
             protocol = sample.get("metadata", {}).get("protocol", "")
             if protocol == "bisq_easy":
                 question_with_context = f"{question} (I'm using Bisq Easy / Bisq 2)"
-            elif protocol == "bisq1":
+            elif protocol == "multisig_v1":
                 question_with_context = f"{question} (I'm using Bisq 1)"
             else:
                 question_with_context = question

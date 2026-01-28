@@ -120,7 +120,7 @@ class VocabularyManager:
             try:
                 # Use same lock file as save() for cross-process coordination
                 lock_path = self.vocab_path.with_suffix(".json.lock")
-                with portalocker.Lock(lock_path, "r", timeout=10):
+                with portalocker.Lock(lock_path, "a", timeout=10):
                     # Read the actual vocabulary file while holding the lock
                     vocab_json = self.vocab_path.read_text()
 

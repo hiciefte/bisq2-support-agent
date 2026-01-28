@@ -69,7 +69,7 @@ def format_change(baseline: float, new: float) -> str:
         arrow = " "
         color = YELLOW
 
-    return f"{color}{arrow}{diff:+.4f} ({pct_change:+.1f}%){RESET}"
+    return f"{color}{arrow}{diff:.4f} ({pct_change:+.1f}%){RESET}"
 
 
 def print_comparison(baseline: dict, new: dict) -> None:
