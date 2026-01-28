@@ -296,10 +296,9 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
       - ADMIN_API_KEY_FOR_GRAFANA=${ADMIN_API_KEY}
-      # Subpath configuration for nginx reverse proxy at /grafana/
-      # Grafana handles subpath (receives /grafana/ prefix, serves from subpath)
-      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Direct access on port 3001 (no nginx proxy)
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001/}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
       # Extended timeout for large HTML responses with inline JSON (~63KB)
       - GF_SERVER_REQUEST_TIMEOUT=120
     ports:
