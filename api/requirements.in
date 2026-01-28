@@ -37,7 +37,7 @@ aisuite[mcp]>=0.1.14
 # LiteLLM for vendor-portable embeddings (100+ providers)
 litellm>=1.30.0
 # MCP SDK for building Model Context Protocol servers
-mcp[cli]>=1.0.0
+mcp[cli]>=1.23.0  # Security fix for CVE-2025-53365, CVE-2025-53366, CVE-2025-66416
 # Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
 # 2.0.0 changes Response tool-call output schema (breaking change)
 openai<2.0.0
