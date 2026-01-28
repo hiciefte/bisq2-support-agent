@@ -21,6 +21,19 @@ sys.modules["ragatouille"] = mock_ragatouille
 class TestColBERTReranker:
     """Test suite for ColBERTReranker."""
 
+    @pytest.fixture(autouse=True)
+    def reset_mock(self):
+        """Reset mock state before each test to ensure test isolation."""
+        # Reset all mock call history and side effects
+        mock_ragatouille.reset_mock()
+        mock_ragatouille.RAGPretrainedModel = MagicMock()
+        mock_ragatouille.RAGPretrainedModel.from_pretrained.return_value = MagicMock()
+        mock_ragatouille.RAGPretrainedModel.from_pretrained.side_effect = None
+        yield
+        # Cleanup after test
+        mock_ragatouille.reset_mock()
+        mock_ragatouille.RAGPretrainedModel.from_pretrained.side_effect = None
+
     @pytest.fixture
     def mock_settings(self):
         """Create mock settings."""
@@ -106,9 +119,7 @@ class TestColBERTReranker:
             reranker.load_model()
 
         assert reranker.is_loaded() is False
-
-        # Reset the side effect for other tests
-        mock_ragatouille.RAGPretrainedModel.from_pretrained.side_effect = None
+        # Note: reset_mock fixture handles cleanup automatically
 
     def test_rerank_empty_documents(self, mock_settings):
         """Test rerank with empty document list."""

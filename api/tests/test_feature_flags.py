@@ -4,9 +4,17 @@ Tests for RAG retriever feature flags.
 Tests the RETRIEVER_BACKEND configuration switching logic.
 """
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# Set up ragatouille mock before any imports that might need it
+# This ensures test isolation regardless of test execution order
+if "ragatouille" not in sys.modules:
+    _mock_ragatouille = MagicMock()
+    _mock_ragatouille.RAGPretrainedModel = MagicMock()
+    sys.modules["ragatouille"] = _mock_ragatouille
 
 
 class TestRetrieverBackendSettings:
@@ -192,6 +200,16 @@ class TestGracefulDegradation:
 
     def test_colbert_failure_returns_unreranked(self):
         """Test that ColBERT failure returns unreranked documents."""
+        # Reset mock state to ensure test isolation
+        mock_rag = sys.modules.get("ragatouille")
+        if mock_rag:
+            mock_rag.reset_mock()
+            mock_rag.RAGPretrainedModel = MagicMock()
+            # Make model loading fail to test graceful degradation
+            mock_rag.RAGPretrainedModel.from_pretrained.side_effect = RuntimeError(
+                "Model not available"
+            )
+
         from app.services.rag.colbert_reranker import ColBERTReranker
         from app.services.rag.interfaces import RetrievedDocument
 
@@ -202,7 +220,7 @@ class TestGracefulDegradation:
 
         reranker = ColBERTReranker(settings)
 
-        # Without loading model, reranking should gracefully degrade
+        # With model loading failure, reranking should gracefully degrade
         docs = [
             RetrievedDocument(content="Doc 1", metadata={}, score=0.9),
             RetrievedDocument(content="Doc 2", metadata={}, score=0.8),
