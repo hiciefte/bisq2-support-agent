@@ -12,14 +12,11 @@ langchain-chroma
 chromadb
 langchain-text-splitters
 
-# Qdrant + LlamaIndex for hybrid search
+# Qdrant for hybrid search (uses LangChain embeddings)
 qdrant-client>=1.12.0
-llama-index-core>=0.10.0
-llama-index-vector-stores-qdrant>=0.2.0
-llama-index-embeddings-openai>=0.1.0
 
-# ColBERT reranking via RAGatouille
-ragatouille>=0.0.8
+# ColBERT reranking is optional (ragatouille has complex native dependencies)
+# Install manually: pip install ragatouille if needed
 
 # RAGAS evaluation framework
 ragas>=0.1.0

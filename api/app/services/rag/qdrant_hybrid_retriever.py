@@ -14,9 +14,11 @@ from typing import Any, Dict, List, Optional
 
 from app.core.config import Settings
 from app.services.rag.interfaces import HybridRetrieverProtocol, RetrievedDocument
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as rest
-from qdrant_client.http.exceptions import ResponseHandlingException
+from qdrant_client import QdrantClient  # type: ignore[import-not-found]
+from qdrant_client.http import models as rest  # type: ignore[import-not-found]
+from qdrant_client.http.exceptions import (  # type: ignore[import-not-found]
+    ResponseHandlingException,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     - Configurable semantic/keyword weight balance
     - Protocol-aware filtering (bisq_easy, multisig_v1, all)
     - Automatic connection management and health checks
-    - LlamaIndex integration for embeddings
+    - LangChain OpenAI embeddings for dense vectors
 
     Attributes:
         settings: Application settings with Qdrant configuration
@@ -90,25 +92,14 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         """Create embedding model for dense vectors.
 
         Returns:
-            OpenAI embeddings model via LlamaIndex
+            OpenAI embeddings model via LangChain
         """
-        try:
-            from llama_index.embeddings.openai import OpenAIEmbedding
+        from langchain_openai import OpenAIEmbeddings
 
-            return OpenAIEmbedding(
-                model=self.settings.OPENAI_EMBEDDING_MODEL,
-                api_key=self.settings.OPENAI_API_KEY,
-            )
-        except ImportError:
-            logger.warning(
-                "LlamaIndex OpenAI embeddings not available, falling back to LangChain"
-            )
-            from langchain_openai import OpenAIEmbeddings
-
-            return OpenAIEmbeddings(
-                model=self.settings.OPENAI_EMBEDDING_MODEL,
-                openai_api_key=self.settings.OPENAI_API_KEY,
-            )
+        return OpenAIEmbeddings(
+            model=self.settings.OPENAI_EMBEDDING_MODEL,
+            openai_api_key=self.settings.OPENAI_API_KEY,
+        )
 
     @property
     def client(self) -> QdrantClient:
@@ -162,14 +153,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         Returns:
             Embedding vector as list of floats
         """
-        # LlamaIndex OpenAIEmbedding
-        if hasattr(self._embeddings, "get_query_embedding"):
-            return self._embeddings.get_query_embedding(query)
-        # LangChain OpenAIEmbeddings
-        elif hasattr(self._embeddings, "embed_query"):
-            return self._embeddings.embed_query(query)
-        else:
-            raise ValueError("Embeddings model does not support query embedding")
+        return self._embeddings.embed_query(query)
 
     def _build_filter(
         self, filter_dict: Optional[Dict[str, Any]] = None
