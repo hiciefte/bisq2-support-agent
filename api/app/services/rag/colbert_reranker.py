@@ -93,7 +93,9 @@ class ColBERTReranker(RerankerProtocol):
             try:
                 logger.info(f"Loading ColBERT model: {self.model_name}")
 
-                from ragatouille import RAGPretrainedModel
+                from ragatouille import (  # type: ignore[import-not-found]
+                    RAGPretrainedModel,
+                )
 
                 self._model = RAGPretrainedModel.from_pretrained(self.model_name)
                 logger.info(f"ColBERT model loaded successfully: {self.model_name}")
@@ -168,7 +170,8 @@ class ColBERTReranker(RerankerProtocol):
                 f"Reranking {len(documents)} documents with ColBERT (top_n={effective_top_n})"
             )
 
-            reranked_results = self._model.rerank(
+            # mypy doesn't know _ensure_model_loaded guarantees self._model is not None
+            reranked_results = self._model.rerank(  # type: ignore[attr-defined]
                 query=query,
                 documents=doc_texts,
                 k=effective_top_n,

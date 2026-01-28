@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import aisuite  # type: ignore[import-untyped]
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
 from app.db.run_migrations import run_migrations
@@ -44,7 +44,7 @@ from app.services.training.comparison_engine import AnswerComparisonEngine
 from app.services.training.unified_pipeline_service import UnifiedPipelineService
 from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 from app.services.wiki_service import WikiService
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from langchain_openai import OpenAIEmbeddings
@@ -347,7 +347,7 @@ logger.info("Prometheus metrics instrumentation initialized")
 
 # Create a dedicated metrics endpoint
 @app.get("/metrics", include_in_schema=False)
-async def metrics(request: Request):
+async def metrics(request: Request, settings: Settings = Depends(get_settings)):
     """
     Prometheus metrics endpoint (internal-only via nginx).
 
@@ -369,7 +369,7 @@ async def metrics(request: Request):
     from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
 
     # Defense-in-depth: restrict in-app in production
-    _s = get_settings()
+    _s = settings
     if str(_s.ENVIRONMENT).strip().lower() in {"production", "prod"}:
         client_host = (request.client.host if request.client else "") or ""
 
