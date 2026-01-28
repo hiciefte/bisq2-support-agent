@@ -13,7 +13,6 @@ Usage:
 import argparse
 import json
 import sys
-from pathlib import Path
 
 # ANSI color codes for terminal output
 GREEN = "\033[92m"

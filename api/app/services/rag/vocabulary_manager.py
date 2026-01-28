@@ -97,7 +97,7 @@ class VocabularyManager:
                 return True
 
             except Exception as e:
-                logger.error(f"Failed to save vocabulary: {e}")
+                logger.exception(f"Failed to save vocabulary: {e}")
                 # Clean up temp file if it exists
                 if tmp_path is not None and tmp_path.exists():
                     tmp_path.unlink()
@@ -118,9 +118,11 @@ class VocabularyManager:
                 return False
 
             try:
-                # Use file locking for concurrent read safety
-                with portalocker.Lock(self.vocab_path, "r", timeout=10) as f:
-                    vocab_json = f.read()
+                # Use same lock file as save() for cross-process coordination
+                lock_path = self.vocab_path.with_suffix(".json.lock")
+                with portalocker.Lock(lock_path, "r", timeout=10):
+                    # Read the actual vocabulary file while holding the lock
+                    vocab_json = self.vocab_path.read_text()
 
                 tokenizer.load_vocabulary(vocab_json)
                 logger.info(
@@ -130,7 +132,7 @@ class VocabularyManager:
                 return True
 
             except Exception as e:
-                logger.error(f"Failed to load vocabulary: {e}")
+                logger.exception(f"Failed to load vocabulary: {e}")
                 return False
 
     def update_and_save(

@@ -9,7 +9,7 @@ Usage:
     python -m api.app.scripts.run_ragas_evaluation [--backend qdrant] [--samples N]
 
 Requires:
-    - ragas>=0.1.21
+    - ragas>=0.2 (handles both new class-based API and older functional API)
     - datasets>=2.21.0
     - Running API service (docker compose up api)
 """
@@ -21,7 +21,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +69,7 @@ async def query_rag_system(
         logger.error(f"HTTP error {e.response.status_code}: {question[:50]}...")
         return {"answer": "", "sources": [], "error": str(e)}
     except Exception as e:
-        logger.error(f"Error querying: {e}")
+        logger.exception(f"Error querying: {e}")
         return {"answer": "", "sources": [], "error": str(e)}
 
 
@@ -184,7 +184,7 @@ def compute_ragas_metrics(
         logger.error("Install with: pip install ragas datasets")
         return compute_simple_metrics(questions, ground_truths, answers, contexts)
     except Exception as e:
-        logger.error(f"RAGAS evaluation failed: {e}")
+        logger.exception(f"RAGAS evaluation failed: {e}")
         logger.warning("Falling back to simple metrics")
         return compute_simple_metrics(questions, ground_truths, answers, contexts)
 
@@ -204,11 +204,13 @@ def compute_simple_metrics(
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
     answer_scores = [
-        similarity(ans, gt) for ans, gt in zip(answers, ground_truths) if ans and gt
+        similarity(ans, gt)
+        for ans, gt in zip(answers, ground_truths, strict=False)
+        if ans and gt
     ]
 
     context_scores = []
-    for ctx_list, gt in zip(contexts, ground_truths):
+    for ctx_list, gt in zip(contexts, ground_truths, strict=False):
         if not ctx_list or not gt:
             context_scores.append(0.0)
             continue
@@ -253,6 +255,14 @@ async def run_evaluation(
         Evaluation results dict
     """
     # Load samples
+    samples_file = Path(samples_path)
+    if not samples_file.exists():
+        logger.error(f"Samples file not found: {samples_path}")
+        logger.error(
+            "Generate samples first with: python -m api.app.scripts.record_baseline_metrics"
+        )
+        sys.exit(1)
+
     with open(samples_path) as f:
         samples = json.load(f)
 
@@ -353,7 +363,7 @@ async def run_evaluation(
 
     # Build results
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "system": backend,
         "samples_count": len(samples),
         "metrics": metrics,
@@ -406,7 +416,7 @@ def main():
         type=str,
         default="qdrant",
         choices=["chromadb", "qdrant", "hybrid"],
-        help="Retriever backend to use (default: qdrant)",
+        help="Label for results (actual backend is configured server-side, default: qdrant)",
     )
     parser.add_argument(
         "--max-samples",

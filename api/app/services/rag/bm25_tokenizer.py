@@ -330,7 +330,8 @@ class BM25SparseTokenizer:
 
         Note: This method has side effects - it updates vocabulary, document
         frequencies, and corpus statistics (_num_documents, _total_doc_length).
-        Each call is treated as indexing a new document.
+        Each call is treated as indexing a new document. All mutations are
+        performed atomically under a lock to ensure thread safety.
 
         Args:
             text: Document text
@@ -351,32 +352,36 @@ class BM25SparseTokenizer:
         indices = []
         values = []
 
-        # Track which tokens we've already incremented DF for in this document
-        # (term_counts already gives us unique tokens per document)
-        for token, count in term_counts.items():
-            # Add to vocabulary if new
-            idx = self._add_token_to_vocabulary(token)
+        # Thread-safe vocabulary and corpus statistics update
+        with self._update_lock:
+            # Track which tokens we've already incremented DF for in this document
+            # (term_counts already gives us unique tokens per document)
+            for token, count in term_counts.items():
+                # Add to vocabulary if new
+                idx = self._add_token_to_vocabulary(token)
 
-            # Increment document frequency once per document for each token
-            self._document_frequencies[token] = (
-                self._document_frequencies.get(token, 0) + 1
-            )
+                # Increment document frequency once per document for each token
+                self._document_frequencies[token] = (
+                    self._document_frequencies.get(token, 0) + 1
+                )
 
-            # Calculate BM25 weight
-            tf = count
-            idf = self._get_idf(token)
+                # Calculate BM25 weight
+                tf = count
+                idf = self._get_idf(token)
 
-            # BM25 TF component with length normalization
-            numerator = tf * (self.K1 + 1)
-            denominator = tf + self.K1 * (1 - self.B + self.B * doc_length / avg_length)
-            bm25_weight = idf * (numerator / denominator)
+                # BM25 TF component with length normalization
+                numerator = tf * (self.K1 + 1)
+                denominator = tf + self.K1 * (
+                    1 - self.B + self.B * doc_length / avg_length
+                )
+                bm25_weight = idf * (numerator / denominator)
 
-            indices.append(idx)
-            values.append(float(bm25_weight))
+                indices.append(idx)
+                values.append(float(bm25_weight))
 
-        # Update corpus statistics
-        self._num_documents += 1
-        self._total_doc_length += doc_length
+            # Update corpus statistics
+            self._num_documents += 1
+            self._total_doc_length += doc_length
 
         return indices, values
 
