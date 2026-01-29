@@ -58,12 +58,12 @@ class TestRetrieverBackendSettings:
         assert settings.ENABLE_COLBERT_RERANK is True
 
     def test_hybrid_weights_defaults(self):
-        """Test hybrid search weights have correct defaults."""
+        """Test hybrid search weights have correct defaults (optimized via RAGAS)."""
         from app.core.config import Settings
 
         settings = Settings()
-        assert settings.HYBRID_SEMANTIC_WEIGHT == 0.7
-        assert settings.HYBRID_KEYWORD_WEIGHT == 0.3
+        assert settings.HYBRID_SEMANTIC_WEIGHT == 0.6
+        assert settings.HYBRID_KEYWORD_WEIGHT == 0.4
 
     def test_hybrid_weights_sum_to_one(self):
         """Test that hybrid weights sum to approximately 1.0."""

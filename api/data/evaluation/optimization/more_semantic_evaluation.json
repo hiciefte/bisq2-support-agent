@@ -1,0 +1,606 @@
+{
+  "timestamp": "2026-01-29T20:40:40.936857+00:00",
+  "system": "qdrant",
+  "samples_count": 40,
+  "metrics": {
+    "context_precision": 0.4537152777498978,
+    "context_recall": 0.3291666666666667,
+    "faithfulness": 0.4999945887445887,
+    "answer_relevancy": 0.0
+  },
+  "avg_response_time": 4.9110627472400665,
+  "individual_results": [
+    {
+      "question": "As a brand new user of this Bisq platform, I am very unhappy and feel like I'm getting scammed by \"reputable sellers\" I have opened a mediation request for ghosting me after sending payment. Thank you for your help [support]",
+      "ground_truth": "there hasn't been a single case of a seller who scammed a buyer, not since reputation score has become a requirement, the only issue that ever happens is that a seller will be late in releasing for a series of circumstances",
+      "answer": "I'm sorry to hear about your experience on Bisq. It's important to note that in Bisq Easy, sellers invest significant time and resources to build their reputation, making it less likely for them to engage in scams. If you're facing issues, opening a mediation request was a good step. Mediation can help resolve disputes and ensure fair handling of your situation. \n\nPlease remain patient as the mediation process unfolds, and feel free to reach out to support if you need further assistance.",
+      "contexts": [
+        "Question: What happens if I get scammed on Bisq Easy?\nAnswer: While there is no refund policy for issues in Bisq Easy, buyers cannot really get scammed by sellers, since the latter need to spend much more money to get reputation, than what they receive by any single trade, and they stand to lose all their reputation if they behave incorrectly.",
+        "Question: What should I do if a seller cancels my trade after a bank transfer?\nAnswer: If this happens in Bisq Easy, you can still open mediation and/or contact support.",
+        "## = Tips for bitcoin sellers\n=\n\nAlthough bitcoin buyers send the fiat payment before bitcoin sellers send them any bitcoin, sellers should still be aware of buyers attempting any charge-back scams. There is almost no cost for a bitcoin buyer to create an account and start making trades, therefore, there is little for a buyer to lose by attempting a scam. Almost all buyers on Bisq Easy will be honest but it is still good to be cautious.\n\nFor this reason they should take steps to ensure their tra...",
+        "Question: What should I do if the seller's name on Bisq doesn't match the bank account name?\nAnswer: You can ask the seller for an explanation and if it's satisfactory, you may proceed with the payment, otherwise open mediation.",
+        "Question: Is there an escrow service for transactions in Bisq Easy?\nAnswer: No, Bisq does not have a built-in escrow-like service like in Bisq1; it relies on reputation to discourage scams."
+      ],
+      "response_time": 5.814062595367432,
+      "error": null
+    },
+    {
+      "question": "\"but I certainly consider rude if you go in someone's shop to try and steal clients for your own shop\". Who is the shop owner of bisq2? \"incentivizing sellers to burn bsq to get reputation\". Who is making money on it? And why is someone \"stealing\" a customer if the shop denies for him to sell in his shop because of a to low reputation. The guy wanting to sell would simply ask the person who wants to buy in the shop but finds no seller, to go outside of the shop, so one can sell to him there. Because the shop doesn't allow for one to sell in the shop because one is having a to low of a reputation.",
+      "ground_truth": "the bisq platform has rules, and anyone using it is expected to follow said rules, trying to circumvent them is also rude, besides sellers do find buyers and make profits at it, or they wouldn't burn bsq to increase their reputation, and buyers do find sellers, as long as they take one of the available offers, considering how most markets have at least one seller you have but to choose",
+      "answer": "The shop owner of Bisq 2 is essentially the **Bisq DAO**, which facilitates the platform's operations. When sellers burn BSQ for reputation, they are investing in their ability to gain trust and increase their trading potential. This incentivization benefits buyers by ensuring they deal with reputable sellers, while sellers can access higher premiums for their trades.\n\nRegarding the concept of \"stealing\" customers, it's about the competition among sellers to maintain high reputation scores. If a seller has a low reputation, they may be restricted from selling within the platform, leading them to seek out buyers outside of Bisq. This dynamic emphasizes the importance of reputation in attracting buyers and making sales on the platform.",
+      "contexts": [
+        "Question: Who profits from incentivizing sellers to burn BSQ for reputation?\nAnswer: Buyers profit from dealing with trusted sellers, sellers profit from being able to access higher markups.\nThe Bisq DAO does not really profit from BSQ being bought by sellers, because it does not cover the ongoing development costs for the platform.",
+        "Question: Why would someone purchase BSQ to burn for reputation and sell on Bisq Easy instead of using Bisq 1?\nAnswer: It is seen as a long-term investment since sellers on Bisq Easy receive a higher premium than on Bisq1.",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "## Why is Reputation important for sellers\n\nBitcoin buyers send the fiat payment to the sellers prior to receiving the bitcoin. Therefore it is important for bitcoin sellers to have a good reputation to help establish trust with their potential trade partners.\n\nIt is expected that users that want to gain reputation to be bitcoin sellers on Bisq Easy will be experienced Bisq users that can provide buyers with a positive experience.\n\nSelling bitcoin on Bisq Easy is expected to be profitable for th...",
+        "## Reputation in Bisq Easy\n\nReputation is a cornerstone of the security model in **Bisq Easy**, a Bisq 2 trade protocol. As buyers send their fiat payment ''before'' receiving Bitcoin, the seller's reputation provides the trust needed for the buyer to proceed confidently.\n\n600px|thumb|left|The 'Build reputation' screen in Bisq 2 (accessed via 'Reputation' on the left menu), showing the four methods available.\n\n## = Why Reputation Matters\n=\n\n* **For Buyers:** Carefully review a seller's reputatio...",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1."
+      ],
+      "response_time": 5.853861570358276,
+      "error": null
+    },
+    {
+      "question": "I get it. But if the offer stays untaken after quite a bit of time, it seems to be a lose-lose situation. The buyer did not get to buy because no seller with high enough reputation took the offer and the seller did not get to sell because of ones reputation being to low. So would one need to excpect consequences for example a ban because of asking and taking it outside of bisq2?",
+      "ground_truth": "as of now, only shillers of competitor platforms have been banned, regarding the rest people don't get jailed because they behave in a rude manner, but sure other people will point it out to them, and if they don't retrace then yes they could get invited to leave",
+      "answer": "In Bisq Easy (Bisq 2), offers may remain untaken if sellers with high enough reputation do not accept them, which can lead to frustration for both buyers and sellers. However, taking the conversation outside of Bisq can have consequences, including potential bans. Bisq emphasizes maintaining a secure and trustworthy trading environment, and conducting trades outside the platform undermines this integrity. Always ensure to conduct trades within the Bisq application to avoid any penalties.",
+      "contexts": [
+        "Question: How can I prevent fluke trades where buyers take my offer and then never reply?\nAnswer: You should factor this risk into the price of your offers, as prevention is not possible because buyers do not need to stake bitcoin in order to take offers on Bisq Easy.",
+        "Question: What happens if I get scammed on Bisq Easy?\nAnswer: While there is no refund policy for issues in Bisq Easy, buyers cannot really get scammed by sellers, since the latter need to spend much more money to get reputation, than what they receive by any single trade, and they stand to lose all their reputation if they behave incorrectly.",
+        "Question: What happens if the seller doesn't release the BTC in a Bisq Easy trade?\nAnswer: If the seller never releases btc, the buyer's payment would be lost since the DAO does not offer reimbursements for Bisq Easy, but the enforced minimum reputation score costs money to the sellers, and heavily discourages them from scamming.",
+        "## Reputation in Bisq Easy\n\nReputation is a cornerstone of the security model in **Bisq Easy**, a Bisq 2 trade protocol. As buyers send their fiat payment ''before'' receiving Bitcoin, the seller's reputation provides the trust needed for the buyer to proceed confidently.\n\n600px|thumb|left|The 'Build reputation' screen in Bisq 2 (accessed via 'Reputation' on the left menu), showing the four methods available.\n\n## = Why Reputation Matters\n=\n\n* **For Buyers:** Carefully review a seller's reputatio...",
+        "Question: Why would someone purchase BSQ to burn for reputation and sell on Bisq Easy instead of using Bisq 1?\nAnswer: It is seen as a long-term investment since sellers on Bisq Easy receive a higher premium than on Bisq1.",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2."
+      ],
+      "response_time": 5.883101224899292,
+      "error": null
+    },
+    {
+      "question": "how to know if im on the latest bisq version",
+      "ground_truth": "current is 2.1.9, still waiting for a binary installer release, otherwise newest public version is 2.1.8, version number is top left",
+      "answer": "To check if you're using the latest version of Bisq Easy (Bisq 2), look at the top left corner of the application to see the current version. You can download the latest release from the [Bisq website](https://bisq.network/downloads) or the GitHub repository, and installing it will automatically replace any older versions you have.",
+      "contexts": [
+        "Question: How do I know if I am on the latest Bisq version?\nAnswer: To check the current version, users should look at the top left corner of the application. To ensure you're on the latest version of Bisq, you can download the most recent release from the Bisq website or the GitHub repository. Installing the latest version will automatically replace any previous versions you have.",
+        "Question: How do I update Bisq?\nAnswer: Download the latest version and install it, which will automatically replace the older one.",
+        "Question: How can I update Bisq?\nAnswer: You can download the latest version from https://bisq.network/downloads or the GitHub repository, and install it normally to replace the older version.",
+        "Question: Where can I get the updated public key for the Bisq1 installer?\nAnswer: You can obtain the updated public key by using the command gpg --receive-keys 0xF806F422E222AA02.",
+        "Question: Where can I find more information about using Bisq?\nAnswer: You can find plenty of information on bisq.wiki",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ..."
+      ],
+      "response_time": 3.1941912174224854,
+      "error": null
+    },
+    {
+      "question": "Because at the end of the day it's up to the person buying whether he wants to take it outside of bisq2 or not, right?",
+      "ground_truth": "it's the buyer's responsibility to decide, yes, but such a seller would be using bisq easy to steer away trade from bisq easy, and that's not nice and cool, so yes it's very discouraged",
+      "answer": "Yes, in Bisq Easy (Bisq 2), it ultimately depends on the buyer whether they want to take the trade outside of the Bisq platform. The protocol relies on the seller's reputation for security, and buyers should be cautious when deciding to transact outside of Bisq.",
+      "contexts": [
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Question: What exactly happens when an order gets accepted in Bisq 2?\nAnswer: When an order is accepted in Bisq Easy, the buyer and seller agree on trade terms, the buyer sends the agreed-upon payment to the seller, and upon confirming receipt, the seller transfers the specified amount of bitcoin to the buyer's btc address This process relies on the seller's reputation for security, and is tailored for small trades to obtain the first UTXO that can be used as a deposit in multisignature trades o...",
+        "Question: Who pays for the maintenance and development of Bisq2 if it's free?\nAnswer: Sellers have to burn or bond BSQ to gain reputation, and that create demand for the token that the contributors are paid with. Moreover, after a buyer gets his first UTXO on Bisq Easy, he can then continue trading on Bisq1, where fees are paid.",
+        "Question: Do I need to use both Bisq 1 and Bisq 2?\nAnswer: If you have BTC, it's cheaper to buy on Bisq 1; to sell BTC on Bisq 2 at a higher price, you need to burn BSQ for reputation.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits."
+      ],
+      "response_time": 3.801926851272583,
+      "error": null
+    },
+    {
+      "question": "How long does it take to receive ACH? Sent payment to a high reputation seller but no replies afterwards, about to reach the 24hour mark very soon.",
+      "ground_truth": "you have to keep in mind there is a person on the other side, so releasing the btc requires that he's in front of the pc to deal with it, it could take some more time",
+      "answer": "In Bisq Easy (Bisq 2), you can expect the seller to send the Bitcoin within **24 hours** after confirming receipt of your fiat payment. If you're approaching the 24-hour mark and haven't received a response, it's advisable to consider opening mediation to involve a third party for assistance.",
+      "contexts": [
+        "Question: How long can I expect to wait for funds to be sent to my address after confirming a fiat payment on Bisq?\nAnswer: You can expect the funds to be sent within 24 hours for instant payments.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: How long does a seller have to send BTC after the fiat is sent?\nAnswer: The time frame is similar to the trade period for the same payment method on Bisq 1.",
+        "Question: How long after the seller received a fiat payment should mediation be requested?\nAnswer: You should ask for a mediator according to the trade period for that payment method on Bisq.",
+        "Question: What exactly happens when an order gets accepted in Bisq 2?\nAnswer: When an order is accepted in Bisq Easy, the buyer and seller agree on trade terms, the buyer sends the agreed-upon payment to the seller, and upon confirming receipt, the seller transfers the specified amount of bitcoin to the buyer's btc address This process relies on the seller's reputation for security, and is tailored for small trades to obtain the first UTXO that can be used as a deposit in multisignature trades o...",
+        "Question: What should I do if I don't receive replies from the seller after sending payment?\nAnswer: If the seller doesn't release the btc within the expected trade period, you should consider opening mediation to involve a third party for assistance."
+      ],
+      "response_time": 3.8928444385528564,
+      "error": null
+    },
+    {
+      "question": "Hi, I am new. I read about building reputation. I understand that this can onlly be done via Bisq 1. I installed Bisq 1 on my Mac, but when opening the app it says that the dmg package is damaged, with explanation that the code of the app no longer correlates with the original signed code. In other words, I can't use Bisq 1, so I can't build reputaion, so I am excluded from using Bisq 2 ?",
+      "ground_truth": "first of all, you need reputation only if you want to sell btc at a premium on bisq2 if you are a nocoiner and want to get started with btc, you can buy some here and then continue buying on bisq1 using that first btc as a security deposit if you already have some btc you should actually start trading on bisq1 regarding that error, it's a known issue on mac: https://bisq.wiki/Downloading_and_installing#macOS",
+      "answer": "You can still use Bisq 2 (Bisq Easy) to trade without needing to build reputation through Bisq 1. The reputation system is specific to Bisq 1, and while it may provide historical user data, it is not required for trading on Bisq 2. \n\nRegarding the issue with Bisq 1 on your Mac, this is a known problem with the installation package. You can follow the macOS installation guide [here](https://bisq.wiki/Doknownloading_and_installing#macOS) for solutions, such as bypassing security restrictions. If you continue to have trouble, it's recommended to focus on using Bisq 2, which has a different reputation handling system.",
+      "contexts": [
+        "Question: What should I do if the Bisq app on macOS reports it is damaged and won't open?\nAnswer: This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Doknownloading_and_installing#macOS.",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "Question: What should I do if Bisq says the file is broken on macOS?\nAnswer: This is a known error; refer to the macOS installation guide for solutions.",
+        "## = Bisq2 specific instructions\n=\n\nBisq2 can be downloaded [https://bisq.network/downloads/ here]. Before installing software that manages your funds, you should always verify the installer has not been tampered with, to avoid the risk of losing funds due to a compromised download.\n\nUsually, installation binaries are signed by Alejandro Garc\u00eda (key ID: E222AA02, primary release manager). However, since this key has expired \u2014 and the expired key was included in previous versions of the Bisq2 app...",
+        "## = Known issues with installation\n=\n\n**MacOS**\n\nNotarization was removed from the build pipeline because of the risk of Apple certification revocation ([https://github.com/bisq-network/bisq/discussions/6341 GitHub issue]). Unfortunately this will require extra steps when installing Bisq on macOS.\n\nPlease follow the guide at https://support.apple.com/en-us/HT202491 in the section \"If you want to open an app that hasn\u2019t been notarized or is from an unidentified developer\".\n\nIf you are using macO...",
+        "Question: Why do I have no reputation on my Bisq2 App after not accessing it for a while?\nAnswer: If you are sure you logged on the correct profile, you probably need to wait to receive full data from the network before seeing your updated reputation score."
+      ],
+      "response_time": 7.607395172119141,
+      "error": null
+    },
+    {
+      "question": "Is it still possible to buy bitcoin with Faster Payments, I don't see them offered any more through the wizard, thanks",
+      "ground_truth": "there are no seller for FP but I guess you can make an offer with a good markup to invite them",
+      "answer": "Yes, it is still possible to buy Bitcoin using Faster Payments. Currently, there are **8 GBP offers** available in total, including several options for purchasing with Faster Payments. You can create your own offer if you don\u2019t find a suitable one.",
+      "contexts": [
+        "Question: Is it still possible to buy bitcoin with Faster Payments?\nAnswer: Currently, there are no sellers available for Faster Payments. However, users can create an offer with a competitive premium to attract sellers.",
+        "Question: Can I still buy Bitcoin using Faster Payments?\nAnswer: Faster Payments is a supported payment method, if you do not find any relevant offer you can try making your own.",
+        "frameless\n\nOnce you are done selecting Payment Methods, you can move on by clicking ''Next''.\n\nOn the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq Easy is the equivalent of 6 USD and the maximum amount is . You can write the fiat amount, the BTC amount, or simply move the slider around.\n\nframeless\n\nFor this example, let's imagine we would like to buy 150\u20ac worth of ...",
+        "Question: How do I sell BTC and receive in SEPA with IBAN?\nAnswer: You can use both Bisq1 and Bisq Easy for selling BTC and receiving payments via SEPA. Bisq1 is easier to use for sellers, while Bisq Easy requires to build reputation.",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits."
+      ],
+      "response_time": 8.5966637134552,
+      "error": null
+    },
+    {
+      "question": "Hello [user], I have a trade whith [user], I can't send the BTC because I can't see the BTC Address. I have de payment.",
+      "ground_truth": "hi, got back to you in DM, I suggested him to DM you directly, or you can have me act as relay for the btc address",
+      "answer": "If you're unable to see the BTC address in your Bisq Easy trade, you can share your BTC address directly with the seller through the trade chat. This is safe, as all chat exchanges are shared during mediation. Just make sure to communicate clearly with the seller about the address you want them to use.",
+      "contexts": [
+        "Question: What should I do if I entered the wrong BTC receiving address in an open Bisq Easy trade?\nAnswer: Communicate with the seller through the trade chat and provide the correct BTC address.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: Can I change my BTC address after sending it to the seller in Bisq Easy?\nAnswer: Yes, just inform the seller in the trader chat.",
+        "Question: Is it safe to share my btc address in the Bisq Easy trade chat if the seller cannot see it in the trade details?\nAnswer: Yes, exchanging your btc address via the trade chat is safe, all trade chat exchanges are shared during mediation.",
+        "Question: How can I receive funds in BTC?\nAnswer: If the funds come from a Bisq Easy trade, you will need to install and configure an external wallet software like Sparrow or Electrum on a desktop, or BlueWallet on mobile.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention."
+      ],
+      "response_time": 3.1964285373687744,
+      "error": null
+    },
+    {
+      "question": "[user] Whenever I try to open mediation by clicking on the \"Request mediation\" button I get a Waring banner telling me that \"A mediator is not availble. Please shoose the support chat\" instead.",
+      "ground_truth": "then please send me a DM so I can forward your logs to the devs, are you on mobile or desktop?",
+      "answer": "It seems that you're encountering an issue with initiating mediation in Bisq Easy (Bisq 2) due to the warning about no available mediator. In this case, you can reach out for support through the open chats, specifically in the Support room on bisq.chat, to get assistance with your trade issue. If the mediation process isn't working, you also have the option to make a reimbursement request in the Bisq DAO.",
+      "contexts": [
+        "Question: What should I do if I cannot open mediation due to a warning about no available mediator?\nAnswer: You can ask for a mediator's support in the open chats.",
+        "Question: What should I do if mediator messages disappear during mediation in Bisq?\nAnswer: You can message the mediator directly on bisq.chat or request support to notify them to contact you.",
+        "Question: How do I request mediation for a trade issue?\nAnswer: In Bisq1 you can either press the button to open mediation that appears after the trade period has ended, or press Ctrl-O before then, but only if there are known issues.\nIn Bisq2 you have access to the open mediation button in the trade interface.",
+        "Question: How can I find out who my mediator is?\nAnswer: You can follow this guide: https://bisq.wiki/Finding_your_mediator",
+        "Question: What should I do if a mediator hasn't responded in my trade?\nAnswer: You can get hold of your mediator by reaching them in the Support room of the matrix bisq space, at bisq.chat",
+        "## Trade Chat\n\nIf you're having any issues completing a trade, or if you just want to keep your counterparty informed (e.g., in case you're delayed completing your end of the deal), you can send your counterparty a message through Bisq's end-to-end encrypted chat mechanism. This allows traders to communicate with each other throughout the course of a trade to resolve potential trade issues quickly without involving a third party like a mediator.\n\n## Mediation in Bisq Easy\n\nMediation is available..."
+      ],
+      "response_time": 5.2028727531433105,
+      "error": null
+    },
+    {
+      "question": "Hi everyone, Trade id: [trade-id]. I'm a buyer. It's been already 8 days since I initiated a trade, and four days since I resend the address of my wallet to [user] i.e. I send it twice first as part of the normal trade and later by messaging. The [user] received and acknoledged the fiat payment four days ago and yet he has not settled. I have already sent him a message every day since but no answer. I have noticed that the [user] connects to the network everyday! so I should assume that it has seen my message... what should I do? Notice that there is no trade mediator assigned to the trade!",
+      "ground_truth": "just try and open mediation, it should end up with one of us",
+      "answer": "Since you are using **Bisq Easy (Bisq 2)** and there is no mediator assigned to your trade, you have a few options:\n\n1. **Open Mediation**: Since the seller has acknowledged receipt of the fiat payment but hasn't released the BTC, you can consider opening mediation to involve a third party for assistance.\n\n2. **Direct Request**: You can reach out to the seller again, politely reminding them of the pending BTC release. \n\n3. **Trade Period**: If the trade period is about to expire, you may want to take action sooner rather than later.\n\nIf the seller continues to be unresponsive, mediation is likely your best option.",
+      "contexts": [
+        "Question: What should I do if a mediator hasn't responded in my trade?\nAnswer: You can get hold of your mediator by reaching them in the Support room of the matrix bisq space, at bisq.chat",
+        "Question: What should I do if my trade is taking longer than expected?\nAnswer: If the fiat has been verifiably sent, and the seller has not released the btc yet, you can open mediation.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "Question: What should I do if I don't receive replies from the seller after sending payment?\nAnswer: If the seller doesn't release the btc within the expected trade period, you should consider opening mediation to involve a third party for assistance.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods"
+      ],
+      "response_time": 6.976780891418457,
+      "error": null
+    },
+    {
+      "question": "[user] well at this point what would be quicker, wait for the btc or cancel and get fiat back, cause I mean I get it, if you have to do it manually it takes more time, however if I sit down and get into it I'd probably process 60 transactions/hour. What you suggest I should do?",
+      "ground_truth": "I guess you can ask him to refund yourpayment but considering that would also require manual intervention, that's not a winning solution :D guess you can open a mediation just in case so we can ping him for that too, once in a while, as we've been doing these last few days, his payouts as of late have all been done manually afaik",
+      "answer": "If you're using Bisq Easy and considering whether to wait for the BTC or cancel the trade to get your fiat back, it largely depends on your urgency. If you believe you can process transactions quickly and you're not receiving the BTC in a reasonable timeframe, canceling the trade to get your fiat back might be the better option. You can easily reject the trade by clicking the 'reject trade' button on the open trades page. However, if you think the BTC will arrive soon and can afford to wait, you might want to hold off on canceling.",
+      "contexts": [
+        "frameless\n\nOnce you are done selecting Payment Methods, you can move on by clicking ''Next''.\n\nOn the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq Easy is the equivalent of 6 USD and the maximum amount is . You can write the fiat amount, the BTC amount, or simply move the slider around.\n\nframeless\n\nFor this example, let's imagine we would like to buy 150\u20ac worth of ...",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc"
+      ],
+      "response_time": 4.480530738830566,
+      "error": null
+    },
+    {
+      "question": "i have not used bisq2 for a while. When i run it asked if i would like to update to bis2.1.8. I downloaded the files and ran the new version. I then closed Bisq2 and deleted the bisq2 folder in Users/RCS4/Appdata/Local/ and copied the old bisq2 folder there. Th problem is then i now run Bisq2.1.8 my old profile does not come up. Any idea how to bring old profile over on windows system. Thanks",
+      "ground_truth": "you shouldn't have deleted the data directory, that's persisted across updates and updating will just replace the application itself, if you backed up the data directory 100% and restored it in the same place it should just work as intended and bring up your previous profile, unless in an edge case where if you use windows you would bump into an OS specific issue that still needs to be resolved, and that makes you lose your existing profile",
+      "answer": "To recover your old Bisq 2 profile on your Windows system, you can try the following steps:\n\n1. **Locate the Old Profile Data**: Ensure you have a backup of your old Bisq 2 profile, specifically the contents of the `Bisq2/db` folder.\n\n2. **Restore the Profile**:\n   - Copy the contents of your old `Bisq2/db` folder into the new `Bisq2` directory, replacing any existing files.\n   - Make sure to run Bisq 2.1.8 after this step to see if your profile has been restored.\n\nIf you've followed these steps and still don't see your old profile, check the backups folder within your data directory for any viable copies of your previous profile data that might be restored.",
+      "contexts": [
+        "Question: How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?\nAnswer: Restore your profile by using a copy of the Bisq2/db folder from your data directory.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup",
+        "Question: How can I restore my old Bisq profile after creating a new one?\nAnswer: The backups folder inside the data directory may contain un-corrupted, viable copies of your previous profile data, which you can try restoring to see if the application state can be accessed again.",
+        "Question: How do I update Bisq?\nAnswer: Download the latest version and install it, which will automatically replace the older one.",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol."
+      ],
+      "response_time": 5.640158414840698,
+      "error": null
+    },
+    {
+      "question": "And apart from that, close the mediation as soon as you receive Txid and it's wrong because BISQ even if you put the same TXID or another transaction to another wallet, BISQ does not recognize it and takes it at face value, the amount is correct and you close the mediation",
+      "ground_truth": "There would be an error shown in Bisq the the TXID does not have the matching receiver btc address AND trade amount.",
+      "answer": "In Bisq Easy (Bisq 2), if you enter the wrong transaction ID (Txid) while closing mediation, the platform will not recognize it as valid. It's crucial to ensure that the Txid you provide is correct, as Bisq takes it at face value. If the amount is correct, you can proceed to close the mediation, but ensure to communicate any discrepancies with your trade partner.",
+      "contexts": [
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if mediator messages disappear during mediation in Bisq?\nAnswer: You can message the mediator directly on bisq.chat or request support to notify them to contact you.",
+        "Question: What should I do if I provided the wrong revtag during a Bitcoin sale on Bisq?\nAnswer: Contact your mediator and explain what happened, if you cannot prove that you control both revtags you might be penalized, and your peer could decide to cancel the trade, as per trade rules.",
+        "Question: What should I do if I entered the wrong BTC receiving address in an open Bisq Easy trade?\nAnswer: Communicate with the seller through the trade chat and provide the correct BTC address."
+      ],
+      "response_time": 3.383897066116333,
+      "error": null
+    },
+    {
+      "question": "\"Is it possible to send fiat currency to Bisq in order to buy stablecoins and then use them to make a transaction with someone else?\"",
+      "ground_truth": "you can only trade fiat for btc on bisq and you send it to the btc seller directly, not to bisq",
+      "answer": "Yes, it is possible to send fiat currency to Bisq in order to buy stablecoins and then use those stablecoins to make transactions with others. In Bisq Easy, you can trade bitcoin for any type of fiat, and buyers can exchange fiat for cryptocurrencies, including stablecoins, after purchasing bitcoin. \n\nJust keep in mind that Bisq Easy operates without security deposits, relying instead on the reputation of the sellers for transaction safety.",
+      "contexts": [
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc",
+        "## = Currencies / Payment Methods\n=\n\nBisq Easy buyers and sellers can trade bitcoin for any type of fiat.\n\nFiat buyers and sellers can choose whatever type of payment method they agree upon for fiat transfer.\n\n## = Dispute mechanisms\n=\n\nBuyers and sellers trading on Bisq Easy can access mediation support should anything go wrong with their trade.\n\nMediators will be able to:\n\n* Help facilitate the successful completion of the trade\n* Confirm fiat / altcoin and bitcoin payments\n* Help cancel trade...",
+        "Question: Can I buy cryptocurrencies other than Bitcoin on Bisq?\nAnswer: Yes, after buying the minimum amount to cover a security deposit on Bisq1, you can trade altcoins."
+      ],
+      "response_time": 3.807291030883789,
+      "error": null
+    },
+    {
+      "question": "I keep getting the error: Error message: java.lang.NoClassDefFoundError: Could not initialize class bisq.account.payment_method.fiat.FiatPaymentRail",
+      "ground_truth": "known ongoing issue, it seems to only be affecting windows users, so you maybe could make it work in a linux VM until a new release is ready",
+      "answer": "It seems you're encountering a technical error related to the Bisq Easy (Bisq 2) application. This specific error, `java.lang.NoClassDefFoundError: Could not initialize class bisq.account.payment_method.fiat.FiatPaymentRail`, usually indicates an issue with the application's dependencies or configuration.\n\nHere are a few steps you can try to resolve the issue:\n\n1. **Restart the Application**: Sometimes, a simple restart can fix initialization errors.\n  \n2. **Check for Updates**: Ensure that you are using the latest version of Bisq Easy. Updates often include bug fixes and improvements.\n\n3. **Reinstall the Application**: If the problem persists, consider uninstalling and then reinstalling Bisq Easy to ensure all components are properly configured.\n\n4. **Check Java Installation**: Ensure that you have the correct version of Java installed, as Bisq requires a compatible Java runtime.\n\nIf these steps do not resolve the issue, you may want to reach out to the Bisq support community for further assistance.",
+      "contexts": [
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Bisq Easy is a trade protocol for Bisq 2, designed to facilitate the acquisition of bitcoin with zero trade fees and without the requirement of a security deposit. Bisq Easy is a social trade protocol intended for novice bitcoin buyers seeking a non-KYC option and aiming to be efficiently onboarded by experienced and knowledgeable sellers that are familiar with the Bisq platform.\n\nBisq Easy is currently the only trade protocol for Bisq 2. More trade protocols are planned for the future.\n\n## Bisq..."
+      ],
+      "response_time": 5.8668413162231445,
+      "error": null
+    },
+    {
+      "question": "same as the issues users are getting on github, the \"failed to init class fiatpayment init\"",
+      "ground_truth": "that issue has been reported and is in the working pipeline",
+      "answer": "The error \"failed to init class fiatpayment init\" you are experiencing with Bisq Easy (Bisq 2) could be related to several factors, including installation issues or conflicts with antivirus software. \n\nMake sure that you have followed the installation instructions correctly, especially if you're using macOS or Windows, as there are known issues related to those platforms. You might need to adjust your settings or permissions to allow Bisq Easy to run smoothly. If the problem persists, consider checking forums or GitHub discussions for similar issues and potential fixes.",
+      "contexts": [
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "## = Known issues with installation\n=\n\n**MacOS**\n\nNotarization was removed from the build pipeline because of the risk of Apple certification revocation ([https://github.com/bisq-network/bisq/discussions/6341 GitHub issue]). Unfortunately this will require extra steps when installing Bisq on macOS.\n\nPlease follow the guide at https://support.apple.com/en-us/HT202491 in the section \"If you want to open an app that hasn\u2019t been notarized or is from an unidentified developer\".\n\nIf you are using macO...",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: What should I do if I can't log in to Bisq 1?\nAnswer: Please provide more details about what you're doing when trying to log in."
+      ],
+      "response_time": 5.406094551086426,
+      "error": null
+    },
+    {
+      "question": "Hi, I just made an identity yesterday and when I opened the program it prompted me to make a new one and I don't know how to get back into the old identity. Can I get back in and how do I prevent this?",
+      "ground_truth": "this could be another issue that's been lurking, a next release should resolve it, did you do other trades on bisq2 already? if you got some btc you can send it to bisq1 wallet and trade there",
+      "answer": "To recover your old identity in Bisq Easy (Bisq 2), you can try the following steps:\n\n1. **Switching Profiles**: Click on your profile avatar in the top right corner of the Bisq application and select the desired profile from the dropdown menu. This will allow you to switch back to your old identity if it still exists.\n\n2. **Backups**: If you cannot find your old identity, check the backups folder in the data directory. There may be viable copies of your previous profile data that you can restore.\n\nTo prevent this from happening in the future, ensure you regularly back up your Bisq data and be mindful of how many identities you create. Each identity has its own reputation and linked information, so managing them carefully is important.",
+      "contexts": [
+        "## Negatives of Identities\n\nReputation built up overtime for bitcoin sellers on Bisq Easy is specific to a specific identity. This means that bitcoin sellers on Bisq Easy will become invested in building up their identities reputation. This is positive for the protocol as a reputation built over time is what gives the protocol it's security mechanism, however for seller's it means that establishing a new identity will have to be done from scratch.\n\nAlthough identities give the user a separate; u...",
+        "Question: How can I restore my old Bisq profile after creating a new one?\nAnswer: The backups folder inside the data directory may contain un-corrupted, viable copies of your previous profile data, which you can try restoring to see if the application state can be accessed again.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?\nAnswer: Restore your profile by using a copy of the Bisq2/db folder from your data directory."
+      ],
+      "response_time": 5.199559926986694,
+      "error": null
+    },
+    {
+      "question": "I have the problem that my profile crashed somehow. I created a new one, just to get into bisq easy again, but how can i restore the old one? In the identity folder there seems to be the old one...",
+      "ground_truth": "you can try playing with restoring the contents of the backup folder and see if that works, in case bisq2 was shutdown uncleanly data might have been corrupted",
+      "answer": "To restore your old Bisq Easy profile, you can check the backups folder inside your data directory. It may contain viable copies of your previous profile data. If you find one, try restoring it to see if you can access your old application state. \n\nIf you need further assistance, feel free to ask!",
+      "contexts": [
+        "Question: How can I restore my old Bisq profile after creating a new one?\nAnswer: The backups folder inside the data directory may contain un-corrupted, viable copies of your previous profile data, which you can try restoring to see if the application state can be accessed again.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup",
+        "Question: How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?\nAnswer: Restore your profile by using a copy of the Bisq2/db folder from your data directory.",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "## Negatives of Identities\n\nReputation built up overtime for bitcoin sellers on Bisq Easy is specific to a specific identity. This means that bitcoin sellers on Bisq Easy will become invested in building up their identities reputation. This is positive for the protocol as a reputation built over time is what gives the protocol it's security mechanism, however for seller's it means that establishing a new identity will have to be done from scratch.\n\nAlthough identities give the user a separate; u..."
+      ],
+      "response_time": 3.7159311771392822,
+      "error": null
+    },
+    {
+      "question": "It was a while that I did no access my Bisq2 App ... And when I did it today I noticed that I have no reputation anymore! Could anybody tell me why?",
+      "ground_truth": "you probably had to wait to receive full data from the network? I see your rep is 70000",
+      "answer": "If you have no reputation on your Bisq 2 app after not accessing it for a while, it may be due to the need for the app to receive full data from the network. Ensure you're logged into the correct profile, and you might need to wait a bit for your updated reputation score to appear. Remember, reputation can only be gained by burning or bonding BSQ, importing account information from Bisq 1, or through specific actions, not through trades alone.",
+      "contexts": [
+        "Question: Why do I have no reputation on my Bisq2 App after not accessing it for a while?\nAnswer: If you are sure you logged on the correct profile, you probably need to wait to receive full data from the network before seeing your updated reputation score.",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "Question: Can I earn reputation in Bisq Easy Mobile?\nAnswer: The only way to increase one's reputation score is by importing account information from Bisq1, and burning or bonding BSQ, one doesn't earn reputation by doing trades no matter if on desktop or mobile.",
+        "## Reputation in Bisq Easy\n\nReputation is a cornerstone of the security model in **Bisq Easy**, a Bisq 2 trade protocol. As buyers send their fiat payment ''before'' receiving Bitcoin, the seller's reputation provides the trust needed for the buyer to proceed confidently.\n\n600px|thumb|left|The 'Build reputation' screen in Bisq 2 (accessed via 'Reputation' on the left menu), showing the four methods available.\n\n## = Why Reputation Matters\n=\n\n* **For Buyers:** Carefully review a seller's reputatio...",
+        "Question: Will Bisq Easy Mobile support reputation features in the future?\nAnswer: Yes, reputation features will be available with the remote version connecting to a desktop Bisq 2.",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1."
+      ],
+      "response_time": 3.177177906036377,
+      "error": null
+    },
+    {
+      "question": "For ACH transfers, my bank requires verification of \"ownership\" of the external account with micro-deposits. Can I still buy BTC through ACH here?",
+      "ground_truth": "well ach is a complicated payment method that banks offer with many quirks.. that verification is not really safe for the seller so if you cannot complete the payment just by sending it it's probably better you find an alternative seller or payment method",
+      "answer": "If your bank requires verification of account ownership through micro-deposits, it may complicate your ability to buy BTC via ACH on Bisq Easy. Micro-deposits are not suitable for peer-to-peer payments, and sellers may be concerned about the security implications. It's advisable to seek an alternative seller or payment method that does not involve this verification process.",
+      "contexts": [
+        "Question: Can I buy BTC through ACH if my bank requires verification of account ownership with micro-deposits?\nAnswer: Micro-deposits verification is a procedure not intended for p2p payments, and is a security issue for the seller, so if your bank only allows to send the payment after that verification is complete, It's better to find an alternative seller or payment method.",
+        "Question: What is the easiest way to buy BTC on Bisq without undergoing KYC?\nAnswer: Bisq is already noKYC in itself, but most payment methods require users to ID themselves, since they use banks and other official money transmitters.You could use face to face cash exchange, cash by mail, US postal money orders, or Amazon gift cards, although these options are less common and often carry a premium.",
+        "Question: How can I transfer BTC into Bisq using my external wallet?\nAnswer: Obtain a receive address from Funds > Receive funds, and use your external wallet to send btc to it.",
+        "Question: Can I buy cryptocurrencies other than Bitcoin on Bisq?\nAnswer: Yes, after buying the minimum amount to cover a security deposit on Bisq1, you can trade altcoins.",
+        "Question: Can I buy BTC with a new account that has no reputation?\nAnswer: Yes, you can buy BTC without reputation; just acquire 0.0005 BTC and send it to your Bisq wallet.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet."
+      ],
+      "response_time": 3.2947282791137695,
+      "error": null
+    },
+    {
+      "question": "I've been having an issue where Bisq 2 keeps forcing me to create a new account upon login. There's no login info, so I haven't been able to recover old accounts or the offers made with them; it simply walks me through the proccess again like it's my first time logging into bisq 2.I can, however, access old chat logs made with the other accounts for whatever reason (it also lets me message them, but I'm not sure if they actually make it through). This is the third \"george-orwell\" ive gone through, I can't keep doing this and I can't make/accept offers with the fear that i'll lose access whenever I log off.",
+      "ground_truth": "are you on windows? there is a general issue going on for that OS lately it seems, which you may be able to resolve running bisq2 under a linux VM",
+      "answer": "It seems you're experiencing issues with your Bisq 2 account, where it keeps prompting you to create a new account upon login. Here are a few steps you can try to recover your old profile:\n\n- **Check Backups**: Look in the backups folder inside your Bisq data directory. It may contain viable copies of your previous profile data that you can restore.\n- **Data Directory**: Ensure you're using the correct data directory that contains your old profile. If you formatted your computer or changed directories, you may have lost access to your original profile.\n- **Automatic Backups**: Bisq manages automatic backups. If you haven't already, see if you have any backups available that you can restore.\n\nIf issues persist, consider reaching out to the Bisq community for additional support.",
+      "contexts": [
+        "Question: What should I do if I can't log in to Bisq 1?\nAnswer: Please provide more details about what you're doing when trying to log in.",
+        "Question: How can I restore my old Bisq profile after creating a new one?\nAnswer: The backups folder inside the data directory may contain un-corrupted, viable copies of your previous profile data, which you can try restoring to see if the application state can be accessed again.",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "Question: How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?\nAnswer: Restore your profile by using a copy of the Bisq2/db folder from your data directory."
+      ],
+      "response_time": 4.60975456237793,
+      "error": null
+    },
+    {
+      "question": "Hey there, i have found someone i trade Fiat to Bitcoin, where i have to sign in my Fiat data and where my Coin Wallet?",
+      "ground_truth": "hi, directions are in the interface itself, you will need your own wallet software to receive bitcoin, I suggest installing Bisq1 so you have the seller send btc there, and then you have at least 0.0005btc in there you can start trading on bisq1 directly",
+      "answer": "In Bisq Easy (Bisq 2), there is no built-in wallet. You will need to set up an external wallet software such as Sparrow, Electrum, or BlueWallet to manage your Bitcoin. Once you have your external wallet set up, you can use it to receive funds from trades on Bisq Easy.\n\nIf you have any specific questions about using external wallets or the trading process, feel free to ask!",
+      "contexts": [
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: How can I access from Bisq2 the wallet that I used in Bisq1?\nAnswer: Bisq2 right now uses a different trade protocol, and has no builtin wallet, you should continue using Bisq1 to trade btc if you want to use the multisig protocol.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "frameless\n\nOnce you are done selecting Payment Methods, you can move on by clicking ''Next''.\n\nOn the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq Easy is the equivalent of 6 USD and the maximum amount is . You can write the fiat amount, the BTC amount, or simply move the slider around.\n\nframeless\n\nFor this example, let's imagine we would like to buy 150\u20ac worth of ...",
+        "## Sending Bitcoin to your Bisq wallet\n\nOnce you\u2019ve gotten enough bitcoin for your security deposit and fees, you can move it into Bisq\u2019s built-in wallet. This isn\u2019t strictly required, but it\u2019ll make trading more convenient since the funds you need to accept an offer will be readily available when you need them.\n\nTo send bitcoin to your Bisq wallet, you'll need an address. You'll find one on Funds > Receive Funds.\n\nYou might see many addresses listed. Pick the address on the bottom next to the Q...",
+        "Question: How can I receive funds in BTC?\nAnswer: If the funds come from a Bisq Easy trade, you will need to install and configure an external wallet software like Sparrow or Electrum on a desktop, or BlueWallet on mobile."
+      ],
+      "response_time": 5.006068229675293,
+      "error": null
+    },
+    {
+      "question": "Another issue I am having is with my \"Profile age\". I created this account over a year ago but the profile age is 29 days. I know I have not been very active during 2025 and I have not used Bisq2 for probably over six months, coming back 29 days ago. Does your profile age resets to zero after a period of time of inactivity?",
+      "ground_truth": "I think that would be the case, profile is not republished to the network if you don't come back online, and if you stay away for more than 15 days that would be reset I guess, I did not consider this myself but it makes sense now and I will ask devs about it",
+      "answer": "In Bisq Easy (Bisq 2), your profile age reflects the time since you first created your account. However, if you haven't been active for an extended period, your profile may not accumulate age credits during inactivity. It's possible that your profile age was reset due to prolonged inactivity or network synchronization issues. Unfortunately, I don't have specific details on reset policies, but if you have been inactive for a long time, it might affect how your profile age is calculated. If you have further concerns, consider reaching out directly to Bisq support for clarification.",
+      "contexts": [
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "## = Method 3: Importing Bisq 1 Account Age\n=\n\nLeverage the history of your fiat accounts from Bisq 1. The older the account, the more trustworthy the user is assumed to be (though this is considered a weaker form of reputation). Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed. You will paste this into Bisq 1.\n# **Step 3:** Open **Bisq 1** a...",
+        "Question: Why do I have no reputation on my Bisq2 App after not accessing it for a while?\nAnswer: If you are sure you logged on the correct profile, you probably need to wait to receive full data from the network before seeing your updated reputation score.",
+        "## = Importing the Account Age from Bisq 1\n=\n\nUsers of Bisq 1 can gain reputation by importing their account age from Bisq 1 into Bisq 2.\n\nAccounts ages from Bisq 1 could include any of the following account types:\n\nAny Fiat account can be used.\n\nThe older the user's account age the more trustworthy the user will be assumed to be.\n\nIn case of repeated registrations the oldest account will be used (as it has the highest value). Multiple accounts do not get accumulated.\n\n**Follow these steps to im...",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup"
+      ],
+      "response_time": 6.483490705490112,
+      "error": null
+    },
+    {
+      "question": "I had the same problem with version 2.1.8. I could not see the chats nor the list of offers.; and when I tried to access Bisq Easy, I got an error message. At the end i have downgraded to version 2.1.6. Everything seems to be working fine now. Hope it helps, at least until they find a solution.",
+      "ground_truth": "well downgrading is not a good idea for other reasons... right now I don't remember what was fixed in 2.1.7 and later in 2.1.8 but you are running with a version that is not supported for trading anymore. Are you on windows?",
+      "answer": "It seems you're experiencing issues with Bisq Easy (Bisq 2). If you're unable to see chats or offers and received an error message while accessing Bisq Easy, downgrading to version 2.1.6 appears to be a temporary solution. It's advisable to report these issues to the Bisq team for further assistance, as they may be able to provide a fix or additional guidance. If you have further questions or need help, feel free to ask!",
+      "contexts": [
+        "Question: What should I do if I can't log in to Bisq 1?\nAnswer: Please provide more details about what you're doing when trying to log in.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: What should I do if Bisq's market price is not updating and is using outdated persisted data?\nAnswer: This could be a general issue; if restarting doesn't help, report the problem to the team for further assistance.",
+        "Bisq 2 is the successor to the original Bisq (Bisq v1). It has been developed from the ground up to allow for multiple trade protocols to be accessed via a single decentralized exchange platform.\n\nAt the initial launch of Bisq 2 will support only one trading protocol 'Bisq Easy'. Over time more trading protocols will be added.\n\nOnce the Bisq Multisig protocol is implemented in Bisq 2, the old version of Bisq can fade out. Bisq 1 will still find its usage as Bisq DAO management tool and for BSQ-B...",
+        "Question: How do I update Bisq?\nAnswer: Download the latest version and install it, which will automatically replace the older one."
+      ],
+      "response_time": 3.898348808288574,
+      "error": null
+    },
+    {
+      "question": "i have started to trade in bisq 1 but choose a bank account that can't send to the other trader 'in his country)and i'd like to send it with my other account already in bisq but i don't know how,the collateral is already sent..",
+      "ground_truth": "yes, changing the account used to send the money is an issue by the rules, but if the seller agrees (it helps if the other account is under the same name) then you can go ahead, ask him in trader chat is the doesn't seller, mediation can be opened before the trade expires with Ctrl-O",
+      "answer": "In Bisq Easy (Bisq 2), changing the bank account used for sending money after the collateral has been sent is not allowed. You can ask the seller for approval to use a different account, but if they do not agree, you may need to open mediation before the trade expires. Be aware that there could be penalties if you're unable to use the account specified in the trade contract.",
+      "contexts": [
+        "Question: Can I change the bank account used to send money after collateral has been sent in Bisq?\nAnswer: Changing the account is not allowed, but you can ask the seller for approval; if they don't agree, you can open mediation before the trade expires, knowing that  you could incur a penalty if you are unable to use the account defined in the trade contract.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Question: How can I access from Bisq2 the wallet that I used in Bisq1?\nAnswer: Bisq2 right now uses a different trade protocol, and has no builtin wallet, you should continue using Bisq1 to trade btc if you want to use the multisig protocol.",
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: Why can't I send funds from my Bisq wallet to another wallet?\nAnswer: In Bisq1, you can only send funds to addresses up to the bech32 format (starting with bc1q), taproot addresses (starting with bc1p) are not supported."
+      ],
+      "response_time": 4.322196006774902,
+      "error": null
+    },
+    {
+      "question": "I'm requesting support, please. I have a trade initated with [support] on 12/11. Fiat payment was made. BTC not received. Communication is ... not ideal. Mediation was requested on 12/15. No messages from mediator.",
+      "ground_truth": "who is your mediator? I am about to check my mediations now and it might be one of mine, there could have been a longer delay since last time I could check my cases",
+      "answer": "It seems you are experiencing issues with a trade on Bisq Easy (Bisq 2). Since you initiated mediation on 12/15 but haven't received any updates, I recommend reaching out to your mediator directly in the Support room of the Bisq chat at bisq.chat. They can assist you further with your situation. Additionally, ensure that you have requested mediation correctly through the trade interface on Bisq. If issues persist, you may consider filing a reimbursement request in the Bisq DAO for further assistance.",
+      "contexts": [
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if a mediator hasn't responded in my trade?\nAnswer: You can get hold of your mediator by reaching them in the Support room of the matrix bisq space, at bisq.chat",
+        "Question: What should I do if I haven't received BTC after making a fiat payment?\nAnswer: Request mediation if communication with the other party is inadequate and wait for the mediator to assist.",
+        "Question: How do I request mediation for a trade issue?\nAnswer: In Bisq1 you can either press the button to open mediation that appears after the trade period has ended, or press Ctrl-O before then, but only if there are known issues.\nIn Bisq2 you have access to the open mediation button in the trade interface.",
+        "Question: How long after the seller received a fiat payment should mediation be requested?\nAnswer: You should ask for a mediator according to the trade period for that payment method on Bisq.",
+        "## Trade Chat\n\nIf you're having any issues completing a trade, or if you just want to keep your counterparty informed (e.g., in case you're delayed completing your end of the deal), you can send your counterparty a message through Bisq's end-to-end encrypted chat mechanism. This allows traders to communicate with each other throughout the course of a trade to resolve potential trade issues quickly without involving a third party like a mediator.\n\n## Mediation in Bisq Easy\n\nMediation is available..."
+      ],
+      "response_time": 4.403167963027954,
+      "error": null
+    },
+    {
+      "question": "Hello is there any way i can get a csv of the crypto swap i did a week ago for taxes?",
+      "ground_truth": "hi, not on bisq easy, if you wish to pay taxes on your trades you will have to note down every trade you do manually, since bisq2 clears history by design",
+      "answer": "In Bisq Easy (Bisq 2), there is no built-in feature to export a CSV of your past crypto swaps for tax purposes. This is by design to enhance user privacy. You will need to manually track your trading activity if you require a report for tax filings.",
+      "contexts": [
+        "Question: Can I get a CSV of my past crypto swap for tax purposes?\nAnswer: Bisq2 does not include a trade history export feature by design, for privacy, so you will need to manually keep track of your activity if you need a report.",
+        "Question: Can I get a CSV of my past trades for tax purposes?\nAnswer: In Bisq Easy there is no reporting feature, by design, to improve privacy on the platform, so you will need to manually note down each trade for tax purposes.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: Where can I find more information about using Bisq?\nAnswer: You can find plenty of information on bisq.wiki",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "# ============================\n\nARCHIVE_ROOT=\"bisq1_backup_\"\nBACKUP_FILE=\"${ARCHIVE_ROOT}$(date +%Y%m%d_%H%M%S).7z\"\nARCHIVE_PATH=\"${TARGET_FOLDER}/${BACKUP_FILE}\"\nSELECTED_FILES=(\n\"BsqSwapTrades\"\n\"BallotList\"\n\"DisputeList\"\n\"RefundDisputeList\"\n\"SequenceNumberMap\"\n\"MyVoteList\"\n\"OpenOffers\"\n\"MyBlindVoteList\"\n\"ClosedTrades\"\n\"MediationDisputeList\"\n\"MyProposalList\"\n\"MailboxMessageList\"\n\"AccountAgeWitnessStore\"\n\"PendingTrades\"\n\"MyProofOfBurnList\"\n\"PreferencesPayload\"\n\"UserPayload\"\n\"AddressEntryList\"\n\"F..."
+      ],
+      "response_time": 3.8730740547180176,
+      "error": null
+    },
+    {
+      "question": "i am new to Bisq, how i can burn or bond?",
+      "ground_truth": "all the info is under the reputation tab, you need to get bsq on bisq1",
+      "answer": "To **burn or bond BSQ** in Bisq Easy (Bisq 2), follow these steps:\n\n1. **Bonding BSQ**:\n   - Lock up BSQ tokens for a minimum of ~1 year to gain reputation. This is refundable and shows commitment.\n   - Go to the **Reputation section** in Bisq 2, select your user profile, and copy your **Profile ID**.\n   - Open **Bisq 1**, navigate to `DAO` > `BONDING` > `BONDED REPUTATION`, and paste your Profile ID in the **`salt`** field.\n   - Enter the amount of BSQ to lock and the lock time (minimum **50,000 blocks**).\n   - Publish the lockup transaction. After confirmation, your reputation will be visible in Bisq 2.\n\n2. **Burning BSQ**:\n   - Burning BSQ involves permanently removing it from circulation to increase your reputation. This can typically be initiated in the Bisq 2 interface under the reputation options.\n\nThese actions help you build a reputation, which is essential for trading on Bisq. If you need more specific guidance, feel free to ask!",
+      "contexts": [
+        "Question: How can I burn or bond BSQ in Bisq?\nAnswer: Information about burning or bonding can be found under the reputation tab of Bisq2; you can acquire and process BSQ on Bisq1.",
+        "## = Bonded Roles\n=\n\nThe contributors providing the resources and infrastructure for Bisq 2 will require their roles to be bonded. This concept was also used in Bisq 1 but as it was not strictly enforced by the system, not all roles are secured by bonds as it was envisioned. In Bisq 2 having set up a BSQ bond is mandatory for most roles and node operators and enforced by the system.\n\nFind out more about the Bisq 2 roles.\n\n## Bisq 1 vs Bisq 2\n\nWhen Bisq 2 is launched it will initially only use th...",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1.",
+        "## = Method 2: Bonding BSQ\n=\n\nYou lock up BSQ tokens for a set period (minimum ~1 year) to gain reputation. This is refundable, but shows commitment for the lock duration. Like burning, regular bonding can represent user activity. Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed. You will paste this into Bisq 1.\n# **Step 3:** Open **Bisq 1** ..."
+      ],
+      "response_time": 6.60180401802063,
+      "error": null
+    },
+    {
+      "question": "How long after the seller received a fiat payment should someone ask for a mediator to come in?",
+      "ground_truth": "same as trade period for that payment method on bisq1 https://bisq.wiki/Payment_methods",
+      "answer": "In Bisq Easy (Bisq 2), you should request a mediator if the seller has received the fiat payment and has not released the BTC after the trade period for that payment method has elapsed. It's essential to monitor the trade period and initiate mediation if the seller does not respond appropriately.",
+      "contexts": [
+        "Question: How long after the seller received a fiat payment should mediation be requested?\nAnswer: You should ask for a mediator according to the trade period for that payment method on Bisq.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if my trade is taking longer than expected?\nAnswer: If the fiat has been verifiably sent, and the seller has not released the btc yet, you can open mediation.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "Question: What should I do if the seller's name on Bisq doesn't match the bank account name?\nAnswer: You can ask the seller for an explanation and if it's satisfactory, you may proceed with the payment, otherwise open mediation.",
+        "Question: What should I do if I haven't received BTC after making a fiat payment?\nAnswer: Request mediation if communication with the other party is inadequate and wait for the mediator to assist."
+      ],
+      "response_time": 2.981170415878296,
+      "error": null
+    },
+    {
+      "question": "hey, i'm trying to buy btc with sepa instant but it fails. It is blocked by the recievers bank. My Recieving BTC Wallet is set to expire in 7 days. If I now send the fiat via normal SEPA (up to 6 working days), my btc wallet could be closed the time when the fiat is recieved by the trader. What should I do? Just send them new BTC Wallet adress that never expires? I used the UI feature in Bisq2 to send the wallet adress, so I would send the new wallet in chat. Is this legit?",
+      "ground_truth": "btc addresses and wallets do not expire, what software did you get the address from?",
+      "answer": "Yes, you can send a new BTC wallet address to the seller in the trader chat. It's perfectly legitimate to inform them of the new address, especially since your current one is set to expire soon. Just make sure to clearly communicate the new address to avoid any confusion. BTC addresses don't actually expire, so there shouldn't be any issues with receiving funds at your original address, but using a new one can provide peace of mind.",
+      "contexts": [
+        "Question: How do I sell BTC and receive in SEPA with IBAN?\nAnswer: You can use both Bisq1 and Bisq Easy for selling BTC and receiving payments via SEPA. Bisq1 is easier to use for sellers, while Bisq Easy requires to build reputation.",
+        "Question: How long does a seller have to send BTC after the fiat is sent?\nAnswer: The time frame is similar to the trade period for the same payment method on Bisq 1.",
+        "Question: What should I do if my BTC wallet/address is set to expire before seller receives the fiat?\nAnswer: BTC wallets and addresses never expire, if your software reports a timeout it is but a UI/UX quirk, since you will receive the incoming transfer even after the \"expiration date\".\nSo don't worry, the address will still be very valid and functional forever.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Question: Can I change my BTC address after sending it to the seller in Bisq Easy?\nAnswer: Yes, just inform the seller in the trader chat.",
+        "Question: How can I transfer BTC into Bisq using my external wallet?\nAnswer: Obtain a receive address from Funds > Receive funds, and use your external wallet to send btc to it."
+      ],
+      "response_time": 3.446018934249878,
+      "error": null
+    },
+    {
+      "question": "exporting account age or signed witness for bisq 2 is only for reputation purpose and not payment account transfers?",
+      "ground_truth": "only reputation, bisq1 and bisq easy have different trade protocols so importing signed accounts is not applicable, bisq1 has still the go-to better protocol until it is ported to bisq2",
+      "answer": "Yes, exporting account age or signed witness in Bisq 2 is solely for reputation purposes and does not facilitate payment account transfers. It allows users to leverage their history from Bisq 1 to enhance their reputation score in Bisq 2.",
+      "contexts": [
+        "Question: Is exporting account age or signed witness for Bisq 2 only for reputation?\nAnswer: Yes, it is only for reputation purposes and not for payment account transfers.",
+        "## = Method 4: Importing Bisq 1 Signed Account Age\n=\n\nLeverage the history of fiat accounts that completed the older signing process in Bisq 1. The older the signed account, the more trustworthy the user is assumed to be (though still considered a weaker form of reputation than BSQ burn/bond). Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed....",
+        "## = Importing the Signed Account Age from Bisq 1\n=\n\nUsers of Bisq 1 can gain reputation by importing their signed account age from Bisq 1 into Bisq 2.\n\nAny signed account from Bisq 1 can be used.\n\nThe older the user's signed account age the more trustworthy the user will be assumed to be.\n\nIn case of repeated registrations the oldest signed account will be used (as it has the highest value). Multiple accounts do not get accumulated. account will be used (as it has the highest value). Multiple a...",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1."
+      ],
+      "response_time": 4.6371259689331055,
+      "error": null
+    },
+    {
+      "question": "hi, im new. Is it only possible to buy bitcoin on Bisq2?",
+      "ground_truth": "yesm you buy the minimum amount to cover a security deposit on bisq1 and then there you can trade also altcoins",
+      "answer": "Yes, on Bisq Easy (Bisq 2), you can both buy and sell Bitcoin. While it primarily facilitates buying Bitcoin for new users, experienced sellers can make offers to sell Bitcoin as well. However, keep in mind that sales may come at a premium due to the additional service provided by sellers.",
+      "contexts": [
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: Is Bisq 1 the only version that works for selling BTC?\nAnswer: You can sell both on Bisq1 and on Bisq2, the former has larger trading volume, while the latter requires to buy reputation but sales are made at a higher markup.",
+        "## How to sell bitcoin on Bisq Easy\n\nUsers of Bisq Easy can both make an offer to sell bitcoin, or take an offer from a user looking to buy bitcoin.\n\nSeller's on Bisq Easy will usually be experienced Bisq users. It is expected they will be helpful and supportive to buyers who are new to Bitcoin and/or Bisq.\u00a0Bisq Easy seller's should be passionate about helping new Bisq users smoothly acquire no KYC bitcoin in a peer to peer manner.\n\nAs building reputation incurs costs for the bitcoin sellers. It...",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1."
+      ],
+      "response_time": 4.2174108028411865,
+      "error": null
+    },
+    {
+      "question": "Please help is it possible to change btc payment address during trade? I have lost access to the previous one",
+      "ground_truth": "yes, just write the new address in the chat and make sure the seller got it",
+      "answer": "Yes, in Bisq Easy (Bisq 2), you can change your Bitcoin payment address during a trade. Just inform the seller in the trader chat and provide the new address to ensure they receive it.",
+      "contexts": [
+        "Question: Can I change my BTC address after sending it to the seller in Bisq Easy?\nAnswer: Yes, just inform the seller in the trader chat.",
+        "Question: Can I change my Bitcoin payment address during a trade?\nAnswer: Yes, you can write the new address in the chat and ensure the seller receives it.",
+        "Question: What should I do if I entered the wrong BTC receiving address in an open Bisq Easy trade?\nAnswer: Communicate with the seller through the trade chat and provide the correct BTC address.",
+        "Question: Can I change the bank account used to send money after collateral has been sent in Bisq?\nAnswer: Changing the account is not allowed, but you can ask the seller for approval; if they don't agree, you can open mediation before the trade expires, knowing that  you could incur a penalty if you are unable to use the account defined in the trade contract.",
+        "Question: How can I access from Bisq2 the wallet that I used in Bisq1?\nAnswer: Bisq2 right now uses a different trade protocol, and has no builtin wallet, you should continue using Bisq1 to trade btc if you want to use the multisig protocol.",
+        "Question: Is it safe to share my btc address in the Bisq Easy trade chat if the seller cannot see it in the trade details?\nAnswer: Yes, exchanging your btc address via the trade chat is safe, all trade chat exchanges are shared during mediation."
+      ],
+      "response_time": 2.67669939994812,
+      "error": null
+    },
+    {
+      "question": "Is there any chainalysis alternative without registration?",
+      "ground_truth": "chainalysis is not a big topic with bisq, 1btc=1btc, plus joinmarket is cheap enough to use",
+      "answer": "I don't have information about that in my knowledge base.",
+      "contexts": [
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: What is the easiest way to buy BTC on Bisq without undergoing KYC?\nAnswer: Bisq is already noKYC in itself, but most payment methods require users to ID themselves, since they use banks and other official money transmitters.You could use face to face cash exchange, cash by mail, US postal money orders, or Amazon gift cards, although these options are less common and often carry a premium.",
+        "Question: Is there an escrow service for transactions in Bisq Easy?\nAnswer: No, Bisq does not have a built-in escrow-like service like in Bisq1; it relies on reputation to discourage scams.",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: Is it possible to run Bisq 2 on Tails, and are there any guides available?\nAnswer: There are no known tutorials for running Bisq 2 on Tails.",
+        "It's highly recommended that you avoid using a corporate, centralized exchange to get your first bitcoin. Most such exchanges (like Coinbase, Binance, Kraken, etc) require a significant amount of personal information, putting you at risk by tying your identity to your bitcoin (as well as by storing all this information in databases with that of others, forming what are commonly referred to as \"honeypots\"\u2014highly attractive targets for hackers). Also, since bitcoin transactions are public and easi..."
+      ],
+      "response_time": 2.394408702850342,
+      "error": null
+    },
+    {
+      "question": "seller said \"as this is an instant method, the link and trade must be completed within **1 day (24 hours)**. BTC is sent within 24 hours after your payment confirms. My auto-settle bot may send the BTC before the Bisq UI is updated; please allow 24h for me to provide the TXID.\"",
+      "ground_truth": "that is [support], wait before opening mediation, I will check with him",
+      "answer": "In Bisq Easy (Bisq 2), sellers generally have **24 hours** to send BTC after the buyer confirms payment. This timeframe is applicable for instant payment methods. If the seller mentions that they may send BTC before the Bisq UI updates, it's advisable to allow up to 24 hours for the transaction ID (TXID) to be provided.",
+      "contexts": [
+        "Question: How long does a seller have to send BTC after the fiat is sent?\nAnswer: The time frame is similar to the trade period for the same payment method on Bisq 1.",
+        "Question: How long can I expect to wait for funds to be sent to my address after confirming a fiat payment on Bisq?\nAnswer: You can expect the funds to be sent within 24 hours for instant payments.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: What exactly happens when an order gets accepted in Bisq 2?\nAnswer: When an order is accepted in Bisq Easy, the buyer and seller agree on trade terms, the buyer sends the agreed-upon payment to the seller, and upon confirming receipt, the seller transfers the specified amount of bitcoin to the buyer's btc address This process relies on the seller's reputation for security, and is tailored for small trades to obtain the first UTXO that can be used as a deposit in multisignature trades o...",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention."
+      ],
+      "response_time": 3.313389301300049,
+      "error": null
+    },
+    {
+      "question": "trade begin time using bisq easy over 48hrs ago. payment completed approx 45 hours ago. status stuck at \"waiting for seller to confirm payment\" for approx 45 hours. this is my first trade. can anyone advise? thanks",
+      "ground_truth": "if the payment method was a fast one you can open mediation",
+      "answer": "It sounds like your trade is experiencing a delay. Here are some steps you can take:\n\n- **Confirm Payment**: Ensure that the seller has indeed received the payment. If they have, they should send the Bitcoin to your address without needing mediation.\n- **Request Mediation**: If the seller does not respond or send the Bitcoin soon, you can request mediation. This is advisable if the trade has been stuck for a significant period.\n- **Follow Up**: Both parties should be available to follow up daily on the trade process until it's resolved.\n\nIf the issue persists, consider reaching out to Bisq support for further assistance.",
+      "contexts": [
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "## Trade Rules\n\nBisq Easy trading rules are as follows:\n\n* Before the payment details are exchanged the trade can be canceled by any party without justification.\n* After the payment details are exchanged, not fulfilling the trade obligations is considered a breach of the trade contract and can lead to getting banned from the network.\n* When sending the Fiat, the buyer MUST fill in the payment reason field with the Trade ID string, which can be found under Bisq Easy > MY OPEN TRADES (this is to p...",
+        "Question: What exactly happens when an order gets accepted in Bisq 2?\nAnswer: When an order is accepted in Bisq Easy, the buyer and seller agree on trade terms, the buyer sends the agreed-upon payment to the seller, and upon confirming receipt, the seller transfers the specified amount of bitcoin to the buyer's btc address This process relies on the seller's reputation for security, and is tailored for small trades to obtain the first UTXO that can be used as a deposit in multisignature trades o...",
+        "Question: How can I get a refund for my payment?\nAnswer: Refunds on Bisq Easy are not typical, since the trade is expected to always complete successfully, but if for any reason the seller agrees to it, he will coordinate the process with the buyer in trader chat."
+      ],
+      "response_time": 8.502984285354614,
+      "error": null
+    },
+    {
+      "question": "Hello, I\u2019m a Bisq 1 user and I\u2019m trying to increase my reputation using the indicated methods: Burning BSQ, Bonding BSQ, and Account Age. The Account Age method worked fine, but I\u2019m not able to make the \u201cBurning BSQ\u201d and \u201cBonding BSQ\u201d methods work. My current software versions: Bisq 1: v1.9.21 Bisq 2: v2.1.7 I have already burned 10 BSQ in Bisq 1 following the step-by-step guide from Bisq 2, but nothing has appeared in my Bisq 2 reputation. I also locked (bonded) 10 BSQ for 50,000 blocks using the step-by-step instructions, and still nothing is reflected in my Bisq 2 reputation. I\u2019ve double-checked the Profile ID used for the burn pre-image and for the bonding salt field. The transactions have many confirmations already, and it has been more than 12 hours. I can provide the TX information if needed. Could anyone please help me? Thanks!",
+      "ground_truth": "have you followed the instructions to the letter and never used Ctrl-C or Ctrl-V to copy and paste but only ever used the provided buttons on the GUI?",
+      "answer": "It seems you are experiencing issues with the **Burning BSQ** and **Bonding BSQ** methods to increase your reputation on Bisq 2, despite following the correct procedures in Bisq 1.\n\nHere are some steps to consider:\n\n1. **Confirm Transaction Status**: Ensure that both your burning and bonding transactions have been confirmed on the blockchain. You can provide the transaction IDs (TXIDs) if you need assistance checking their status.\n\n2. **Correct Profile ID**: Double-check that the Profile ID you used for both the burn pre-image and bonding salt field is indeed the same as the one displayed in your Bisq 2 profile.\n\n3. **Waiting Period**: Although you mentioned it's been over 12 hours, sometimes it may take a bit longer for the reputation changes to reflect in Bisq 2 after transactions are confirmed. \n\n4. **Consult the Logs**: If possible, check the logs in both Bisq 1 and Bisq 2 for any error messages related to the reputation update process.\n\nIf you've verified all these points and the issue persists, it may be beneficial to reach out to the Bisq support community or forums, as they can provide more specific troubleshooting related to your software versions and transactions.",
+      "contexts": [
+        "Question: How can I burn or bond BSQ in Bisq?\nAnswer: Information about burning or bonding can be found under the reputation tab of Bisq2; you can acquire and process BSQ on Bisq1.",
+        "## = Method 1: Burning BSQ\n=\n\nYou permanently **burn** BSQ tokens to gain reputation. This represents a strong, long-term commitment to the network, akin to a proof of work. Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed. You will paste this into Bisq 1.\n# **Step 3:** Open **Bisq 1** and go to `DAO` > `PROOF OF BURN`. Paste the copied Profi...",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1.",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "## = Burning BSQ\n=\n\nA user who wants to improve their reputation on the Bisq Easy trade protocol can can burn BSQ.\n\nThe more BSQ that is burned the better the reputation score the user would get.\n\nThe minimum amount of BSQ that can be burnt is 5.46 BSQ (dust limit).\n\nThe value gained by burning BSQ persists over time. Reputation scores achieved from burning BSQ is cumulative. It can be assumed that regular burning (e.g. each week or month) is a form of work and represents activity by the user re..."
+      ],
+      "response_time": 9.496744871139526,
+      "error": null
+    },
+    {
+      "question": "i dont have a error the error is cannot connect to tor and open the setting of tor i try with bridge and without bridge but not work",
+      "ground_truth": "reinstalling bisq doesn't solve anything but you can maybe try this https://bisq.wiki/Last_resort_restore",
+      "answer": "If you're having trouble connecting to Tor while using Bisq Easy (Bisq 2), here are some steps you can take:\n\n1. **Check Tor Settings**: Ensure that your Tor configuration is correct. You might want to try adjusting the settings in the `bisq.conf` file as described in the documentation.\n\n2. **Use a Proxy**: If you're in a location with restricted access, consider setting up a SOCKS5 proxy. You can edit the `bisq.conf` file to include your proxy settings.\n\n3. **Firewall and Antivirus**: Make sure that your firewall or antivirus software is not blocking Bisq or Tor connections.\n\n4. **Restart Bisq and Tor**: Sometimes, simply restarting both the Bisq application and the Tor service can resolve connection issues.\n\nIf these steps do not help, you may refer to the troubleshooting guides available in the Bisq documentation for more detailed solutions.",
+      "contexts": [
+        "Question: How can I resolve the issue of not being able to connect to Tor?\nAnswer: Reinstalling Bisq won't solve the problem; consider following the last resort restore guide.",
+        "Question: What can I do if I can't connect with Bisq?\nAnswer: Refer to the troubleshooting guide for network connection issues.",
+        "Question: Can I manually configure the torrc file for Bisq2?\nAnswer: Refer to this link: https://github.com/bisq-network/bisq2/pull/3046 for manual configuration instructions.",
+        "The [https://en.wikipedia.org/wiki/Great_Firewall Great Firewall of China] (GFW) makes it difficult to run Bisq from within mainland China.\n\nThis article outlines a workaround.\n\n## Requirements\n\nYou will need a working solution to access the internet already available to you, for example a VPN or a local proxy, and know its IP and port number; Bisq will be made to use that proxy to reach the Tor entry nodes.\n\nAlternatively to the following, also look into the SSTap software bundle, which users r...",
+        "Question: Does Bisq require Tor to be installed on Linux systems?\nAnswer: No, Bisq uses its own tor connection.",
+        "* download Tor Browser for your OS\n* have Tor Browser \"installed\" (actually it is just uncompressed in a folder with no ties to registry or system config) in a path that's unique to your Bisq nym\n* run Tor Browser (ignore the error about restarting Tor if there is another Tor Browser open, as they will try to bind the same ports, returning an error, and close the popup) and open about:config in the URL bar, say that you really want to access the options, then search for _port\n* you want to edit ..."
+      ],
+      "response_time": 6.382778882980347,
+      "error": null
+    },
+    {
+      "question": "I ACCEPTED A OFFER ON THE 19TH OF NOVEMBER SENT ALL MY DETAILS BUT I STILL HAVENT GOT THE PAYMENT DETAILS TO PAY THE SELLER.I HAVE MESSAGED THEM TWICE OVER THE LAST FEW DAYS TO NO RESPONCE, BUT HE HASNT REJETED THE OFFER AND IS ONLINE EVERY DAY. HAS SOMETHING LIKELY GONE WRONG?",
+      "ground_truth": "sometimes that just happens, you can cancel or reject the trade without consequences",
+      "answer": "In Bisq Easy, if the seller has not provided payment details and has been unresponsive for several days, you can cancel the trade without consequences if they have been unresponsive for at least 24 hours. You can do this by using the appropriate button in the application. If you feel the situation requires further action, you might also consider opening mediation.",
+      "contexts": [
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: How can I get a refund for my payment?\nAnswer: Refunds on Bisq Easy are not typical, since the trade is expected to always complete successfully, but if for any reason the seller agrees to it, he will coordinate the process with the buyer in trader chat.",
+        "Question: What should I do if the seller's name on Bisq doesn't match the bank account name?\nAnswer: You can ask the seller for an explanation and if it's satisfactory, you may proceed with the payment, otherwise open mediation.",
+        "Question: What should I do if a seller cancels my trade after a bank transfer?\nAnswer: If this happens in Bisq Easy, you can still open mediation and/or contact support.",
+        "Question: Can I cancel a Bitcoin trade if the seller hasn't provided their bank information and has been unresponsive for days?\nAnswer: In Bisq Easy you can cancel/reject the trade without consequences if your peer has been unresponsive for at least 24hrs, by using the appropriate button."
+      ],
+      "response_time": 5.2035346031188965,
+      "error": null
+    }
+  ]
+}
