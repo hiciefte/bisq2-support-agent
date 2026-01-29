@@ -242,7 +242,7 @@ User Query → Version Detection → Multi-Stage Protocol Filtering
 - BM25 with K1=1.5, B=0.75
 - Embedding model: `text-embedding-3-small` (1536 dimensions)
 
-For detailed architecture, see [RAG Architecture](claudedocs/rag-architecture.md).
+For detailed architecture, see [RAG Architecture](docs/rag-architecture.md).
 
 ### 1. Wiki Documents
 -   **Location**: `api/data/wiki/`

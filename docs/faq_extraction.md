@@ -142,7 +142,7 @@ FAQs and wiki documents are retrieved together in protocol-prioritized stages:
 - Stage 2: General content (`all` protocol) if insufficient results
 - Stage 3: Cross-protocol fallback if needed
 
-For full retrieval pipeline details, see [RAG Architecture](../claudedocs/rag-architecture.md).
+For full retrieval pipeline details, see [RAG Architecture](rag-architecture.md).
 
 ## Monitoring and Maintenance
 
