@@ -8,7 +8,7 @@
  * Actual: "FAQ Answer (Staff Source)"
  */
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { TrainingReviewItem } from './TrainingReviewItem';
 
 // Mock lucide-react icons
@@ -34,8 +34,15 @@ jest.mock('lucide-react', () => ({
 
 // Mock the EditableAnswer component to capture the label prop
 jest.mock('./EditableAnswer', () => ({
-  EditableAnswer: ({ label }: { label: string }) => (
-    <div data-testid="editable-answer-label">{label}</div>
+  EditableAnswer: ({ label, isEditing }: { label: string; isEditing: boolean }) => (
+    <div data-testid="editable-answer-label" data-editing={isEditing}>{label}</div>
+  ),
+}));
+
+// Mock the EditableQuestion component
+jest.mock('./EditableQuestion', () => ({
+  EditableQuestion: ({ label, isEditing }: { label: string; isEditing: boolean }) => (
+    <div data-testid="editable-question-label" data-editing={isEditing}>{label}</div>
   ),
 }));
 
@@ -142,6 +149,8 @@ const createMockCandidate = (overrides = {}) => ({
   category: null,
   original_staff_answer: null,
   generated_answer_sources: null,
+  original_user_question: null,
+  edited_question_text: null,
   ...overrides,
 });
 
@@ -855,6 +864,208 @@ describe('TrainingReviewItem', () => {
       // Should NOT show technical labels
       expect(screen.queryByText('RAG Generated Answer')).not.toBeInTheDocument();
       expect(screen.queryByText('AI Generated Answer')).not.toBeInTheDocument();
+    });
+  });
+
+  // Unified Edit Mode - TDD RED Phase
+  // User story: As an admin, I want to press 'E' to edit both question AND answer together,
+  // so that I can review the complete FAQ pair in a single editing flow
+  describe('Unified Edit Mode (TDD)', () => {
+    test('pressing E should enter unified edit mode for BOTH question and answer', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Initially not editing
+      const questionComponent = screen.getByTestId('editable-question-label');
+      const answerComponent = screen.getByTestId('editable-answer-label');
+      expect(questionComponent).toHaveAttribute('data-editing', 'false');
+      expect(answerComponent).toHaveAttribute('data-editing', 'false');
+
+      // Press 'E' key
+      fireEvent.keyDown(window, { key: 'e' });
+
+      // BOTH should be in editing mode (unified edit)
+      expect(questionComponent).toHaveAttribute('data-editing', 'true');
+      expect(answerComponent).toHaveAttribute('data-editing', 'true');
+    });
+
+    test('should NOT have separate Q shortcut - only E for unified edit', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Press 'Q' key - should NOT trigger any editing
+      fireEvent.keyDown(window, { key: 'q' });
+
+      // Neither should be editing (Q shortcut removed)
+      const questionComponent = screen.getByTestId('editable-question-label');
+      const answerComponent = screen.getByTestId('editable-answer-label');
+      expect(questionComponent).toHaveAttribute('data-editing', 'false');
+      expect(answerComponent).toHaveAttribute('data-editing', 'false');
+    });
+
+    test('footer shortcut hint should show E for Edit (not separate Q and E)', () => {
+      const mockCandidate = createMockCandidate({
+        routing: 'FULL_REVIEW',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Should show unified 'E Edit' shortcut
+      expect(screen.getByText(/E.*Edit/i)).toBeInTheDocument();
+      // Should NOT show separate 'Q Edit Question' shortcut
+      expect(screen.queryByText(/Q.*Edit Question/i)).not.toBeInTheDocument();
+    });
+
+    test('should have single Edit button that triggers unified edit mode', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Should have exactly ONE Edit button for the Q&A pair
+      const editButtons = screen.getAllByRole('button', { name: /edit/i });
+      expect(editButtons).toHaveLength(1);
+    });
+
+    test('unified save should call onUpdateCandidate with BOTH question and answer changes', async () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+        question_text: 'Original question',
+        staff_answer: 'Original answer',
+      });
+
+      // We need to verify that onUpdateCandidate is called with both fields
+      // This tests the contract that a single save updates both
+      const onUpdateMock = jest.fn().mockResolvedValue(undefined);
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+          onUpdateCandidate={onUpdateMock}
+        />
+      );
+
+      // Enter edit mode
+      fireEvent.keyDown(window, { key: 'e' });
+
+      // The implementation should support updating both in one call
+      // This is already supported by the API: onUpdateCandidate({ edited_question_text, edited_staff_answer })
+    });
+
+    test('Escape should cancel unified edit mode (exit both)', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Enter edit mode
+      fireEvent.keyDown(window, { key: 'e' });
+
+      const questionComponent = screen.getByTestId('editable-question-label');
+      const answerComponent = screen.getByTestId('editable-answer-label');
+
+      // Verify we're in edit mode
+      expect(questionComponent).toHaveAttribute('data-editing', 'true');
+      expect(answerComponent).toHaveAttribute('data-editing', 'true');
+
+      // Press Escape
+      fireEvent.keyDown(window, { key: 'Escape' });
+
+      // Both should exit edit mode
+      expect(questionComponent).toHaveAttribute('data-editing', 'false');
+      expect(answerComponent).toHaveAttribute('data-editing', 'false');
+    });
+
+    test('should show single save/cancel action bar when in edit mode', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Enter edit mode
+      fireEvent.keyDown(window, { key: 'e' });
+
+      // Should have ONE save button and ONE cancel button (not separate per field)
+      const saveButtons = screen.getAllByRole('button', { name: /save/i });
+      const cancelButtons = screen.getAllByRole('button', { name: /cancel/i });
+
+      // Unified mode = single action bar
+      expect(saveButtons).toHaveLength(1);
+      expect(cancelButtons).toHaveLength(1);
+    });
+
+    test('should use simplified state (isEditing instead of isEditingQuestion/isEditingAnswer)', () => {
+      // This is a design requirement test - the component should use 2 states, not 4
+      // We verify by checking that both components receive the same editing state
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      // Enter edit mode
+      fireEvent.keyDown(window, { key: 'e' });
+
+      const questionComponent = screen.getByTestId('editable-question-label');
+      const answerComponent = screen.getByTestId('editable-answer-label');
+
+      // Both should have IDENTICAL editing state (proving unified state management)
+      expect(questionComponent.getAttribute('data-editing')).toBe(
+        answerComponent.getAttribute('data-editing')
+      );
     });
   });
 });

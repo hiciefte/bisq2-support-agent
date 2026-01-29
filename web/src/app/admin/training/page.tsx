@@ -79,6 +79,8 @@ interface UnifiedCandidate {
   // Protocol selection and answer editing fields
   protocol: ProtocolType | null;
   edited_staff_answer: string | null;
+  // User-edited version of question
+  edited_question_text: string | null;
   // Category field
   category: string | null;
   // RAG-generated answer sources for verification
@@ -522,8 +524,8 @@ export default function TrainingPage() {
     setSelectedRouting(routing);
   };
 
-  // Handle update candidate (edited answer or category)
-  const handleUpdateCandidate = async (updates: { edited_staff_answer?: string; category?: string }) => {
+  // Handle update candidate (edited question, answer, or category)
+  const handleUpdateCandidate = async (updates: { edited_staff_answer?: string; edited_question_text?: string; category?: string }) => {
     if (!currentItem) return;
 
     try {

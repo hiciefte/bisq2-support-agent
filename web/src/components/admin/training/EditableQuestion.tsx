@@ -7,15 +7,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { Pencil, Check, X } from "lucide-react";
 
-// Note: "View Original Staff Answer" removed - now consolidated in "Original Conversation"
-// section at the top of TrainingReviewItem for better review flow (Think in Flows principle)
-
-interface EditableAnswerProps {
-  answer: string;
-  editedAnswer: string | null;
+interface EditableQuestionProps {
+  question: string;
+  editedQuestion: string | null;
   isEditing: boolean;
   onEditStart: () => void;
-  onEditSave: (newAnswer: string) => Promise<void>;
+  onEditSave: (newQuestion: string) => Promise<void>;
   onEditCancel: () => void;
   label: string;
   icon: React.ReactNode;
@@ -26,9 +23,9 @@ interface EditableAnswerProps {
   onValueChange?: (value: string) => void;
 }
 
-export function EditableAnswer({
-  answer,
-  editedAnswer,
+export function EditableQuestion({
+  question,
+  editedQuestion,
   isEditing,
   onEditStart,
   onEditSave,
@@ -39,12 +36,12 @@ export function EditableAnswer({
   hideEditButton = false,
   hideSaveCancel = false,
   onValueChange,
-}: EditableAnswerProps) {
-  // Use edited answer if available, otherwise use original
-  const displayAnswer = editedAnswer ?? answer;
-  const [editValue, setEditValue] = useState(displayAnswer);
+}: EditableQuestionProps) {
+  // Use edited question if available, otherwise use original
+  const displayQuestion = editedQuestion ?? question;
+  const [editValue, setEditValue] = useState(displayQuestion);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const isModified = editedAnswer !== null && editedAnswer !== answer;
+  const isModified = editedQuestion !== null && editedQuestion !== question;
 
   // Auto-focus and resize on edit mode
   useEffect(() => {
@@ -55,21 +52,21 @@ export function EditableAnswer({
     }
   }, [isEditing]);
 
-  // Reset edit value when answer changes
+  // Reset edit value when question changes
   useEffect(() => {
-    setEditValue(displayAnswer);
-  }, [displayAnswer]);
+    setEditValue(displayQuestion);
+  }, [displayQuestion]);
 
   const handleSave = useCallback(async () => {
     await onEditSave(editValue);
   }, [editValue, onEditSave]);
 
   const handleCancel = useCallback(() => {
-    setEditValue(displayAnswer);
+    setEditValue(displayQuestion);
     onEditCancel();
-  }, [displayAnswer, onEditCancel]);
+  }, [displayQuestion, onEditCancel]);
 
-  const hasChanges = editValue !== displayAnswer;
+  const hasChanges = editValue !== displayQuestion;
 
   // Keyboard shortcuts for edit mode (disabled in unified mode - parent handles these)
   useEffect(() => {
@@ -133,7 +130,7 @@ export function EditableAnswer({
       {/* Content - Clean, minimal style */}
       <div
         className={cn(
-          "p-4 rounded-lg border min-h-[120px] transition-all",
+          "p-4 rounded-lg border transition-all",
           isEditing
             ? "bg-background border-primary ring-1 ring-primary"
             : "bg-muted/30 border-border"
@@ -151,11 +148,11 @@ export function EditableAnswer({
               e.target.style.height = "auto";
               e.target.style.height = `${e.target.scrollHeight}px`;
             }}
-            className="min-h-[100px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
-            placeholder="Enter the corrected answer..."
+            className="min-h-[60px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
+            placeholder="Enter the corrected question..."
           />
         ) : (
-          <p className="text-sm whitespace-pre-wrap">{displayAnswer}</p>
+          <p className="text-sm whitespace-pre-wrap">{displayQuestion}</p>
         )}
       </div>
 
@@ -187,12 +184,9 @@ export function EditableAnswer({
       {/* Modified indicator */}
       {isModified && !isEditing && (
         <p className="text-xs text-muted-foreground mt-2">
-          This answer has been modified from the original staff response.
+          This question has been modified from the original.
         </p>
       )}
-
-      {/* Original answer viewing now consolidated in "Original Conversation" section
-          at top of TrainingReviewItem - removed here per Speed Through Subtraction principle */}
     </div>
   );
 }

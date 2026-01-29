@@ -60,6 +60,7 @@ class UnifiedCandidateResponse(BaseModel):
     updated_at: Optional[str]
     protocol: Optional[str] = None
     edited_staff_answer: Optional[str] = None
+    edited_question_text: Optional[str] = None
     category: Optional[str] = None
     generated_answer_sources: Optional[List[Dict[str, Any]]] = None
 
@@ -96,6 +97,9 @@ class UpdateCandidateRequest(BaseModel):
 
     edited_staff_answer: Optional[str] = Field(
         default=None, description="User-edited version of the staff answer"
+    )
+    edited_question_text: Optional[str] = Field(
+        default=None, description="User-edited version of the question"
     )
     category: Optional[str] = Field(
         default=None,
@@ -870,16 +874,17 @@ async def update_candidate(
     request_body: UpdateCandidateRequest,
     pipeline_service=Depends(get_pipeline_service()),
 ):
-    """Update a candidate's editable fields (e.g., edited_staff_answer).
+    """Update a candidate's editable fields (e.g., edited_staff_answer, edited_question_text).
 
-    This endpoint allows reviewers to edit the staff answer before approval.
-    The edited answer will be used when creating the FAQ entry.
+    This endpoint allows reviewers to edit the question and staff answer before approval.
+    The edited values will be used when creating the FAQ entry.
     """
     logger.info(f"Admin request to update candidate {candidate_id}")
     try:
         candidate = await pipeline_service.update_candidate(
             candidate_id=candidate_id,
             edited_staff_answer=request_body.edited_staff_answer,
+            edited_question_text=request_body.edited_question_text,
             category=request_body.category,
         )
         if candidate is None:
@@ -1306,6 +1311,7 @@ def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
         - updated_at: ISO timestamp of last update
         - protocol: Detected Bisq protocol (bisq_easy, multisig_v1, etc.)
         - edited_staff_answer: Admin-edited version of staff answer
+        - edited_question_text: Admin-edited version of question
         - category: FAQ category (Trading, Wallet, etc.)
         - generated_answer_sources: List of source documents used by RAG
         - original_user_question: Pre-transformation user question
@@ -1349,6 +1355,7 @@ def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
         "updated_at": candidate.updated_at,
         "protocol": getattr(candidate, "protocol", None),
         "edited_staff_answer": getattr(candidate, "edited_staff_answer", None),
+        "edited_question_text": getattr(candidate, "edited_question_text", None),
         "category": getattr(candidate, "category", None),
         "generated_answer_sources": sources,
         "original_user_question": getattr(candidate, "original_user_question", None),
