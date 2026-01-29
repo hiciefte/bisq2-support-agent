@@ -89,11 +89,18 @@ export const InlineEditFAQ = memo(
         // High similarity warning threshold (85%)
         const hasHighSimilarity = editSimilarFaqs.some((item) => item.similarity >= 0.85);
 
+        // AbortController ref for cleanup on unmount
+        const abortControllerRef = useRef<AbortController | null>(null);
+
         // Immediate similarity check function (for initial mount check)
         const checkSimilarFaqsImmediate = async (question: string) => {
             if (question.length < 10) {
                 return;
             }
+
+            // Cancel any in-flight request
+            abortControllerRef.current?.abort();
+            abortControllerRef.current = new AbortController();
 
             setIsCheckingEditSimilar(true);
             try {
@@ -108,6 +115,7 @@ export const InlineEditFAQ = memo(
                             limit: 5,
                             exclude_id: faq.id,
                         }),
+                        signal: abortControllerRef.current.signal,
                     }
                 );
                 if (response.ok) {
@@ -115,6 +123,10 @@ export const InlineEditFAQ = memo(
                     setEditSimilarFaqs(data.similar_faqs || []);
                 }
             } catch (error) {
+                // Ignore abort errors - they're expected on unmount
+                if (error instanceof Error && error.name === "AbortError") {
+                    return;
+                }
                 console.error("Failed to check similar FAQs:", error);
             } finally {
                 setIsCheckingEditSimilar(false);
@@ -160,10 +172,11 @@ export const InlineEditFAQ = memo(
             [faq.id, faq.question]
         );
 
-        // Cleanup debounce on unmount
+        // Cleanup debounce and abort controller on unmount
         useEffect(() => {
             return () => {
                 checkSimilarFaqs.cancel();
+                abortControllerRef.current?.abort();
             };
         }, [checkSimilarFaqs]);
 

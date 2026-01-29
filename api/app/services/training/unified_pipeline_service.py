@@ -976,9 +976,11 @@ class UnifiedPipelineService:
             raise ValueError(f"Candidate {candidate_id} not found")
 
         # Check for duplicate FAQs before creating
+        # Use edited question if available (admin may have improved phrasing)
+        question_to_check = candidate.edited_question_text or candidate.question_text
         if self.rag_service is not None:
             similar_faqs = await self.rag_service.search_faq_similarity(
-                question=candidate.question_text,
+                question=question_to_check,
                 threshold=DUPLICATE_FAQ_THRESHOLD,
                 limit=3,
             )

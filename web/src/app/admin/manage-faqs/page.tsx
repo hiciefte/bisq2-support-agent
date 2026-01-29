@@ -272,6 +272,19 @@ export default function ManageFaqsPage() {
         setSelectedFaqId(null);
     }, [currentPage, filters]);
 
+    // Restore selection when displayFaqs updates (e.g., after optimistic update or background refresh)
+    // Bug fix: Without this, keyboard selection is lost when list updates after save/delete
+    useEffect(() => {
+        if (selectedFaqId && displayFaqs?.faqs) {
+            const newIndex = displayFaqs.faqs.findIndex((faq) => faq.id === selectedFaqId);
+            if (newIndex !== -1) {
+                setSelectedIndex(newIndex);
+            }
+        }
+        // Only restore when displayFaqs changes - selectedFaqId is the stable reference
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayFaqs]);
+
     const fetchFaqs = useCallback(
         async (page = 1, isBackgroundRefresh = false) => {
             // Save scroll position for background refreshes
@@ -501,17 +514,6 @@ export default function ManageFaqsPage() {
         window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
     }, []);
 
-    /**
-     * Handle "View FAQ" click from inline edit - open the public FAQ page in a new tab.
-     * Bug fix: Previously tried to scroll to FAQ in admin list which often failed.
-     */
-    const handleViewSimilarFaqFromEdit = useCallback(async (faq: SimilarFAQItem) => {
-        // Import the slug generator dynamically to avoid SSR issues
-        const { generateFaqSlug } = await import("@/lib/utils");
-        const slug = await generateFaqSlug(faq.question, faq.id);
-        // Open public FAQ page in new tab
-        window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
-    }, []);
 
     // Reset similar FAQs when form closes
     useEffect(() => {
@@ -2274,7 +2276,7 @@ export default function ManageFaqsPage() {
                                                             setEditCategoryComboboxOpen
                                                         }
                                                         availableCategories={availableCategories}
-                                                        onViewSimilarFaq={handleViewSimilarFaqFromEdit}
+                                                        onViewSimilarFaq={handleViewSimilarFaq}
                                                     />
                                                 </div>
                                             );
