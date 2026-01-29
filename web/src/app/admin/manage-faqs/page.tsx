@@ -175,6 +175,8 @@ export default function ManageFaqsPage() {
 
     // Keyboard navigation state
     const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+    // Track selected FAQ by ID to maintain selection across list updates (Bug fix: double focus jump)
+    const [selectedFaqId, setSelectedFaqId] = useState<string | null>(null);
 
     // Category combobox state
     const [categoryComboboxOpen, setCategoryComboboxOpen] = useState(false);
@@ -244,9 +246,12 @@ export default function ManageFaqsPage() {
     }, [filters]);
 
     // Scroll selected FAQ into view when selection changes
+    // Note: Only responds to selectedIndex changes, NOT displayFaqs changes
+    // The handleVerifyFaq function handles jumping to next FAQ directly
     useEffect(() => {
         if (selectedIndex >= 0 && displayFaqs?.faqs[selectedIndex]) {
             const selectedFaq = displayFaqs.faqs[selectedIndex];
+            setSelectedFaqId(selectedFaq.id);
             const element = faqRefs.current.get(selectedFaq.id);
             if (element) {
                 element.scrollIntoView({
@@ -254,12 +259,17 @@ export default function ManageFaqsPage() {
                     block: "center",
                 });
             }
+        } else if (selectedIndex === -1) {
+            setSelectedFaqId(null);
         }
-    }, [selectedIndex, displayFaqs]);
+        // displayFaqs intentionally excluded - we only scroll on user-initiated index changes
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedIndex]);
 
     // Reset selected index when FAQ data changes (pagination, filtering, etc.)
     useEffect(() => {
         setSelectedIndex(-1);
+        setSelectedFaqId(null);
     }, [currentPage, filters]);
 
     const fetchFaqs = useCallback(
@@ -480,55 +490,28 @@ export default function ManageFaqsPage() {
     }, [formData.question, checkSimilarFaqs]);
 
     /**
-     * Handle "View FAQ" click - scroll to the FAQ or open in new context.
+     * Handle "View FAQ" click - open the public FAQ page in a new tab.
+     * Bug fix: Previously tried to scroll to FAQ in admin list which often failed.
      */
-    const handleViewSimilarFaq = useCallback((faqId: number) => {
-        // Find the FAQ in current data and scroll to it
-        const faqIndex = displayFaqs?.faqs.findIndex((f) => f.id === String(faqId));
-        if (faqIndex !== undefined && faqIndex >= 0) {
-            // Close the form sheet to show the FAQ list
-            setIsFormOpen(false);
-            // Set selection to the found FAQ
-            setSelectedIndex(faqIndex);
-            // Expand it for visibility
-            setExpandedIds((prev) => new Set(prev).add(String(faqId)));
-            // Scroll to it after a brief delay for the sheet to close
-            setTimeout(() => {
-                const faqElement = faqRefs.current.get(String(faqId));
-                faqElement?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 300);
-        } else {
-            // FAQ not on current page - notify user
-            toast({
-                title: "FAQ Not On This Page",
-                description: `FAQ #${faqId} may be on a different page. Try searching for it.`,
-            });
-        }
-    }, [displayFaqs, toast]);
+    const handleViewSimilarFaq = useCallback(async (faq: SimilarFAQItem) => {
+        // Import the slug generator dynamically to avoid SSR issues
+        const { generateFaqSlug } = await import("@/lib/utils");
+        const slug = await generateFaqSlug(faq.question, faq.id);
+        // Open public FAQ page in new tab
+        window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+    }, []);
 
     /**
-     * Handle "View FAQ" click from inline edit - scroll to the FAQ without closing editor.
-     * This allows the user to see the similar FAQ while still editing.
+     * Handle "View FAQ" click from inline edit - open the public FAQ page in a new tab.
+     * Bug fix: Previously tried to scroll to FAQ in admin list which often failed.
      */
-    const handleViewSimilarFaqFromEdit = useCallback((faqId: number) => {
-        // Find the FAQ in current data and scroll to it
-        const faqIndex = displayFaqs?.faqs.findIndex((f) => f.id === String(faqId));
-        if (faqIndex !== undefined && faqIndex >= 0) {
-            // Expand it for visibility if collapsed
-            setExpandedIds((prev) => new Set(prev).add(String(faqId)));
-            // Scroll to it smoothly
-            setTimeout(() => {
-                const faqElement = faqRefs.current.get(String(faqId));
-                faqElement?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 100);
-        } else {
-            // FAQ not on current page - notify user
-            toast({
-                title: "FAQ Not On This Page",
-                description: `FAQ #${faqId} may be on a different page. Try searching for it.`,
-            });
-        }
-    }, [displayFaqs, toast]);
+    const handleViewSimilarFaqFromEdit = useCallback(async (faq: SimilarFAQItem) => {
+        // Import the slug generator dynamically to avoid SSR issues
+        const { generateFaqSlug } = await import("@/lib/utils");
+        const slug = await generateFaqSlug(faq.question, faq.id);
+        // Open public FAQ page in new tab
+        window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+    }, []);
 
     // Reset similar FAQs when form closes
     useEffect(() => {
@@ -772,22 +755,26 @@ export default function ManageFaqsPage() {
                 // US-002: Jump to next unverified FAQ after verification
                 if (displayFaqs && currentIndex >= 0) {
                     // Find next unverified FAQ after current position
-                    const nextUnverifiedIndex = displayFaqs.faqs.findIndex(
+                    const nextUnverified = displayFaqs.faqs.find(
                         (f, idx) => idx > currentIndex && !f.verified && f.id !== faq.id
                     );
 
-                    if (nextUnverifiedIndex >= 0) {
-                        // Found next unverified - jump to it
+                    if (nextUnverified) {
+                        // Found next unverified - jump to it by ID (prevents double-jump on refresh)
+                        const nextUnverifiedIndex = displayFaqs.faqs.findIndex((f) => f.id === nextUnverified.id);
                         setSelectedIndex(nextUnverifiedIndex);
+                        setSelectedFaqId(nextUnverified.id);
                     } else {
                         // No more unverified after current - check from beginning
-                        const firstUnverifiedIndex = displayFaqs.faqs.findIndex(
+                        const firstUnverified = displayFaqs.faqs.find(
                             (f) => !f.verified && f.id !== faq.id
                         );
 
-                        if (firstUnverifiedIndex >= 0) {
-                            // Found unverified from beginning - jump to it
+                        if (firstUnverified) {
+                            // Found unverified from beginning - jump to it by ID
+                            const firstUnverifiedIndex = displayFaqs.faqs.findIndex((f) => f.id === firstUnverified.id);
                             setSelectedIndex(firstUnverifiedIndex);
+                            setSelectedFaqId(firstUnverified.id);
                         }
                         // If no unverified anywhere, stay on current FAQ (now verified)
                     }
