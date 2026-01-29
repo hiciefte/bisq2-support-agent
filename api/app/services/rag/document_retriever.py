@@ -411,8 +411,8 @@ class DocumentRetriever:
             if key not in seen:
                 seen.add(key)
                 unique_docs.append(doc)
-                # ChromaDB returns distance (lower is better), convert to similarity
-                # Distance is typically 0-2 for cosine, normalize to 0-1 similarity
+                # ChromaDB returns L2 distance (lower is better), convert to similarity
+                # For normalized vectors, L2 distance ranges 0-2, normalize to 0-1 similarity
                 similarity = max(0, 1 - (score / 2))
                 unique_scores.append(similarity)
 

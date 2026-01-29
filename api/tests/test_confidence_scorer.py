@@ -13,7 +13,7 @@ class TestConfidenceScorer:
     def mock_nli_validator(self):
         """Create mock NLI validator."""
         mock = MagicMock()
-        mock.validate_answer = AsyncMock(return_value=0.8)
+        mock.validate_answer_async = AsyncMock(return_value=0.8)
         return mock
 
     @pytest.fixture
@@ -28,7 +28,7 @@ class TestConfidenceScorer:
         self, confidence_scorer, mock_nli_validator
     ):
         """AC-1.1.1: High entailment + good sources = high confidence."""
-        mock_nli_validator.validate_answer.return_value = 0.95
+        mock_nli_validator.validate_answer_async.return_value = 0.95
 
         sources = [
             Document(
@@ -64,7 +64,7 @@ class TestConfidenceScorer:
     async def test_confidence_weights_nli(self, confidence_scorer, mock_nli_validator):
         """AC-1.1.2: NLI contributes 40% of score."""
         # High NLI, low source quality, low completeness
-        mock_nli_validator.validate_answer.return_value = 1.0
+        mock_nli_validator.validate_answer_async.return_value = 1.0
 
         sources = [
             Document(
@@ -90,7 +90,7 @@ class TestConfidenceScorer:
         self, confidence_scorer, mock_nli_validator
     ):
         """AC-1.1.3: Source quality contributes 30% of score."""
-        mock_nli_validator.validate_answer.return_value = 0.0
+        mock_nli_validator.validate_answer_async.return_value = 0.0
 
         sources = [
             Document(
@@ -116,7 +116,7 @@ class TestConfidenceScorer:
         self, confidence_scorer, mock_nli_validator
     ):
         """AC-1.1.4: Completeness contributes 30% of score."""
-        mock_nli_validator.validate_answer.return_value = 0.0
+        mock_nli_validator.validate_answer_async.return_value = 0.0
 
         sources = [
             Document(
@@ -141,7 +141,7 @@ class TestConfidenceScorer:
         self, confidence_scorer, mock_nli_validator
     ):
         """Confidence score always between 0 and 1."""
-        mock_nli_validator.validate_answer.return_value = 0.5
+        mock_nli_validator.validate_answer_async.return_value = 0.5
 
         sources = [
             Document(
@@ -164,7 +164,7 @@ class TestConfidenceScorer:
         self, confidence_scorer, mock_nli_validator
     ):
         """Source quality is averaged across all sources."""
-        mock_nli_validator.validate_answer.return_value = 0.5
+        mock_nli_validator.validate_answer_async.return_value = 0.5
 
         sources = [
             Document(page_content="Content 1", metadata={"source_weight": 1.0}),
@@ -184,7 +184,7 @@ class TestConfidenceScorer:
     @pytest.mark.asyncio
     async def test_default_source_weight(self, confidence_scorer, mock_nli_validator):
         """Missing source_weight defaults to 0.5."""
-        mock_nli_validator.validate_answer.return_value = 0.5
+        mock_nli_validator.validate_answer_async.return_value = 0.5
 
         sources = [
             Document(
@@ -278,8 +278,8 @@ class TestConfidenceScorer:
         )
 
         # Check that NLI was called with combined context
-        mock_nli_validator.validate_answer.assert_called_once()
-        call_args = mock_nli_validator.validate_answer.call_args
+        mock_nli_validator.validate_answer_async.assert_called_once()
+        call_args = mock_nli_validator.validate_answer_async.call_args
         context = call_args[0][0]
 
         # Should combine first 5 sources

@@ -105,7 +105,7 @@ export function VectorStoreStatusBanner() {
 
   return (
     <div
-      className="sticky top-0 z-50 border-b border-amber-500/20 bg-amber-50 dark:bg-amber-900/10"
+      className="sticky top-0 z-50 bg-amber-50 shadow-sm dark:bg-amber-900/10 dark:shadow-amber-950/20"
       role="status"
       aria-live="polite"
     >

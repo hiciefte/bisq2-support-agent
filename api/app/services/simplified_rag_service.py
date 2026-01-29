@@ -137,6 +137,11 @@ class SimplifiedRAGService:
         self.rag_chain = None
         self.prompt = None
 
+        # Qdrant/hybrid retriever components (initialized if RETRIEVER_BACKEND != chromadb)
+        self.qdrant_retriever = None
+        self.colbert_reranker = None
+        self.resilient_retriever = None
+
         # Initialize lock for rebuild serialization to prevent concurrent rebuilds
         self._setup_lock = asyncio.Lock()
 
@@ -239,6 +244,89 @@ class SimplifiedRAGService:
         """
         # Use configured MCP HTTP URL for AISuite MCP integration
         self.llm = self.llm_provider.initialize_llm(mcp_url=self.settings.MCP_HTTP_URL)
+
+    def _initialize_qdrant_retriever(self, backend: str) -> None:
+        """Initialize Qdrant-based retriever with optional fallback.
+
+        Args:
+            backend: Retriever backend type ("qdrant" or "hybrid")
+        """
+        try:
+            from app.services.rag.colbert_reranker import ColBERTReranker
+            from app.services.rag.qdrant_hybrid_retriever import QdrantHybridRetriever
+            from app.services.rag.resilient_retriever import ResilientRetriever
+
+            # Initialize Qdrant hybrid retriever
+            self.qdrant_retriever = QdrantHybridRetriever(
+                settings=self.settings,
+                embeddings=self.embeddings,
+            )
+
+            # Check if Qdrant is healthy
+            if not self.qdrant_retriever.health_check():
+                logger.warning("Qdrant not healthy, falling back to ChromaDB retriever")
+                self._fallback_to_chromadb()
+                return
+
+            # Initialize ColBERT reranker if enabled
+            if self.settings.ENABLE_COLBERT_RERANK:
+                try:
+                    self.colbert_reranker = ColBERTReranker(settings=self.settings)
+                    logger.info("ColBERT reranker initialized (lazy loading)")
+                except Exception as e:
+                    logger.warning(f"ColBERT reranker initialization failed: {e}")
+                    self.colbert_reranker = None
+
+            if backend == "hybrid":
+                # Create resilient retriever with ChromaDB fallback
+                # Create a ChromaDB-based retriever for fallback
+                chroma_retriever = self.vectorstore.as_retriever(
+                    search_type="similarity_score_threshold",
+                    search_kwargs={"k": 8, "score_threshold": 0.3},
+                )
+
+                # Wrap ChromaDB retriever in a compatible interface
+                from app.services.rag.chromadb_retriever_adapter import (
+                    ChromaDBRetrieverAdapter,
+                )
+
+                chroma_adapter = ChromaDBRetrieverAdapter(
+                    vectorstore=self.vectorstore,
+                    retriever=chroma_retriever,
+                )
+
+                self.resilient_retriever = ResilientRetriever(
+                    primary=self.qdrant_retriever,
+                    fallback=chroma_adapter,
+                    auto_reset=True,
+                    reset_interval=300,  # 5 minutes
+                )
+                self.retriever = self.resilient_retriever
+                logger.info("Hybrid retriever initialized (Qdrant + ChromaDB fallback)")
+            else:
+                # Pure Qdrant retriever
+                self.retriever = self.qdrant_retriever
+                logger.info("Qdrant hybrid retriever initialized")
+
+        except ImportError as e:
+            logger.error(f"Qdrant dependencies not available: {e}")
+            self._fallback_to_chromadb()
+        except Exception as e:
+            logger.error(f"Failed to initialize Qdrant retriever: {e}", exc_info=True)
+            self._fallback_to_chromadb()
+
+    def _fallback_to_chromadb(self) -> None:
+        """Fallback to ChromaDB retriever when Qdrant is unavailable."""
+        logger.info("Falling back to ChromaDB retriever")
+        self.retriever = self.vectorstore.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": 8,
+                "score_threshold": 0.3,
+            },
+        )
+        self.qdrant_retriever = None
+        self.resilient_retriever = None
 
     @instrument_stage("retrieval")
     def _retrieve_with_version_priority(
@@ -420,20 +508,30 @@ class SimplifiedRAGService:
                         f"Vector store loaded successfully from {self.db_path} (skipping re-embedding of {len(splits)} documents)"
                     )
 
-                # Create retriever
-                self.retriever = self.vectorstore.as_retriever(
-                    search_type="similarity_score_threshold",
-                    search_kwargs={
-                        "k": 8,  # Increased from 5 to 8
-                        "score_threshold": 0.3,  # Lowered threshold to allow more matches
-                    },
-                )
+                # Create retriever based on RETRIEVER_BACKEND setting
+                retriever_backend = self.settings.RETRIEVER_BACKEND
+                logger.info(f"Initializing retriever backend: {retriever_backend}")
+
+                if retriever_backend in ("qdrant", "hybrid"):
+                    # Initialize Qdrant-based retriever
+                    self._initialize_qdrant_retriever(retriever_backend)
+                else:
+                    # Default: ChromaDB retriever
+                    self.retriever = self.vectorstore.as_retriever(
+                        search_type="similarity_score_threshold",
+                        search_kwargs={
+                            "k": 8,  # Increased from 5 to 8
+                            "score_threshold": 0.3,  # Lowered threshold
+                        },
+                    )
 
                 # Initialize document retriever for version-aware retrieval
                 self.document_retriever = DocumentRetriever(
                     vectorstore=self.vectorstore, retriever=self.retriever
                 )
-                logger.info("Document retriever initialized")
+                logger.info(
+                    f"Document retriever initialized (backend: {retriever_backend})"
+                )
 
                 # Initialize language model
                 logger.info("Initializing language model...")

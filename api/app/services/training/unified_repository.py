@@ -79,6 +79,7 @@ class UnifiedFAQCandidate:
     updated_at: Optional[str] = None
     protocol: Optional[str] = None  # bisq_easy, multisig_v1, musig, all
     edited_staff_answer: Optional[str] = None  # User-edited version of staff answer
+    edited_question_text: Optional[str] = None  # User-edited version of question
     category: Optional[str] = None  # FAQ category (e.g., Trading, Wallet, Installation)
     generated_answer_sources: Optional[str] = None  # JSON string of sources used
     original_user_question: Optional[str] = (
@@ -259,6 +260,7 @@ class UnifiedFAQCandidateRepository:
                 skip_order INTEGER DEFAULT 0,
                 protocol TEXT CHECK (protocol IN ('bisq_easy', 'multisig_v1', 'musig', 'all', NULL)),
                 edited_staff_answer TEXT,
+                edited_question_text TEXT,
                 category TEXT DEFAULT 'General'
             )
             """)
@@ -394,6 +396,12 @@ class UnifiedFAQCandidateRepository:
                 "ALTER TABLE unified_faq_candidates ADD COLUMN edited_staff_answer TEXT"
             )
             logger.info("Added 'edited_staff_answer' column to unified_faq_candidates")
+
+        if "edited_question_text" not in columns:
+            cursor.execute(
+                "ALTER TABLE unified_faq_candidates ADD COLUMN edited_question_text TEXT"
+            )
+            logger.info("Added 'edited_question_text' column to unified_faq_candidates")
 
         if "category" not in columns:
             cursor.execute(
@@ -902,6 +910,7 @@ class UnifiedFAQCandidateRepository:
         candidate_id: int,
         protocol: Optional[str] = None,
         edited_staff_answer: Optional[str] = None,
+        edited_question_text: Optional[str] = None,
         generated_answer: Optional[str] = None,
         embedding_similarity: Optional[float] = None,
         factual_alignment: Optional[float] = None,
@@ -926,6 +935,7 @@ class UnifiedFAQCandidateRepository:
             candidate_id: The candidate's database ID
             protocol: Protocol type (bisq_easy, multisig_v1, musig, all)
             edited_staff_answer: User-edited version of the staff answer
+            edited_question_text: User-edited version of the question
             generated_answer: Regenerated RAG answer
             embedding_similarity: Updated embedding similarity score
             factual_alignment: Updated factual alignment score
@@ -955,6 +965,10 @@ class UnifiedFAQCandidateRepository:
         if edited_staff_answer is not None:
             updates.append("edited_staff_answer = ?")
             params.append(edited_staff_answer)
+
+        if edited_question_text is not None:
+            updates.append("edited_question_text = ?")
+            params.append(edited_question_text)
 
         if generated_answer is not None:
             updates.append("generated_answer = ?")
@@ -1145,6 +1159,11 @@ class UnifiedFAQCandidateRepository:
         edited_staff_answer = (
             row["edited_staff_answer"] if "edited_staff_answer" in row.keys() else None
         )
+        edited_question_text = (
+            row["edited_question_text"]
+            if "edited_question_text" in row.keys()
+            else None
+        )
         category = row["category"] if "category" in row.keys() else "General"
         generated_answer_sources = (
             row["generated_answer_sources"]
@@ -1197,6 +1216,7 @@ class UnifiedFAQCandidateRepository:
             updated_at=row["updated_at"],
             protocol=protocol,
             edited_staff_answer=edited_staff_answer,
+            edited_question_text=edited_question_text,
             category=category,
             generated_answer_sources=generated_answer_sources,
             original_user_question=original_user_question,

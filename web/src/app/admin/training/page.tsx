@@ -12,6 +12,7 @@ import { TrainingReviewItem } from '@/components/admin/training/TrainingReviewIt
 import { EmptyQueueState } from '@/components/admin/training/EmptyQueueState';
 import { BatchReviewList } from '@/components/admin/training/BatchReviewList';
 import { DuplicateFAQDialog } from '@/components/admin/training/DuplicateFAQDialog';
+import { VectorStoreStatusBanner } from '@/components/admin/VectorStoreStatusBanner';
 import { useTrainingKeyboard } from '@/hooks/useTrainingKeyboard';
 import type { Source } from '@/components/chat/types/chat.types';
 
@@ -78,6 +79,8 @@ interface UnifiedCandidate {
   // Protocol selection and answer editing fields
   protocol: ProtocolType | null;
   edited_staff_answer: string | null;
+  // User-edited version of question
+  edited_question_text: string | null;
   // Category field
   category: string | null;
   // RAG-generated answer sources for verification
@@ -521,8 +524,8 @@ export default function TrainingPage() {
     setSelectedRouting(routing);
   };
 
-  // Handle update candidate (edited answer or category)
-  const handleUpdateCandidate = async (updates: { edited_staff_answer?: string; category?: string }) => {
+  // Handle update candidate (edited question, answer, or category)
+  const handleUpdateCandidate = async (updates: { edited_staff_answer?: string; edited_question_text?: string; category?: string }) => {
     if (!currentItem) return;
 
     try {
@@ -634,7 +637,12 @@ export default function TrainingPage() {
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
+    <div className="min-h-screen bg-background">
+      {/* Vector Store Status Banner - shows when FAQs need embedding update */}
+      {/* Positioned outside padded container for consistent full-width appearance (like FAQ Management) */}
+      <VectorStoreStatusBanner />
+
+      <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Training Pipeline</h1>
@@ -775,6 +783,7 @@ export default function TrainingPage() {
         similarFaqs={duplicateFaqs}
         candidateQuestion={duplicateCandidateQuestion}
       />
+      </div>
     </div>
   );
 }

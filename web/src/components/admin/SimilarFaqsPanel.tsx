@@ -32,8 +32,8 @@ interface SimilarFaqsPanelProps {
   similarFaqs: SimilarFAQItem[];
   /** Whether the component is currently loading */
   isLoading?: boolean;
-  /** Callback when "View FAQ" is clicked */
-  onViewFaq?: (faqId: number) => void;
+  /** Callback when "View FAQ" is clicked - receives full item for slug generation */
+  onViewFaq?: (faq: SimilarFAQItem) => void;
   /** Optional className for custom styling */
   className?: string;
 }
@@ -210,7 +210,7 @@ export function SimilarFaqsPanel({
                     <button
                       type="button"
                       data-testid="view-faq-link"
-                      onClick={() => onViewFaq?.(faq.id)}
+                      onClick={() => onViewFaq?.(faq)}
                       className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 hover:underline dark:text-amber-500 dark:hover:text-amber-400"
                     >
                       View FAQ

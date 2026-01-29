@@ -114,6 +114,74 @@ class Settings(BaseSettings):
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
+    # Retrieval Backend Configuration
+    # Options: "chromadb" (default), "qdrant", "hybrid" (Qdrant with ChromaDB fallback)
+    RETRIEVER_BACKEND: str = "chromadb"
+
+    # Qdrant Vector Database Settings
+    QDRANT_HOST: str = "qdrant"  # Docker service name
+    QDRANT_PORT: int = 6333
+    QDRANT_COLLECTION: str = "bisq_docs"
+    QDRANT_GRPC_PORT: int = 6334  # Optional gRPC port for performance
+
+    # ColBERT Reranking Settings
+    COLBERT_MODEL: str = "colbert-ir/colbertv2.0"
+    COLBERT_TOP_N: int = 5  # Number of documents to return after reranking
+    ENABLE_COLBERT_RERANK: bool = False  # Disabled by default; opt-in for production
+
+    # Hybrid Search Weights (must sum to 1.0)
+    # Optimized via RAGAS evaluation: 0.6/0.4 shows +6% faithfulness improvement
+    HYBRID_SEMANTIC_WEIGHT: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for dense/semantic vectors in hybrid search",
+    )
+    HYBRID_KEYWORD_WEIGHT: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Weight for sparse/BM25 vectors in hybrid search",
+    )
+
+    @field_validator("RETRIEVER_BACKEND")
+    @classmethod
+    def validate_retriever_backend(cls, v: str) -> str:
+        """Validate RETRIEVER_BACKEND is a supported value.
+
+        Fails fast on typos to prevent runtime errors in the retrieval selector.
+
+        Args:
+            v: Retriever backend value
+
+        Returns:
+            Validated retriever backend value
+
+        Raises:
+            ValueError: If backend is not supported
+        """
+        allowed = {"chromadb", "qdrant", "hybrid"}
+        if v not in allowed:
+            raise ValueError(
+                f"RETRIEVER_BACKEND must be one of {', '.join(sorted(allowed))}, got '{v}'"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_hybrid_weights_sum(self) -> "Settings":
+        """Ensure HYBRID_SEMANTIC_WEIGHT + HYBRID_KEYWORD_WEIGHT == 1.0."""
+        total = self.HYBRID_SEMANTIC_WEIGHT + self.HYBRID_KEYWORD_WEIGHT
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"HYBRID_SEMANTIC_WEIGHT ({self.HYBRID_SEMANTIC_WEIGHT}) + "
+                f"HYBRID_KEYWORD_WEIGHT ({self.HYBRID_KEYWORD_WEIGHT}) must sum to 1.0, "
+                f"got {total}"
+            )
+        return self
+
+    # BM25 Tokenizer Settings
+    BM25_VOCABULARY_FILE: str = "bm25_vocabulary.json"  # Vocabulary file in DATA_DIR
+
     # LLM Message Classification Settings (Provider-Agnostic)
     # Supports multiple LLM providers via AISuite: openai, anthropic, ollama
     ENABLE_LLM_CLASSIFICATION: bool = False  # Enable LLM-based message classification

@@ -53,7 +53,7 @@ export interface InlineEditFAQProps {
     editCategoryComboboxOpen: boolean;
     setEditCategoryComboboxOpen: (open: boolean) => void;
     availableCategories: string[];
-    onViewSimilarFaq?: (faqId: number) => void;
+    onViewSimilarFaq?: (faq: SimilarFAQItem) => void;
 }
 
 /**
@@ -89,11 +89,55 @@ export const InlineEditFAQ = memo(
         // High similarity warning threshold (85%)
         const hasHighSimilarity = editSimilarFaqs.some((item) => item.similarity >= 0.85);
 
-        // Debounced similarity check function
+        // AbortController ref for cleanup on unmount
+        const abortControllerRef = useRef<AbortController | null>(null);
+
+        // Immediate similarity check function (for initial mount check)
+        const checkSimilarFaqsImmediate = async (question: string) => {
+            if (question.length < 10) {
+                return;
+            }
+
+            // Cancel any in-flight request
+            abortControllerRef.current?.abort();
+            abortControllerRef.current = new AbortController();
+
+            setIsCheckingEditSimilar(true);
+            try {
+                const response = await makeAuthenticatedRequest(
+                    `/admin/faqs/check-similar`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            question,
+                            threshold: 0.65,
+                            limit: 5,
+                            exclude_id: faq.id,
+                        }),
+                        signal: abortControllerRef.current.signal,
+                    }
+                );
+                if (response.ok) {
+                    const data = await response.json();
+                    setEditSimilarFaqs(data.similar_faqs || []);
+                }
+            } catch (error) {
+                // Ignore abort errors - they're expected on unmount
+                if (error instanceof Error && error.name === "AbortError") {
+                    return;
+                }
+                console.error("Failed to check similar FAQs:", error);
+            } finally {
+                setIsCheckingEditSimilar(false);
+            }
+        };
+
+        // Debounced similarity check function (for typing changes)
         const checkSimilarFaqs = useMemo(
             () =>
                 debounce(async (question: string) => {
-                    // Skip if question is too short or unchanged
+                    // Skip if question is too short or unchanged from original
                     if (question.length < 10 || question === faq.question) {
                         setEditSimilarFaqs([]);
                         setIsCheckingEditSimilar(false);
@@ -128,16 +172,27 @@ export const InlineEditFAQ = memo(
             [faq.id, faq.question]
         );
 
-        // Cleanup debounce on unmount
+        // Cleanup debounce and abort controller on unmount
         useEffect(() => {
             return () => {
                 checkSimilarFaqs.cancel();
+                abortControllerRef.current?.abort();
             };
         }, [checkSimilarFaqs]);
 
         // Auto-focus question input when entering edit mode
         useEffect(() => {
             questionInputRef.current?.focus();
+        }, []);
+
+        // Bug fix: Run similarity check on mount if question is long enough
+        // This shows the warning immediately when edit dialog opens, not just on focus change
+        useEffect(() => {
+            if (faq.question && faq.question.length >= 10) {
+                checkSimilarFaqsImmediate(faq.question);
+            }
+            // Only run on mount - faq.question won't change during edit (draft is separate)
+            // eslint-disable-next-line react-hooks/exhaustive-deps
         }, []);
 
         const handleSubmit = async () => {

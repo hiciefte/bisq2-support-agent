@@ -35,6 +35,9 @@ import {
   PlusCircle,
   ThumbsUp,
   ThumbsDown,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import {
   Collapsible,
@@ -44,11 +47,15 @@ import {
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { ProtocolSelector, ProtocolType } from './ProtocolSelector';
 import { EditableAnswer } from './EditableAnswer';
+import { EditableQuestion } from './EditableQuestion';
 import { CategorySelector } from './CategorySelector';
 import { StickyActionFooter } from './StickyActionFooter';
+import { SimilarFaqsPanel, SimilarFAQItem } from '@/components/admin/SimilarFaqsPanel';
 import { SourceBadges } from '@/components/chat/components/source-badges';
 import { ConfidenceBadge } from '@/components/chat/components/confidence-badge';
 import { MarkdownContent } from '@/components/chat/components/markdown-content';
+import { makeAuthenticatedRequest } from '@/lib/auth';
+import debounce from 'lodash.debounce';
 import type { Source } from '@/components/chat/types/chat.types';
 
 // Unified FAQ Candidate type (from unified pipeline)
@@ -95,6 +102,8 @@ interface UnifiedCandidate {
   original_user_question: string | null;
   // Original conversational staff answer before LLM transformation
   original_staff_answer: string | null;
+  // User-edited version of question
+  edited_question_text: string | null;
 }
 
 // Type for conversation context message
@@ -109,7 +118,7 @@ interface TrainingReviewItemProps {
   onApprove: () => Promise<void>;
   onReject: (reason: string) => Promise<void>;
   onSkip: () => Promise<void>;
-  onUpdateCandidate: (updates: { edited_staff_answer?: string; category?: string }) => Promise<void>;
+  onUpdateCandidate: (updates: { edited_staff_answer?: string; edited_question_text?: string; category?: string }) => Promise<void>;
   onRegenerateAnswer: (protocol: ProtocolType) => Promise<void>;
   onRateGeneratedAnswer?: (rating: 'good' | 'needs_improvement') => Promise<void>;
   isLoading: boolean;
@@ -209,8 +218,9 @@ export function TrainingReviewItem({
     )
   );
   const [showConversation, setShowConversation] = useState(shouldAutoExpandConversation);
+  // Unified edit mode: single state for editing both Q&A together (UX improvement)
   const [isEditing, setIsEditing] = useState(false);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [currentProtocol, setCurrentProtocol] = useState<ProtocolType | null>(pair.protocol);
   const [currentCategory, setCurrentCategory] = useState<string | null>(pair.category);
@@ -219,6 +229,10 @@ export function TrainingReviewItem({
   const [isRatingAnswer, setIsRatingAnswer] = useState(false);
   // P3: Confirmation dialog state for reject action
   const [pendingRejectReason, setPendingRejectReason] = useState<string | null>(null);
+
+  // Real-time similarity checking state (Feedback Immediacy principle)
+  const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([]);
+  const [isCheckingSimilarity, setIsCheckingSimilarity] = useState(false);
 
   // Sticky footer visibility state
   const [showStickyFooter, setShowStickyFooter] = useState(false);
@@ -244,37 +258,6 @@ export function TrainingReviewItem({
     observer.observe(footer);
     return () => observer.disconnect();
   }, []);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Don't trigger if typing in an input or editing
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        return;
-      }
-
-      // Only trigger if no modifier keys
-      if (e.ctrlKey || e.metaKey || e.altKey) {
-        return;
-      }
-
-      // 'C' to toggle conversation view
-      if (e.key === 'c' && pair.conversation_context) {
-        e.preventDefault();
-        setShowConversation(prev => !prev);
-      }
-
-      // 'E' to toggle edit mode (only when not already editing)
-      if (e.key === 'e' && !isEditing) {
-        e.preventDefault();
-        setIsEditing(true);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [pair.conversation_context, isEditing]);
 
   // Sync protocol when pair changes
   useEffect(() => {
@@ -353,20 +336,96 @@ export function TrainingReviewItem({
     }
   }, [onRegenerateAnswer]);
 
-  // Handle save edited answer (Rule 5.5)
-  const handleSaveEdit = useCallback(async (newAnswer: string) => {
-    setIsSavingEdit(true);
+  // Unified edit mode: refs to track edited values
+  const editedQuestionRef = useRef<string | null>(null);
+  const editedAnswerRef = useRef<string | null>(null);
+
+  // Handle unified save (both Q&A together) (Rule 5.5)
+  const handleUnifiedSave = useCallback(async () => {
+    setIsSaving(true);
     try {
-      await onUpdateCandidate({ edited_staff_answer: newAnswer });
+      const updates: { edited_question_text?: string; edited_staff_answer?: string } = {};
+      if (editedQuestionRef.current !== null) {
+        updates.edited_question_text = editedQuestionRef.current;
+      }
+      if (editedAnswerRef.current !== null) {
+        updates.edited_staff_answer = editedAnswerRef.current;
+      }
+      if (Object.keys(updates).length > 0) {
+        await onUpdateCandidate(updates);
+      }
       setIsEditing(false);
+      editedQuestionRef.current = null;
+      editedAnswerRef.current = null;
     } finally {
-      setIsSavingEdit(false);
+      setIsSaving(false);
     }
   }, [onUpdateCandidate]);
 
-  // Handle cancel edit (Rule 5.5)
-  const handleCancelEdit = useCallback(() => {
+  // Handle unified cancel (exit edit mode without saving)
+  const handleUnifiedCancel = useCallback(() => {
     setIsEditing(false);
+    editedQuestionRef.current = null;
+    editedAnswerRef.current = null;
+  }, []);
+
+  // Keyboard shortcuts - must be after unified handlers are defined
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Don't trigger if typing in an input or editing
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      // Only trigger if no modifier keys
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
+      // 'C' to toggle conversation view
+      if (e.key === 'c' && pair.conversation_context) {
+        e.preventDefault();
+        setShowConversation(prev => !prev);
+      }
+
+      // 'E' to enter unified edit mode for both Q&A (UX improvement: single edit flow)
+      if (e.key === 'e' && !isEditing) {
+        e.preventDefault();
+        setIsEditing(true);
+      }
+    };
+
+    // Separate handler for edit mode specific shortcuts (needs modifier key support)
+    const handleEditModeKeyDown = (e: KeyboardEvent) => {
+      if (!isEditing) return;
+
+      // 'Escape' to exit unified edit mode
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleUnifiedCancel();
+        return;
+      }
+
+      // Cmd/Ctrl + Enter to save unified changes
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleUnifiedSave();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    window.addEventListener('keydown', handleEditModeKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+      window.removeEventListener('keydown', handleEditModeKeyDown);
+    };
+  }, [pair.conversation_context, isEditing, handleUnifiedCancel, handleUnifiedSave]);
+
+  // Track answer changes during edit
+  const handleAnswerChange = useCallback((newAnswer: string) => {
+    editedAnswerRef.current = newAnswer;
   }, []);
 
   // Handle category change (local state only) (Rule 5.5)
@@ -383,6 +442,66 @@ export function TrainingReviewItem({
       setIsSavingCategory(false);
     }
   }, [onUpdateCandidate]);
+
+  // Real-time similarity checking (Feedback Immediacy principle)
+  // Debounced to 600ms like InlineEditFAQ - check as user types
+  const checkSimilarFaqs = useMemo(
+    () =>
+      debounce(async (question: string) => {
+        if (!question.trim() || question.length < 10) {
+          setSimilarFaqs([]);
+          return;
+        }
+
+        setIsCheckingSimilarity(true);
+        try {
+          const response = await makeAuthenticatedRequest(
+            `/admin/faqs/check-similar`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                question,
+                threshold: 0.65,
+                limit: 5,
+              }),
+            }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            // Filter out exact matches (self-matches from existing FAQs)
+            const filtered = (data.similar_faqs || []).filter(
+              (f: SimilarFAQItem) => f.question.toLowerCase() !== question.toLowerCase()
+            );
+            setSimilarFaqs(filtered);
+          }
+        } catch (error) {
+          console.error('Failed to check similar FAQs:', error);
+        } finally {
+          setIsCheckingSimilarity(false);
+        }
+      }, 600),
+    []
+  );
+
+  // Check similarity on mount and when candidate changes
+  useEffect(() => {
+    const currentQuestion = pair.edited_question_text || pair.question_text;
+    checkSimilarFaqs(currentQuestion);
+    // Cleanup debounce on unmount
+    return () => {
+      checkSimilarFaqs.cancel();
+    };
+  }, [pair.id, pair.edited_question_text, pair.question_text, checkSimilarFaqs]);
+
+  // Check similarity when question is edited (during edit mode)
+  const handleQuestionChangeWithSimilarityCheck = useCallback((newQuestion: string) => {
+    editedQuestionRef.current = newQuestion;
+    checkSimilarFaqs(newQuestion);
+  }, [checkSimilarFaqs]);
+
+  // Alias for compatibility with existing code
+  const handleQuestionChange = handleQuestionChangeWithSimilarityCheck;
 
   // Handle rating the generated answer quality for LearningEngine training (Rule 5.5)
   const handleRateGeneratedAnswer = useCallback(async (rating: 'good' | 'needs_improvement') => {
@@ -528,32 +647,72 @@ export function TrainingReviewItem({
           </Collapsible>
         )}
 
-        {/* Question Display - Clean, minimal style */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <User className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium text-sm">User Question</span>
-          </div>
-          <div className="p-4 rounded-lg border bg-muted/30 border-border">
-            <p className="text-sm">{pair.question_text}</p>
-          </div>
-        </div>
+        {/* Unified FAQ Edit Section */}
+        {/* Single Edit button triggers unified mode for both Q&A (UX improvement) */}
+        <div className="space-y-4">
+          {/* Header with unified Edit button */}
+          {!isEditing && (
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-sm">FAQ Content</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+                className="h-7 text-xs"
+              >
+                <Pencil className="h-3 w-3 mr-1" />
+                Edit
+              </Button>
+            </div>
+          )}
 
-        {/* Answer Comparison */}
-        <div className="grid md:grid-cols-2 gap-4">
-          {/* Staff Answer - Editable */}
-          {/* Staff sender shown in header - no duplication here (Speed Through Subtraction) */}
-          <EditableAnswer
-            answer={pair.staff_answer}
-            editedAnswer={pair.edited_staff_answer}
+          {/* Question Display - Editable */}
+          <EditableQuestion
+            question={pair.question_text}
+            editedQuestion={pair.edited_question_text}
             isEditing={isEditing}
             onEditStart={() => setIsEditing(true)}
-            onEditSave={handleSaveEdit}
-            onEditCancel={handleCancelEdit}
-            label="FAQ Answer"
-            icon={<User className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
-            isSaving={isSavingEdit}
+            onEditSave={async (q) => { handleQuestionChange(q); }}
+            onEditCancel={handleUnifiedCancel}
+            label="FAQ Question"
+            icon={<User className="h-4 w-4 text-muted-foreground" />}
+            isSaving={isSaving}
+            hideEditButton={true}
+            hideSaveCancel={true}
+            onValueChange={handleQuestionChange}
           />
+
+          {/* Real-time Similar FAQs Warning (Feedback Immediacy principle) */}
+          {/* Shows when similar FAQs detected to prevent duplicate FAQ creation */}
+          <SimilarFaqsPanel
+            similarFaqs={similarFaqs}
+            isLoading={isCheckingSimilarity}
+            onViewFaq={async (faq) => {
+              // Use public FAQ URL with slug (consistent with FAQ Management)
+              const { generateFaqSlug } = await import("@/lib/utils");
+              const slug = await generateFaqSlug(faq.question, faq.id);
+              window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+            }}
+          />
+
+          {/* Answer Comparison */}
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Staff Answer - Editable */}
+            {/* Staff sender shown in header - no duplication here (Speed Through Subtraction) */}
+            <EditableAnswer
+              answer={pair.staff_answer}
+              editedAnswer={pair.edited_staff_answer}
+              isEditing={isEditing}
+              onEditStart={() => setIsEditing(true)}
+              onEditSave={async (a) => { handleAnswerChange(a); }}
+              onEditCancel={handleUnifiedCancel}
+              label="FAQ Answer"
+              icon={<User className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
+              isSaving={isSaving}
+              hideEditButton={true}
+              hideSaveCancel={true}
+              onValueChange={handleAnswerChange}
+            />
 
           {/* Generated Answer - Clean, minimal style */}
           <div>
@@ -681,6 +840,34 @@ export function TrainingReviewItem({
               </div>
             )}
           </div>
+        </div>
+
+          {/* Unified Edit Mode Action Bar */}
+          {isEditing && (
+            <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-border">
+              <Button size="sm" onClick={handleUnifiedSave} disabled={isSaving}>
+                {isSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4 mr-1" />
+                    Save Changes
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleUnifiedCancel} disabled={isSaving}>
+                <X className="h-4 w-4 mr-1" />
+                Cancel
+              </Button>
+              <span className="text-xs text-muted-foreground ml-2">
+                Press <kbd className="px-1 py-0.5 bg-muted rounded text-xs">⌘↵</kbd> to save |{" "}
+                <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Esc</kbd> to cancel
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Category and Protocol - grouped in combining frame */}
@@ -992,7 +1179,7 @@ export function TrainingReviewItem({
         routing={pair.routing}
         isLoading={isLoading}
         onApprove={onApprove}
-        onReject={() => setShowRejectSelect(true)}
+        onReject={handleDirectReject}
         onSkip={onSkip}
       />
     </Card>

@@ -11,6 +11,13 @@ from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.evaluation import EvaluationResult, RAGEvaluator
+from app.services.rag.interfaces import (
+    HybridRetrieverProtocol,
+    RerankerProtocol,
+    ResilientRetrieverProtocol,
+    RetrievedDocument,
+    RetrieverProtocol,
+)
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
@@ -29,6 +36,7 @@ __all__ = [
     "DocumentProcessor",
     "DocumentRetriever",
     "EmpathyDetector",
+    "HybridRetrieverProtocol",
     "LiteLLMEmbeddings",
     "EvaluationResult",
     "LLMProvider",
@@ -36,6 +44,10 @@ __all__ = [
     "PromptManager",
     "ProtocolDetector",
     "RAGEvaluator",
+    "RerankerProtocol",
+    "ResilientRetrieverProtocol",
+    "RetrievedDocument",
+    "RetrieverProtocol",
     "VectorStoreManager",
     "VectorStoreStateManager",
     "VersionDetector",  # Deprecated alias

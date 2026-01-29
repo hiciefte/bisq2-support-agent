@@ -222,72 +222,78 @@ If `SUPPORT_AGENT_NICKNAMES` is not configured:
 
 ## RAG System Content
 
-The RAG system's knowledge base is built from two sources:
+The RAG system uses a **hybrid retrieval pipeline** combining:
+- **Metadata Filtering**: Protocol-based prioritization (Bisq Easy vs Bisq 1)
+- **Keyword Search**: BM25 sparse vectors for exact term matching
+- **Semantic Search**: Dense vector embeddings for meaning-based retrieval
+- **Weighted Fusion**: 60% semantic + 40% keyword scoring (configurable via `HYBRID_SEMANTIC_WEIGHT`/`HYBRID_KEYWORD_WEIGHT`)
+
+### Retrieval Pipeline
+
+```
+User Query → Version Detection → Multi-Stage Protocol Filtering
+    → Hybrid Search (Semantic 60% + Keyword 40%)
+    → Deduplication → Optional ColBERT Reranking
+    → Context Assembly → LLM Generation
+```
+
+**Key Parameters**:
+- ChromaDB k=8 candidates, score_threshold=0.3
+- BM25 with K1=1.5, B=0.75
+- Embedding model: `text-embedding-3-small` (1536 dimensions)
+
+For detailed architecture, see [RAG Architecture](docs/rag-architecture.md).
 
 ### 1. Wiki Documents
 -   **Location**: `api/data/wiki/`
--   **Purpose**:
-    - Primary knowledge base for the RAG system
-    - Provides structured documentation about Bisq 1 and Bisq 2
-    - Used to generate accurate and context-aware responses to user queries
--   **Supported Formats**:
-    - MediaWiki XML dump file (`bisq_dump.xml`) for bulk import
--   **Processing Pipeline**:
-    1. **Initial Processing**:
-       - XML dumps are processed by `process_wiki_dump.py`
-       - Content is cleaned and categorized (Bisq 1, Bisq 2, or general)
-       - Documents are converted to JSONL format with metadata
-    2. **Document Preparation**:
-       - Documents are loaded by `WikiService`
-       - Each document is tagged with metadata (category, version, section)
-       - Content is split into chunks for better retrieval
-       - Source weights are assigned (wiki content has a weight of 1.1)
-    3. **RAG Integration**:
-       - Processed documents are converted to embeddings
-       - Stored in a Chroma vector database
-       - Used alongside FAQ data for comprehensive responses
-       - Documents are prioritized based on protocol relevance (bisq_easy > multisig_v1 > general)
--   **Metadata Structure**:
-    ```json
-    {
-      "title": "Document Title",
-      "content": "Document Content",
-      "category": "bisq2|bisq1|general",
-      "type": "wiki",
-      "section": "Section Name",
-      "source_weight": 1.1,
-      "protocol": "bisq_easy|multisig_v1|musig|all"
-    }
-    ```
+-   **Purpose**: Primary knowledge base with structured Bisq 1/2 documentation
+-   **Processing**: XML dumps → `process_wiki_dump.py` → JSONL with metadata
+-   **Source Weight**: 1.1 (slightly higher than FAQs)
+-   **Protocol Tagging**: Documents auto-categorized as `bisq_easy`, `multisig_v1`, or `all`
 
-    Protocol values map to display names:
-    - `bisq_easy` → Bisq Easy (Bisq 2)
-    - `multisig_v1` → Multisig v1 (Bisq 1)
-    - `musig` → MuSig (future protocol)
-    - `all` → General (cross-protocol content)
+**Metadata Structure**:
+```json
+{
+  "title": "Document Title",
+  "category": "bisq2|bisq1|general",
+  "type": "wiki",
+  "source_weight": 1.1,
+  "protocol": "bisq_easy|multisig_v1|all"
+}
+```
 
 ### 2. FAQ Data
--   **Automatic Extraction**:
-    - FAQs are automatically extracted from support chat conversations
-    - The system uses OpenAI to identify and format FAQs
-    - Extracted FAQs are stored in SQLite database (`api/data/faqs.db`)
--   **Manual Addition**:
-    - Use the admin interface at `/admin/manage-faqs` to add FAQs manually
-    - FAQs are stored directly in the SQLite database with full CRUD support
+-   **Storage**: SQLite database (`api/data/faqs.db`) - authoritative source
+-   **Extraction**: Automatic from support chat via Training Pipeline
+-   **Manual Addition**: Admin interface at `/admin/manage-faqs`
+-   **Source Weight**: 1.0
+
+### Multi-Stage Protocol Filtering
+
+For **Bisq Easy queries** (default):
+| Stage | Filter | k | Trigger |
+|-------|--------|---|---------|
+| 1 | `protocol="bisq_easy"` | 6 | Always |
+| 2 | `protocol="all"` | 4 | If < 4 docs |
+| 3 | `protocol="multisig_v1"` | 2 | If < 3 docs |
+
+For **Bisq 1 queries**:
+| Stage | Filter | k | Trigger |
+|-------|--------|---|---------|
+| 1 | `protocol="multisig_v1"` | 4 | Always |
+| 2 | `protocol="all"` | 2 | If < 3 docs |
 
 ### Content Processing
 
-When the API service starts, it automatically processes all content from the `wiki` and `faq` sources, converts it into vector embeddings, and stores it in the ChromaDB vector store (`api/data/vectorstore/`).
-
-To add new content, simply add files to the `api/data/wiki/` directory or add entries to the FAQ file, then restart the API service.
+When the API service starts, it processes wiki and FAQ sources into vector embeddings stored in ChromaDB (`api/data/vectorstore/`).
 
 ```bash
-# To add new wiki content and rebuild the vector store
+# Add new wiki content
 cp your_document.md api/data/wiki/
 docker compose -f docker/docker-compose.yml restart api
 ```
 
-For more details on the automated FAQ extraction process, see [FAQ Extraction Documentation](docs/faq_extraction.md).
+For FAQ extraction details, see [FAQ Extraction Documentation](docs/faq_extraction.md).
 
 ## Monitoring and Security
 

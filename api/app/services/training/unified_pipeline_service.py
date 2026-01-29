@@ -976,9 +976,11 @@ class UnifiedPipelineService:
             raise ValueError(f"Candidate {candidate_id} not found")
 
         # Check for duplicate FAQs before creating
+        # Use edited question if available (admin may have improved phrasing)
+        question_to_check = candidate.edited_question_text or candidate.question_text
         if self.rag_service is not None:
             similar_faqs = await self.rag_service.search_faq_similarity(
-                question=candidate.question_text,
+                question=question_to_check,
                 threshold=DUPLICATE_FAQ_THRESHOLD,
                 limit=3,
             )
@@ -996,12 +998,13 @@ class UnifiedPipelineService:
         faq_source = get_faq_source_display_name(candidate.source)
         now = datetime.now(timezone.utc)
 
-        # Use edited_staff_answer if available, otherwise use original staff_answer
+        # Use edited versions if available, otherwise use original values
         final_answer = candidate.edited_staff_answer or candidate.staff_answer
+        final_question = candidate.edited_question_text or candidate.question_text
 
         # Create verified FAQ using FAQItem model
         faq_item = FAQItem(
-            question=candidate.question_text,
+            question=final_question,
             answer=final_answer,
             source=faq_source,
             verified=True,  # Pipeline approval = admin verification
@@ -1353,19 +1356,21 @@ class UnifiedPipelineService:
         self,
         candidate_id: int,
         edited_staff_answer: Optional[str] = None,
+        edited_question_text: Optional[str] = None,
         category: Optional[str] = None,
     ) -> Optional[UnifiedFAQCandidate]:
         """
         Update a candidate's editable fields.
 
-        Currently supports editing the staff answer and category before approval.
-        The edited answer will be used when creating the FAQ.
+        Currently supports editing the question, staff answer, and category before approval.
+        The edited values will be used when creating the FAQ.
         When the staff answer is edited, comparison scores are recalculated
         to reflect how well the RAG answer matches the new staff answer.
 
         Args:
             candidate_id: ID of the candidate to update
             edited_staff_answer: User-edited version of the staff answer
+            edited_question_text: User-edited version of the question
             category: FAQ category (e.g., Trading, Wallet, Installation)
 
         Returns:
@@ -1391,6 +1396,7 @@ class UnifiedPipelineService:
             return self.repository.update_candidate(
                 candidate_id=candidate_id,
                 edited_staff_answer=edited_staff_answer,
+                edited_question_text=edited_question_text,
                 embedding_similarity=comparison.embedding_similarity,
                 factual_alignment=comparison.factual_alignment,
                 contradiction_score=comparison.contradiction_score,
@@ -1406,6 +1412,7 @@ class UnifiedPipelineService:
         return self.repository.update_candidate(
             candidate_id=candidate_id,
             edited_staff_answer=edited_staff_answer,
+            edited_question_text=edited_question_text,
             category=category,
         )
 

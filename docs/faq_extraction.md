@@ -120,12 +120,29 @@ In the production environment, the FAQ extraction is scheduled to run **daily at
 
 ## Integration with RAG System
 
-The extracted FAQs are used in the RAG system as follows:
+The extracted FAQs are integrated into the hybrid retrieval pipeline:
 
-1. The `FAQService` loads the FAQ data during system initialization.
-2. Each FAQ is converted into a `Document` object with appropriate metadata.
-3. These documents are added to the vector store for semantic search.
-4. When a user asks a question, relevant FAQs may be retrieved and included in the context for generating a response.
+### Document Preparation
+1. The `FAQService` loads FAQ data from SQLite (`faqs.db`) during initialization
+2. Each FAQ is converted into a `Document` with metadata:
+   - `type`: "faq"
+   - `protocol`: "bisq_easy", "multisig_v1", or "all" (for version filtering)
+   - `source_weight`: 1.0 (base weight)
+3. Documents are embedded and stored in ChromaDB vector store
+
+### Retrieval Integration
+FAQs participate in the hybrid retrieval pipeline:
+- **Semantic Search**: FAQ embeddings matched via cosine similarity (weight: 0.7)
+- **Keyword Search**: FAQ text indexed for BM25 sparse vector matching (weight: 0.3)
+- **Protocol Filtering**: FAQs filtered by protocol metadata based on query version detection
+
+### Multi-Stage Retrieval
+FAQs and wiki documents are retrieved together in protocol-prioritized stages:
+- Stage 1: Protocol-specific content (e.g., `bisq_easy` for Bisq 2 queries)
+- Stage 2: General content (`all` protocol) if insufficient results
+- Stage 3: Cross-protocol fallback if needed
+
+For full retrieval pipeline details, see [RAG Architecture](rag-architecture.md).
 
 ## Monitoring and Maintenance
 

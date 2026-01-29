@@ -20,6 +20,10 @@ interface EditableAnswerProps {
   label: string;
   icon: React.ReactNode;
   isSaving?: boolean;
+  // Unified edit mode props
+  hideEditButton?: boolean;
+  hideSaveCancel?: boolean;
+  onValueChange?: (value: string) => void;
 }
 
 export function EditableAnswer({
@@ -32,6 +36,9 @@ export function EditableAnswer({
   label,
   icon,
   isSaving = false,
+  hideEditButton = false,
+  hideSaveCancel = false,
+  onValueChange,
 }: EditableAnswerProps) {
   // Use edited answer if available, otherwise use original
   const displayAnswer = editedAnswer ?? answer;
@@ -64,9 +71,9 @@ export function EditableAnswer({
 
   const hasChanges = editValue !== displayAnswer;
 
-  // Keyboard shortcuts for edit mode
+  // Keyboard shortcuts for edit mode (disabled in unified mode - parent handles these)
   useEffect(() => {
-    if (!isEditing) return;
+    if (!isEditing || hideSaveCancel) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape to cancel
@@ -86,7 +93,7 @@ export function EditableAnswer({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isEditing, hasChanges, handleSave, handleCancel]);
+  }, [isEditing, hasChanges, handleSave, handleCancel, hideSaveCancel]);
 
   return (
     <div>
@@ -110,7 +117,7 @@ export function EditableAnswer({
             </Badge>
           )}
         </div>
-        {!isEditing && (
+        {!isEditing && !hideEditButton && (
           <Button
             variant="ghost"
             size="sm"
@@ -138,6 +145,8 @@ export function EditableAnswer({
             value={editValue}
             onChange={(e) => {
               setEditValue(e.target.value);
+              // Notify parent of value changes for unified edit mode
+              onValueChange?.(e.target.value);
               // Auto-resize
               e.target.style.height = "auto";
               e.target.style.height = `${e.target.scrollHeight}px`;
@@ -150,8 +159,8 @@ export function EditableAnswer({
         )}
       </div>
 
-      {/* Edit Mode Actions */}
-      {isEditing && (
+      {/* Edit Mode Actions - hidden in unified edit mode */}
+      {isEditing && !hideSaveCancel && (
         <div className="mt-3 flex items-center gap-2">
           <Button size="sm" onClick={handleSave} disabled={!hasChanges || isSaving}>
             {isSaving ? (
