@@ -637,10 +637,12 @@ export default function TrainingPage() {
   }
 
   return (
-    <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
+    <div className="min-h-screen bg-background">
       {/* Vector Store Status Banner - shows when FAQs need embedding update */}
+      {/* Positioned outside padded container for consistent full-width appearance (like FAQ Management) */}
       <VectorStoreStatusBanner />
 
+      <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Training Pipeline</h1>
@@ -781,6 +783,7 @@ export default function TrainingPage() {
         similarFaqs={duplicateFaqs}
         candidateQuestion={duplicateCandidateQuestion}
       />
+      </div>
     </div>
   );
 }

@@ -50,9 +50,12 @@ import { EditableAnswer } from './EditableAnswer';
 import { EditableQuestion } from './EditableQuestion';
 import { CategorySelector } from './CategorySelector';
 import { StickyActionFooter } from './StickyActionFooter';
+import { SimilarFaqsPanel, SimilarFAQItem } from '@/components/admin/SimilarFaqsPanel';
 import { SourceBadges } from '@/components/chat/components/source-badges';
 import { ConfidenceBadge } from '@/components/chat/components/confidence-badge';
 import { MarkdownContent } from '@/components/chat/components/markdown-content';
+import { makeAuthenticatedRequest } from '@/lib/auth';
+import debounce from 'lodash.debounce';
 import type { Source } from '@/components/chat/types/chat.types';
 
 // Unified FAQ Candidate type (from unified pipeline)
@@ -226,6 +229,10 @@ export function TrainingReviewItem({
   const [isRatingAnswer, setIsRatingAnswer] = useState(false);
   // P3: Confirmation dialog state for reject action
   const [pendingRejectReason, setPendingRejectReason] = useState<string | null>(null);
+
+  // Real-time similarity checking state (Feedback Immediacy principle)
+  const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([]);
+  const [isCheckingSimilarity, setIsCheckingSimilarity] = useState(false);
 
   // Sticky footer visibility state
   const [showStickyFooter, setShowStickyFooter] = useState(false);
@@ -416,11 +423,6 @@ export function TrainingReviewItem({
     };
   }, [pair.conversation_context, isEditing, handleUnifiedCancel, handleUnifiedSave]);
 
-  // Track question changes during edit
-  const handleQuestionChange = useCallback((newQuestion: string) => {
-    editedQuestionRef.current = newQuestion;
-  }, []);
-
   // Track answer changes during edit
   const handleAnswerChange = useCallback((newAnswer: string) => {
     editedAnswerRef.current = newAnswer;
@@ -440,6 +442,66 @@ export function TrainingReviewItem({
       setIsSavingCategory(false);
     }
   }, [onUpdateCandidate]);
+
+  // Real-time similarity checking (Feedback Immediacy principle)
+  // Debounced to 600ms like InlineEditFAQ - check as user types
+  const checkSimilarFaqs = useMemo(
+    () =>
+      debounce(async (question: string) => {
+        if (!question.trim() || question.length < 10) {
+          setSimilarFaqs([]);
+          return;
+        }
+
+        setIsCheckingSimilarity(true);
+        try {
+          const response = await makeAuthenticatedRequest(
+            `/admin/faqs/check-similar`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                question,
+                threshold: 0.65,
+                limit: 5,
+              }),
+            }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            // Filter out exact matches (self-matches from existing FAQs)
+            const filtered = (data.similar_faqs || []).filter(
+              (f: SimilarFAQItem) => f.question.toLowerCase() !== question.toLowerCase()
+            );
+            setSimilarFaqs(filtered);
+          }
+        } catch (error) {
+          console.error('Failed to check similar FAQs:', error);
+        } finally {
+          setIsCheckingSimilarity(false);
+        }
+      }, 600),
+    []
+  );
+
+  // Check similarity on mount and when candidate changes
+  useEffect(() => {
+    const currentQuestion = pair.edited_question_text || pair.question_text;
+    checkSimilarFaqs(currentQuestion);
+    // Cleanup debounce on unmount
+    return () => {
+      checkSimilarFaqs.cancel();
+    };
+  }, [pair.id, pair.edited_question_text, pair.question_text, checkSimilarFaqs]);
+
+  // Check similarity when question is edited (during edit mode)
+  const handleQuestionChangeWithSimilarityCheck = useCallback((newQuestion: string) => {
+    editedQuestionRef.current = newQuestion;
+    checkSimilarFaqs(newQuestion);
+  }, [checkSimilarFaqs]);
+
+  // Alias for compatibility with existing code
+  const handleQuestionChange = handleQuestionChangeWithSimilarityCheck;
 
   // Handle rating the generated answer quality for LearningEngine training (Rule 5.5)
   const handleRateGeneratedAnswer = useCallback(async (rating: 'good' | 'needs_improvement') => {
@@ -618,6 +680,19 @@ export function TrainingReviewItem({
             hideEditButton={true}
             hideSaveCancel={true}
             onValueChange={handleQuestionChange}
+          />
+
+          {/* Real-time Similar FAQs Warning (Feedback Immediacy principle) */}
+          {/* Shows when similar FAQs detected to prevent duplicate FAQ creation */}
+          <SimilarFaqsPanel
+            similarFaqs={similarFaqs}
+            isLoading={isCheckingSimilarity}
+            onViewFaq={async (faq) => {
+              // Use public FAQ URL with slug (consistent with FAQ Management)
+              const { generateFaqSlug } = await import("@/lib/utils");
+              const slug = await generateFaqSlug(faq.question, faq.id);
+              window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+            }}
           />
 
           {/* Answer Comparison */}
@@ -1104,7 +1179,7 @@ export function TrainingReviewItem({
         routing={pair.routing}
         isLoading={isLoading}
         onApprove={onApprove}
-        onReject={() => setShowRejectSelect(true)}
+        onReject={handleDirectReject}
         onSkip={onSkip}
       />
     </Card>

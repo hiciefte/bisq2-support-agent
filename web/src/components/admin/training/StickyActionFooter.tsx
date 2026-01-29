@@ -1,10 +1,21 @@
 "use client"
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { XCircle, SkipForward, PlusCircle, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+// Rejection reasons - same as in TrainingReviewItem
+const REJECT_REASONS = [
+  { value: "incorrect", label: "Incorrect" },
+  { value: "outdated", label: "Outdated" },
+  { value: "too_vague", label: "Too vague" },
+  { value: "off_topic", label: "Off-topic" },
+  { value: "duplicate", label: "Duplicate" },
+  { value: "other", label: "Other" },
+];
 
 interface StickyActionFooterProps {
   isVisible: boolean;
@@ -14,7 +25,7 @@ interface StickyActionFooterProps {
   routing: string;
   isLoading: boolean;
   onApprove: () => void;
-  onReject: () => void;
+  onReject: (reason: string) => void;
   onSkip: () => void;
 }
 
@@ -29,11 +40,20 @@ export function StickyActionFooter({
   onReject,
   onSkip,
 }: StickyActionFooterProps) {
+  // Local state for showing rejection reasons in sticky footer
+  const [showRejectReasons, setShowRejectReasons] = useState(false);
+
   // Semantic routing labels (Phase: Queue Semantic Redesign)
   const routingLabels: Record<string, string> = {
     FULL_REVIEW: "Knowledge Gap",
     SPOT_CHECK: "Minor Gap",
     AUTO_APPROVE: "Calibration",
+  };
+
+  // Handle direct rejection (Speed Through Subtraction principle)
+  const handleDirectReject = (reason: string) => {
+    onReject(reason);
+    setShowRejectReasons(false);
   };
 
   return (
@@ -61,14 +81,14 @@ export function StickyActionFooter({
                     variant="outline"
                     className={cn(
                       "text-xs",
-                      score >= 80
+                      score >= 0.80
                         ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800"
-                        : score >= 60
+                        : score >= 0.60
                         ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800"
                         : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"
                     )}
                   >
-                    {Math.round(score)}%
+                    {Math.round(score * 100)}%
                   </Badge>
                 )}
                 {category && (
@@ -92,15 +112,46 @@ export function StickyActionFooter({
                   <SkipForward className="h-4 w-4 mr-1" />
                   Skip
                 </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={onReject}
-                  disabled={isLoading}
-                >
-                  <XCircle className="h-4 w-4 mr-1" />
-                  Reject
-                </Button>
+
+                {/* Rejection reasons or Reject button */}
+                {showRejectReasons ? (
+                  <div className="flex items-center gap-1 animate-in fade-in slide-in-from-right-2 duration-200">
+                    {REJECT_REASONS.map((reason) => (
+                      <Button
+                        key={reason.value}
+                        variant={reason.value === 'other' ? 'outline' : 'destructive'}
+                        size="sm"
+                        onClick={() => handleDirectReject(reason.value)}
+                        disabled={isLoading}
+                        className={cn(
+                          "text-xs px-2",
+                          reason.value === 'other' && 'text-destructive border-destructive/50 hover:bg-destructive/10'
+                        )}
+                      >
+                        {reason.label}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowRejectReasons(false)}
+                      className="text-xs px-2"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setShowRejectReasons(true)}
+                    disabled={isLoading}
+                  >
+                    <XCircle className="h-4 w-4 mr-1" />
+                    Reject
+                  </Button>
+                )}
+
                 <Button
                   size="sm"
                   onClick={onApprove}
