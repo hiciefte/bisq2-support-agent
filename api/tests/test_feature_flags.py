@@ -73,6 +73,14 @@ class TestRetrieverBackendSettings:
         total = settings.HYBRID_SEMANTIC_WEIGHT + settings.HYBRID_KEYWORD_WEIGHT
         assert abs(total - 1.0) < 0.01
 
+    def test_invalid_retriever_backend_rejected(self):
+        """Test that invalid RETRIEVER_BACKEND values are rejected at startup."""
+        with patch.dict("os.environ", {"RETRIEVER_BACKEND": "invalid_backend"}):
+            from app.core.config import Settings
+
+            with pytest.raises(ValueError, match="must be one of"):
+                Settings()
+
 
 class TestRAGServiceBackendSwitching:
     """Test suite for RAG service backend switching."""

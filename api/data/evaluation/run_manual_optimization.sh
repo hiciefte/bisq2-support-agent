@@ -41,10 +41,11 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$RESULTS_DIR"
 
-# Backup original env file before making changes
-if [ ! -f "$ENV_FILE_BACKUP" ]; then
-    echo "Backing up original configuration..."
-    cp "$ENV_FILE" "$ENV_FILE_BACKUP"
+# Always backup original env file before making changes (refresh on each run)
+echo "Backing up original configuration..."
+if ! cp -f "$ENV_FILE" "$ENV_FILE_BACKUP"; then
+    echo "ERROR: Failed to create backup of $ENV_FILE"
+    exit 1
 fi
 
 echo "=========================================="
@@ -78,9 +79,17 @@ for config in "${CONFIGS[@]}"; do
     echo "Testing: $desc (semantic=$semantic, keyword=$keyword)"
     echo "------------------------------------------"
 
-    # Update environment
-    sed -i.bak "s/HYBRID_SEMANTIC_WEIGHT=.*/HYBRID_SEMANTIC_WEIGHT=$semantic/" "$ENV_FILE"
-    sed -i.bak "s/HYBRID_KEYWORD_WEIGHT=.*/HYBRID_KEYWORD_WEIGHT=$keyword/" "$ENV_FILE"
+    # Update environment (handle both existing and missing keys)
+    if grep -q "^HYBRID_SEMANTIC_WEIGHT=" "$ENV_FILE"; then
+        sed -i.bak "s/^HYBRID_SEMANTIC_WEIGHT=.*/HYBRID_SEMANTIC_WEIGHT=$semantic/" "$ENV_FILE"
+    else
+        echo "HYBRID_SEMANTIC_WEIGHT=$semantic" >> "$ENV_FILE"
+    fi
+    if grep -q "^HYBRID_KEYWORD_WEIGHT=" "$ENV_FILE"; then
+        sed -i.bak "s/^HYBRID_KEYWORD_WEIGHT=.*/HYBRID_KEYWORD_WEIGHT=$keyword/" "$ENV_FILE"
+    else
+        echo "HYBRID_KEYWORD_WEIGHT=$keyword" >> "$ENV_FILE"
+    fi
     rm -f "${ENV_FILE}.bak"
 
     # Restart API with new config
