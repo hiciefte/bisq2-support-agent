@@ -12,6 +12,7 @@ import { TrainingReviewItem } from '@/components/admin/training/TrainingReviewIt
 import { EmptyQueueState } from '@/components/admin/training/EmptyQueueState';
 import { BatchReviewList } from '@/components/admin/training/BatchReviewList';
 import { DuplicateFAQDialog } from '@/components/admin/training/DuplicateFAQDialog';
+import { VectorStoreStatusBanner } from '@/components/admin/VectorStoreStatusBanner';
 import { useTrainingKeyboard } from '@/hooks/useTrainingKeyboard';
 import type { Source } from '@/components/chat/types/chat.types';
 
@@ -635,6 +636,9 @@ export default function TrainingPage() {
 
   return (
     <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
+      {/* Vector Store Status Banner - shows when FAQs need embedding update */}
+      <VectorStoreStatusBanner />
+
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Training Pipeline</h1>

@@ -251,11 +251,21 @@ class NLIValidator:
 
         Returns:
             list[float]: List of entailment scores
+
+        Raises:
+            ValueError: If contexts and answers have different lengths
         """
+        # Validate input lengths to avoid silent truncation
+        if len(contexts) != len(answers):
+            raise ValueError(
+                f"contexts and answers must have the same length, "
+                f"got {len(contexts)} and {len(answers)}"
+            )
+
         # Return and cache neutral scores if pipeline not available
         if self.nli_pipeline is None:
             if cache_results:
-                for context, answer in zip(contexts, answers):
+                for context, answer in zip(contexts, answers, strict=True):
                     self._add_to_cache(answer, context, 0.5)
             return [0.5] * len(contexts)
 
@@ -264,7 +274,7 @@ class NLIValidator:
         uncached_indices: list[int] = []
         uncached_pairs: list[str] = []
 
-        for i, (context, answer) in enumerate(zip(contexts, answers)):
+        for i, (context, answer) in enumerate(zip(contexts, answers, strict=True)):
             cached = self._get_from_cache(answer, context)
             if cached is not None:
                 scores[i] = cached
