@@ -49,13 +49,13 @@ class TestRetrieverBackendSettings:
         assert settings.QDRANT_COLLECTION == "bisq_docs"
 
     def test_colbert_settings_defaults(self):
-        """Test ColBERT settings have correct defaults."""
+        """Test ColBERT settings have correct defaults (rerank disabled by default)."""
         from app.core.config import Settings
 
         settings = Settings()
         assert settings.COLBERT_MODEL == "colbert-ir/colbertv2.0"
         assert settings.COLBERT_TOP_N == 5
-        assert settings.ENABLE_COLBERT_RERANK is True
+        assert settings.ENABLE_COLBERT_RERANK is False  # Disabled by default; opt-in
 
     def test_hybrid_weights_defaults(self):
         """Test hybrid search weights have correct defaults (optimized via RAGAS)."""
@@ -144,12 +144,12 @@ class TestRAGServiceBackendSwitching:
 class TestColBERTFeatureFlag:
     """Test suite for ColBERT reranking feature flag."""
 
-    def test_colbert_enabled_by_default(self):
-        """Test that ColBERT reranking is enabled by default."""
+    def test_colbert_disabled_by_default(self):
+        """Test that ColBERT reranking is disabled by default (opt-in)."""
         from app.core.config import Settings
 
         settings = Settings()
-        assert settings.ENABLE_COLBERT_RERANK is True
+        assert settings.ENABLE_COLBERT_RERANK is False
 
     def test_colbert_can_be_disabled(self):
         """Test that ColBERT can be disabled via environment."""

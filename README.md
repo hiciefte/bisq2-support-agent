@@ -226,13 +226,13 @@ The RAG system uses a **hybrid retrieval pipeline** combining:
 - **Metadata Filtering**: Protocol-based prioritization (Bisq Easy vs Bisq 1)
 - **Keyword Search**: BM25 sparse vectors for exact term matching
 - **Semantic Search**: Dense vector embeddings for meaning-based retrieval
-- **Weighted Fusion**: 70% semantic + 30% keyword scoring
+- **Weighted Fusion**: 60% semantic + 40% keyword scoring (configurable via `HYBRID_SEMANTIC_WEIGHT`/`HYBRID_KEYWORD_WEIGHT`)
 
 ### Retrieval Pipeline
 
 ```
 User Query → Version Detection → Multi-Stage Protocol Filtering
-    → Hybrid Search (Semantic 70% + Keyword 30%)
+    → Hybrid Search (Semantic 60% + Keyword 40%)
     → Deduplication → Optional ColBERT Reranking
     → Context Assembly → LLM Generation
 ```

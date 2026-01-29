@@ -11,7 +11,7 @@
   "avg_response_time": 3.6272540012995402,
   "individual_results": [
     {
-      "question": "As a brand new user of this Bisq platform, I am very unhappy and feel like I'm getting scammed by \"reputable sellers\" I have opened a mediation request for ghosting me after sending payment. Thank you for your help suddenwhipvapor",
+      "question": "As a brand new user of this Bisq platform, I am very unhappy and feel like I'm getting scammed by \"reputable sellers\" I have opened a mediation request for ghosting me after sending payment. Thank you for your help [USER_REDACTED]",
       "ground_truth": "there hasn't been a single case of a seller who scammed a buyer, not since reputation score has become a requirement, the only issue that ever happens is that a seller will be late in releasing for a series of circumstances",
       "answer": "I'm sorry to hear you're having a difficult experience. In Bisq Easy, while there isn't a refund policy, it's important to note that reputable sellers invest significant time and resources to build their reputation. If you feel you've been scammed, opening a mediation request was the right step. Mediation can help resolve disputes, so make sure to provide all relevant information to support your case. If you have further concerns, consider reaching out to Bisq support directly for assistance.",
       "contexts": [
@@ -129,7 +129,7 @@
       "error": null
     },
     {
-      "question": "Hello @suddenwhipvapor, I have a trade whith @Clavel, I can't send the BTC because I can't see the BTC Address. I have de payment.",
+      "question": "Hello [USER_REDACTED], I have a trade whith [USER_REDACTED], I can't send the BTC because I can't see the BTC Address. I have de payment.",
       "ground_truth": "hi, got back to you in DM, I suggested him to DM you directly, or you can have me act as relay for the btc address",
       "answer": "In Bisq Easy (Bisq 2), if you're unable to see the BTC address for sending, it's important to communicate with your trade counterpart through the trade chat. You can safely share your BTC address there, as all communications are protected during mediation. If you need to change the address, just inform them in the chat.",
       "contexts": [
@@ -144,7 +144,7 @@
       "error": null
     },
     {
-      "question": "@suddenwhipvapor Whenever I try to open mediation by clicking on the \"Request mediation\" button I get a Waring banner telling me that \"A mediator is not availble. Please shoose the support chat\" instead.",
+      "question": "[USER_REDACTED] Whenever I try to open mediation by clicking on the \"Request mediation\" button I get a Waring banner telling me that \"A mediator is not availble. Please shoose the support chat\" instead.",
       "ground_truth": "then please send me a DM so I can forward your logs to the devs, are you on mobile or desktop?",
       "answer": "It seems that the \"Request mediation\" button is currently inactive due to a lack of available mediators. In this case, you should use the support chat to get help. You can reach out to your mediator through the Support room in the Bisq chat or directly message them there. If you continue to have issues, consider making a reimbursement request in the Bisq DAO.",
       "contexts": [
@@ -159,7 +159,7 @@
       "error": null
     },
     {
-      "question": "Hi everyone, Trade id: 346e8301-f497-340f-8bf3-2d1de8a3c8e8. I'm a buyer. It's been already 8 days since I initiated a trade, and four days since I resend the address of my wallet to @armalar i.e. I send it twice first as part of the normal trade and later by messaging. The @armalar received and acknoledged the fiat payment four days ago and yet he has not settled. I have already sent him a message every day since but no answer. I have noticed that the @armalar connects to the network everyday! so I should assume that it has seen my message... what should I do? Notice that there is no trade mediator assigned to the trade!",
+      "question": "Hi everyone, Trade id: [TRADE_ID_REDACTED]. I'm a buyer. It's been already 8 days since I initiated a trade, and four days since I resend the address of my wallet to [USER_REDACTED] i.e. I send it twice first as part of the normal trade and later by messaging. The [USER_REDACTED] received and acknoledged the fiat payment four days ago and yet he has not settled. I have already sent him a message every day since but no answer. I have noticed that the [USER_REDACTED] connects to the network everyday! so I should assume that it has seen my message... what should I do? Notice that there is no trade mediator assigned to the trade!",
       "ground_truth": "just try and open mediation, it should end up with one of us",
       "answer": "It seems the trade ID you provided is not formatted correctly for a Bitcoin transaction lookup. However, since you're using Bisq Easy and there is no mediator assigned to your trade, I recommend the following steps:\n\n1. **Open Mediation**: Since the seller has received the fiat payment but hasn't released the BTC, you should consider opening mediation to involve a third party for assistance.\n   \n2. **Direct Contact**: Continue trying to reach the seller through Bisq's messaging system. If they have acknowledged your payment, they should respond.\n\n3. **Check Trade Period**: If the seller doesn't release the BTC within the expected trade period, mediation becomes essential.\n\nIf you need further assistance, feel free to ask!",
       "contexts": [
@@ -174,7 +174,7 @@
       "error": null
     },
     {
-      "question": "@suddenwhipvapor well at this point what would be quicker, wait for the btc or cancel and get fiat back, cause I mean I get it, if you have to do it manually it takes more time, however if I sit down and get into it I'd probably process 60 transactions/hour. What you suggest I should do?",
+      "question": "[USER_REDACTED] well at this point what would be quicker, wait for the btc or cancel and get fiat back, cause I mean I get it, if you have to do it manually it takes more time, however if I sit down and get into it I'd probably process 60 transactions/hour. What you suggest I should do?",
       "ground_truth": "I guess you can ask him to refund yourpayment but considering that would also require manual intervention, that's not a winning solution :D guess you can open a mediation just in case so we can ping him for that too, once in a while, as we've been doing these last few days, his payouts as of late have all been done manually afaik",
       "answer": "If you're using Bisq Easy (Bisq 2) and your trade appears stuck, you have a couple of options. If the seller has received your fiat payment, you can instruct them to send the BTC to your address without needing a mediator. However, if you're unsure about the seller's next steps or if the process seems too slow, you may consider canceling the trade and getting your fiat back by using the 'reject trade' button in the open trade page. This can often be quicker than waiting for the transaction to process.",
       "contexts": [
@@ -396,7 +396,7 @@
       "error": null
     },
     {
-      "question": "I'm requesting support, please. I have a trade initated with strayorigin on 12/11. Fiat payment was made. BTC not received. Communication is ... not ideal. Mediation was requested on 12/15. No messages from mediator.",
+      "question": "I'm requesting support, please. I have a trade initated with [USER_REDACTED] on 12/11. Fiat payment was made. BTC not received. Communication is ... not ideal. Mediation was requested on 12/15. No messages from mediator.",
       "ground_truth": "who is your mediator? I am about to check my mediations now and it might be one of mine, there could have been a longer delay since last time I could check my cases",
       "answer": "It sounds like you're facing issues with your trade on Bisq Easy (Bisq 2). If you've already requested mediation and haven't received any responses from the mediator, you can try reaching out to them directly in the Support room of the Matrix Bisq space at bisq.chat. Additionally, ensure that the mediator is aware of your situation and any delays. If communication continues to be poor, you may want to consider escalating the issue within the community.",
       "contexts": [

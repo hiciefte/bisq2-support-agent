@@ -127,12 +127,34 @@ class Settings(BaseSettings):
     # ColBERT Reranking Settings
     COLBERT_MODEL: str = "colbert-ir/colbertv2.0"
     COLBERT_TOP_N: int = 5  # Number of documents to return after reranking
-    ENABLE_COLBERT_RERANK: bool = True  # Enable/disable ColBERT reranking
+    ENABLE_COLBERT_RERANK: bool = False  # Disabled by default; opt-in for production
 
     # Hybrid Search Weights (must sum to 1.0)
     # Optimized via RAGAS evaluation: 0.6/0.4 shows +6% faithfulness improvement
-    HYBRID_SEMANTIC_WEIGHT: float = 0.6  # Weight for dense/semantic vectors
-    HYBRID_KEYWORD_WEIGHT: float = 0.4  # Weight for sparse/BM25 vectors
+    HYBRID_SEMANTIC_WEIGHT: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for dense/semantic vectors in hybrid search",
+    )
+    HYBRID_KEYWORD_WEIGHT: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Weight for sparse/BM25 vectors in hybrid search",
+    )
+
+    @model_validator(mode="after")
+    def validate_hybrid_weights_sum(self) -> "Settings":
+        """Ensure HYBRID_SEMANTIC_WEIGHT + HYBRID_KEYWORD_WEIGHT == 1.0."""
+        total = self.HYBRID_SEMANTIC_WEIGHT + self.HYBRID_KEYWORD_WEIGHT
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"HYBRID_SEMANTIC_WEIGHT ({self.HYBRID_SEMANTIC_WEIGHT}) + "
+                f"HYBRID_KEYWORD_WEIGHT ({self.HYBRID_KEYWORD_WEIGHT}) must sum to 1.0, "
+                f"got {total}"
+            )
+        return self
 
     # BM25 Tokenizer Settings
     BM25_VOCABULARY_FILE: str = "bm25_vocabulary.json"  # Vocabulary file in DATA_DIR

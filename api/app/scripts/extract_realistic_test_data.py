@@ -16,6 +16,8 @@ Output:
 import json
 import logging
 import re
+import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -137,27 +139,26 @@ class QAPair:
 
 def is_excluded_message(text: str) -> bool:
     """Check if message matches exclusion patterns."""
-    text_lower = text.lower().strip()
+    text_stripped = text.strip()
     for pattern in EXCLUDE_QUESTION_PATTERNS:
-        if re.search(pattern, text_lower, re.IGNORECASE):
+        if re.search(pattern, text_stripped, re.IGNORECASE):
             return True
     return False
 
 
 def is_clarifying_question(text: str) -> bool:
     """Check if answer is just a clarifying question, not a real answer."""
-    text_lower = text.lower().strip()
+    text_stripped = text.strip()
     for pattern in EXCLUDE_ANSWER_PATTERNS:
-        if re.search(pattern, text_lower, re.IGNORECASE):
+        if re.search(pattern, text_stripped, re.IGNORECASE):
             return True
     return False
 
 
 def is_likely_question(text: str) -> bool:
     """Check if text is likely a substantive question or problem description."""
-    text_lower = text.lower()
     for pattern in QUESTION_INDICATORS:
-        if re.search(pattern, text_lower, re.IGNORECASE):
+        if re.search(pattern, text, re.IGNORECASE):
             return True
     return False
 
@@ -174,11 +175,14 @@ def extract_qa_pairs(data: dict) -> list[QAPair]:
     qa_pairs = []
     messages = data.get("messages", [])
 
+    # Pre-compute lowercase support staff set for efficient lookup
+    support_staff_lower = {s.lower() for s in SUPPORT_STAFF}
+
     logger.info(f"Processing {len(messages)} messages")
 
     for msg in messages:
         # Only consider messages from support staff that cite another message
-        if msg["author"].lower() not in {s.lower() for s in SUPPORT_STAFF}:
+        if msg["author"].lower() not in support_staff_lower:
             continue
 
         if "citation" not in msg:
@@ -190,7 +194,7 @@ def extract_qa_pairs(data: dict) -> list[QAPair]:
         answer_text = msg.get("message", "")
 
         # Skip if the cited message is from support staff (staff replying to staff)
-        if cited_author.lower() in {s.lower() for s in SUPPORT_STAFF}:
+        if cited_author.lower() in support_staff_lower:
             continue
 
         # Skip if question is too short or excluded
@@ -330,10 +334,10 @@ def main():
     # Load support chat data
     if not input_path.exists():
         logger.error(f"Support chat export not found: {input_path}")
-        return
+        sys.exit(1)
 
     logger.info(f"Loading support chat from {input_path}")
-    with open(input_path) as f:
+    with open(input_path, encoding="utf-8") as f:
         data = json.load(f)
 
     logger.info(f"Export metadata: {data.get('exportMetadata', {})}")
@@ -363,13 +367,13 @@ def main():
         print("EXTRACTED Q&A PAIRS")
         print("=" * 70)
         for i, sample in enumerate(samples):
-            print(f"\n[{i+1}] Q: {sample['question'][:100]}...")
+            print(f"\n[{i + 1}] Q: {sample['question'][:100]}...")
             print(f"    A: {sample['ground_truth'][:100]}...")
             print(f"    (by {sample['metadata']['answer_author']})")
 
     # Save output
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(samples, f, indent=2)
 
     logger.info(f"Saved {len(samples)} samples to {output_path}")
@@ -384,8 +388,6 @@ def main():
     print(f"Q&A pairs extracted: {len(samples)}")
     print(f"Output file: {output_path}")
     print("\nAnswer authors distribution:")
-    from collections import Counter
-
     author_counts = Counter(s["metadata"]["answer_author"] for s in samples)
     for author, count in author_counts.most_common():
         print(f"  {author}: {count}")

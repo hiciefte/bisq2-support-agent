@@ -9,6 +9,7 @@ set -e
 
 COMPOSE_CMD="docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml"
 ENV_FILE="docker/.env"
+ENV_FILE_BACKUP="${ENV_FILE}.optimization_backup"
 RESULTS_DIR="api/data/evaluation/optimization"
 
 # Configurations to test: "semantic_weight,keyword_weight,description"
@@ -19,7 +20,32 @@ CONFIGS=(
     "0.8,0.2,more_semantic"
 )
 
+# Cleanup function to restore original config
+cleanup() {
+    echo ""
+    echo "Cleaning up..."
+    if [ -f "$ENV_FILE_BACKUP" ]; then
+        echo "Restoring original configuration from backup..."
+        mv "$ENV_FILE_BACKUP" "$ENV_FILE"
+    fi
+    # Remove any leftover .bak files from sed
+    rm -f "${ENV_FILE}.bak"
+    # Restart API with restored config
+    echo "Restarting API with original configuration..."
+    $COMPOSE_CMD up -d api --force-recreate
+    echo "Cleanup complete."
+}
+
+# Register cleanup on script exit, interrupt, or termination
+trap cleanup EXIT INT TERM
+
 mkdir -p "$RESULTS_DIR"
+
+# Backup original env file before making changes
+if [ ! -f "$ENV_FILE_BACKUP" ]; then
+    echo "Backing up original configuration..."
+    cp "$ENV_FILE" "$ENV_FILE_BACKUP"
+fi
 
 echo "=========================================="
 echo "Manual Hyperparameter Optimization"
@@ -55,6 +81,7 @@ for config in "${CONFIGS[@]}"; do
     # Update environment
     sed -i.bak "s/HYBRID_SEMANTIC_WEIGHT=.*/HYBRID_SEMANTIC_WEIGHT=$semantic/" "$ENV_FILE"
     sed -i.bak "s/HYBRID_KEYWORD_WEIGHT=.*/HYBRID_KEYWORD_WEIGHT=$keyword/" "$ENV_FILE"
+    rm -f "${ENV_FILE}.bak"
 
     # Restart API with new config
     echo "Restarting API..."
@@ -76,14 +103,7 @@ for config in "${CONFIGS[@]}"; do
     echo "Completed: $desc"
 done
 
-# Restore original config
-echo ""
-echo "------------------------------------------"
-echo "Restoring original configuration..."
-sed -i.bak "s/HYBRID_SEMANTIC_WEIGHT=.*/HYBRID_SEMANTIC_WEIGHT=0.7/" "$ENV_FILE"
-sed -i.bak "s/HYBRID_KEYWORD_WEIGHT=.*/HYBRID_KEYWORD_WEIGHT=0.3/" "$ENV_FILE"
-$COMPOSE_CMD up -d api --force-recreate
-
+# Cleanup will be called automatically via trap
 echo ""
 echo "=========================================="
 echo "Optimization Complete!"
