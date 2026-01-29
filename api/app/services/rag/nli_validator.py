@@ -1,5 +1,6 @@
 """NLI Validator for answer entailment checking."""
 
+import asyncio
 import hashlib
 import logging
 import threading
@@ -162,6 +163,9 @@ class NLIValidator:
         """
         Check if answer is entailed by context (async version).
 
+        Offloads CPU-bound NLI inference to a thread pool to avoid
+        blocking the event loop.
+
         Args:
             context: Source text to check against
             answer: Generated answer to validate
@@ -182,8 +186,8 @@ class NLIValidator:
             self._add_to_cache(answer, context, 0.5)
             return 0.5
 
-        # Run inference
-        score = self._run_inference(context, answer)
+        # Run CPU-bound inference in thread pool to avoid blocking event loop
+        score = await asyncio.to_thread(self._run_inference, context, answer)
 
         # Cache result
         self._add_to_cache(answer, context, score)
@@ -204,24 +208,8 @@ class NLIValidator:
                 "hit_rate": hit_rate,
             }
 
-    async def batch_validate(
-        self, contexts: list[str], answers: list[str]
-    ) -> list[float]:
-        """
-        Batch validation for efficiency.
-
-        Args:
-            contexts: List of source texts
-            answers: List of answers to validate
-
-        Returns:
-            list[float]: List of entailment scores
-        """
-        # Return neutral scores if pipeline not available
-        if self.nli_pipeline is None:
-            return [0.5] * len(contexts)
-
-        pairs = [f"{c} [SEP] {a}" for c, a in zip(contexts, answers)]
+    def _batch_inference(self, pairs: list[str]) -> list[float]:
+        """Run batch NLI inference (internal method for thread offloading)."""
         results = self.nli_pipeline(pairs, top_k=3, batch_size=8)
 
         # Handle transformers v5 which can return nested list [[[{...}], ...]]
@@ -246,3 +234,58 @@ class NLIValidator:
                 scores.append(0.5 - (contradiction * 0.5))
 
         return scores
+
+    async def batch_validate(
+        self, contexts: list[str], answers: list[str], cache_results: bool = True
+    ) -> list[float]:
+        """
+        Batch validation for efficiency.
+
+        Offloads CPU-bound NLI inference to a thread pool and optionally
+        caches individual results for future single-item lookups.
+
+        Args:
+            contexts: List of source texts
+            answers: List of answers to validate
+            cache_results: Whether to cache individual results (default True)
+
+        Returns:
+            list[float]: List of entailment scores
+        """
+        # Return and cache neutral scores if pipeline not available
+        if self.nli_pipeline is None:
+            if cache_results:
+                for context, answer in zip(contexts, answers):
+                    self._add_to_cache(answer, context, 0.5)
+            return [0.5] * len(contexts)
+
+        # Check cache for each pair, collect uncached indices
+        scores: list[Optional[float]] = [None] * len(contexts)
+        uncached_indices: list[int] = []
+        uncached_pairs: list[str] = []
+
+        for i, (context, answer) in enumerate(zip(contexts, answers)):
+            cached = self._get_from_cache(answer, context)
+            if cached is not None:
+                scores[i] = cached
+            else:
+                uncached_indices.append(i)
+                uncached_pairs.append(f"{context} [SEP] {answer}")
+
+        # If all cached, return early
+        if not uncached_indices:
+            return [s for s in scores if s is not None]
+
+        # Run batch inference in thread pool for uncached items
+        batch_scores = await asyncio.to_thread(self._batch_inference, uncached_pairs)
+
+        # Populate results and optionally cache
+        for idx, batch_idx in enumerate(uncached_indices):
+            score = batch_scores[idx]
+            scores[batch_idx] = score
+            if cache_results:
+                context = contexts[batch_idx]
+                answer = answers[batch_idx]
+                self._add_to_cache(answer, context, score)
+
+        return [s for s in scores if s is not None]
