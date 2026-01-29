@@ -6,6 +6,36 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Simple hash function for non-secure contexts (HTTP).
+ * Uses djb2 algorithm as fallback when crypto.subtle is unavailable.
+ */
+function simpleHash(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
+  }
+  // Convert to unsigned 32-bit and then to hex
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Generate SHA-256 hash suffix, with fallback for non-secure contexts.
+ * crypto.subtle is only available in secure contexts (HTTPS/localhost).
+ */
+async function generateHashSuffix(input: string): Promise<string> {
+  // Check if crypto.subtle is available (secure context)
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 8);
+  }
+  // Fallback: use simple hash for HTTP contexts
+  return simpleHash(input);
+}
+
+/**
  * Generate FAQ slug from question and ID.
  * Mirrors the backend slug generation algorithm in api/app/services/faq/slug_manager.py
  *
@@ -43,13 +73,8 @@ export async function generateFaqSlug(question: string, faqId: string | number):
     }
   }
 
-  // Generate 8-char SHA256 hash suffix from FAQ ID
-  const idString = String(faqId);
-  const encoder = new TextEncoder();
-  const data = encoder.encode(idString);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashSuffix = hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 8);
+  // Generate 8-char hash suffix from FAQ ID (with fallback for HTTP)
+  const hashSuffix = await generateHashSuffix(String(faqId));
 
   // Handle empty or reserved slugs
   if (!slug || RESERVED_SLUGS.has(slug)) {
