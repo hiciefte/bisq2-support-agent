@@ -506,12 +506,13 @@ export default function ManageFaqsPage() {
      * Handle "View FAQ" click - open the public FAQ page in a new tab.
      * Bug fix: Previously tried to scroll to FAQ in admin list which often failed.
      */
-    const handleViewSimilarFaq = useCallback(async (faq: SimilarFAQItem) => {
+    const handleViewSimilarFaq = useCallback((faq: SimilarFAQItem) => {
         // Import the slug generator dynamically to avoid SSR issues
-        const { generateFaqSlug } = await import("@/lib/utils");
-        const slug = await generateFaqSlug(faq.question, faq.id);
-        // Open public FAQ page in new tab
-        window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+        import("@/lib/utils").then(({ generateFaqSlug }) => {
+            const slug = generateFaqSlug(faq.question, faq.id);
+            // Open public FAQ page in new tab
+            window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+        });
     }, []);
 
 

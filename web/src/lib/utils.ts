@@ -1,4 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
+import { sha256 } from "@noble/hashes/sha256"
+import { bytesToHex } from "@noble/hashes/utils"
 import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
@@ -6,33 +8,18 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Simple hash function for non-secure contexts (HTTP).
- * Uses djb2 algorithm as fallback when crypto.subtle is unavailable.
+ * Generate SHA-256 hash suffix using @noble/hashes.
+ * This provides consistent hashing in both secure (HTTPS) and non-secure (HTTP) contexts.
+ * The @noble/hashes library is a pure-JS implementation that works everywhere.
+ *
+ * @param input - The string to hash
+ * @returns First 8 characters of the SHA-256 hex digest
  */
-function simpleHash(str: string): string {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
-  }
-  // Convert to unsigned 32-bit and then to hex
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-/**
- * Generate SHA-256 hash suffix, with fallback for non-secure contexts.
- * crypto.subtle is only available in secure contexts (HTTPS/localhost).
- */
-async function generateHashSuffix(input: string): Promise<string> {
-  // Check if crypto.subtle is available (secure context)
-  if (typeof crypto !== "undefined" && crypto.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(input);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 8);
-  }
-  // Fallback: use simple hash for HTTP contexts
-  return simpleHash(input);
+function generateHashSuffix(input: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hash = sha256(data);
+  return bytesToHex(hash).slice(0, 8);
 }
 
 /**
@@ -43,7 +30,7 @@ async function generateHashSuffix(input: string): Promise<string> {
  * @param faqId - The FAQ ID (string or number)
  * @returns URL-safe slug string
  */
-export async function generateFaqSlug(question: string, faqId: string | number): Promise<string> {
+export function generateFaqSlug(question: string, faqId: string | number): string {
   const MAX_SLUG_LENGTH = 60;
   const RESERVED_SLUGS = new Set([
     "admin", "api", "static", "assets", "health", "metrics",
@@ -73,8 +60,8 @@ export async function generateFaqSlug(question: string, faqId: string | number):
     }
   }
 
-  // Generate 8-char hash suffix from FAQ ID (with fallback for HTTP)
-  const hashSuffix = await generateHashSuffix(String(faqId));
+  // Generate 8-char hash suffix from FAQ ID
+  const hashSuffix = generateHashSuffix(String(faqId));
 
   // Handle empty or reserved slugs
   if (!slug || RESERVED_SLUGS.has(slug)) {

@@ -208,7 +208,7 @@ class TestAlertsEndpoint:
         from app.main import app
 
         # Inject mock matrix service
-        app.state.matrix_shadow_service = mock_matrix_service
+        app.state.matrix_alert_service = mock_matrix_service
 
         client = TestClient(app)
         response = client.post("/alertmanager/alerts", json=sample_alert_payload)
@@ -225,7 +225,7 @@ class TestAlertsEndpoint:
         """Test processing multiple alerts in one payload."""
         from app.main import app
 
-        app.state.matrix_shadow_service = mock_matrix_service
+        app.state.matrix_alert_service = mock_matrix_service
 
         payload = {
             "receiver": "matrix-notifications",
@@ -257,8 +257,8 @@ class TestAlertsEndpoint:
         from app.main import app
 
         # Remove matrix service
-        if hasattr(app.state, "matrix_shadow_service"):
-            delattr(app.state, "matrix_shadow_service")
+        if hasattr(app.state, "matrix_alert_service"):
+            delattr(app.state, "matrix_alert_service")
 
         client = TestClient(app)
         response = client.post("/alertmanager/alerts", json=sample_alert_payload)
@@ -279,7 +279,7 @@ class TestAlertsEndpoint:
         mock_matrix_service.send_alert_message = AsyncMock(
             side_effect=Exception("Matrix connection failed")
         )
-        app.state.matrix_shadow_service = mock_matrix_service
+        app.state.matrix_alert_service = mock_matrix_service
 
         client = TestClient(app)
         response = client.post("/alertmanager/alerts", json=sample_alert_payload)

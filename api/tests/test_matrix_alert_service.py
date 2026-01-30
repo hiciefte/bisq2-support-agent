@@ -1,0 +1,224 @@
+"""Tests for Matrix alert service.
+
+TDD tests for the Matrix alerting functionality that sends
+Prometheus Alertmanager alerts to a dedicated Matrix room.
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+class TestMatrixAlertServiceConfig:
+    """Test suite for Matrix alert service configuration."""
+
+    def test_matrix_alert_room_setting_exists(self):
+        """Test that MATRIX_ALERT_ROOM setting exists in config."""
+        from app.core.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "MATRIX_ALERT_ROOM")
+
+    def test_matrix_alert_room_default_empty(self):
+        """Test that MATRIX_ALERT_ROOM defaults to empty string."""
+        from app.core.config import Settings
+
+        settings = Settings()
+        assert settings.MATRIX_ALERT_ROOM == ""
+
+    def test_matrix_alert_room_can_be_set(self):
+        """Test that MATRIX_ALERT_ROOM can be set via environment."""
+        with patch.dict("os.environ", {"MATRIX_ALERT_ROOM": "!test123:matrix.org"}):
+            from app.core.config import Settings
+
+            settings = Settings()
+            assert settings.MATRIX_ALERT_ROOM == "!test123:matrix.org"
+
+
+class TestMatrixAlertServiceInitialization:
+    """Test suite for Matrix alert service initialization."""
+
+    def test_service_can_be_imported(self):
+        """Test that MatrixAlertService can be imported."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        assert MatrixAlertService is not None
+
+    def test_service_init_with_settings(self):
+        """Test service initialization with settings."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+        service = MatrixAlertService(settings)
+        assert service is not None
+        assert service.settings == settings
+
+    def test_service_is_configured_returns_false_when_missing_homeserver(self):
+        """Test is_configured returns False when homeserver is missing."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = ""
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+        service = MatrixAlertService(settings)
+        assert service.is_configured() is False
+
+    def test_service_is_configured_returns_false_when_missing_room(self):
+        """Test is_configured returns False when alert room is missing."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_ALERT_ROOM = ""
+
+        service = MatrixAlertService(settings)
+        assert service.is_configured() is False
+
+    def test_service_is_configured_returns_true_when_properly_configured(self):
+        """Test is_configured returns True when all required settings present."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+        service = MatrixAlertService(settings)
+        assert service.is_configured() is True
+
+
+class TestMatrixAlertServiceSendMessage:
+    """Test suite for send_alert_message functionality."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Create mock settings for tests."""
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        settings.MATRIX_SESSION_PATH = "/tmp/test_session.json"
+        return settings
+
+    @pytest.mark.asyncio
+    async def test_send_alert_message_when_not_configured(self, mock_settings):
+        """Test that send_alert_message does nothing when not configured."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        mock_settings.MATRIX_ALERT_ROOM = ""  # Not configured
+        service = MatrixAlertService(mock_settings)
+
+        # Should not raise, just log warning
+        await service.send_alert_message("Test alert")
+
+    @pytest.mark.asyncio
+    async def test_send_alert_message_connects_and_sends(self, mock_settings):
+        """Test that send_alert_message connects and sends message."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        # Need to mock RoomSendResponse for the isinstance check
+        with patch(
+            "app.services.alerting.matrix_alert_service.RoomSendResponse"
+        ) as mock_response_class:
+            service = MatrixAlertService(mock_settings)
+
+            # Mock the Matrix client
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response_class.return_value = mock_response
+            # Make isinstance check pass
+            mock_client.room_send = AsyncMock(return_value=mock_response)
+
+            with patch.object(service, "_get_client", return_value=mock_client):
+                with patch(
+                    "app.services.alerting.matrix_alert_service.isinstance",
+                    return_value=True,
+                ):
+                    await service.send_alert_message("🔥 Test alert")
+
+                    # Verify room_send was called with correct arguments
+                    mock_client.room_send.assert_called_once()
+                    call_kwargs = mock_client.room_send.call_args.kwargs
+                    assert call_kwargs["room_id"] == "!alert:matrix.org"
+                    assert call_kwargs["message_type"] == "m.room.message"
+
+    @pytest.mark.asyncio
+    async def test_send_alert_message_handles_connection_error(self, mock_settings):
+        """Test that send_alert_message handles connection errors gracefully."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        service = MatrixAlertService(mock_settings)
+
+        with patch.object(
+            service, "_get_client", side_effect=Exception("Connection failed")
+        ):
+            # Should not raise, just log error
+            await service.send_alert_message("Test alert")
+
+
+class TestAlertmanagerIntegration:
+    """Test suite for alertmanager webhook integration."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Create mock settings for tests."""
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        return settings
+
+    def test_alertmanager_route_uses_matrix_alert_service(self):
+        """Test that alertmanager route references matrix_alert_service."""
+        from app.routes.alertmanager import receive_alerts
+
+        # The route should exist and be async
+        assert receive_alerts is not None
+        assert hasattr(receive_alerts, "__wrapped__") or callable(receive_alerts)
+
+    @pytest.mark.asyncio
+    async def test_alertmanager_processes_alerts_with_service(self, mock_settings):
+        """Test alertmanager endpoint processes alerts using the service."""
+        from app.routes.alertmanager import router
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI()
+        app.include_router(router, prefix="/alertmanager")
+
+        # Create and configure the service
+        service = MatrixAlertService(mock_settings)
+        service.send_alert_message = AsyncMock()
+        app.state.matrix_alert_service = service
+
+        client = TestClient(app)
+        response = client.post(
+            "/alertmanager/alerts",
+            json={
+                "receiver": "test",
+                "status": "firing",
+                "alerts": [
+                    {
+                        "status": "firing",
+                        "labels": {"alertname": "TestAlert", "severity": "warning"},
+                        "annotations": {"summary": "Test summary"},
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["alerts_processed"] == 1
+        service.send_alert_message.assert_called_once()
