@@ -9,6 +9,106 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+class TestMatrixAlertSettingsProtocol:
+    """Test suite for MatrixAlertSettings Protocol type safety."""
+
+    def test_protocol_can_be_imported(self):
+        """Test that MatrixAlertSettings Protocol can be imported."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
+
+        assert MatrixAlertSettings is not None
+
+    def test_protocol_defines_required_attributes(self):
+        """Test that Protocol defines all required Matrix settings attributes."""
+        from typing import get_type_hints
+
+        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
+
+        # Protocol should define these attributes
+        hints = get_type_hints(MatrixAlertSettings)
+        assert "MATRIX_HOMESERVER_URL" in hints
+        assert "MATRIX_USER" in hints
+        assert "MATRIX_ALERT_ROOM" in hints
+
+    def test_settings_class_satisfies_protocol(self):
+        """Test that Settings class satisfies MatrixAlertSettings Protocol."""
+        from app.core.config import Settings
+        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
+
+        # Settings should have all required attributes
+        settings = Settings()
+        assert hasattr(settings, "MATRIX_HOMESERVER_URL")
+        assert hasattr(settings, "MATRIX_USER")
+        assert hasattr(settings, "MATRIX_ALERT_ROOM")
+
+        # Should be usable where MatrixAlertSettings is expected (duck typing)
+        # This verifies structural subtyping works
+        def accepts_settings(s: MatrixAlertSettings) -> str:
+            return s.MATRIX_HOMESERVER_URL
+
+        result = accepts_settings(settings)
+        assert isinstance(result, str)
+
+
+class TestMatrixAlertServiceSessionPath:
+    """Test suite for session path portability."""
+
+    def test_uses_explicit_alert_session_path_when_set(self):
+        """Test that explicit MATRIX_ALERT_SESSION_PATH is used when set."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        settings.MATRIX_ALERT_SESSION_PATH = "/custom/path/alert_session.json"
+        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+
+        service = MatrixAlertService(settings)
+        session_path = service._get_session_path()
+
+        assert session_path == "/custom/path/alert_session.json"
+
+    def test_derives_path_from_session_file_directory(self):
+        """Test that path is derived from MATRIX_SESSION_FILE directory."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        # No explicit alert session path
+        del settings.MATRIX_ALERT_SESSION_PATH
+        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+
+        service = MatrixAlertService(settings)
+        session_path = service._get_session_path()
+
+        # Should derive from same directory as MATRIX_SESSION_FILE
+        assert session_path == "/data/matrix_alert_session.json"
+
+    def test_uses_default_when_no_paths_configured(self):
+        """Test fallback to default path when nothing is configured."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        # No paths configured
+        del settings.MATRIX_ALERT_SESSION_PATH
+        del settings.MATRIX_SESSION_FILE
+
+        service = MatrixAlertService(settings)
+        session_path = service._get_session_path()
+
+        # Should use sensible default
+        assert session_path == "/data/matrix_alert_session.json"
+
+
 class TestMatrixAlertServiceConfig:
     """Test suite for Matrix alert service configuration."""
 

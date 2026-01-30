@@ -10,8 +10,9 @@ Architecture:
 
 import html
 import logging
+import os
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, runtime_checkable
 
 try:
     from nio import AsyncClient, RoomSendResponse
@@ -23,6 +24,27 @@ except ImportError:
     RoomSendResponse = None
 
 logger = logging.getLogger(__name__)
+
+# Default session path for Docker environments
+DEFAULT_ALERT_SESSION_PATH = "/data/matrix_alert_session.json"
+
+
+@runtime_checkable
+class MatrixAlertSettings(Protocol):
+    """Protocol defining required settings for Matrix alerting.
+
+    This Protocol enables static type checking while allowing any
+    settings object that has the required attributes (structural subtyping).
+
+    Attributes:
+        MATRIX_HOMESERVER_URL: Matrix homeserver URL (e.g., https://matrix.org)
+        MATRIX_USER: Matrix bot user ID (e.g., @bot:matrix.org)
+        MATRIX_ALERT_ROOM: Room ID for alert notifications
+    """
+
+    MATRIX_HOMESERVER_URL: str
+    MATRIX_USER: str
+    MATRIX_ALERT_ROOM: str
 
 
 class MatrixAlertService:
@@ -36,16 +58,42 @@ class MatrixAlertService:
         settings: Application settings with Matrix configuration
     """
 
-    def __init__(self, settings: Any):
+    def __init__(self, settings: MatrixAlertSettings):
         """Initialize Matrix alert service.
 
         Args:
-            settings: Application settings with Matrix configuration
+            settings: Application settings satisfying MatrixAlertSettings Protocol
         """
         self.settings = settings
         self._client: Optional["AsyncClient"] = None
         self._connection_manager: Optional[Any] = None
         self._session_manager: Optional[Any] = None
+
+    def _get_session_path(self) -> str:
+        """Get the session file path for alert service.
+
+        Priority:
+        1. Explicit MATRIX_ALERT_SESSION_PATH if set
+        2. Derived from MATRIX_SESSION_FILE directory (same dir, different filename)
+        3. Default fallback path
+
+        Returns:
+            Path to the alert session file
+        """
+        # 1. Check for explicit alert session path
+        explicit_path = getattr(self.settings, "MATRIX_ALERT_SESSION_PATH", None)
+        if explicit_path:
+            return explicit_path
+
+        # 2. Derive from MATRIX_SESSION_FILE directory
+        session_file = getattr(self.settings, "MATRIX_SESSION_FILE", None)
+        if session_file:
+            directory = os.path.dirname(session_file)
+            if directory:
+                return os.path.join(directory, "matrix_alert_session.json")
+
+        # 3. Default fallback
+        return DEFAULT_ALERT_SESSION_PATH
 
     def is_configured(self) -> bool:
         """Check if Matrix alerting is configured.
@@ -80,9 +128,7 @@ class MatrixAlertService:
         homeserver = self.settings.MATRIX_HOMESERVER_URL
         user_id = self.settings.MATRIX_USER
         password = getattr(self.settings, "MATRIX_PASSWORD", "")
-        session_path = getattr(
-            self.settings, "MATRIX_SESSION_PATH", "/data/matrix_alert_session.json"
-        )
+        session_path = self._get_session_path()
 
         # Create client
         self._client = AsyncClient(homeserver, user_id)
