@@ -193,6 +193,19 @@ async def lifespan(app: FastAPI):
     app.state.unified_pipeline_service = unified_pipeline_service
     logger.info("UnifiedPipelineService initialized")
 
+    # Initialize Matrix alert service for Alertmanager notifications
+    logger.info("Initializing MatrixAlertService...")
+    from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+    matrix_alert_service = MatrixAlertService(settings)
+    app.state.matrix_alert_service = matrix_alert_service
+    if matrix_alert_service.is_configured():
+        logger.info(
+            f"MatrixAlertService initialized, alerts will be sent to {settings.MATRIX_ALERT_ROOM}"
+        )
+    else:
+        logger.info("MatrixAlertService not configured (MATRIX_ALERT_ROOM not set)")
+
     # Initialize LearningEngine for adaptive threshold tuning
     logger.info("Initializing LearningEngine...")
     learning_engine = LearningEngine()
@@ -227,6 +240,11 @@ async def lifespan(app: FastAPI):
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
         await app.state.tor_monitoring_service.stop()
+
+    # Close Matrix alert service
+    if hasattr(app.state, "matrix_alert_service") and app.state.matrix_alert_service:
+        logger.info("Closing Matrix alert service...")
+        await app.state.matrix_alert_service.close()
 
     # Clean up Bisq MCP service
     if hasattr(app.state, "bisq_mcp_service") and app.state.bisq_mcp_service:

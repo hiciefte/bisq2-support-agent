@@ -172,12 +172,12 @@ async def receive_alerts(
     Returns:
         AlertResponse with status and count of processed alerts
     """
-    # Get matrix service from app state
-    matrix_service = getattr(request.app.state, "matrix_shadow_service", None)
+    # Get matrix alert service from app state
+    matrix_service = getattr(request.app.state, "matrix_alert_service", None)
 
     if not matrix_service:
         logger.warning(
-            "Matrix shadow service not available, alerts will not be sent to Matrix"
+            "Matrix alert service not available, alerts will not be sent to Matrix"
         )
         return AlertResponse(
             status="ok",

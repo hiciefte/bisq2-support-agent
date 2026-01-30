@@ -687,11 +687,12 @@ export function TrainingReviewItem({
           <SimilarFaqsPanel
             similarFaqs={similarFaqs}
             isLoading={isCheckingSimilarity}
-            onViewFaq={async (faq) => {
+            onViewFaq={(faq) => {
               // Use public FAQ URL with slug (consistent with FAQ Management)
-              const { generateFaqSlug } = await import("@/lib/utils");
-              const slug = await generateFaqSlug(faq.question, faq.id);
-              window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+              import("@/lib/utils").then(({ generateFaqSlug }) => {
+                const slug = generateFaqSlug(faq.question, faq.id);
+                window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer");
+              });
             }}
           />
 

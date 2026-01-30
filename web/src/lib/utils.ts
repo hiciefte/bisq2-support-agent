@@ -1,8 +1,25 @@
 import { clsx, type ClassValue } from "clsx"
+import { sha256 } from "@noble/hashes/sha256"
+import { bytesToHex } from "@noble/hashes/utils"
 import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+/**
+ * Generate SHA-256 hash suffix using @noble/hashes.
+ * This provides consistent hashing in both secure (HTTPS) and non-secure (HTTP) contexts.
+ * The @noble/hashes library is a pure-JS implementation that works everywhere.
+ *
+ * @param input - The string to hash
+ * @returns First 8 characters of the SHA-256 hex digest
+ */
+function generateHashSuffix(input: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hash = sha256(data);
+  return bytesToHex(hash).slice(0, 8);
 }
 
 /**
@@ -13,7 +30,7 @@ export function cn(...inputs: ClassValue[]) {
  * @param faqId - The FAQ ID (string or number)
  * @returns URL-safe slug string
  */
-export async function generateFaqSlug(question: string, faqId: string | number): Promise<string> {
+export function generateFaqSlug(question: string, faqId: string | number): string {
   const MAX_SLUG_LENGTH = 60;
   const RESERVED_SLUGS = new Set([
     "admin", "api", "static", "assets", "health", "metrics",
@@ -43,13 +60,8 @@ export async function generateFaqSlug(question: string, faqId: string | number):
     }
   }
 
-  // Generate 8-char SHA256 hash suffix from FAQ ID
-  const idString = String(faqId);
-  const encoder = new TextEncoder();
-  const data = encoder.encode(idString);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashSuffix = hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 8);
+  // Generate 8-char hash suffix from FAQ ID
+  const hashSuffix = generateHashSuffix(String(faqId));
 
   // Handle empty or reserved slugs
   if (!slug || RESERVED_SLUGS.has(slug)) {

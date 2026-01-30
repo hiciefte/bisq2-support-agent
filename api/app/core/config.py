@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     )
     MATRIX_TOKEN: str = ""  # DEPRECATED: Access token (use MATRIX_PASSWORD instead)
     MATRIX_ROOMS: str | list[str] = ""  # Room IDs to monitor (comma-separated or list)
+    MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
     MATRIX_SESSION_FILE: str = (
         "matrix_session.json"  # Session filename (relative to DATA_DIR)
     )
