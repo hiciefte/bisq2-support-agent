@@ -452,7 +452,7 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-protobuf==6.33.4
+protobuf==6.33.5
     # via
     #   googleapis-common-protos
     #   onnxruntime
@@ -537,7 +537,7 @@ python-multipart==0.0.22
     # via mcp
 python-socks[asyncio]==2.8.0
     # via aiohttp-socks
-pytokens==0.4.0
+pytokens==0.4.1
     # via black
 pyyaml==6.0.3
     # via
