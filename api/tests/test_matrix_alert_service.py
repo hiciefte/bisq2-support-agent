@@ -109,6 +109,75 @@ class TestMatrixAlertServiceSessionPath:
         assert session_path == "/data/matrix_alert_session.json"
 
 
+class TestMatrixAlertServiceConcurrency:
+    """Test suite for concurrent initialization safety."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Create mock settings for tests."""
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_USER = "@bot:matrix.org"
+        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+        return settings
+
+    @pytest.mark.asyncio
+    async def test_concurrent_get_client_calls_only_init_once(self, mock_settings):
+        """Test that concurrent _get_client calls only initialize once."""
+        import asyncio
+
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        service = MatrixAlertService(mock_settings)
+        init_count = 0
+
+        async def mock_connect():
+            nonlocal init_count
+            init_count += 1
+            await asyncio.sleep(0.1)  # Simulate slow connection
+
+        with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
+            with patch(
+                "app.integrations.matrix.connection_manager.ConnectionManager"
+            ) as mock_cm:
+                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                    mock_cm.return_value.connect = mock_connect
+
+                    # Launch multiple concurrent calls
+                    tasks = [service._get_client() for _ in range(5)]
+                    await asyncio.gather(*tasks)
+
+                    # Should only have initialized once despite 5 concurrent calls
+                    assert init_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_connect_cleans_up_state(self, mock_settings):
+        """Test that failed connection attempt cleans up partial state."""
+        from app.services.alerting.matrix_alert_service import MatrixAlertService
+
+        service = MatrixAlertService(mock_settings)
+
+        with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
+            with patch(
+                "app.integrations.matrix.connection_manager.ConnectionManager"
+            ) as mock_cm:
+                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                    mock_cm.return_value.connect = AsyncMock(
+                        side_effect=Exception("Connection failed")
+                    )
+
+                    # Should raise the exception
+                    with pytest.raises(Exception, match="Connection failed"):
+                        await service._get_client()
+
+                    # State should be cleaned up
+                    assert service._client is None
+                    assert service._connection_manager is None
+                    assert service._session_manager is None
+
+
 class TestMatrixAlertServiceConfig:
     """Test suite for Matrix alert service configuration."""
 

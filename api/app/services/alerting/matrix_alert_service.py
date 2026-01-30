@@ -8,6 +8,7 @@ Architecture:
     Alertmanager -> POST /alertmanager/alerts -> MatrixAlertService -> Matrix room
 """
 
+import asyncio
 import html
 import logging
 import os
@@ -68,6 +69,7 @@ class MatrixAlertService:
         self._client: Optional["AsyncClient"] = None
         self._connection_manager: Optional[Any] = None
         self._session_manager: Optional[Any] = None
+        self._init_lock = asyncio.Lock()
 
     def _get_session_path(self) -> str:
         """Get the session file path for alert service.
@@ -108,6 +110,10 @@ class MatrixAlertService:
     async def _get_client(self) -> "AsyncClient":
         """Get or create authenticated Matrix client.
 
+        Thread-safe initialization using asyncio.Lock to prevent
+        concurrent connection attempts. Failed connections clean up
+        partial state to allow retry.
+
         Returns:
             Authenticated AsyncClient instance
 
@@ -118,38 +124,53 @@ class MatrixAlertService:
         if not NIO_AVAILABLE:
             raise ImportError("matrix-nio is not installed")
 
+        # Fast path: already initialized
         if self._client is not None:
             return self._client
 
-        # Import here to avoid circular imports
-        from app.integrations.matrix.connection_manager import ConnectionManager
-        from app.integrations.matrix.session_manager import SessionManager
+        # Serialize initialization to prevent concurrent connection attempts
+        async with self._init_lock:
+            # Double-check after acquiring lock (another task may have initialized)
+            if self._client is not None:
+                return self._client
 
-        homeserver = self.settings.MATRIX_HOMESERVER_URL
-        user_id = self.settings.MATRIX_USER
-        password = getattr(self.settings, "MATRIX_PASSWORD", "")
-        session_path = self._get_session_path()
+            # Import here to avoid circular imports
+            from app.integrations.matrix.connection_manager import ConnectionManager
+            from app.integrations.matrix.session_manager import SessionManager
 
-        # Create client
-        self._client = AsyncClient(homeserver, user_id)
+            homeserver = self.settings.MATRIX_HOMESERVER_URL
+            user_id = self.settings.MATRIX_USER
+            password = getattr(self.settings, "MATRIX_PASSWORD", "")
+            session_path = self._get_session_path()
 
-        # Create session manager for password-based auth
-        self._session_manager = SessionManager(
-            client=self._client,
-            password=password,
-            session_file=session_path,
-        )
+            try:
+                # Create client
+                self._client = AsyncClient(homeserver, user_id)
 
-        # Create connection manager
-        self._connection_manager = ConnectionManager(
-            client=self._client,
-            session_manager=self._session_manager,
-        )
+                # Create session manager for password-based auth
+                self._session_manager = SessionManager(
+                    client=self._client,
+                    password=password,
+                    session_file=session_path,
+                )
 
-        # Connect (handles login and session persistence)
-        await self._connection_manager.connect()
+                # Create connection manager
+                self._connection_manager = ConnectionManager(
+                    client=self._client,
+                    session_manager=self._session_manager,
+                )
 
-        return self._client
+                # Connect (handles login and session persistence)
+                await self._connection_manager.connect()
+
+                return self._client
+
+            except Exception:
+                # Clean up partial state on failure to allow retry
+                self._client = None
+                self._connection_manager = None
+                self._session_manager = None
+                raise
 
     async def send_alert_message(self, message: str) -> bool:
         """Send an alert message to the Matrix alert room.
