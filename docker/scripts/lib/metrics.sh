@@ -80,7 +80,7 @@ report_faq_extraction_metrics() {
     local encoded_key
     encoded_key=$(url_encode "$ADMIN_API_KEY")
 
-    curl -s -X POST "$METRICS_ENDPOINT/faq-extraction?provided_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/faq-extraction?api_key=${encoded_key}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report FAQ extraction metrics" >&2
@@ -111,7 +111,7 @@ report_wiki_update_metrics() {
     local encoded_key
     encoded_key=$(url_encode "$ADMIN_API_KEY")
 
-    curl -s -X POST "$METRICS_ENDPOINT/wiki-update?provided_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/wiki-update?api_key=${encoded_key}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report wiki update metrics" >&2
@@ -142,7 +142,7 @@ report_feedback_processing_metrics() {
     local encoded_key
     encoded_key=$(url_encode "$ADMIN_API_KEY")
 
-    curl -s -X POST "$METRICS_ENDPOINT/feedback-processing?provided_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/feedback-processing?api_key=${encoded_key}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report feedback processing metrics" >&2
