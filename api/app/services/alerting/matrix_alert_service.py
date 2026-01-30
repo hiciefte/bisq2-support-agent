@@ -8,6 +8,7 @@ Architecture:
     Alertmanager -> POST /alertmanager/alerts -> MatrixAlertService -> Matrix room
 """
 
+import html
 import logging
 import re
 from typing import Any, Optional
@@ -156,13 +157,15 @@ class MatrixAlertService:
             text: Text with simple markdown (bold, newlines)
 
         Returns:
-            HTML formatted text
+            HTML formatted text with special characters escaped
         """
+        # First escape HTML special characters to prevent XSS
+        escaped = html.escape(text)
         # Convert **bold** to <strong>bold</strong>
-        html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
         # Convert newlines to <br>
-        html = html.replace("\n", "<br>")
-        return html
+        result = result.replace("\n", "<br>")
+        return result
 
     async def close(self) -> None:
         """Close the Matrix client connection.
