@@ -145,8 +145,8 @@ class MatrixAlertService:
                 logger.error(f"Failed to send alert to Matrix: {response}")
                 return False
 
-        except Exception as e:
-            logger.exception(f"Error sending alert to Matrix: {e}")
+        except Exception:
+            logger.exception("Error sending alert to Matrix")
             return False
 
     def _markdown_to_html(self, text: str) -> str:
@@ -165,13 +165,19 @@ class MatrixAlertService:
         return html
 
     async def close(self) -> None:
-        """Close the Matrix client connection."""
-        if self._client is not None:
-            try:
+        """Close the Matrix client connection.
+
+        Uses ConnectionManager.disconnect() to properly update metrics
+        and connection state flags.
+        """
+        try:
+            if self._connection_manager is not None:
+                await self._connection_manager.disconnect()
+            elif self._client is not None:
                 await self._client.close()
-            except Exception as e:
-                logger.warning(f"Error closing Matrix alert client: {e}")
-            finally:
-                self._client = None
-                self._connection_manager = None
-                self._session_manager = None
+        except Exception:
+            logger.warning("Error closing Matrix alert client")
+        finally:
+            self._client = None
+            self._connection_manager = None
+            self._session_manager = None
