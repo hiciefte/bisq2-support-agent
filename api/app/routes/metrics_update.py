@@ -8,7 +8,7 @@ This API provides HTTP endpoints that cron scripts can call to record task outco
 
 from typing import Literal, Optional
 
-from app.core.security import verify_admin_key
+from app.core.security import verify_admin_access
 from app.metrics.task_metrics import (
     record_faq_extraction_failure,
     record_faq_extraction_success,
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 router = APIRouter(
     prefix="/admin/metrics",
     tags=["Metrics"],
-    dependencies=[Depends(verify_admin_key)],
+    dependencies=[Depends(verify_admin_access)],
 )
 
 
