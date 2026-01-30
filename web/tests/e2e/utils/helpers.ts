@@ -128,15 +128,44 @@ export async function loginAsAdmin(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Use domcontentloaded for more reliable navigation
+      // Use domcontentloaded - faster and doesn't wait for all network requests
       await page.goto(`${baseUrl}/admin`, {
         waitUntil: 'domcontentloaded',
         timeout: 20000
       });
-      await page.getByLabel('API Key').waitFor({ timeout: 15000 });
-      await page.getByLabel('API Key').fill(apiKey);
+
+      // Wait for the loading spinner to disappear (SecureAuth component finishes auth check)
+      // The spinner has animate-spin class, wait for it to be gone
+      try {
+        await page.waitForSelector('svg.animate-spin', { state: 'attached', timeout: 2000 });
+        // If spinner found, wait for it to disappear
+        await page.waitForSelector('svg.animate-spin', { state: 'detached', timeout: 30000 });
+      } catch {
+        // Spinner may not appear if auth check is fast, that's ok
+      }
+
+      // Wait for either the login form or dashboard to appear (handles both logged-out and logged-in states)
+      const loginFormOrDashboard = await Promise.race([
+        page.waitForSelector('input#apiKey', { timeout: 20000 }).then(() => 'login'),
+        page.waitForSelector('text=Admin Dashboard', { timeout: 20000 }).then(() => 'dashboard'),
+        page.waitForSelector('h1:has-text("Overview")', { timeout: 20000 }).then(() => 'dashboard'),
+      ]);
+
+      if (loginFormOrDashboard === 'dashboard') {
+        // Already authenticated, we're done
+        console.log('loginAsAdmin: Already authenticated');
+        return;
+      }
+
+      // Fill in the login form using the input ID directly
+      await page.fill('input#apiKey', apiKey);
       await page.click('button:has-text("Login")');
-      await page.waitForSelector('text=Admin Dashboard', { timeout: 15000 });
+
+      // Wait for successful login - check for dashboard content
+      await Promise.race([
+        page.waitForSelector('text=Admin Dashboard', { timeout: 15000 }),
+        page.waitForSelector('h1:has-text("Overview")', { timeout: 15000 }),
+      ]);
       return; // Success
     } catch (error) {
       lastError = error as Error;
