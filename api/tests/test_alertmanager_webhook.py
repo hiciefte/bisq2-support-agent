@@ -68,7 +68,7 @@ def sample_resolved_payload():
 
 @pytest.fixture
 def mock_matrix_service():
-    """Mock Matrix shadow mode service."""
+    """Mock Matrix alert service."""
     service = MagicMock()
     service.send_alert_message = AsyncMock(return_value=True)
     return service

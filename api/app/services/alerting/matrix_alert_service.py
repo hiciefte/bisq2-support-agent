@@ -9,6 +9,7 @@ Architecture:
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 try:
@@ -145,7 +146,7 @@ class MatrixAlertService:
                 return False
 
         except Exception as e:
-            logger.error(f"Error sending alert to Matrix: {e}")
+            logger.exception(f"Error sending alert to Matrix: {e}")
             return False
 
     def _markdown_to_html(self, text: str) -> str:
@@ -157,8 +158,6 @@ class MatrixAlertService:
         Returns:
             HTML formatted text
         """
-        import re
-
         # Convert **bold** to <strong>bold</strong>
         html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
         # Convert newlines to <br>
