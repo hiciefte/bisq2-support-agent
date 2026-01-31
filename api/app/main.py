@@ -11,25 +11,17 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import aisuite  # type: ignore[import-untyped]
+from app.channels.lifecycle import create_channel_gateway
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
 from app.db.run_migrations import run_migrations
-from app.metrics.tor_metrics import (
-    update_cookie_security_mode,
-    update_tor_service_configured,
-)
+from app.metrics.tor_metrics import (update_cookie_security_mode,
+                                     update_tor_service_configured)
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
-from app.routes import (
-    alertmanager,
-    chat,
-    feedback_routes,
-    health,
-    metrics_update,
-    onion_verify,
-    public_faqs,
-)
+from app.routes import (alertmanager, chat, feedback_routes, health, metrics_update,
+                        onion_verify, public_faqs)
 from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq_service import FAQService
@@ -151,6 +143,19 @@ async def lifespan(app: FastAPI):
     app.state.public_faq_service = public_faq_service
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
+
+    # Initialize Channel Gateway with default middleware hooks
+    logger.info("Initializing Channel Gateway...")
+    channel_gateway = create_channel_gateway(
+        rag_service=rag_service,
+        register_default_hooks=True,
+        rate_limit_capacity=20,
+        rate_limit_refill_rate=1.0,
+    )
+    app.state.channel_gateway = channel_gateway
+    logger.info(
+        f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"
+    )
 
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
@@ -374,16 +379,10 @@ async def metrics(request: Request, settings: Settings = Depends(get_settings)):
     Defense-in-depth: Also enforces IP allowlist in production to fail closed if nginx misconfigured.
     """
     # Import here to avoid circular dependency
-    from app.routes.admin.analytics import (
-        FEEDBACK_HELPFUL,
-        FEEDBACK_HELPFUL_RATE,
-        FEEDBACK_TOTAL,
-        FEEDBACK_UNHELPFUL,
-        ISSUE_COUNT,
-        SOURCE_HELPFUL,
-        SOURCE_HELPFUL_RATE,
-        SOURCE_TOTAL,
-    )
+    from app.routes.admin.analytics import (FEEDBACK_HELPFUL, FEEDBACK_HELPFUL_RATE,
+                                            FEEDBACK_TOTAL, FEEDBACK_UNHELPFUL,
+                                            ISSUE_COUNT, SOURCE_HELPFUL,
+                                            SOURCE_HELPFUL_RATE, SOURCE_TOTAL)
     from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
 
     # Defense-in-depth: restrict in-app in production

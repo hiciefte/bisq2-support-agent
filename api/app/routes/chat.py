@@ -1,9 +1,14 @@
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
+from app.channels.gateway import ChannelGateway
+from app.channels.models import ChannelType
+from app.channels.models import ChatMessage as ChannelChatMessage
+from app.channels.models import GatewayError, IncomingMessage, UserContext
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
 from fastapi import APIRouter, Depends, Request, status
@@ -79,12 +84,30 @@ class QueryResponse(BaseModel):
     mcp_tools_used: Optional[List[McpToolUsage]] = None
 
 
+def _gateway_error_to_status(error: GatewayError) -> int:
+    """Convert GatewayError to HTTP status code."""
+    from app.channels.models import ErrorCode
+
+    error_status_map = {
+        ErrorCode.RATE_LIMIT_EXCEEDED: 429,
+        ErrorCode.AUTHENTICATION_FAILED: 401,
+        ErrorCode.AUTHORIZATION_FAILED: 403,
+        ErrorCode.INVALID_MESSAGE: 400,
+        ErrorCode.VALIDATION_ERROR: 400,
+        ErrorCode.PII_DETECTED: 400,
+        ErrorCode.CHANNEL_UNAVAILABLE: 503,
+        ErrorCode.RAG_SERVICE_ERROR: 500,
+        ErrorCode.INTERNAL_ERROR: 500,
+    }
+    return error_status_map.get(error.error_code, 500)
+
+
 @router.api_route("/query", methods=["POST"])
 async def query(
     request: Request,
     settings: Settings = Depends(get_settings),
 ):
-    """Process a query and return a response with sources."""
+    """Process a query through the Channel Gateway and return a response with sources."""
     logger.info("Received request to /query endpoint")
     # SECURITY: Only log safe headers, not all headers which may contain tokens
     logger.info(
@@ -97,8 +120,8 @@ async def query(
     start_time = time.time()
 
     try:
-        # Get RAG service from app state
-        rag_service = request.app.state.rag_service
+        # Get gateway from app state
+        gateway: ChannelGateway = request.app.state.channel_gateway
 
         # Use the automatically parsed payload from Body
         data = await request.json()
@@ -111,7 +134,6 @@ async def query(
         # Validate against our model
         try:
             logger.debug("Attempting to validate request data...")
-            # Get field names using model_json_schema instead of model_fields.keys()
             expected_fields = list(
                 QueryRequest.model_json_schema()["properties"].keys()
             )
@@ -129,7 +151,7 @@ async def query(
             QUERY_ERRORS.labels(error_type="validation").inc()
             raise ValidationError(detail=str(e)) from e
 
-        # Get response from simplified RAG service
+        # Log chat history info
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
         if query_request.chat_history:
             logger.info(
@@ -141,50 +163,78 @@ async def query(
         else:
             logger.info("No chat history provided in the request")
 
-        result = await rag_service.query(
-            query_request.question, query_request.chat_history
+        # Convert to channel message format
+        chat_history = None
+        if query_request.chat_history:
+            chat_history = [
+                ChannelChatMessage(
+                    role="user" if msg.role == "user" else "assistant",
+                    content=msg.content,
+                )
+                for msg in query_request.chat_history
+            ]
+
+        # Create incoming message for gateway
+        incoming = IncomingMessage(
+            message_id=f"web_{uuid.uuid4()}",
+            channel=ChannelType.WEB,
+            question=query_request.question,
+            chat_history=chat_history,
+            user=UserContext(user_id="web_anonymous"),
         )
 
-        # Convert sources to the expected format
-        # Use `or "all"` to handle None values (not just missing keys)
+        # Process through gateway
+        result = await gateway.process_message(incoming)
+
+        # Handle gateway error
+        if isinstance(result, GatewayError):
+            logger.warning(f"Gateway returned error: {result.error_code}")
+            QUERY_ERRORS.labels(error_type=result.error_code.value).inc()
+            return JSONResponse(
+                status_code=_gateway_error_to_status(result),
+                content={
+                    "detail": result.error_message,
+                    "error_code": result.error_code.value,
+                    "details": result.details,
+                },
+            )
+
+        # Convert OutgoingMessage to QueryResponse format (backward compatibility)
         formatted_sources = [
             Source(
-                title=source["title"],
-                type=source["type"],
-                content=source["content"],
-                protocol=source.get("protocol") or "all",
-                # Wiki source link fields
-                url=source.get("url"),
-                section=source.get("section"),
-                similarity_score=source.get("similarity_score"),
+                title=source.title,
+                type=source.category or "wiki",
+                content="",  # OutgoingMessage uses DocumentReference without content
+                protocol="all",
+                url=source.url,
+                section=None,
+                similarity_score=source.relevance_score,
             )
-            for source in result["sources"]
+            for source in result.sources
         ]
 
         response_data = QueryResponse(
-            answer=result["answer"],
+            answer=result.answer,
             sources=formatted_sources,
-            response_time=result["response_time"],
-            # Phase 1 metadata
-            confidence=result.get("confidence"),
-            routing_action=result.get("routing_action"),
-            detected_version=result.get("detected_version"),
-            version_confidence=result.get("version_confidence"),
-            emotion=result.get("emotion"),
-            emotion_intensity=result.get("emotion_intensity"),
-            forwarded_to_human=result.get("forwarded_to_human", False),
-            # MCP tools metadata
-            mcp_tools_used=result.get("mcp_tools_used"),
+            response_time=result.metadata.processing_time_ms
+            / 1000.0,  # Convert to seconds
+            # Phase 1 metadata from gateway metadata
+            confidence=result.metadata.confidence_score,
+            routing_action=None,  # Not tracked in gateway yet
+            detected_version=None,  # Not tracked in gateway yet
+            version_confidence=None,  # Not tracked in gateway yet
+            emotion=None,  # Not tracked in gateway yet
+            emotion_intensity=None,  # Not tracked in gateway yet
+            forwarded_to_human=result.requires_human,
+            mcp_tools_used=None,  # Not tracked in gateway yet
         )
 
         # Log response size and validate JSON serializability
         response_dict = response_data.model_dump()
         try:
-            import json
-
             response_json = json.dumps(response_dict)
             logger.info(
-                f"Response prepared: answer_length={len(result['answer'])}, "
+                f"Response prepared: answer_length={len(result.answer)}, "
                 f"sources_count={len(formatted_sources)}, "
                 f"total_size={len(response_json)} bytes"
             )
