@@ -159,6 +159,13 @@ class FeedbackService:
             if timestamp is None:
                 timestamp = datetime.now(timezone.utc).isoformat()
 
+            # Extract channel metadata (with backwards-compatible defaults)
+            channel = feedback_data.get("channel", "web")
+            feedback_method = feedback_data.get("feedback_method", "web_dialog")
+            external_message_id = feedback_data.get("external_message_id")
+            reactor_identity_hash = feedback_data.get("reactor_identity_hash")
+            reaction_emoji = feedback_data.get("reaction_emoji")
+
             # Store in database using repository
             feedback_id = self.repository.store_feedback(
                 message_id=message_id,
@@ -171,6 +178,11 @@ class FeedbackService:
                 timestamp=timestamp,
                 sources=sources,
                 sources_used=sources_used,
+                channel=channel,
+                feedback_method=feedback_method,
+                external_message_id=external_message_id,
+                reactor_identity_hash=reactor_identity_hash,
+                reaction_emoji=reaction_emoji,
             )
 
             # Log conversation history details
@@ -590,6 +602,129 @@ class FeedbackService:
             logger.exception("Error getting feedback count")
             return 0
 
+    def store_reaction_feedback(
+        self,
+        message_id: str,
+        question: str,
+        answer: str,
+        rating: str,
+        user_id: str,
+        channel: str,
+        feedback_method: str = "reaction",
+        external_message_id: Optional[str] = None,
+        reactor_identity_hash: Optional[str] = None,
+        reaction_emoji: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Store reaction-based feedback with deduplication.
+
+        If a reaction already exists for the same (channel, ext_id, reactor),
+        the existing record is updated (emoji change). Otherwise a new
+        feedback + reaction tracking record is created.
+
+        Returns True if feedback was stored/updated.
+        """
+        try:
+            rating_int = 1 if rating == "positive" else 0
+
+            # Check for existing reaction
+            existing = None
+            if reactor_identity_hash and external_message_id:
+                existing = self.repository.get_reaction_by_key(
+                    channel, external_message_id, reactor_identity_hash
+                )
+
+            if existing:
+                # Update existing reaction tracking (emoji change)
+                self.repository.upsert_reaction_tracking(
+                    channel=channel,
+                    external_message_id=external_message_id,
+                    reactor_identity_hash=reactor_identity_hash,
+                    reaction_emoji=reaction_emoji or "",
+                    feedback_id=existing["feedback_id"],
+                )
+                logger.info(
+                    "Updated existing reaction: channel=%s ext_id=%s",
+                    channel,
+                    external_message_id,
+                )
+            else:
+                # Create new feedback entry
+                feedback_id = self.repository.store_feedback(
+                    message_id=message_id,
+                    question=question,
+                    answer=answer,
+                    rating=rating_int,
+                    channel=channel,
+                    feedback_method=feedback_method,
+                    external_message_id=external_message_id,
+                    reactor_identity_hash=reactor_identity_hash,
+                    reaction_emoji=reaction_emoji,
+                    sources=sources,
+                )
+                # Create reaction tracking record
+                if reactor_identity_hash and external_message_id:
+                    self.repository.upsert_reaction_tracking(
+                        channel=channel,
+                        external_message_id=external_message_id,
+                        reactor_identity_hash=reactor_identity_hash,
+                        reaction_emoji=reaction_emoji or "",
+                        feedback_id=feedback_id,
+                    )
+                logger.info(
+                    "Stored new reaction feedback: channel=%s ext_id=%s feedback_id=%s",
+                    channel,
+                    external_message_id,
+                    feedback_id,
+                )
+
+            # Invalidate cache
+            self._feedback_cache = None
+            self._last_load_time = None
+
+            return True
+
+        except Exception:
+            logger.exception(
+                "Error storing reaction feedback: channel=%s ext_id=%s",
+                channel,
+                external_message_id,
+            )
+            return False
+
+    def revoke_reaction_feedback(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+    ) -> bool:
+        """Revoke a reaction (soft delete — marks revoked, does not delete feedback).
+
+        Returns True if revocation was processed.
+        """
+        try:
+            result = self.repository.revoke_reaction_tracking(
+                channel=channel,
+                external_message_id=external_message_id,
+                reactor_identity_hash=reactor_identity_hash,
+            )
+            if result:
+                self._feedback_cache = None
+                self._last_load_time = None
+                logger.info(
+                    "Revoked reaction: channel=%s ext_id=%s",
+                    channel,
+                    external_message_id,
+                )
+            return result
+        except Exception:
+            logger.exception(
+                "Error revoking reaction: channel=%s ext_id=%s",
+                channel,
+                external_message_id,
+            )
+            return False
+
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard.
 
@@ -615,7 +750,22 @@ class FeedbackService:
                     continue
 
             # Delegate to analyzer for enhanced statistics
-            return self.analyzer.calculate_enhanced_stats(feedback_items, basic_stats)
+            stats = self.analyzer.calculate_enhanced_stats(feedback_items, basic_stats)
+
+            # Add channel and method breakdowns
+            try:
+                stats["feedback_by_channel"] = (
+                    self.repository.get_feedback_stats_by_channel()
+                )
+                stats["feedback_by_method"] = (
+                    self.repository.get_feedback_count_by_method()
+                )
+            except Exception:
+                logger.warning("Failed to get channel/method stats, using defaults")
+                stats.setdefault("feedback_by_channel", {})
+                stats.setdefault("feedback_by_method", {})
+
+            return stats
 
         except Exception as e:
             logger.error(f"Error getting feedback stats: {e!s}")
@@ -631,6 +781,8 @@ class FeedbackService:
                 "unprocessed_negative_count": 0,
                 "source_effectiveness": {},
                 "feedback_by_month": {},
+                "feedback_by_channel": {},
+                "feedback_by_method": {},
             }
 
 
