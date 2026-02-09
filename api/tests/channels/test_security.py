@@ -5,14 +5,22 @@ PII handling, and other security controls.
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.channels.models import ChannelType, ErrorCode, IncomingMessage, UserContext
-from app.channels.security import (EnvironmentSecretStore, ErrorFactory, InputValidator,
-                                   PIIDetector, PIIType, RateLimitConfig,
-                                   SecurityIncidentHandler, SecurityIncidentType,
-                                   SensitiveDataFilter, TokenBucket)
+from app.channels.security import (
+    EnvironmentSecretStore,
+    ErrorFactory,
+    InputValidator,
+    PIIDetector,
+    PIIType,
+    RateLimitConfig,
+    SecurityIncidentHandler,
+    SecurityIncidentType,
+    SensitiveDataFilter,
+    TokenBucket,
+)
 
 # =============================================================================
 # Channel Authentication Tests
@@ -121,7 +129,7 @@ class TestUserAuthentication:
         context = UserContext(
             user_id="test_user",
             auth_token="valid.jwt.token",
-            auth_timestamp=datetime.utcnow(),
+            auth_timestamp=datetime.now(timezone.utc),
         )
         assert context.auth_token == "valid.jwt.token"
 
@@ -256,7 +264,7 @@ class TestRateLimiting:
             token_bucket.consume()
 
         # Simulate time passing
-        token_bucket.last_refill = datetime.utcnow() - timedelta(seconds=5)
+        token_bucket.last_refill = datetime.now(timezone.utc) - timedelta(seconds=5)
 
         # Should have refilled
         allowed, meta = token_bucket.consume()

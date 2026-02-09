@@ -8,10 +8,20 @@ from unittest.mock import AsyncMock
 
 import pytest
 from app.channels.gateway import ChannelGateway
-from app.channels.hooks import (BasePostProcessingHook, BasePreProcessingHook,
-                                HookPriority)
-from app.channels.models import (ChannelType, ChatMessage, ErrorCode, GatewayError,
-                                 IncomingMessage, OutgoingMessage, UserContext)
+from app.channels.hooks import (
+    BasePostProcessingHook,
+    BasePreProcessingHook,
+    HookPriority,
+)
+from app.channels.models import (
+    ChannelType,
+    ChatMessage,
+    ErrorCode,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+    UserContext,
+)
 
 
 @pytest.fixture

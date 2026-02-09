@@ -3,12 +3,10 @@
 Wraps existing Matrix integration into channel plugin architecture.
 """
 
-import uuid
 from typing import Set
 
 from app.channels.base import ChannelBase
-from app.channels.models import (ChannelCapability, ChannelType, DocumentReference,
-                                 IncomingMessage, OutgoingMessage, ResponseMetadata)
+from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
 
 
 class MatrixChannel(ChannelBase):
@@ -16,12 +14,19 @@ class MatrixChannel(ChannelBase):
 
     This plugin wraps the existing Matrix integration to work with
     the channel plugin architecture. The Matrix channel:
-    - Maintains persistent connection to Matrix homeserver
+    - Maintains persistent connection to Matrix homeserver via ConnectionManager
     - Receives messages from configured rooms
-    - Sends responses back to Matrix rooms
+    - Sends responses back to Matrix rooms via nio AsyncClient
+
+    The channel uses ChannelRuntime to resolve dependencies:
+    - "matrix_connection_manager": ConnectionManager for connection lifecycle
+    - "matrix_client": nio AsyncClient for room operations
 
     Example:
         runtime = ChannelRuntime(settings=settings, rag_service=rag)
+        runtime.register("matrix_connection_manager", connection_manager)
+        runtime.register("matrix_client", async_client)
+
         channel = MatrixChannel(runtime)
         await channel.start()
 
@@ -45,36 +50,61 @@ class MatrixChannel(ChannelBase):
             ChannelCapability.SEND_RESPONSES,
         }
 
+    @property
+    def channel_type(self) -> ChannelType:
+        """Return channel type for outgoing messages."""
+        return ChannelType.MATRIX
+
     async def start(self) -> None:
         """Start the Matrix channel.
 
-        Connects to Matrix homeserver and starts syncing.
+        Connects to Matrix homeserver via ConnectionManager. If ConnectionManager
+        is not registered in the runtime, the channel will start in degraded mode
+        (not connected).
         """
         self._logger.info("Starting Matrix channel")
 
-        # Delegate to connection method
-        if hasattr(self, "_connect_to_homeserver"):
-            await self._connect_to_homeserver()
+        # Get ConnectionManager from runtime
+        conn_manager = self.runtime.resolve_optional("matrix_connection_manager")
+        if not conn_manager:
+            self._logger.warning(
+                "Matrix ConnectionManager not registered in runtime. "
+                "Channel will start but connection will be unavailable."
+            )
+            self._is_connected = False
+            return
 
-        self._is_connected = True
-        self._logger.info("Matrix channel started")
+        # Connect via ConnectionManager
+        try:
+            await conn_manager.connect()
+            self._is_connected = True
+            self._logger.info("Matrix channel started - connection established")
+        except Exception as e:
+            self._logger.error(f"Failed to connect to Matrix homeserver: {e}")
+            self._is_connected = False
 
     async def stop(self) -> None:
         """Stop the Matrix channel.
 
-        Disconnects from homeserver gracefully.
+        Disconnects from homeserver gracefully via ConnectionManager.
         """
         self._logger.info("Stopping Matrix channel")
 
-        # Delegate to disconnection method
-        if hasattr(self, "_disconnect_from_homeserver"):
-            await self._disconnect_from_homeserver()
+        # Get ConnectionManager from runtime
+        conn_manager = self.runtime.resolve_optional("matrix_connection_manager")
+        if conn_manager:
+            try:
+                await conn_manager.disconnect()
+            except Exception as e:
+                self._logger.error(f"Error disconnecting from Matrix: {e}")
 
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
 
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
         """Send response to Matrix room.
+
+        Uses Matrix nio AsyncClient to send text message to room.
 
         Args:
             target: Room ID (e.g., !roomid:matrix.org).
@@ -85,80 +115,47 @@ class MatrixChannel(ChannelBase):
         """
         self._logger.debug(f"Sending message to Matrix room {target}")
 
-        # Delegate to room send method
-        if hasattr(self, "_send_to_room"):
-            return await self._send_to_room(target, message.answer)
+        # Get Matrix client from runtime
+        client = self.runtime.resolve_optional("matrix_client")
+        if not client:
+            self._logger.warning(
+                "Matrix client not registered in runtime, cannot send message"
+            )
+            return False
 
-        # Default implementation
-        return True
-
-    async def handle_incoming(self, message: IncomingMessage) -> OutgoingMessage:
-        """Handle incoming message from Matrix room.
-
-        Delegates to RAG service and builds response.
-
-        Args:
-            message: Incoming message from Matrix.
-
-        Returns:
-            OutgoingMessage with RAG response.
-        """
-        import time
-
-        start_time = time.time()
-
-        # Build chat history for RAG service
-        chat_history = None
-        if message.chat_history:
-            chat_history = [
-                {"role": msg.role, "content": msg.content}
-                for msg in message.chat_history
-            ]
-
-        # Query RAG service
-        rag_response = await self.runtime.rag_service.query(
-            question=message.question,
-            chat_history=chat_history,
-        )
-
-        # Build sources from RAG response
-        sources = []
-        for source in rag_response.get("sources", []):
-            sources.append(
-                DocumentReference(
-                    document_id=source.get("document_id", str(uuid.uuid4())),
-                    title=source.get("title", "Unknown"),
-                    url=source.get("url"),
-                    relevance_score=source.get("relevance_score", 0.5),
-                    category=source.get("category"),
-                )
+        try:
+            # Send text message via nio client
+            response = await client.room_send(
+                room_id=target,
+                message_type="m.room.message",
+                content={
+                    "msgtype": "m.text",
+                    "body": message.answer,
+                },
             )
 
-        # Build metadata
-        processing_time = (time.time() - start_time) * 1000
-        metadata = ResponseMetadata(
-            processing_time_ms=processing_time,
-            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
-            model_name=rag_response.get("model_name", "unknown"),
-            tokens_used=rag_response.get("tokens_used"),
-            confidence_score=rag_response.get("confidence_score"),
-            hooks_executed=[],
-        )
+            # Check for successful send (has event_id)
+            if hasattr(response, "event_id") and response.event_id:
+                self._logger.debug(
+                    f"Message sent to {target}, event_id: {response.event_id}"
+                )
+                return True
+            else:
+                # Error response
+                error_msg = getattr(response, "message", "Unknown error")
+                self._logger.error(f"Failed to send message to {target}: {error_msg}")
+                return False
 
-        return OutgoingMessage(
-            message_id=str(uuid.uuid4()),
-            in_reply_to=message.message_id,
-            channel=ChannelType.MATRIX,
-            answer=rag_response.get("answer", ""),
-            sources=sources,
-            user=message.user,
-            metadata=metadata,
-            suggested_questions=rag_response.get("suggested_questions"),
-            requires_human=rag_response.get("requires_human", False),
-        )
+        except Exception as e:
+            self._logger.error(f"Error sending message to Matrix room {target}: {e}")
+            return False
+
+    # handle_incoming() inherited from ChannelBase
 
     async def join_room(self, room_id: str) -> bool:
         """Join a Matrix room.
+
+        Uses Matrix nio AsyncClient to join the specified room.
 
         Args:
             room_id: Matrix room ID to join.
@@ -168,13 +165,35 @@ class MatrixChannel(ChannelBase):
         """
         self._logger.info(f"Joining Matrix room {room_id}")
 
-        if hasattr(self, "_join_matrix_room"):
-            return await self._join_matrix_room(room_id)
+        # Get Matrix client from runtime
+        client = self.runtime.resolve_optional("matrix_client")
+        if not client:
+            self._logger.warning(
+                "Matrix client not registered in runtime, cannot join room"
+            )
+            return False
 
-        return True
+        try:
+            response = await client.join(room_id)
+
+            # Check for successful join (has room_id)
+            if hasattr(response, "room_id") and response.room_id:
+                self._logger.info(f"Successfully joined room {room_id}")
+                return True
+            else:
+                # Error response
+                error_msg = getattr(response, "message", "Unknown error")
+                self._logger.error(f"Failed to join room {room_id}: {error_msg}")
+                return False
+
+        except Exception as e:
+            self._logger.error(f"Error joining Matrix room {room_id}: {e}")
+            return False
 
     async def leave_room(self, room_id: str) -> bool:
         """Leave a Matrix room.
+
+        Uses Matrix nio AsyncClient to leave the specified room.
 
         Args:
             room_id: Matrix room ID to leave.
@@ -184,7 +203,27 @@ class MatrixChannel(ChannelBase):
         """
         self._logger.info(f"Leaving Matrix room {room_id}")
 
-        if hasattr(self, "_leave_matrix_room"):
-            return await self._leave_matrix_room(room_id)
+        # Get Matrix client from runtime
+        client = self.runtime.resolve_optional("matrix_client")
+        if not client:
+            self._logger.warning(
+                "Matrix client not registered in runtime, cannot leave room"
+            )
+            return False
 
-        return True
+        try:
+            response = await client.room_leave(room_id)
+
+            # Check for successful leave (has room_id or no error)
+            if hasattr(response, "room_id") and response.room_id:
+                self._logger.info(f"Successfully left room {room_id}")
+                return True
+            else:
+                # Error response
+                error_msg = getattr(response, "message", "Unknown error")
+                self._logger.error(f"Failed to leave room {room_id}: {error_msg}")
+                return False
+
+        except Exception as e:
+            self._logger.error(f"Error leaving Matrix room {room_id}: {e}")
+            return False

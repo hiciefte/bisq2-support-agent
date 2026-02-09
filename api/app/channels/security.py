@@ -6,7 +6,7 @@ Security infrastructure for channel plugin architecture.
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Tuple
 
@@ -353,7 +353,7 @@ class TokenBucket:
         self.capacity = capacity
         self.refill_rate = refill_rate
         self.tokens = float(capacity)
-        self.last_refill = datetime.utcnow()
+        self.last_refill = datetime.now(timezone.utc)
 
     def consume(self, tokens: int = 1) -> Tuple[bool, Dict[str, Any]]:
         """Try to consume tokens from the bucket.
@@ -362,7 +362,7 @@ class TokenBucket:
             (allowed, metadata) tuple
         """
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         elapsed = (now - self.last_refill).total_seconds()
 
         # Refill tokens

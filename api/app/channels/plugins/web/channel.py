@@ -3,12 +3,10 @@
 Wraps existing web chat functionality into channel plugin architecture.
 """
 
-import uuid
 from typing import Set
 
 from app.channels.base import ChannelBase
-from app.channels.models import (ChannelCapability, ChannelType, DocumentReference,
-                                 IncomingMessage, OutgoingMessage, ResponseMetadata)
+from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
 
 
 class WebChannel(ChannelBase):
@@ -40,6 +38,11 @@ class WebChannel(ChannelBase):
             ChannelCapability.TEXT_MESSAGES,
             ChannelCapability.CHAT_HISTORY,
         }
+
+    @property
+    def channel_type(self) -> ChannelType:
+        """Return channel type for outgoing messages."""
+        return ChannelType.WEB
 
     async def start(self) -> None:
         """Start the web channel.
@@ -74,67 +77,4 @@ class WebChannel(ChannelBase):
         self._logger.debug(f"Web channel send_message called for {target}")
         return True
 
-    async def handle_incoming(self, message: IncomingMessage) -> OutgoingMessage:
-        """Handle incoming message from web chat.
-
-        Delegates to RAG service and builds response.
-
-        Args:
-            message: Incoming message from web interface.
-
-        Returns:
-            OutgoingMessage with RAG response.
-        """
-        import time
-
-        start_time = time.time()
-
-        # Build chat history for RAG service
-        chat_history = None
-        if message.chat_history:
-            chat_history = [
-                {"role": msg.role, "content": msg.content}
-                for msg in message.chat_history
-            ]
-
-        # Query RAG service
-        rag_response = await self.runtime.rag_service.query(
-            question=message.question,
-            chat_history=chat_history,
-        )
-
-        # Build sources from RAG response
-        sources = []
-        for source in rag_response.get("sources", []):
-            sources.append(
-                DocumentReference(
-                    document_id=source.get("document_id", str(uuid.uuid4())),
-                    title=source.get("title", "Unknown"),
-                    url=source.get("url"),
-                    relevance_score=source.get("relevance_score", 0.5),
-                    category=source.get("category"),
-                )
-            )
-
-        # Build metadata
-        processing_time = (time.time() - start_time) * 1000
-        metadata = ResponseMetadata(
-            processing_time_ms=processing_time,
-            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
-            model_name=rag_response.get("model_name", "unknown"),
-            tokens_used=rag_response.get("tokens_used"),
-            confidence_score=rag_response.get("confidence_score"),
-            hooks_executed=[],
-        )
-
-        return OutgoingMessage(
-            message_id=str(uuid.uuid4()),
-            in_reply_to=message.message_id,
-            channel=ChannelType.WEB,
-            answer=rag_response.get("answer", ""),
-            sources=sources,
-            user=message.user,
-            metadata=metadata,
-            suggested_questions=rag_response.get("suggested_questions"),
-            requires_human=rag_response.get("requires_human", False),
-        )
+    # handle_incoming() inherited from ChannelBase

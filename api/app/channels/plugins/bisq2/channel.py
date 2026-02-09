@@ -4,11 +4,16 @@ Wraps existing Bisq2 API integration into channel plugin architecture.
 """
 
 import uuid
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from app.channels.base import ChannelBase
-from app.channels.models import (ChannelCapability, ChannelType, DocumentReference,
-                                 IncomingMessage, OutgoingMessage, ResponseMetadata)
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    IncomingMessage,
+    OutgoingMessage,
+    UserContext,
+)
 
 
 class Bisq2Channel(ChannelBase):
@@ -17,8 +22,12 @@ class Bisq2Channel(ChannelBase):
     This plugin wraps the existing bisq_api.py functionality to integrate
     with the channel plugin architecture. The Bisq2 channel:
     - Polls Bisq2 API for new support conversations
-    - Extracts FAQs from resolved conversations
-    - Sends responses back to Bisq2 support system
+    - Processes incoming questions through the RAG service
+
+    Note: This is a polling-only channel. The Bisq2 API only supports
+    exporting conversations (read-only). FAQ extraction from resolved
+    conversations is handled by the training pipeline (Bisq2SyncService),
+    not by this channel plugin.
 
     Example:
         runtime = ChannelRuntime(settings=settings, rag_service=rag)
@@ -29,7 +38,6 @@ class Bisq2Channel(ChannelBase):
         messages = await channel.poll_conversations()
         for message in messages:
             response = await channel.handle_incoming(message)
-            await channel.send_message(message.channel_metadata["conversation_id"], response)
     """
 
     @property
@@ -39,23 +47,48 @@ class Bisq2Channel(ChannelBase):
 
     @property
     def capabilities(self) -> Set[ChannelCapability]:
-        """Return supported capabilities."""
+        """Return supported capabilities.
+
+        Note: Bisq2 API is read-only (export/polling only), so SEND_RESPONSES
+        is not supported. FAQ extraction is handled by the training pipeline.
+        """
         return {
             ChannelCapability.RECEIVE_MESSAGES,
-            ChannelCapability.SEND_RESPONSES,
             ChannelCapability.POLL_CONVERSATIONS,
-            ChannelCapability.EXTRACT_FAQS,
         }
+
+    @property
+    def channel_type(self) -> ChannelType:
+        """Return channel type for outgoing messages."""
+        return ChannelType.BISQ2
 
     async def start(self) -> None:
         """Start the Bisq2 channel.
 
-        Initializes connection to Bisq2 API.
+        Verifies connectivity to Bisq2 API. If Bisq2API is not registered
+        in the runtime, the channel will start in degraded mode (polling
+        will return empty results).
         """
         self._logger.info("Starting Bisq2 channel")
-        # In real implementation, would verify Bisq2 API connectivity
-        self._is_connected = True
-        self._logger.info("Bisq2 channel started")
+
+        # Verify Bisq2API is available in runtime
+        bisq_api = self.runtime.resolve_optional("bisq2_api")
+        if not bisq_api:
+            self._logger.warning(
+                "Bisq2API not registered in runtime. "
+                "Channel will start but polling will be unavailable."
+            )
+            self._is_connected = False
+            return
+
+        # Verify API connectivity by attempting to setup the session
+        try:
+            await bisq_api.setup()
+            self._is_connected = True
+            self._logger.info("Bisq2 channel started - API connection verified")
+        except Exception as e:
+            self._logger.error(f"Failed to connect to Bisq2 API: {e}")
+            self._is_connected = False
 
     async def stop(self) -> None:
         """Stop the Bisq2 channel."""
@@ -66,115 +99,100 @@ class Bisq2Channel(ChannelBase):
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
         """Send response back to Bisq2 conversation.
 
+        Note: The Bisq2 API is read-only (export endpoint only). Sending
+        responses back to Bisq2 support system is not supported. This method
+        always returns False.
+
         Args:
             target: Conversation ID in Bisq2 system.
             message: Response message to send.
 
         Returns:
-            True on success, False on failure.
+            False - Bisq2 API does not support sending messages.
         """
-        self._logger.debug(f"Sending response to Bisq2 conversation {target}")
-        # In real implementation, would POST to Bisq2 API
-        return True
-
-    async def handle_incoming(self, message: IncomingMessage) -> OutgoingMessage:
-        """Handle incoming message from Bisq2 support.
-
-        Delegates to RAG service and builds response.
-
-        Args:
-            message: Incoming message from Bisq2 support.
-
-        Returns:
-            OutgoingMessage with RAG response.
-        """
-        import time
-
-        start_time = time.time()
-
-        # Build chat history for RAG service
-        chat_history = None
-        if message.chat_history:
-            chat_history = [
-                {"role": msg.role, "content": msg.content}
-                for msg in message.chat_history
-            ]
-
-        # Query RAG service
-        rag_response = await self.runtime.rag_service.query(
-            question=message.question,
-            chat_history=chat_history,
+        self._logger.warning(
+            f"send_message called for Bisq2 conversation {target}, "
+            "but Bisq2 API does not support sending responses"
         )
+        return False
 
-        # Build sources from RAG response
-        sources = []
-        for source in rag_response.get("sources", []):
-            sources.append(
-                DocumentReference(
-                    document_id=source.get("document_id", str(uuid.uuid4())),
-                    title=source.get("title", "Unknown"),
-                    url=source.get("url"),
-                    relevance_score=source.get("relevance_score", 0.5),
-                    category=source.get("category"),
-                )
-            )
-
-        # Build metadata
-        processing_time = (time.time() - start_time) * 1000
-        metadata = ResponseMetadata(
-            processing_time_ms=processing_time,
-            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
-            model_name=rag_response.get("model_name", "unknown"),
-            tokens_used=rag_response.get("tokens_used"),
-            confidence_score=rag_response.get("confidence_score"),
-            hooks_executed=[],
-        )
-
-        return OutgoingMessage(
-            message_id=str(uuid.uuid4()),
-            in_reply_to=message.message_id,
-            channel=ChannelType.BISQ2,
-            answer=rag_response.get("answer", ""),
-            sources=sources,
-            user=message.user,
-            metadata=metadata,
-            suggested_questions=rag_response.get("suggested_questions"),
-            requires_human=rag_response.get("requires_human", False),
-        )
+    # handle_incoming() inherited from ChannelBase
 
     async def poll_conversations(self) -> List[IncomingMessage]:
         """Poll Bisq2 API for new support conversations.
+
+        Delegates to Bisq2API.export_chat_messages() to fetch new conversations,
+        then transforms them into IncomingMessage format.
 
         Returns:
             List of new incoming messages from Bisq2.
         """
         self._logger.debug("Polling Bisq2 API for new conversations")
 
-        # Delegate to internal poll method
-        if hasattr(self, "_poll_api"):
-            return await self._poll_api()
+        # Get Bisq2API from runtime services
+        bisq_api = self.runtime.resolve_optional("bisq2_api")
+        if not bisq_api:
+            self._logger.warning("Bisq2API not registered in runtime, cannot poll")
+            return []
 
-        # Default implementation returns empty list
-        # Real implementation would call Bisq2 API
-        return []
+        try:
+            # Export messages from Bisq2 API
+            result = await bisq_api.export_chat_messages()
+            messages = result.get("messages", [])
 
-    async def extract_faqs(
-        self, conversations: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Extract FAQs from resolved Bisq2 conversations.
+            if not messages:
+                return []
+
+            # Transform to IncomingMessage format
+            incoming_messages = []
+            for msg in messages:
+                incoming = self._transform_bisq_message(msg)
+                if incoming:
+                    incoming_messages.append(incoming)
+
+            self._logger.info(
+                f"Polled {len(incoming_messages)} messages from Bisq2 API"
+            )
+            return incoming_messages
+
+        except Exception as e:
+            self._logger.error(f"Error polling Bisq2 API: {e}")
+            return []
+
+    def _transform_bisq_message(self, msg: Dict[str, Any]) -> Optional[IncomingMessage]:
+        """Transform a Bisq2 API message to IncomingMessage format.
 
         Args:
-            conversations: List of resolved conversations.
+            msg: Raw message from Bisq2 API.
 
         Returns:
-            List of FAQ entries extracted from conversations.
+            IncomingMessage or None if transformation fails.
         """
-        self._logger.debug(f"Extracting FAQs from {len(conversations)} conversations")
+        try:
+            message_id = msg.get("messageId", str(uuid.uuid4()))
+            author = msg.get("author", "unknown")
+            text = msg.get("message", "")
 
-        # Delegate to internal extraction method
-        if hasattr(self, "_extract_faqs_from_conversations"):
-            return await self._extract_faqs_from_conversations(conversations)
+            if not text:
+                return None
 
-        # Default implementation returns empty list
-        # Real implementation would use LLM to extract Q&A pairs
-        return []
+            return IncomingMessage(
+                message_id=message_id,
+                channel=ChannelType.BISQ2,
+                question=text,
+                user=UserContext(
+                    user_id=author,
+                    session_id=None,
+                    channel_user_id=author,
+                    auth_token=None,
+                ),
+                channel_metadata={
+                    "conversation_id": msg.get("conversationId", ""),
+                    "date": msg.get("date", ""),
+                    "citation": str(msg.get("citation")) if msg.get("citation") else "",
+                },
+                channel_signature=None,
+            )
+        except Exception as e:
+            self._logger.warning(f"Failed to transform Bisq2 message: {e}")
+            return None

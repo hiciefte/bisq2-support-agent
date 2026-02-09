@@ -180,7 +180,13 @@ async def query(
             channel=ChannelType.WEB,
             question=query_request.question,
             chat_history=chat_history,
-            user=UserContext(user_id="web_anonymous"),
+            user=UserContext(
+                user_id="web_anonymous",
+                session_id=None,
+                channel_user_id=None,
+                auth_token=None,
+            ),
+            channel_signature=None,
         )
 
         # Process through gateway

@@ -5,12 +5,16 @@ Implements request/response metrics collection.
 
 import logging
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.channels.hooks import BasePreProcessingHook, HookPriority
-from app.channels.models import (ChannelType, GatewayError, IncomingMessage,
-                                 OutgoingMessage)
+from app.channels.models import (
+    ChannelType,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,7 @@ class MetricsHook(BasePreProcessingHook):
         try:
             self._request_count += 1
             self._channel_stats[message.channel] += 1
-            self._last_request_time = datetime.utcnow()
+            self._last_request_time = datetime.now(timezone.utc)
 
             self._logger.debug(
                 f"Request recorded: channel={message.channel}, "
@@ -70,7 +74,7 @@ class MetricsHook(BasePreProcessingHook):
         """
         try:
             self._response_count += 1
-            self._last_response_time = datetime.utcnow()
+            self._last_response_time = datetime.now(timezone.utc)
 
             self._logger.debug(
                 f"Response recorded: channel={incoming.channel}, "

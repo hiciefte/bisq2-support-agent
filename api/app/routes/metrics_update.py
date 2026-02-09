@@ -10,8 +10,6 @@ from typing import Literal, Optional
 
 from app.core.security import verify_admin_access
 from app.metrics.task_metrics import (
-    record_faq_extraction_failure,
-    record_faq_extraction_success,
     record_feedback_processing_failure,
     record_feedback_processing_success,
     record_wiki_update_failure,
@@ -25,15 +23,6 @@ router = APIRouter(
     tags=["Metrics"],
     dependencies=[Depends(verify_admin_access)],
 )
-
-
-class FAQExtractionMetrics(BaseModel):
-    """Metrics for FAQ extraction task."""
-
-    status: Literal["success", "failure"]
-    messages_processed: int = Field(ge=0, default=0)
-    faqs_generated: int = Field(ge=0, default=0)
-    duration: Optional[float] = Field(ge=0, default=None)
 
 
 class WikiUpdateMetrics(BaseModel):
@@ -50,29 +39,6 @@ class FeedbackProcessingMetrics(BaseModel):
     status: Literal["success", "failure"]
     entries_processed: int = Field(ge=0, default=0)
     duration: Optional[float] = Field(ge=0, default=None)
-
-
-@router.post("/faq-extraction", status_code=status.HTTP_204_NO_CONTENT)
-async def update_faq_extraction_metrics(metrics: FAQExtractionMetrics):
-    """
-    Update FAQ extraction metrics from cron job.
-
-    Called by the scheduler's FAQ extraction script to record task outcomes.
-
-    Example curl from scheduler container:
-        curl -X POST http://api:8000/admin/metrics/faq-extraction \\
-          -H "X-API-Key: $ADMIN_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"status":"success","messages_processed":42,"faqs_generated":5,"duration":123.45}'
-    """
-    if metrics.status == "success":
-        record_faq_extraction_success(
-            messages_processed=metrics.messages_processed,
-            faqs_generated=metrics.faqs_generated,
-            duration=metrics.duration,
-        )
-    else:
-        record_faq_extraction_failure(duration=metrics.duration)
 
 
 @router.post("/wiki-update", status_code=status.HTTP_204_NO_CONTENT)

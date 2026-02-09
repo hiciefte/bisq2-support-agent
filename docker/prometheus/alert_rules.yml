@@ -55,26 +55,6 @@ groups:
       # Warning Alerts (Review Within Hours)
       # ========================================
 
-      - alert: FAQExtractionFailure
-        expr: faq_extraction_last_run_status == 0
-        for: 1h
-        labels:
-          severity: warning
-          component: faq
-        annotations:
-          summary: "FAQ extraction failed"
-          description: "FAQ extraction process has failed. New support conversations not being indexed."
-
-      - alert: FAQExtractionStale
-        expr: (time() - faq_extraction_last_success_timestamp) > 172800  # 48 hours
-        for: 2h
-        labels:
-          severity: warning
-          component: faq
-        annotations:
-          summary: "FAQ extraction hasn't succeeded in 48 hours"
-          description: "Last successful extraction was {{ $value | humanizeDuration }} ago."
-
       - alert: WikiUpdateFailure
         expr: wiki_update_last_run_status == 0
         for: 1h

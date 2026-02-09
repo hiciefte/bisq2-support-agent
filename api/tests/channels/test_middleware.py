@@ -3,12 +3,19 @@
 TDD tests for middleware implementations: rate limiting, PII filtering, metrics.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.channels.hooks import HookPriority
-from app.channels.models import (ChannelType, ErrorCode, GatewayError, IncomingMessage,
-                                 OutgoingMessage, ResponseMetadata, UserContext)
+from app.channels.models import (
+    ChannelType,
+    ErrorCode,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+    ResponseMetadata,
+    UserContext,
+)
 
 
 def _make_outgoing(answer: str, user_id: str = "test-user") -> OutgoingMessage:
@@ -149,7 +156,7 @@ class TestRateLimitHook:
 
         # Manually advance time by manipulating bucket
         bucket = hook._get_bucket(sample_incoming_message.user.user_id)
-        bucket.last_refill = datetime.utcnow() - timedelta(seconds=1)
+        bucket.last_refill = datetime.now(timezone.utc) - timedelta(seconds=1)
         bucket.tokens = 0
 
         # Should now have tokens again

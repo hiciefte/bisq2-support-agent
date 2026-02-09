@@ -676,15 +676,14 @@ class SimplifiedRAGService:
     async def query(
         self,
         question: str,
-        chat_history: List[Union[Dict[str, str], Any]],
+        chat_history: Optional[List[Dict[str, str]]] = None,
         override_version: Optional[str] = None,
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """Process a query and return a response with metadata.
 
         Args:
             question: The query to process
-            chat_history: List of either dictionaries containing chat messages with 'role' and 'content' keys,
-                        or objects with role and content attributes
+            chat_history: Optional list of chat messages with 'role' and 'content' keys
             override_version: Optional version to use instead of auto-detection (for Shadow Mode)
 
         Returns:
@@ -698,6 +697,7 @@ class SimplifiedRAGService:
 
         # Track request rate
         RAG_REQUEST_RATE.inc()
+        chat_history = chat_history or []
 
         try:
             if not self.rag_chain:

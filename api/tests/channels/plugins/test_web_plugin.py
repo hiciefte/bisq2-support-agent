@@ -6,8 +6,14 @@ TDD tests for the Web channel plugin that wraps existing chat.py logic.
 from unittest.mock import MagicMock
 
 import pytest
-from app.channels.models import (ChannelCapability, ChannelType, ChatMessage,
-                                 IncomingMessage, OutgoingMessage, UserContext)
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    ChatMessage,
+    IncomingMessage,
+    OutgoingMessage,
+    UserContext,
+)
 
 
 class TestWebChannelProperties:
@@ -106,7 +112,7 @@ class TestWebChannelMessageHandling:
             user=UserContext(user_id="test-user"),
         )
 
-        result = await channel.handle_incoming(message)
+        await channel.handle_incoming(message)
 
         mock_rag_service.query.assert_called_once()
 

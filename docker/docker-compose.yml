@@ -473,11 +473,10 @@ services:
         apk add --no-cache docker-cli docker-compose bash coreutils curl jq bc &&
         mkdir -p /var/log/cron &&
         # Add @reboot entries to run scripts once when crond starts
-        echo '@reboot /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' > /etc/crontabs/root &&
-        echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
+        echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' > /etc/crontabs/root &&
         # Add regular cron entries
+        # NOTE: update-faqs.sh removed - replaced by unified training pipeline (poll-matrix.sh)
         echo '0 1 * * 0 /scripts/update-wiki.sh >> /var/log/cron/wiki.log 2>&1' >> /etc/crontabs/root &&
-        echo '0 0 * * * /scripts/update-faqs.sh >> /var/log/cron/faqs.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
         echo '0 */12 * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&

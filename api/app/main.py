@@ -16,12 +16,21 @@ from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
 from app.db.run_migrations import run_migrations
-from app.metrics.tor_metrics import (update_cookie_security_mode,
-                                     update_tor_service_configured)
+from app.metrics.tor_metrics import (
+    update_cookie_security_mode,
+    update_tor_service_configured,
+)
 from app.middleware import TorDetectionMiddleware
 from app.middleware.cache_control import CacheControlMiddleware
-from app.routes import (alertmanager, chat, feedback_routes, health, metrics_update,
-                        onion_verify, public_faqs)
+from app.routes import (
+    alertmanager,
+    chat,
+    feedback_routes,
+    health,
+    metrics_update,
+    onion_verify,
+    public_faqs,
+)
 from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq_service import FAQService
@@ -379,10 +388,16 @@ async def metrics(request: Request, settings: Settings = Depends(get_settings)):
     Defense-in-depth: Also enforces IP allowlist in production to fail closed if nginx misconfigured.
     """
     # Import here to avoid circular dependency
-    from app.routes.admin.analytics import (FEEDBACK_HELPFUL, FEEDBACK_HELPFUL_RATE,
-                                            FEEDBACK_TOTAL, FEEDBACK_UNHELPFUL,
-                                            ISSUE_COUNT, SOURCE_HELPFUL,
-                                            SOURCE_HELPFUL_RATE, SOURCE_TOTAL)
+    from app.routes.admin.analytics import (
+        FEEDBACK_HELPFUL,
+        FEEDBACK_HELPFUL_RATE,
+        FEEDBACK_TOTAL,
+        FEEDBACK_UNHELPFUL,
+        ISSUE_COUNT,
+        SOURCE_HELPFUL,
+        SOURCE_HELPFUL_RATE,
+        SOURCE_TOTAL,
+    )
     from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics
 
     # Defense-in-depth: restrict in-app in production

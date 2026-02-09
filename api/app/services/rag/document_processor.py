@@ -8,12 +8,58 @@ This module handles document preparation for the RAG system including:
 """
 
 import logging
-from typing import List
+import os
+from typing import Any, List
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SEPARATORS = [
+    "\n## ",  # Markdown level 2 headers
+    "\n# ",  # Markdown level 1 headers
+    "\n\n",  # Paragraph breaks
+    "==",  # MediaWiki section markers
+    "=",  # MediaWiki single markers
+    "'''",  # MediaWiki bold text
+    "{{",  # MediaWiki templates
+    "*",  # List markers
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    " ",  # Word breaks
+    "",  # Character splits (last resort)
+]
+
+
+class _SimpleCharacterTextSplitter:
+    """Minimal splitter fallback that avoids heavyweight dependencies."""
+
+    def __init__(
+        self, chunk_size: int, chunk_overlap: int, separators: List[str]
+    ) -> None:
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self._separators = separators
+
+    def split_documents(self, documents: List[Document]) -> List[Document]:
+        chunks: List[Document] = []
+        step = max(1, self.chunk_size - self.chunk_overlap)
+
+        for document in documents:
+            text = document.page_content or ""
+            if len(text) <= self.chunk_size:
+                chunks.append(document)
+                continue
+
+            for start in range(0, len(text), step):
+                chunk_text = text[start : start + self.chunk_size]
+                if not chunk_text:
+                    continue
+                chunks.append(
+                    Document(page_content=chunk_text, metadata=dict(document.metadata))
+                )
+
+        return chunks
 
 
 class DocumentProcessor:
@@ -39,25 +85,10 @@ class DocumentProcessor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-        # Configure text splitter with MediaWiki-aware separators
-        # Prioritize MediaWiki section headers to keep related content together
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=[
-                "\n## ",  # Markdown level 2 headers
-                "\n# ",  # Markdown level 1 headers
-                "\n\n",  # Paragraph breaks
-                "==",  # MediaWiki section markers
-                "=",  # MediaWiki single markers
-                "'''",  # MediaWiki bold text
-                "{{",  # MediaWiki templates
-                "*",  # List markers
-                "\n",  # Line breaks
-                ". ",  # Sentence endings
-                " ",  # Word breaks
-                "",  # Character splits (last resort)
-            ],
+            separators=DEFAULT_SEPARATORS,
         )
 
         logger.info(
@@ -95,10 +126,12 @@ class DocumentProcessor:
         self.chunk_overlap = chunk_overlap
 
         # Recreate text splitter with new settings
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=self.text_splitter._separators,  # Reuse existing separators
+            separators=list(
+                self.text_splitter._separators
+            ),  # Reuse existing separators
         )
 
         logger.info(
@@ -115,3 +148,25 @@ class DocumentProcessor:
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
         }
+
+    def _create_text_splitter(
+        self, chunk_size: int, chunk_overlap: int, separators: List[str]
+    ) -> Any:
+        """Create langchain splitter when available, otherwise use fallback."""
+        if os.getenv("BISQ_DISABLE_TRANSFORMERS", "").lower() in ("1", "true", "yes"):
+            logger.info("Using fallback text splitter (BISQ_DISABLE_TRANSFORMERS set)")
+            return _SimpleCharacterTextSplitter(chunk_size, chunk_overlap, separators)
+
+        try:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+            return RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=separators,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Falling back to simple splitter due to import/init error: {e}"
+            )
+            return _SimpleCharacterTextSplitter(chunk_size, chunk_overlap, separators)

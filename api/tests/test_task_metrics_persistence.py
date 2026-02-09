@@ -12,9 +12,6 @@ from pathlib import Path
 import pytest
 from app.core.config import Settings
 from app.metrics.task_metrics import (
-    FAQ_EXTRACTION_FAQS_GENERATED,
-    FAQ_EXTRACTION_LAST_RUN_STATUS,
-    FAQ_EXTRACTION_MESSAGES_PROCESSED,
     FEEDBACK_PROCESSING_ENTRIES,
     FEEDBACK_PROCESSING_LAST_RUN_STATUS,
     WIKI_UPDATE_LAST_RUN_STATUS,
@@ -74,9 +71,6 @@ def reset_global_instance(test_settings):
 @pytest.fixture(autouse=True)
 def reset_metrics():
     """Reset all Prometheus Gauge metrics before each test."""
-    FAQ_EXTRACTION_LAST_RUN_STATUS.set(0)
-    FAQ_EXTRACTION_MESSAGES_PROCESSED.set(0)
-    FAQ_EXTRACTION_FAQS_GENERATED.set(0)
     WIKI_UPDATE_LAST_RUN_STATUS.set(0)
     WIKI_UPDATE_PAGES_PROCESSED.set(0)
     FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(0)
@@ -243,7 +237,7 @@ class TestLoadAllMetrics:
     def test_load_all_multiple_metrics(self, persistence):
         """Should load all metrics from database."""
         expected = {
-            "faq_extraction_last_run_status": 1.0,
+            "wiki_update_last_run_status": 1.0,
             "wiki_update_pages_processed": 150.0,
             "feedback_processing_entries_processed": 25.0,
         }
@@ -413,9 +407,6 @@ class TestPrometheusIntegration:
     def test_production_metric_names(self, persistence):
         """Should handle actual production metric names."""
         production_metrics = {
-            "faq_extraction_last_run_status": 1.0,
-            "faq_extraction_messages_processed": 42.0,
-            "faq_extraction_faqs_generated": 5.0,
             "wiki_update_last_run_status": 1.0,
             "wiki_update_pages_processed": 150.0,
             "feedback_processing_last_run_status": 1.0,

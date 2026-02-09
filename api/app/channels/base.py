@@ -3,11 +3,20 @@
 Defines the ChannelProtocol and ChannelBase ABC for channel plugins.
 """
 
+import importlib.util
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol, Set, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Set, runtime_checkable
 
-from app.channels.models import ChannelCapability, HealthStatus, OutgoingMessage
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    DocumentReference,
+    HealthStatus,
+    IncomingMessage,
+    OutgoingMessage,
+    ResponseMetadata,
+)
 
 if TYPE_CHECKING:
     from app.channels.runtime import ChannelRuntime
@@ -54,8 +63,21 @@ class ChannelBase(ABC):
     Plugins should extend this class to get shared functionality
     while implementing the abstract methods.
 
+    Class Attributes:
+        REQUIRED_PACKAGES: Tuple of pip package names required by this channel.
+            Used by check_dependencies() to verify availability.
+
     Example:
+        @register_channel("matrix")
         class MatrixChannel(ChannelBase):
+            REQUIRED_PACKAGES = ("nio",)
+
+            @classmethod
+            def setup_dependencies(cls, runtime, settings):
+                from nio import AsyncClient
+                client = AsyncClient(settings.MATRIX_URL, settings.MATRIX_USER)
+                runtime.register("matrix_client", client)
+
             @property
             def channel_id(self) -> str:
                 return "matrix"
@@ -73,6 +95,53 @@ class ChannelBase(ABC):
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return await self._send_to_room(target, message)
     """
+
+    # Immutable tuple of required pip packages for this channel
+    REQUIRED_PACKAGES: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def check_dependencies(cls) -> tuple[bool, list[str]]:
+        """Check if required packages are available.
+
+        Uses importlib.util.find_spec() to check package availability
+        without actually importing the package.
+
+        Returns:
+            Tuple of (all_available, missing_packages).
+            all_available is True if all packages are installed.
+            missing_packages is a list of package names that are not installed.
+
+        Example:
+            >>> ok, missing = MatrixChannel.check_dependencies()
+            >>> if not ok:
+            ...     print(f"Missing packages: {missing}")
+        """
+        missing = []
+        for package in cls.REQUIRED_PACKAGES:
+            if importlib.util.find_spec(package) is None:
+                missing.append(package)
+        return len(missing) == 0, missing
+
+    @classmethod
+    def setup_dependencies(cls, runtime: "ChannelRuntime", settings: Any) -> None:
+        """Register channel-specific dependencies in runtime.
+
+        Override in subclasses that need external services registered
+        before channel instantiation. Called by ChannelBootstrapper.
+
+        Args:
+            runtime: ChannelRuntime to register services in.
+            settings: Application settings object.
+
+        Example:
+            @classmethod
+            def setup_dependencies(cls, runtime, settings):
+                from slack_sdk import WebClient
+                client = WebClient(token=settings.SLACK_TOKEN)
+                runtime.register("slack_client", client)
+        """
+        # Default implementation does nothing - for simple channels like Web
+        pass
 
     def __init__(self, runtime: "ChannelRuntime") -> None:
         """Initialize channel with runtime dependencies.
@@ -100,6 +169,15 @@ class ChannelBase(ABC):
 
         Returns:
             Set of ChannelCapability enum values.
+        """
+
+    @property
+    @abstractmethod
+    def channel_type(self) -> ChannelType:
+        """Channel type for outgoing messages.
+
+        Returns:
+            ChannelType enum value for this channel.
         """
 
     @property
@@ -177,3 +255,113 @@ class ChannelBase(ABC):
             error: The exception that occurred.
         """
         self._logger.error(f"Channel error: {error}", exc_info=True)
+
+    async def handle_incoming(self, message: IncomingMessage) -> OutgoingMessage:
+        """Handle incoming message from channel.
+
+        Template method that processes incoming messages through the RAG service
+        and builds standardized responses. Subclasses can override helper methods
+        to customize behavior without duplicating the entire flow.
+
+        Args:
+            message: Incoming message from the channel.
+
+        Returns:
+            OutgoingMessage with RAG response.
+        """
+        import time
+        import uuid
+
+        start_time = time.time()
+
+        # Build chat history for RAG service
+        chat_history = self._format_chat_history(message)
+
+        # Query RAG service
+        rag_response = await self.runtime.rag_service.query(
+            question=message.question,
+            chat_history=chat_history,
+        )
+
+        # Build response components
+        sources = self._build_sources(rag_response)
+        processing_time = (time.time() - start_time) * 1000
+        metadata = self._build_metadata(rag_response, processing_time)
+
+        return OutgoingMessage(
+            message_id=str(uuid.uuid4()),
+            in_reply_to=message.message_id,
+            channel=self.channel_type,
+            answer=rag_response.get("answer", ""),
+            sources=sources,
+            user=message.user,
+            metadata=metadata,
+            suggested_questions=rag_response.get("suggested_questions"),
+            requires_human=rag_response.get("requires_human", False),
+        )
+
+    def _format_chat_history(self, message: IncomingMessage) -> list | None:
+        """Format chat history for RAG service.
+
+        Override in subclasses to customize chat history formatting.
+
+        Args:
+            message: Incoming message containing chat history.
+
+        Returns:
+            Formatted chat history or None if no history.
+        """
+        if not message.chat_history:
+            return None
+        return [
+            {"role": msg.role, "content": msg.content} for msg in message.chat_history
+        ]
+
+    def _build_sources(self, rag_response: dict) -> list[DocumentReference]:
+        """Build DocumentReference list from RAG response.
+
+        Override in subclasses to customize source building.
+
+        Args:
+            rag_response: Response dictionary from RAG service.
+
+        Returns:
+            List of DocumentReference objects.
+        """
+        import uuid
+
+        sources = []
+        for source in rag_response.get("sources", []):
+            sources.append(
+                DocumentReference(
+                    document_id=source.get("document_id", str(uuid.uuid4())),
+                    title=source.get("title", "Unknown"),
+                    url=source.get("url"),
+                    relevance_score=source.get("relevance_score", 0.5),
+                    category=source.get("category"),
+                )
+            )
+        return sources
+
+    def _build_metadata(
+        self, rag_response: dict, processing_time_ms: float
+    ) -> ResponseMetadata:
+        """Build ResponseMetadata from RAG response.
+
+        Override in subclasses to customize metadata building.
+
+        Args:
+            rag_response: Response dictionary from RAG service.
+            processing_time_ms: Processing time in milliseconds.
+
+        Returns:
+            ResponseMetadata object.
+        """
+        return ResponseMetadata(
+            processing_time_ms=processing_time_ms,
+            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
+            model_name=rag_response.get("model_name", "unknown"),
+            tokens_used=rag_response.get("tokens_used"),
+            confidence_score=rag_response.get("confidence_score"),
+            hooks_executed=[],
+        )

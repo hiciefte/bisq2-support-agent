@@ -203,8 +203,12 @@ class TestChannelsConfig:
     @pytest.mark.unit
     def test_at_least_one_channel_required(self):
         """At least one channel must be enabled."""
-        from app.channels.config import (Bisq2ChannelConfig, ChannelsConfig,
-                                         MatrixChannelConfig, WebChannelConfig)
+        from app.channels.config import (
+            Bisq2ChannelConfig,
+            ChannelsConfig,
+            MatrixChannelConfig,
+            WebChannelConfig,
+        )
 
         with pytest.raises(ValidationError, match="(?i)at least one"):
             ChannelsConfig(
@@ -216,8 +220,12 @@ class TestChannelsConfig:
     @pytest.mark.unit
     def test_multiple_channels_enabled(self):
         """Multiple channels can be enabled."""
-        from app.channels.config import (Bisq2ChannelConfig, ChannelsConfig,
-                                         MatrixChannelConfig, WebChannelConfig)
+        from app.channels.config import (
+            Bisq2ChannelConfig,
+            ChannelsConfig,
+            MatrixChannelConfig,
+            WebChannelConfig,
+        )
 
         config = ChannelsConfig(
             bisq2=Bisq2ChannelConfig(enabled=True),

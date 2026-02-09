@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Set
 from unittest.mock import MagicMock
 
 import pytest
-from app.channels.models import ChannelCapability, HealthStatus, OutgoingMessage
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    HealthStatus,
+    OutgoingMessage,
+)
 
 if TYPE_CHECKING:
     from app.channels.base import ChannelBase
@@ -80,6 +85,10 @@ class TestChannelBaseContract:
                 return "complete"
 
             @property
+            def channel_type(self) -> ChannelType:
+                return ChannelType.WEB
+
+            @property
             def capabilities(self) -> Set[ChannelCapability]:
                 return {ChannelCapability.RECEIVE_MESSAGES}
 
@@ -114,6 +123,10 @@ class TestChannelBaseRequiredMethods:
             @property
             def channel_id(self) -> str:
                 return "test"
+
+            @property
+            def channel_type(self) -> ChannelType:
+                return ChannelType.WEB
 
             @property
             def capabilities(self) -> Set[ChannelCapability]:
@@ -188,6 +201,10 @@ class TestChannelBaseProperties:
                 return "test-channel-123"
 
             @property
+            def channel_type(self) -> ChannelType:
+                return ChannelType.WEB
+
+            @property
             def capabilities(self) -> Set[ChannelCapability]:
                 return {
                     ChannelCapability.RECEIVE_MESSAGES,
@@ -244,6 +261,10 @@ class TestChannelBaseLifecycleHooks:
             @property
             def channel_id(self) -> str:
                 return "hook-test"
+
+            @property
+            def channel_type(self) -> ChannelType:
+                return ChannelType.WEB
 
             @property
             def capabilities(self) -> Set[ChannelCapability]:
@@ -308,6 +329,10 @@ class TestChannelBaseLogging:
             @property
             def channel_id(self) -> str:
                 return "logging-test"
+
+            @property
+            def channel_type(self) -> ChannelType:
+                return ChannelType.WEB
 
             @property
             def capabilities(self) -> Set[ChannelCapability]:

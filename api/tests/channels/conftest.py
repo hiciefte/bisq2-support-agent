@@ -1,16 +1,30 @@
 """Shared fixtures for channel plugin tests."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
-from app.channels.models import (ChannelType, ChatMessage, DocumentReference, ErrorCode,
-                                 GatewayError, HealthStatus, IncomingMessage,
-                                 MessagePriority, OutgoingMessage, ResponseMetadata,
-                                 UserContext)
-from app.channels.security import (EnvironmentSecretStore, PIIDetector, RateLimitConfig,
-                                   SecurityIncidentHandler, TokenBucket)
+from app.channels.models import (
+    ChannelType,
+    ChatMessage,
+    DocumentReference,
+    ErrorCode,
+    GatewayError,
+    HealthStatus,
+    IncomingMessage,
+    MessagePriority,
+    OutgoingMessage,
+    ResponseMetadata,
+    UserContext,
+)
+from app.channels.security import (
+    EnvironmentSecretStore,
+    PIIDetector,
+    RateLimitConfig,
+    SecurityIncidentHandler,
+    TokenBucket,
+)
 
 # =============================================================================
 # Test Settings
@@ -74,7 +88,7 @@ def signed_incoming_message(
     sample_user_context: UserContext, test_channel_secret: str
 ) -> IncomingMessage:
     """IncomingMessage with valid signature."""
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(timezone.utc)
     message = IncomingMessage(
         message_id="test-msg-signed",
         channel=ChannelType.WEB,

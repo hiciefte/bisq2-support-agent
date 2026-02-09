@@ -7,8 +7,12 @@ from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.channels.models import (ErrorCode, GatewayError, IncomingMessage,
-                                 OutgoingMessage)
+from app.channels.models import (
+    ErrorCode,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+)
 
 
 class TestChannelGatewayRouting:
@@ -23,7 +27,7 @@ class TestChannelGatewayRouting:
         from app.channels.gateway import ChannelGateway
 
         gateway = ChannelGateway(rag_service=mock_rag_service)
-        result = await gateway.process_message(sample_incoming_message)
+        await gateway.process_message(sample_incoming_message)
 
         mock_rag_service.query.assert_called_once()
         call_args = mock_rag_service.query.call_args
@@ -320,7 +324,7 @@ class TestChannelGatewayErrorHandling:
         gateway.register_pre_hook(FailingHook(name="failing"))
 
         # Should not raise, but log and continue
-        result = await gateway.process_message(sample_incoming_message)
+        await gateway.process_message(sample_incoming_message)
 
         # Processing should continue to RAG
         mock_rag_service.query.assert_called_once()

@@ -9,8 +9,12 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from app.channels.gateway import ChannelGateway, RAGServiceProtocol
-from app.channels.middleware import (AuthenticationHook, MetricsHook, PIIFilterHook,
-                                     RateLimitHook)
+from app.channels.middleware import (
+    AuthenticationHook,
+    MetricsHook,
+    PIIFilterHook,
+    RateLimitHook,
+)
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)

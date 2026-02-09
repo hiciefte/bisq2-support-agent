@@ -2,9 +2,9 @@
 Prometheus metrics for scheduled background tasks.
 
 This module provides metrics instrumentation for periodic tasks like:
-- FAQ extraction from support chats
 - Wiki content updates
 - Feedback processing
+- Bisq2 API health checks
 
 Metrics are exposed via the /metrics endpoint and monitored by Prometheus
 for alerting on task failures, staleness, and performance issues.
@@ -22,42 +22,6 @@ from typing import Any, Callable, Optional
 from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# FAQ Extraction Metrics
-# =============================================================================
-
-FAQ_EXTRACTION_RUNS = Counter(
-    "faq_extraction_runs_total",
-    "Total number of FAQ extraction runs",
-    ["status"],  # success, failure, retry
-)
-
-FAQ_EXTRACTION_DURATION = Histogram(
-    "faq_extraction_duration_seconds",
-    "Duration of FAQ extraction process in seconds",
-    buckets=(10, 30, 60, 120, 300, 600, 1200, 1800, 3600),  # 10s to 1h
-)
-
-FAQ_EXTRACTION_MESSAGES_PROCESSED = Gauge(
-    "faq_extraction_messages_processed",
-    "Number of messages processed in last FAQ extraction run",
-)
-
-FAQ_EXTRACTION_FAQS_GENERATED = Gauge(
-    "faq_extraction_faqs_generated",
-    "Number of FAQs generated in last extraction run",
-)
-
-FAQ_EXTRACTION_LAST_SUCCESS_TIMESTAMP = Gauge(
-    "faq_extraction_last_success_timestamp",
-    "Unix timestamp of last successful FAQ extraction",
-)
-
-FAQ_EXTRACTION_LAST_RUN_STATUS = Gauge(
-    "faq_extraction_last_run_status",
-    "Status of last FAQ extraction run (1=success, 0=failure)",
-)
 
 # =============================================================================
 # Bisq2 API Health Metrics
@@ -143,73 +107,6 @@ FEEDBACK_PROCESSING_LAST_RUN_STATUS = Gauge(
 # =============================================================================
 # Decorator Functions for Task Instrumentation
 # =============================================================================
-
-
-def instrument_faq_extraction(func: Callable) -> Callable:
-    """
-    Decorator to instrument FAQ extraction tasks with Prometheus metrics.
-
-    Tracks:
-    - Run count (success/failure)
-    - Duration
-    - Messages processed
-    - FAQs generated
-    - Last success timestamp
-    - Last run status
-
-    Example:
-        @instrument_faq_extraction
-        async def extract_faqs():
-            # extraction logic
-            return {"messages_processed": 100, "faqs_generated": 15}
-    """
-
-    @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start_time = time.time()
-        result = None
-
-        try:
-            # Execute the task
-            result = await func(*args, **kwargs)
-
-            # Calculate duration
-            duration = time.time() - start_time
-            FAQ_EXTRACTION_DURATION.observe(duration)
-
-            # Update success metrics
-            FAQ_EXTRACTION_RUNS.labels(status="success").inc()
-            FAQ_EXTRACTION_LAST_RUN_STATUS.set(1)
-            FAQ_EXTRACTION_LAST_SUCCESS_TIMESTAMP.set(time.time())
-
-            # Update task-specific metrics if result contains them
-            if isinstance(result, dict):
-                if "messages_processed" in result:
-                    FAQ_EXTRACTION_MESSAGES_PROCESSED.set(result["messages_processed"])
-                if "faqs_generated" in result:
-                    FAQ_EXTRACTION_FAQS_GENERATED.set(result["faqs_generated"])
-
-            # Persist Gauge values to database to survive container restarts
-            _persist_faq_metrics()
-
-            return result
-
-        except Exception:
-            # Calculate duration even on failure
-            duration = time.time() - start_time
-            FAQ_EXTRACTION_DURATION.observe(duration)
-
-            # Update failure metrics
-            FAQ_EXTRACTION_RUNS.labels(status="failure").inc()
-            FAQ_EXTRACTION_LAST_RUN_STATUS.set(0)
-
-            # Persist failure status to database
-            _persist_faq_metrics()
-
-            # Re-raise the exception
-            raise
-
-    return wrapper
 
 
 def instrument_wiki_update(func: Callable) -> Callable:
@@ -345,53 +242,6 @@ def instrument_feedback_processing(func: Callable) -> Callable:
 # =============================================================================
 
 
-def record_faq_extraction_success(
-    messages_processed: int = 0,
-    faqs_generated: int = 0,
-    duration: Optional[float] = None,
-) -> None:
-    """
-    Manually record successful FAQ extraction metrics.
-
-    Useful when calling from shell scripts that wrap the Python extraction process.
-
-    Args:
-        messages_processed: Number of messages processed
-        faqs_generated: Number of FAQs generated
-        duration: Task duration in seconds (optional)
-    """
-    FAQ_EXTRACTION_RUNS.labels(status="success").inc()
-    FAQ_EXTRACTION_LAST_RUN_STATUS.set(1)
-    FAQ_EXTRACTION_LAST_SUCCESS_TIMESTAMP.set(time.time())
-
-    if messages_processed > 0:
-        FAQ_EXTRACTION_MESSAGES_PROCESSED.set(messages_processed)
-    if faqs_generated > 0:
-        FAQ_EXTRACTION_FAQS_GENERATED.set(faqs_generated)
-    if duration is not None:
-        FAQ_EXTRACTION_DURATION.observe(duration)
-
-    # Persist Gauge values to database
-    _persist_faq_metrics()
-
-
-def record_faq_extraction_failure(duration: Optional[float] = None) -> None:
-    """
-    Manually record failed FAQ extraction metrics.
-
-    Args:
-        duration: Task duration in seconds (optional)
-    """
-    FAQ_EXTRACTION_RUNS.labels(status="failure").inc()
-    FAQ_EXTRACTION_LAST_RUN_STATUS.set(0)
-
-    if duration is not None:
-        FAQ_EXTRACTION_DURATION.observe(duration)
-
-    # Persist failure status to database
-    _persist_faq_metrics()
-
-
 def record_wiki_update_success(
     pages_processed: int = 0, duration: Optional[float] = None
 ) -> None:
@@ -515,40 +365,6 @@ def _safe_persist(func: Callable[[], None]) -> Callable[[], None]:
 
 
 @_safe_persist
-def _persist_faq_metrics() -> None:
-    """Persist FAQ extraction Gauge metrics to database."""
-    from app.utils.task_metrics_persistence import get_persistence
-
-    persistence = get_persistence()
-
-    # Collect metrics, filtering out None values
-    # REGISTRY.get_sample_value() returns None if metric doesn't exist yet
-    metrics = {
-        "faq_extraction_last_run_status": REGISTRY.get_sample_value(
-            "faq_extraction_last_run_status"
-        ),
-        "faq_extraction_last_success_timestamp": REGISTRY.get_sample_value(
-            "faq_extraction_last_success_timestamp"
-        ),
-        "faq_extraction_messages_processed": REGISTRY.get_sample_value(
-            "faq_extraction_messages_processed"
-        ),
-        "faq_extraction_faqs_generated": REGISTRY.get_sample_value(
-            "faq_extraction_faqs_generated"
-        ),
-    }
-
-    # Filter out None values and ensure float type
-    # Database has NOT NULL constraint and save_metrics expects Dict[str, float]
-    valid_metrics = {
-        name: float(value) for name, value in metrics.items() if value is not None
-    }
-
-    if valid_metrics:
-        persistence.save_metrics(valid_metrics)
-
-
-@_safe_persist
 def _persist_wiki_metrics() -> None:
     """Persist wiki update Gauge metrics to database."""
     from app.utils.task_metrics_persistence import get_persistence
@@ -645,22 +461,6 @@ def restore_metrics_from_database() -> None:
 
         persistence = get_persistence()
         metrics = persistence.load_all_metrics()
-
-        # Restore FAQ extraction metrics
-        if "faq_extraction_last_run_status" in metrics:
-            FAQ_EXTRACTION_LAST_RUN_STATUS.set(
-                metrics["faq_extraction_last_run_status"]
-            )
-        if "faq_extraction_last_success_timestamp" in metrics:
-            FAQ_EXTRACTION_LAST_SUCCESS_TIMESTAMP.set(
-                metrics["faq_extraction_last_success_timestamp"]
-            )
-        if "faq_extraction_messages_processed" in metrics:
-            FAQ_EXTRACTION_MESSAGES_PROCESSED.set(
-                metrics["faq_extraction_messages_processed"]
-            )
-        if "faq_extraction_faqs_generated" in metrics:
-            FAQ_EXTRACTION_FAQS_GENERATED.set(metrics["faq_extraction_faqs_generated"])
 
         # Restore wiki update metrics
         if "wiki_update_last_run_status" in metrics:

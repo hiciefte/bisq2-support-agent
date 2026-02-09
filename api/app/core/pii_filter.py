@@ -5,7 +5,7 @@ Redacts sensitive information from log messages to prevent PII leakage.
 
 import logging
 import re
-from typing import Pattern
+from typing import Any, Pattern
 
 
 class PIIFilter(logging.Filter):
@@ -72,7 +72,7 @@ class PIIFilter(logging.Filter):
 
         return True
 
-    def _redact_string(self, value: any) -> any:
+    def _redact_string(self, value: Any) -> Any:
         """Redact PII from a string value.
 
         Args:

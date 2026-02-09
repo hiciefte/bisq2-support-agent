@@ -25,26 +25,63 @@ Example usage:
 """
 
 from app.channels.base import ChannelBase, ChannelProtocol
-from app.channels.config import (Bisq2ChannelConfig, ChannelConfigBase, ChannelsConfig,
-                                 MatrixChannelConfig, WebChannelConfig)
+from app.channels.bootstrapper import BootstrapResult, ChannelBootstrapper
+from app.channels.config import (
+    Bisq2ChannelConfig,
+    ChannelConfigBase,
+    ChannelsConfig,
+    MatrixChannelConfig,
+    WebChannelConfig,
+)
 from app.channels.dependencies import get_gateway
 from app.channels.gateway import ChannelGateway
-from app.channels.hooks import (BasePostProcessingHook, BasePreProcessingHook,
-                                HookPriority, PostProcessingHook, PreProcessingHook)
+from app.channels.hooks import (
+    BasePostProcessingHook,
+    BasePreProcessingHook,
+    HookPriority,
+    PostProcessingHook,
+    PreProcessingHook,
+)
 from app.channels.lifecycle import channel_lifespan, create_channel_gateway
-from app.channels.models import (ChannelCapability, ChannelType, ChatMessage,
-                                 DocumentReference, ErrorCode, GatewayError,
-                                 HealthStatus, IncomingMessage, MessagePriority,
-                                 OutgoingMessage, ResponseMetadata, UserContext)
-from app.channels.registry import (ChannelAlreadyRegisteredError, ChannelNotFoundError,
-                                   ChannelRegistry, ChannelStartupError,
-                                   register_channel)
-from app.channels.runtime import (ChannelRuntime, ServiceAlreadyRegisteredError,
-                                  ServiceNotFoundError)
-from app.channels.security import (EnvironmentSecretStore, ErrorFactory, InputValidator,
-                                   PIIDetector, PIIType, RateLimitConfig,
-                                   SecurityIncidentHandler, SecurityIncidentType,
-                                   SensitiveDataFilter, TokenBucket)
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    ChatMessage,
+    DocumentReference,
+    ErrorCode,
+    GatewayError,
+    HealthStatus,
+    IncomingMessage,
+    MessagePriority,
+    OutgoingMessage,
+    ResponseMetadata,
+    UserContext,
+)
+from app.channels.registry import (
+    ChannelAlreadyRegisteredError,
+    ChannelNotFoundError,
+    ChannelRegistry,
+    ChannelStartupError,
+    get_registered_channel_types,
+    register_channel,
+)
+from app.channels.runtime import (
+    ChannelRuntime,
+    ServiceAlreadyRegisteredError,
+    ServiceNotFoundError,
+)
+from app.channels.security import (
+    EnvironmentSecretStore,
+    ErrorFactory,
+    InputValidator,
+    PIIDetector,
+    PIIType,
+    RateLimitConfig,
+    SecurityIncidentHandler,
+    SecurityIncidentType,
+    SensitiveDataFilter,
+    TokenBucket,
+)
 
 __all__ = [
     # Base classes
@@ -62,6 +99,10 @@ __all__ = [
     "ChannelNotFoundError",
     "ChannelStartupError",
     "register_channel",
+    "get_registered_channel_types",
+    # Bootstrapper
+    "BootstrapResult",
+    "ChannelBootstrapper",
     # Runtime
     "ChannelRuntime",
     "ServiceAlreadyRegisteredError",

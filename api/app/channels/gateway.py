@@ -9,8 +9,14 @@ import uuid
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 from app.channels.hooks import PostProcessingHook, PreProcessingHook
-from app.channels.models import (DocumentReference, ErrorCode, GatewayError,
-                                 IncomingMessage, OutgoingMessage, ResponseMetadata)
+from app.channels.models import (
+    DocumentReference,
+    ErrorCode,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+    ResponseMetadata,
+)
 from app.channels.security import ErrorFactory
 
 logger = logging.getLogger(__name__)
