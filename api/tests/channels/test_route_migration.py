@@ -162,6 +162,32 @@ class TestQueryRouteWithGateway:
         payload = json.loads(response.body)
         assert payload["error_code"] == ErrorCode.RATE_LIMIT_EXCEEDED.value
 
+    @pytest.mark.unit
+    def test_gateway_error_status_map_includes_additional_codes(self):
+        """Additional gateway error codes map to expected HTTP statuses."""
+        from app.routes.chat import _gateway_error_to_status
+
+        assert (
+            _gateway_error_to_status(
+                type(
+                    "Err",
+                    (),
+                    {"error_code": ErrorCode.SERVICE_UNAVAILABLE},
+                )()
+            )
+            == 503
+        )
+        assert (
+            _gateway_error_to_status(
+                type(
+                    "Err",
+                    (),
+                    {"error_code": ErrorCode.MESSAGE_TOO_LARGE},
+                )()
+            )
+            == 413
+        )
+
 
 # =============================================================================
 # Backward Compatibility Tests
@@ -214,3 +240,23 @@ class TestBackwardCompatibility:
         assert "type" in properties
         assert "content" in properties
         assert "protocol" in properties
+
+
+class TestWebUserContextDerivation:
+    """Test web user context derivation edge cases."""
+
+    @pytest.mark.unit
+    def test_empty_request_metadata_uses_unique_fallback(self):
+        """Missing headers/client metadata should not collapse to a shared bucket."""
+        from app.routes.chat import _derive_web_user_context
+
+        request = MagicMock()
+        request.cookies = {}
+        request.headers = {}
+        request.client = None
+
+        first_user_id, first_session_id = _derive_web_user_context(request)
+        second_user_id, second_session_id = _derive_web_user_context(request)
+
+        assert first_user_id != second_user_id
+        assert first_session_id != second_session_id

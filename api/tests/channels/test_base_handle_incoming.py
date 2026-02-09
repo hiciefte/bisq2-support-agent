@@ -292,6 +292,28 @@ class TestChannelBaseHandleIncoming:
         assert source.document_id is not None  # Generated UUID
         assert source.relevance_score == 0.5  # Default
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_incoming_maps_source_type_to_category(
+        self, mock_runtime, incoming_message
+    ):
+        """handle_incoming preserves source type when category is absent."""
+        mock_runtime.rag_service.query.return_value = {
+            "answer": "Answer",
+            "sources": [
+                {
+                    "title": "FAQ Source",
+                    "type": "faq",
+                }
+            ],
+        }
+        channel = ConcreteTestChannel(mock_runtime)
+
+        result = await channel.handle_incoming(incoming_message)
+
+        assert len(result.sources) == 1
+        assert result.sources[0].category == "faq"
+
 
 class TestChannelTypeProperty:
     """Test channel_type property for different channels."""

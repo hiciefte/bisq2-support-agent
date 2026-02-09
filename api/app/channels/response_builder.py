@@ -14,7 +14,7 @@ def build_sources(rag_response: Mapping[str, Any]) -> List[DocumentReference]:
             title=source.get("title", "Unknown"),
             url=source.get("url"),
             relevance_score=source.get("relevance_score", 0.5),
-            category=source.get("category"),
+            category=source.get("category") or source.get("type"),
         )
         for source in rag_response.get("sources", [])
     ]

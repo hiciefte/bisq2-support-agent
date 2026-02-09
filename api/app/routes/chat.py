@@ -94,7 +94,10 @@ def _gateway_error_to_status(error: GatewayError) -> int:
         ErrorCode.INVALID_MESSAGE: 400,
         ErrorCode.VALIDATION_ERROR: 400,
         ErrorCode.PII_DETECTED: 400,
+        ErrorCode.MESSAGE_TOO_LARGE: 413,
         ErrorCode.CHANNEL_UNAVAILABLE: 503,
+        ErrorCode.SERVICE_UNAVAILABLE: 503,
+        ErrorCode.REQUIRES_HUMAN_ESCALATION: 503,
         ErrorCode.RAG_SERVICE_ERROR: 500,
         ErrorCode.INTERNAL_ERROR: 500,
     }
@@ -113,7 +116,7 @@ def _derive_web_user_context(request: Request) -> tuple[str, str]:
         client_host = request.client.host if request.client else ""
         user_agent = request.headers.get("user-agent", "")
         token = "|".join([forwarded_for, client_host, user_agent]).strip()
-        if not token:
+        if not token or token.replace("|", "").strip() == "":
             token = str(uuid.uuid4())
 
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
