@@ -54,7 +54,7 @@ tasks:
       - "test -f claudedocs/adr/escalation-lifecycle-decisions.md"
 
   - id: E04
-    status: todo
+    status: done
     title: "Data layer -- models + repository"
     phase: "1"
     changes:
@@ -76,7 +76,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_repository.py -v"
 
   - id: E05
-    status: todo
+    status: in_progress
     title: "Service layer -- lifecycle orchestration"
     phase: "2"
     changes:

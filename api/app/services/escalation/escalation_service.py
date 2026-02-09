@@ -1,0 +1,345 @@
+"""Escalation lifecycle orchestration service."""
+
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Literal, Optional
+
+from app.models.escalation import (
+    DuplicateEscalationError,
+    Escalation,
+    EscalationAlreadyClaimedError,
+    EscalationCountsResponse,
+    EscalationCreate,
+    EscalationDeliveryStatus,
+    EscalationFilters,
+    EscalationListResponse,
+    EscalationNotFoundError,
+    EscalationNotRespondedError,
+    EscalationStatus,
+    EscalationUpdate,
+    UserPollResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class EscalationService:
+    """Orchestrates the escalation lifecycle.
+
+    Dependencies injected via constructor:
+    - repository: EscalationRepository (async SQLite CRUD)
+    - response_delivery: ResponseDelivery (channel routing)
+    - faq_service: FAQService (FAQ creation)
+    - learning_engine: LearningEngine (learning recording)
+    - settings: Settings (configuration)
+    """
+
+    def __init__(
+        self,
+        repository,
+        response_delivery,
+        faq_service,
+        learning_engine,
+        settings,
+    ):
+        self.repository = repository
+        self.response_delivery = response_delivery
+        self.faq_service = faq_service
+        self.learning_engine = learning_engine
+        self.settings = settings
+
+    # ------------------------------------------------------------------
+    # Create
+    # ------------------------------------------------------------------
+
+    async def create_escalation(self, data: EscalationCreate) -> Escalation:
+        """Create a new escalation. Idempotent on message_id."""
+        try:
+            return await self.repository.create(data)
+        except DuplicateEscalationError:
+            logger.info(
+                "Duplicate escalation for message_id=%s, returning existing",
+                data.message_id,
+            )
+            existing = await self.repository.get_by_message_id(data.message_id)
+            if existing is None:
+                raise
+            return existing
+
+    # ------------------------------------------------------------------
+    # Claim
+    # ------------------------------------------------------------------
+
+    async def claim_escalation(self, escalation_id: int, staff_id: str) -> Escalation:
+        """Claim an escalation for review."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        # Already claimed by same staff — idempotent
+        if escalation.staff_id == staff_id and escalation.status in (
+            EscalationStatus.IN_REVIEW,
+            EscalationStatus.RESPONDED,
+        ):
+            return escalation
+
+        # Already claimed by another staff — check TTL
+        if (
+            escalation.status == EscalationStatus.IN_REVIEW
+            and escalation.staff_id
+            and escalation.staff_id != staff_id
+        ):
+            if escalation.claimed_at and not self._is_claim_expired(
+                escalation.claimed_at
+            ):
+                raise EscalationAlreadyClaimedError(
+                    f"Escalation {escalation_id} already claimed by "
+                    f"{escalation.staff_id}"
+                )
+
+        now = datetime.now(timezone.utc)
+        return await self.repository.update(
+            escalation_id,
+            EscalationUpdate(
+                status=EscalationStatus.IN_REVIEW,
+                staff_id=staff_id,
+                claimed_at=now,
+            ),
+        )
+
+    def _is_claim_expired(self, claimed_at: datetime) -> bool:
+        ttl_minutes = getattr(self.settings, "ESCALATION_CLAIM_TTL_MINUTES", 30)
+        expiry = claimed_at + timedelta(minutes=ttl_minutes)
+        return datetime.now(timezone.utc) > expiry
+
+    # ------------------------------------------------------------------
+    # Respond
+    # ------------------------------------------------------------------
+
+    async def respond_to_escalation(
+        self, escalation_id: int, staff_answer: str, staff_id: str
+    ) -> Escalation:
+        """Save staff response, deliver to user, record learning."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        # Already responded by same staff — idempotent
+        if (
+            escalation.status == EscalationStatus.RESPONDED
+            and escalation.staff_id == staff_id
+        ):
+            return escalation
+
+        # Closed — cannot respond
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} is closed")
+
+        # Must be claimed by this staff (or pending)
+        if (
+            escalation.status == EscalationStatus.IN_REVIEW
+            and escalation.staff_id
+            and escalation.staff_id != staff_id
+        ):
+            if not self._is_claim_expired(escalation.claimed_at):
+                raise EscalationAlreadyClaimedError(
+                    f"Escalation {escalation_id} claimed by " f"{escalation.staff_id}"
+                )
+
+        now = datetime.now(timezone.utc)
+        updated = await self.repository.update(
+            escalation_id,
+            EscalationUpdate(
+                status=EscalationStatus.RESPONDED,
+                staff_answer=staff_answer,
+                staff_id=staff_id,
+                responded_at=now,
+            ),
+        )
+
+        # Attempt delivery (non-blocking)
+        try:
+            delivered = await self.response_delivery.deliver(updated, staff_answer)
+            if not delivered:
+                logger.warning("Delivery failed for escalation %d", escalation_id)
+                await self.repository.update(
+                    escalation_id,
+                    EscalationUpdate(
+                        delivery_status=EscalationDeliveryStatus.FAILED,
+                        delivery_error="Delivery returned False",
+                    ),
+                )
+        except Exception:
+            logger.exception("Delivery error for escalation %d", escalation_id)
+
+        # Record learning
+        try:
+            admin_action = (
+                "approved"
+                if staff_answer.strip() == escalation.ai_draft_answer.strip()
+                else "edited"
+            )
+            self.learning_engine.record_review(
+                question_id=f"escalation_{escalation.id}",
+                confidence=escalation.confidence_score,
+                admin_action=admin_action,
+                routing_action=escalation.routing_action,
+                metadata={
+                    "channel": escalation.channel,
+                    "staff_id": staff_id,
+                },
+            )
+        except Exception:
+            logger.exception("Learning engine error for escalation %d", escalation_id)
+
+        return updated
+
+    # ------------------------------------------------------------------
+    # Generate FAQ
+    # ------------------------------------------------------------------
+
+    async def generate_faq_from_escalation(
+        self,
+        escalation_id: int,
+        question: str,
+        answer: str,
+        category: str = "General",
+        protocol: Optional[Literal["multisig_v1", "bisq_easy", "musig", "all"]] = None,
+    ) -> Dict[str, Any]:
+        """Create auto-verified FAQ from resolved escalation."""
+        from datetime import datetime, timezone
+
+        from app.models.faq import FAQItem
+
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        if escalation.status not in (
+            EscalationStatus.RESPONDED,
+            EscalationStatus.CLOSED,
+        ):
+            raise EscalationNotRespondedError(
+                f"Escalation {escalation_id} has not been responded to"
+            )
+
+        faq_item = FAQItem(
+            question=question,
+            answer=answer,
+            category=category,
+            protocol=protocol,
+            source="Escalation",
+            verified=True,
+            verified_at=datetime.now(timezone.utc),
+        )
+
+        faq = self.faq_service.add_faq(faq_item)
+        faq_id = getattr(faq, "id", str(faq))
+
+        await self.repository.update(
+            escalation_id,
+            EscalationUpdate(generated_faq_id=str(faq_id)),
+        )
+
+        return {
+            "faq_id": str(faq_id),
+            "question": question,
+            "answer": answer,
+        }
+
+    # ------------------------------------------------------------------
+    # Close
+    # ------------------------------------------------------------------
+
+    async def close_escalation(self, escalation_id: int) -> Escalation:
+        """Close an escalation."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        now = datetime.now(timezone.utc)
+        return await self.repository.update(
+            escalation_id,
+            EscalationUpdate(
+                status=EscalationStatus.CLOSED,
+                closed_at=now,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # List / Query
+    # ------------------------------------------------------------------
+
+    async def list_escalations(
+        self,
+        status: Optional[EscalationStatus] = None,
+        channel: Optional[str] = None,
+        priority=None,
+        staff_id: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> EscalationListResponse:
+        """List escalations with optional filters."""
+        filters = EscalationFilters(
+            status=status,
+            channel=channel,
+            priority=priority,
+            staff_id=staff_id,
+            limit=limit,
+            offset=offset,
+        )
+        escalations, total = await self.repository.list_escalations(filters)
+        return EscalationListResponse(
+            escalations=escalations,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_escalation_counts(self) -> EscalationCountsResponse:
+        """Get counts by status for dashboard badges."""
+        return await self.repository.get_counts()
+
+    # ------------------------------------------------------------------
+    # User polling
+    # ------------------------------------------------------------------
+
+    async def get_user_response(self, message_id: str) -> Optional[UserPollResponse]:
+        """Get staff response for web polling."""
+        escalation = await self.repository.get_by_message_id(message_id)
+        if escalation is None:
+            return None
+
+        if escalation.status in (
+            EscalationStatus.RESPONDED,
+            EscalationStatus.CLOSED,
+        ):
+            return UserPollResponse(
+                status="resolved",
+                staff_answer=escalation.staff_answer,
+                responded_at=escalation.responded_at,
+            )
+
+        return UserPollResponse(status="pending")
+
+    # ------------------------------------------------------------------
+    # Maintenance
+    # ------------------------------------------------------------------
+
+    async def auto_close_stale(self) -> int:
+        """Close escalations older than configured hours."""
+        hours = getattr(self.settings, "ESCALATION_AUTO_CLOSE_HOURS", 72)
+        threshold = datetime.now(timezone.utc) - timedelta(hours=hours)
+        count = await self.repository.close_stale(threshold)
+        if count:
+            logger.info("Auto-closed %d stale escalations", count)
+        return count
+
+    async def purge_retention(self) -> int:
+        """Delete old closed/responded escalations."""
+        days = getattr(self.settings, "ESCALATION_RETENTION_DAYS", 90)
+        threshold = datetime.now(timezone.utc) - timedelta(days=days)
+        count = await self.repository.purge_old(threshold)
+        if count:
+            logger.info("Purged %d old escalations", count)
+        return count

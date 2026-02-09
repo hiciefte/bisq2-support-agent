@@ -99,7 +99,7 @@ class EscalationUpdate(BaseModel):
     """Patch fields for updating an escalation."""
 
     status: Optional[EscalationStatus] = None
-    staff_answer: Optional[str] = Field(None, max_length=10000)
+    staff_answer: Optional[str] = Field(default=None, max_length=10000)
     staff_id: Optional[str] = None
     delivery_status: Optional[EscalationDeliveryStatus] = None
     delivery_error: Optional[str] = None
