@@ -284,7 +284,7 @@ class TestRevocation:
         svc = MagicMock(spec=[])  # no methods
         p = ReactionProcessor(tracker=tracker, feedback_service=svc)
         result = await p.revoke_reaction("matrix", "$evt:server", "@voter:server")
-        assert result is True  # still returns True (no-op)
+        assert result is False  # service unavailable → returns False
 
 
 # =============================================================================

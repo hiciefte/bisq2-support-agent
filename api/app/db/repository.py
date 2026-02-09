@@ -714,11 +714,10 @@ class FeedbackRepository:
         reactor_identity_hash: str,
         reaction_emoji: str,
         feedback_id: int,
-    ) -> int:
+    ) -> None:
         """Insert or update a reaction tracking record.
 
         On conflict (same channel/ext_id/reactor), updates emoji and timestamp.
-        Returns the reaction tracking ID.
         """
         now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection() as conn:
@@ -746,7 +745,6 @@ class FeedbackRepository:
                 ),
             )
             conn.commit()
-            return cursor.lastrowid
 
     def revoke_reaction_tracking(
         self,

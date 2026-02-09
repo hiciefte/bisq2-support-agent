@@ -215,7 +215,7 @@ class ReactionProcessor:
         }
 
         try:
-            await self._store_feedback(feedback_data)
+            self._store_feedback(feedback_data)
             return True
         except Exception:
             logger.exception(
@@ -240,8 +240,10 @@ class ReactionProcessor:
             if self.feedback_service and hasattr(
                 self.feedback_service, "revoke_reaction_feedback"
             ):
-                await self._run_revoke(channel_id, external_message_id, reactor_hash)
-            return True
+                self._run_revoke(channel_id, external_message_id, reactor_hash)
+                return True
+            logger.debug("FeedbackService unavailable for revocation")
+            return False
         except Exception:
             logger.exception(
                 "Failed to revoke reaction: channel=%s ext_id=%s",
@@ -250,8 +252,8 @@ class ReactionProcessor:
             )
             return False
 
-    async def _store_feedback(self, feedback_data: Dict[str, Any]) -> None:
-        """Store feedback via FeedbackService."""
+    def _store_feedback(self, feedback_data: Dict[str, Any]) -> None:
+        """Store feedback via FeedbackService (synchronous)."""
         if self.feedback_service and hasattr(
             self.feedback_service, "store_reaction_feedback"
         ):
@@ -261,13 +263,13 @@ class ReactionProcessor:
                 "FeedbackService not available or missing store_reaction_feedback"
             )
 
-    async def _run_revoke(
+    def _run_revoke(
         self,
         channel_id: str,
         external_message_id: str,
         reactor_hash: str,
     ) -> None:
-        """Run revoke on feedback service."""
+        """Run revoke on feedback service (synchronous)."""
         self.feedback_service.revoke_reaction_feedback(
             channel=channel_id,
             external_message_id=external_message_id,
