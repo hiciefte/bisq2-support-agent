@@ -1040,6 +1040,7 @@ class SimplifiedRAGService:
                 "feedback_created": False,
                 "confidence": confidence,
                 "routing_action": routing_action.action,
+                "requires_human": routing_action.action == "needs_human",
                 "detected_version": detected_version,
                 "version_confidence": version_confidence,
                 "mcp_tools_used": mcp_tools_used,

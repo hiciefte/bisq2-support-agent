@@ -1,0 +1,221 @@
+spec_path: claudedocs/spec/escalation-learning-pipeline/
+spec_docs:
+  - README.md
+  - 01-architecture-overview.md
+  - 02-api-contracts.md
+  - 03-tdd-test-plan.md
+  - 04-implementation-roadmap.md
+stop_condition: all tasks marked done
+tasks:
+  - id: E01
+    status: done
+    title: "Wire requires_human in RAGService"
+    phase: "0a"
+    changes:
+      - api/app/services/simplified_rag_service.py
+    notes: |
+      When AutoSendRouter returns action="needs_human", set
+      requires_human=True in the response dict. Without this the
+      EscalationPostHook never triggers. Safe default: requires_human=False
+      when the router is unavailable or returns any other action.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_upstream.py::TestRequiresHumanWiring -v"
+
+  - id: E02
+    status: todo
+    title: "Abstract methods on ChannelBase + all plugins"
+    phase: "0b"
+    changes:
+      - api/app/channels/base.py
+      - api/app/channels/plugins/web/channel.py
+      - api/app/channels/plugins/matrix/channel.py
+      - api/app/channels/plugins/bisq2/channel.py
+    notes: |
+      Add get_delivery_target(metadata) and format_escalation_message(username,
+      escalation_id, support_handle) as abstract methods on ChannelBase.
+      Implement in all three channel plugins.
+      NOTE: Reaction spec already added original_question to handle_incoming()
+      and rewrote send_message(). Only add the 2 new abstract methods here.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_upstream.py::TestChannelAdapterNewMethods -v"
+
+  - id: E03
+    status: todo
+    title: "Decision lock ADR"
+    phase: "0c"
+    changes:
+      - claudedocs/adr/escalation-lifecycle-decisions.md
+    notes: |
+      Document frozen decisions: idempotency (duplicate message_id returns
+      existing), delivery semantics (save-first, delivery failure non-blocking),
+      polling statuses (pending/resolved), channel extensibility contract,
+      Bisq2 transition (WS primary, polling fallback).
+    checks:
+      - "test -f claudedocs/adr/escalation-lifecycle-decisions.md"
+
+  - id: E04
+    status: todo
+    title: "Data layer -- models + repository"
+    phase: "1"
+    changes:
+      - api/app/models/escalation.py
+      - api/app/services/escalation/__init__.py
+      - api/app/services/escalation/escalation_repository.py
+      - api/tests/escalation/__init__.py
+      - api/tests/escalation/conftest.py
+    notes: |
+      Create Pydantic models from 02-api-contracts.md section 1.
+      Create EscalationRepository with separate escalations.db.
+      Use aiosqlite for async SQLite access (the API is async;
+      blocking sqlite3 calls in async handlers will stall the event loop).
+      Add indices: unique message_id, (status, created_at),
+      (channel, status, created_at), responded_at.
+      Store channel_metadata and sources as JSON text.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_models.py -v"
+      - "pytest api/tests/escalation/test_escalation_repository.py -v"
+
+  - id: E05
+    status: todo
+    title: "Service layer -- lifecycle orchestration"
+    phase: "2"
+    changes:
+      - api/app/services/escalation/escalation_service.py
+    notes: |
+      Implement create_escalation (idempotent), claim_escalation (with TTL),
+      respond_to_escalation (persist-first, retry delivery, record learning),
+      close_escalation, auto_close_stale, purge_retention.
+      Add maintenance scheduling via asyncio background task in lifespan().
+    checks:
+      - "pytest api/tests/escalation/test_escalation_service.py -v"
+      - "pytest api/tests/escalation/test_escalation_concurrency.py -v"
+
+  - id: E06
+    status: todo
+    title: "Gateway EscalationPostHook"
+    phase: "3"
+    changes:
+      - api/app/channels/hooks/__init__.py
+      - api/app/channels/hooks/escalation_hook.py
+    notes: |
+      Convert hooks.py -> hooks/ package. Move existing hooks.py content
+      to hooks/__init__.py (preserve all imports). Add escalation_hook.py.
+      Hook uses HookPriority.HIGH (100), passes through when
+      requires_human=False, creates escalation and replaces answer
+      when requires_human=True. Delegates message formatting to
+      adapter.format_escalation_message() -- no channel if/elif in hook code.
+      Register hook in bootstrap/main initialization.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_hook.py -v"
+
+  - id: E07
+    status: todo
+    title: "Admin + polling API"
+    phase: "4"
+    changes:
+      - api/app/routes/admin/escalations.py
+      - api/app/routes/escalation_polling.py
+      - api/app/main.py
+      - api/app/core/config.py
+    notes: |
+      Implement admin endpoints (list, counts, get, claim, respond,
+      generate-faq, close) with verify_admin_access. Implement polling
+      endpoint with UUID message_id (not sequential ID).
+      Add rate limiting for polling: evaluate slowapi or custom middleware.
+      Wire routes in main.py. Add escalation config settings.
+    checks:
+      - "pytest api/tests/routes/test_escalation_endpoints.py -v"
+
+  - id: E08
+    status: todo
+    title: "Response delivery + Bisq2 WS"
+    phase: "5"
+    changes:
+      - api/app/services/escalation/response_delivery.py
+      - api/app/channels/plugins/bisq2/channel.py
+    notes: |
+      Implement ResponseDelivery with adapter lookup and target extraction.
+      Import Bisq2WebSocketClient from api/app/integrations/bisq2_websocket.py
+      (created by reaction spec). Compose it into the delivery transport
+      rather than building from scratch.
+      Add WS frame schema validation, ack correlation by client_message_id,
+      send timeout handling, inbound dedupe, and explicit transport state
+      machine (connected, degraded_polling, reconnecting).
+      Keep polling fallback when WebSocket unavailable.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_response_delivery.py -v"
+      - "pytest api/tests/escalation/test_escalation_bisq2_websocket.py -v"
+
+  - id: E09
+    status: todo
+    title: "Learning + FAQ integration"
+    phase: "6"
+    changes:
+      - api/app/services/escalation/escalation_service.py
+    notes: |
+      Wire LearningEngine.record_review() in respond_to_escalation() with
+      diff-based admin_action: "approved" if staff_answer matches
+      ai_draft_answer, "edited" if different.
+      Implement generate_faq_from_escalation() using FAQService.add_faq()
+      with protocol literals (multisig_v1, bisq_easy, musig, all).
+      Call _trigger_update(rebuild=False) after FAQ creation.
+    checks:
+      - "pytest api/tests/escalation/test_escalation_learning.py -v"
+
+  - id: E10
+    status: todo
+    title: "Frontend -- admin queue + chat UI"
+    phase: "7"
+    changes:
+      - web/src/app/admin/escalations/page.tsx
+      - web/src/app/admin/escalations/EscalationReviewPanel.tsx
+      - web/src/app/admin/escalations/GenerateFAQDialog.tsx
+      - web/src/components/chat/components/human-review-badge.tsx
+      - web/src/components/chat/components/human-response-section.tsx
+      - web/src/components/chat/hooks/use-escalation-polling.ts
+      - web/src/components/chat/components/message-item.tsx
+      - web/src/components/chat/hooks/use-chat.ts
+      - web/src/components/chat/types/chat.types.ts
+      - web/src/app/admin/layout.tsx
+    notes: |
+      Admin: queue list with filter tabs, review panel with editable
+      textarea, FAQ generation dialog with duplicate detection.
+      Chat: sky-blue badge ("Support team notified") with pulse animation,
+      polling hook (10s initial, 30s active, 60s background),
+      inline staff response rendering.
+    checks:
+      - "cd web && npm run build"
+      - "cd web && npm run lint"
+
+  - id: E11
+    status: todo
+    title: "Reliability + security gates"
+    phase: "8"
+    changes:
+      - api/app/services/escalation/escalation_service.py
+      - api/app/channels/hooks/escalation_hook.py
+    notes: |
+      Add observability metrics: escalation lifecycle counts, delivery
+      outcomes by channel, polling rate-limit hits, Bisq2 WS reconnects.
+      Add structured logs with escalation_id, channel, staff_id.
+      Load and abuse tests for polling and queue APIs.
+    checks:
+      - "pytest api/tests/escalation/ -v --timeout=10"
+      - "pytest api/tests/routes/test_escalation_endpoints.py -v --timeout=10"
+
+  - id: E12
+    status: todo
+    title: "Rollout -- feature flags + deploy"
+    phase: "9"
+    changes:
+      - api/app/core/config.py
+      - docker/docker-compose.yml
+    notes: |
+      Add feature flags: ESCALATION_ENABLED, ESCALATION_BISQ2_WS_ENABLED.
+      EscalationPostHook checks ESCALATION_ENABLED before acting.
+      Bisq2 WS transport checks ESCALATION_BISQ2_WS_ENABLED.
+      Document deploy order: backend first, then admin UI, then chat UI,
+      then Bisq2 WS enablement.
+    checks:
+      - "pytest api/tests/escalation/ -v"
+      - "cd api && black --check . && isort --check ."
