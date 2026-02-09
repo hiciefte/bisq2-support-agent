@@ -3,7 +3,7 @@
 Pydantic models for channel-specific configuration with validation.
 """
 
-from typing import List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
@@ -21,6 +21,29 @@ class ChannelConfigBase(BaseModel):
 
 
 # =============================================================================
+# Reaction Configuration
+# =============================================================================
+
+
+class ReactionConfig(BaseModel):
+    """Configuration for reaction-based feedback collection."""
+
+    enabled: bool = Field(
+        default=False, description="Enable reaction feedback for this channel"
+    )
+    emoji_rating_map: Optional[Dict[str, int]] = Field(
+        default=None, description="Custom emoji-to-rating map (0=negative, 1=positive)"
+    )
+    message_tracking_ttl_hours: int = Field(
+        default=24, ge=1, le=168, description="TTL for sent message tracking (hours)"
+    )
+    reactor_identity_salt: SecretStr = Field(
+        default=SecretStr(""),
+        description="Salt for reactor identity hashing (must be stable across deployments)",
+    )
+
+
+# =============================================================================
 # Channel-Specific Configurations
 # =============================================================================
 
@@ -31,6 +54,7 @@ class Bisq2ChannelConfig(ChannelConfigBase):
     api_url: str = "http://bisq2-api:8090"
     poll_interval_seconds: int = Field(default=60, ge=10, le=3600)
     export_batch_size: int = Field(default=100, ge=10, le=1000)
+    reactions: ReactionConfig = Field(default_factory=ReactionConfig)
 
     @model_validator(mode="after")
     def validate_api_url(self) -> "Bisq2ChannelConfig":
@@ -57,6 +81,7 @@ class MatrixChannelConfig(ChannelConfigBase):
     rooms: List[str] = Field(default_factory=list)
     session_file: str = "matrix_session.json"
     poll_interval_seconds: int = Field(default=5, ge=1, le=60)
+    reactions: ReactionConfig = Field(default_factory=ReactionConfig)
 
     @model_validator(mode="after")
     def validate_auth_config(self) -> "MatrixChannelConfig":

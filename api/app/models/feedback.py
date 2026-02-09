@@ -21,13 +21,30 @@ class FeedbackRequest(BaseModel):
     """Request model for submitting feedback."""
 
     message_id: str = Field(
-        pattern=r"^[a-f0-9-]{36}$", description="UUID of the message"
+        pattern=r"^[a-zA-Z0-9_$:.\-]{1,256}$",
+        description="Message ID (UUID, Matrix event_id, or Bisq2 hex)",
     )
     question: str = Field(max_length=5000, description="User question")
     answer: str = Field(max_length=20000, description="Assistant answer")
     rating: int = Field(ge=0, le=1, description="0 for negative, 1 for positive")
     explanation: Optional[str] = Field(
         None, max_length=5000, description="Feedback explanation"
+    )
+    channel: str = Field(
+        default="web", description="Source channel (web, matrix, bisq2)"
+    )
+    feedback_method: str = Field(
+        default="web_dialog",
+        description="How feedback was submitted (web_dialog, reaction)",
+    )
+    external_message_id: Optional[str] = Field(
+        None, description="Channel-native message ID for reaction tracking"
+    )
+    reactor_identity_hash: Optional[str] = Field(
+        None, description="SHA-256 hash of reactor identity for dedup"
+    )
+    reaction_emoji: Optional[str] = Field(
+        None, description="Original emoji used for reaction feedback"
     )
     conversation_history: Optional[List[ConversationMessage]] = Field(
         None, max_length=50, description="Conversation context (max 50 messages)"
@@ -71,6 +88,11 @@ class FeedbackItem(BaseModel):
     answer: str
     rating: int = Field(description="0 for negative, 1 for positive")
     timestamp: str
+    channel: str = Field(default="web", description="Source channel")
+    feedback_method: str = Field(default="web_dialog", description="Feedback method")
+    external_message_id: Optional[str] = None
+    reactor_identity_hash: Optional[str] = None
+    reaction_emoji: Optional[str] = None
     sources: Optional[List[Dict[str, str]]] = None
     sources_used: Optional[List[Dict[str, str]]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -148,6 +170,12 @@ class FeedbackFilterRequest(BaseModel):
     rating: Optional[str] = Field(None, description="positive, negative, or all")
     date_from: Optional[str] = Field(None, description="ISO date string")
     date_to: Optional[str] = Field(None, description="ISO date string")
+    channel: Optional[str] = Field(
+        None, description="Filter by channel (web, matrix, bisq2)"
+    )
+    feedback_method: Optional[str] = Field(
+        None, description="Filter by method (web_dialog, reaction)"
+    )
     issues: Optional[List[str]] = Field(
         None, description="List of issue types to filter by"
     )
@@ -192,6 +220,8 @@ class FeedbackStatsResponse(BaseModel):
     needs_faq_count: int
     source_effectiveness: Dict[str, Dict[str, Any]]
     feedback_by_month: Dict[str, int]
+    feedback_by_channel: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    feedback_by_method: Dict[str, Dict[str, int]] = Field(default_factory=dict)
 
 
 class CreateFAQFromFeedbackRequest(BaseModel):
