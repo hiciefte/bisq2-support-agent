@@ -38,6 +38,9 @@ interface FeedbackItem {
   answer: string;
   rating: number;
   timestamp: string;
+  channel?: string;
+  feedback_method?: string;
+  reaction_emoji?: string;
   conversation_history?: ConversationMessage[];
   sources?: Array<{
     title: string;
@@ -76,6 +79,12 @@ interface FeedbackListResponse {
   filters_applied: Record<string, string | number | boolean | string[]>;
 }
 
+interface ChannelMethodStats {
+  total: number;
+  positive: number;
+  negative: number;
+}
+
 interface FeedbackStats {
   total_feedback: number;
   positive_count: number;
@@ -86,6 +95,8 @@ interface FeedbackStats {
   needs_faq_count: number;
   source_effectiveness: Record<string, { count: number; helpful_rate: number }>;
   feedback_by_month: Record<string, number>;
+  feedback_by_channel?: Record<string, ChannelMethodStats>;
+  feedback_by_method?: Record<string, ChannelMethodStats>;
 }
 
 export default function ManageFeedbackPage() {
@@ -102,6 +113,8 @@ export default function ManageFeedbackPage() {
     rating: 'all',
     date_from: undefined as Date | undefined,
     date_to: undefined as Date | undefined,
+    channel: 'all',
+    feedback_method: 'all',
     issues: [] as string[],
     source_types: [] as string[],
     search_text: '',
@@ -164,6 +177,8 @@ export default function ManageFeedbackPage() {
     filters.rating !== 'all' ||
     filters.date_from ||
     filters.date_to ||
+    filters.channel !== 'all' ||
+    filters.feedback_method !== 'all' ||
     filters.issues.length > 0 ||
     filters.source_types.length > 0 ||
     filters.needs_faq;
@@ -202,7 +217,7 @@ export default function ManageFeedbackPage() {
 
     const params = new URLSearchParams();
     Object.entries(adjustedFilters).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '' &&
+      if (value !== undefined && value !== null && value !== '' && value !== 'all' &&
           !(Array.isArray(value) && value.length === 0) && value !== false) {
         if (Array.isArray(value)) {
           params.append(key, value.join(','));
@@ -308,6 +323,8 @@ export default function ManageFeedbackPage() {
       rating: 'all',
       date_from: undefined,
       date_to: undefined,
+      channel: 'all',
+      feedback_method: 'all',
       issues: [],
       source_types: [],
       search_text: '',
@@ -458,6 +475,15 @@ export default function ManageFeedbackPage() {
     return colors[issue as keyof typeof colors] || 'bg-gray-100 text-gray-800';
   };
 
+  const getChannelBadge = (channel?: string) => {
+    const badges: Record<string, { label: string; className: string }> = {
+      'web': { label: 'Web', className: 'bg-blue-100 text-blue-800' },
+      'matrix': { label: 'Matrix', className: 'bg-green-100 text-green-800' },
+      'bisq2': { label: 'Bisq2', className: 'bg-orange-100 text-orange-800' },
+    };
+    return badges[channel || 'web'] || { label: channel || 'web', className: 'bg-gray-100 text-gray-800' };
+  };
+
   // Authentication is handled by SecureAuth wrapper in layout
 
   return (
@@ -478,6 +504,8 @@ export default function ManageFeedbackPage() {
                       filters.search_text && 'text',
                       filters.rating !== 'all' && 'rating',
                       filters.date_from && 'date',
+                      filters.channel !== 'all' && 'channel',
+                      filters.feedback_method !== 'all' && 'method',
                       filters.issues.length && `${filters.issues.length} issue${filters.issues.length > 1 ? 's' : ''}`,
                       filters.source_types.length && `${filters.source_types.length} source${filters.source_types.length > 1 ? 's' : ''}`,
                       filters.needs_faq && 'needs FAQ'
@@ -525,6 +553,64 @@ export default function ManageFeedbackPage() {
           </div>
         </div>
 
+        {/* Channel Breakdown Stats */}
+        {stats && stats.feedback_by_channel && Object.keys(stats.feedback_by_channel).length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Feedback by Channel</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {Object.entries(stats.feedback_by_channel).map(([channel, data]) => {
+                    const badge = getChannelBadge(channel);
+                    const rate = data.total > 0 ? ((data.positive / data.total) * 100).toFixed(0) : '0';
+                    return (
+                      <div key={channel} className="flex items-center justify-between text-sm">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-muted-foreground">{data.total} total</span>
+                          <span className="text-green-600">{data.positive} +</span>
+                          <span className="text-red-600">{data.negative} -</span>
+                          <span className="font-medium">{rate}% helpful</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Feedback by Method</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {stats.feedback_by_method && Object.entries(stats.feedback_by_method).map(([method, data]) => {
+                    const label = method === 'web_dialog' ? 'Web Dialog' : method === 'reaction' ? 'Reaction' : method;
+                    const rate = data.total > 0 ? ((data.positive / data.total) * 100).toFixed(0) : '0';
+                    return (
+                      <div key={method} className="flex items-center justify-between text-sm">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          {label}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-muted-foreground">{data.total} total</span>
+                          <span className="text-green-600">{data.positive} +</span>
+                          <span className="text-red-600">{data.negative} -</span>
+                          <span className="font-medium">{rate}% helpful</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Filters Panel */}
       {showFilters && (
         <Card>
@@ -550,6 +636,39 @@ export default function ManageFeedbackPage() {
                   value={filters.search_text}
                   onChange={(e) => handleFilterChange('search_text', e.target.value)}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Channel</Label>
+                <Select
+                  value={filters.channel}
+                  onValueChange={(value) => handleFilterChange('channel', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All channels" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Channels</SelectItem>
+                    <SelectItem value="web">Web</SelectItem>
+                    <SelectItem value="matrix">Matrix</SelectItem>
+                    <SelectItem value="bisq2">Bisq2</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Feedback Method</Label>
+                <Select
+                  value={filters.feedback_method}
+                  onValueChange={(value) => handleFilterChange('feedback_method', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All methods" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Methods</SelectItem>
+                    <SelectItem value="web_dialog">Web Dialog</SelectItem>
+                    <SelectItem value="reaction">Reaction</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Date From</Label>
@@ -622,6 +741,19 @@ export default function ManageFeedbackPage() {
                           <span className="text-sm text-muted-foreground">
                             {formatDate(feedback.timestamp)}
                           </span>
+                          {(() => {
+                            const badge = getChannelBadge(feedback.channel);
+                            return (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                            );
+                          })()}
+                          {feedback.feedback_method === 'reaction' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {feedback.reaction_emoji || 'Reaction'}
+                            </span>
+                          )}
                           {feedback.has_no_source_response && (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
                               No Source Available
@@ -788,6 +920,24 @@ export default function ManageFeedbackPage() {
                 <div>
                   <span className="font-medium text-card-foreground font-medium">Timestamp:</span>
                   <p className="mt-1">{formatDate(selectedFeedback.timestamp)}</p>
+                </div>
+                <div>
+                  <span className="font-medium text-card-foreground font-medium">Channel:</span>
+                  <div className="mt-1">
+                    {(() => {
+                      const badge = getChannelBadge(selectedFeedback.channel);
+                      return (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
+                    {selectedFeedback.feedback_method === 'reaction' && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        {selectedFeedback.reaction_emoji || 'Reaction'}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {selectedFeedback.has_no_source_response && (
                   <div>
