@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import chromadb
 from app.core.config import get_settings
@@ -28,7 +28,6 @@ from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
-from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
@@ -152,7 +151,7 @@ class SimplifiedRAGService:
 
         # Initialize Phase 1 components
         self.version_detector = ProtocolDetector()
-        self.empathy_detector = EmpathyDetector()
+
         self.conversation_state_manager = ConversationStateManager()
 
         # Initialize source weights
@@ -606,7 +605,7 @@ class SimplifiedRAGService:
 
     @instrument_stage("generation")
     async def _answer_from_context(
-        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+        self, question: str, chat_history: List[Dict[str, str]]
     ) -> dict:
         """Try to answer a question using only conversation history.
 
@@ -676,15 +675,14 @@ class SimplifiedRAGService:
     async def query(
         self,
         question: str,
-        chat_history: List[Union[Dict[str, str], Any]],
+        chat_history: Optional[List[Dict[str, str]]] = None,
         override_version: Optional[str] = None,
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """Process a query and return a response with metadata.
 
         Args:
             question: The query to process
-            chat_history: List of either dictionaries containing chat messages with 'role' and 'content' keys,
-                        or objects with role and content attributes
+            chat_history: Optional list of chat messages with 'role' and 'content' keys
             override_version: Optional version to use instead of auto-detection (for Shadow Mode)
 
         Returns:
@@ -698,6 +696,7 @@ class SimplifiedRAGService:
 
         # Track request rate
         RAG_REQUEST_RATE.inc()
+        chat_history = chat_history or []
 
         try:
             if not self.rag_chain:
@@ -768,18 +767,6 @@ class SimplifiedRAGService:
                         "forwarded_to_human": False,
                         "feedback_created": False,
                     }
-
-            # Detect emotional state for empathetic response
-            emotion, emotion_intensity = await self.empathy_detector.detect_emotion(
-                preprocessed_question
-            )
-            response_modifier = self.empathy_detector.get_response_modifier(
-                emotion, emotion_intensity
-            )
-            if response_modifier:
-                logger.info(
-                    f"Detected emotion: {emotion} (intensity: {emotion_intensity:.2f})"
-                )
 
             # Update conversation state
             conv_id = self.conversation_state_manager.generate_conversation_id(
@@ -1055,8 +1042,6 @@ class SimplifiedRAGService:
                 "routing_action": routing_action.action,
                 "detected_version": detected_version,
                 "version_confidence": version_confidence,
-                "emotion": emotion,
-                "emotion_intensity": emotion_intensity,
                 "mcp_tools_used": mcp_tools_used,
                 "original_language": original_language,
                 "translated": was_translated,

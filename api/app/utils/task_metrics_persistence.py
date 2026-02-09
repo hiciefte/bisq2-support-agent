@@ -6,7 +6,7 @@ container restarts, deployments, and crashes. Each metric value is stored in a
 database row and automatically restored on application startup.
 
 Architecture:
-- Single table with 7 rows (one per metric)
+- Single table with rows (one per metric)
 - Atomic transactions for data integrity
 - Automatic restoration on startup via main.py lifespan
 - Reuses existing feedback.db database (see Database Strategy below)
@@ -27,7 +27,7 @@ Trade-offs:
 - Schema changes must consider both systems
 
 Rationale:
-Both systems are low-volume (7 metrics + occasional feedback entries), have
+Both systems are low-volume (a handful of metrics + occasional feedback entries), have
 similar lifecycle requirements (persist indefinitely), and use identical
 technology (SQLite with simple CRUD operations). The operational benefits
 outweigh the coupling concerns at current scale.
@@ -44,13 +44,13 @@ Database Schema:
     )
 
 Metrics persisted:
-- faq_extraction_last_run_status (1=success, 0=failure)
-- faq_extraction_messages_processed
-- faq_extraction_faqs_generated
 - wiki_update_last_run_status (1=success, 0=failure)
 - wiki_update_pages_processed
 - feedback_processing_last_run_status (1=success, 0=failure)
 - feedback_processing_entries_processed
+- bisq2_api_health_status (1=healthy, 0=unhealthy)
+- bisq2_api_last_check_timestamp
+- bisq2_api_response_time_seconds
 """
 
 import sqlite3

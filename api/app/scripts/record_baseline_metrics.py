@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -358,7 +358,7 @@ async def run_evaluation(
 
     # Build results
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "system": "chromadb",
         "samples_count": len(samples),
         "metrics": metrics,

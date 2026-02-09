@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import aisuite  # type: ignore[import-untyped]
+from app.channels.lifecycle import create_channel_gateway
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
@@ -37,6 +38,7 @@ from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.public_faq_service import PublicFAQService
+from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 from app.services.rag.learning_engine import LearningEngine
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
@@ -47,7 +49,6 @@ from app.services.wiki_service import WikiService
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from langchain_openai import OpenAIEmbeddings
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
@@ -152,6 +153,17 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
+    # Initialize Channel Gateway with default middleware hooks
+    logger.info("Initializing Channel Gateway...")
+    channel_gateway = create_channel_gateway(
+        rag_service=rag_service,
+        register_default_hooks=True,
+    )
+    app.state.channel_gateway = channel_gateway
+    logger.info(
+        f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"
+    )
+
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
     tor_configured = bool(settings.TOR_HIDDEN_SERVICE)
@@ -171,7 +183,7 @@ async def lifespan(app: FastAPI):
     # Initialize AnswerComparisonEngine for real LLM-based answer comparison
     logger.info("Initializing AnswerComparisonEngine...")
     ai_client = aisuite.Client()
-    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
     comparison_engine = AnswerComparisonEngine(
         ai_client=ai_client,
         embeddings_model=embeddings_model,

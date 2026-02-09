@@ -4,7 +4,7 @@ Vector store state tracking and manual rebuild coordination.
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class VectorStoreStateManager:
             "operation": operation,
             "faq_id": faq_id,
             "timestamp": time.time(),
-            "timestamp_iso": datetime.utcnow().isoformat(),
+            "timestamp_iso": datetime.now(timezone.utc).isoformat(),
         }
 
         if metadata:
@@ -84,7 +84,9 @@ class VectorStoreStateManager:
             "pending_changes_count": len(self._pending_changes),
             "last_rebuild_time": self._last_rebuild_time,
             "last_rebuild_iso": (
-                datetime.fromtimestamp(self._last_rebuild_time).isoformat()
+                datetime.fromtimestamp(
+                    self._last_rebuild_time, tz=timezone.utc
+                ).isoformat()
                 if self._last_rebuild_time
                 else None
             ),

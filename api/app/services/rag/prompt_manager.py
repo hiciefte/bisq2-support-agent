@@ -9,15 +9,43 @@ This module handles:
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
 from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
 from app.utils.logging import redact_pii
 from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _SimplePrompt:
+    template: str
+
+
+@dataclass
+class _SimpleMessage:
+    prompt: _SimplePrompt
+
+
+class SimpleChatPromptTemplate:
+    """Lightweight prompt template with LangChain-compatible surface."""
+
+    def __init__(self, template: str) -> None:
+        self._template = template
+        self.messages = [_SimpleMessage(prompt=_SimplePrompt(template=template))]
+
+    @classmethod
+    def from_template(cls, template: str) -> "SimpleChatPromptTemplate":
+        return cls(template)
+
+    def format(self, **kwargs: Any) -> str:
+        result = self._template
+        for key, value in kwargs.items():
+            result = result.replace(f"{{{key}}}", str(value))
+        return result
 
 
 class RAGPromptNotInitializedError(RuntimeError):
@@ -48,7 +76,7 @@ class PromptManager:
         """
         self.settings = settings
         self.feedback_service = feedback_service
-        self.prompt: Optional[ChatPromptTemplate] = None
+        self.prompt: Optional[SimpleChatPromptTemplate] = None
 
         logger.info("Prompt manager initialized")
 
@@ -119,14 +147,14 @@ class PromptManager:
 
         return "\n".join(formatted_history)
 
-    def create_rag_prompt(self) -> ChatPromptTemplate:
+    def create_rag_prompt(self) -> SimpleChatPromptTemplate:
         """Create the RAG prompt template with feedback integration.
 
         Incorporates feedback guidance if available and creates a template
         optimized for Bisq 2 support with version awareness.
 
         Returns:
-            ChatPromptTemplate configured for RAG queries
+            Prompt template configured for RAG queries
         """
         # Get prompt guidance from the FeedbackService if available
         additional_guidance = ""
@@ -290,7 +318,7 @@ Context: {{context}}
 Answer:"""
 
         # Create the prompt template
-        self.prompt = ChatPromptTemplate.from_template(system_template)
+        self.prompt = SimpleChatPromptTemplate.from_template(system_template)
         logger.info(f"Custom RAG prompt created with {len(system_template)} characters")
 
         return self.prompt
@@ -513,11 +541,11 @@ Answer:"""
         logger.info("Custom RAG chain created successfully")
         return generate_response
 
-    def get_prompt(self) -> Optional[ChatPromptTemplate]:
+    def get_prompt(self) -> Optional[SimpleChatPromptTemplate]:
         """Get the current prompt template.
 
         Returns:
-            ChatPromptTemplate or None if not yet created
+            Prompt template or None if not yet created
         """
         return self.prompt
 

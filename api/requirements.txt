@@ -54,7 +54,7 @@ build==1.4.0
     # via
     #   chromadb
     #   pip-tools
-cachetools==6.2.6
+cachetools==7.0.0
     # via -r api/requirements.in
 certifi==2026.1.4
     # via
@@ -68,7 +68,7 @@ cfgv==3.5.0
     # via pre-commit
 charset-normalizer==3.4.4
     # via requests
-chromadb==1.4.1
+chromadb==1.5.0
     # via
     #   -r api/requirements.in
     #   langchain-chroma
@@ -80,8 +80,6 @@ click==8.3.1
     #   typer
     #   typer-slim
     #   uvicorn
-coloredlogs==15.0.1
-    # via onnxruntime
 contourpy==1.3.3
     # via matplotlib
 cryptography==46.0.4
@@ -114,7 +112,7 @@ docstring-parser==0.15
     #   instructor
 durationpy==0.10
     # via kubernetes
-fastapi==0.128.0
+fastapi==0.128.5
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
@@ -122,7 +120,6 @@ filelock==3.20.3
     # via
     #   datasets
     #   huggingface-hub
-    #   transformers
     #   virtualenv
 flake8==7.3.0
     # via -r api/requirements.in
@@ -142,7 +139,7 @@ googleapis-common-protos==1.72.0
     # via opentelemetry-exporter-otlp-proto-grpc
 greenlet==3.3.1
     # via sqlalchemy
-grpcio==1.76.0
+grpcio==1.78.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -181,13 +178,11 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.3.5
+huggingface-hub==1.4.1
     # via
     #   datasets
     #   tokenizers
     #   transformers
-humanfriendly==10.0
-    # via coloredlogs
 hyperframe==6.1.0
     # via h2
 identify==2.6.16
@@ -212,7 +207,7 @@ isort==7.0.0
     # via -r api/requirements.in
 jinja2==3.1.6
     # via litellm
-jiter==0.12.0
+jiter==0.13.0
     # via openai
 joblib==1.5.3
     # via scikit-learn
@@ -235,7 +230,7 @@ kiwisolver==1.4.9
     # via matplotlib
 kubernetes==35.0.0
     # via chromadb
-langchain==1.2.7
+langchain==1.2.9
     # via ragas
 langchain-chroma==1.1.0
     # via -r api/requirements.in
@@ -243,7 +238,7 @@ langchain-classic==1.0.1
     # via langchain-community
 langchain-community==0.4.1
     # via ragas
-langchain-core==1.2.7
+langchain-core==1.2.9
     # via
     #   -r api/requirements.in
     #   langchain
@@ -264,7 +259,7 @@ langchain-text-splitters==1.1.0
     # via
     #   -r api/requirements.in
     #   langchain-classic
-langgraph==1.0.7
+langgraph==1.0.8
     # via langchain
 langgraph-checkpoint==4.0.0
     # via
@@ -272,9 +267,9 @@ langgraph-checkpoint==4.0.0
     #   langgraph-prebuilt
 langgraph-prebuilt==1.0.7
     # via langgraph
-langgraph-sdk==0.3.3
+langgraph-sdk==0.3.4
     # via langgraph
-langsmith==0.6.6
+langsmith==0.6.9
     # via
     #   langchain-classic
     #   langchain-community
@@ -339,7 +334,7 @@ networkx==3.6.1
     # via ragas
 nodeenv==1.10.0
     # via pre-commit
-numpy==2.4.1
+numpy==2.4.2
     # via
     #   chromadb
     #   contourpy
@@ -357,7 +352,7 @@ numpy==2.4.1
     #   transformers
 oauthlib==3.3.1
     # via requests-oauthlib
-onnxruntime==1.23.2
+onnxruntime==1.24.1
     # via chromadb
 openai==1.109.1
     # via
@@ -386,7 +381,7 @@ opentelemetry-sdk==1.39.1
     #   opentelemetry-exporter-otlp-proto-grpc
 opentelemetry-semantic-conventions==0.60b1
     # via opentelemetry-sdk
-orjson==3.11.6
+orjson==3.11.7
     # via
     #   chromadb
     #   langgraph-sdk
@@ -395,7 +390,7 @@ ormsgpack==1.12.2
     # via langgraph-checkpoint
 overrides==7.7.0
     # via chromadb
-packaging==25.0
+packaging==26.0
     # via
     #   black
     #   build
@@ -504,11 +499,11 @@ pygments==2.19.2
     # via
     #   pytest
     #   rich
-pyjwt[crypto]==2.10.1
+pyjwt[crypto]==2.11.0
     # via mcp
 pyparsing==3.3.2
     # via matplotlib
-pypika==0.50.0
+pypika==0.51.1
     # via chromadb
 pyproject-hooks==1.2.0
     # via
@@ -619,7 +614,7 @@ sqlalchemy==2.0.46
     #   langchain-community
 sse-starlette==3.2.0
     # via mcp
-starlette==0.50.0
+starlette==0.52.1
     # via
     #   fastapi
     #   mcp
@@ -646,7 +641,7 @@ tokenizers==0.22.2
     #   chromadb
     #   litellm
     #   transformers
-tqdm==4.67.1
+tqdm==4.67.3
     # via
     #   -r api/requirements.in
     #   chromadb
@@ -655,7 +650,7 @@ tqdm==4.67.1
     #   openai
     #   ragas
     #   transformers
-transformers==5.0.0
+transformers==5.1.0
     # via -r api/requirements.in
 typer==0.9.4
     # via
@@ -697,6 +692,7 @@ typing-inspect==0.9.0
     # via dataclasses-json
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   mcp
     #   pydantic
     #   pydantic-settings
@@ -733,6 +729,7 @@ xxhash==3.6.0
     # via
     #   datasets
     #   langgraph
+    #   langsmith
 yarl==1.22.0
     # via aiohttp
 zipp==3.23.0

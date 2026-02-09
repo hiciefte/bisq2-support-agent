@@ -8,12 +8,77 @@ This module handles document preparation for the RAG system including:
 """
 
 import logging
-from typing import List
+import os
+from typing import Any, List
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SEPARATORS = [
+    "\n## ",  # Markdown level 2 headers
+    "\n# ",  # Markdown level 1 headers
+    "\n\n",  # Paragraph breaks
+    "==",  # MediaWiki section markers
+    "=",  # MediaWiki single markers
+    "'''",  # MediaWiki bold text
+    "{{",  # MediaWiki templates
+    "*",  # List markers
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    " ",  # Word breaks
+    "",  # Character splits (last resort)
+]
+
+
+class _SimpleCharacterTextSplitter:
+    """Minimal splitter fallback that avoids heavyweight dependencies."""
+
+    def __init__(
+        self, chunk_size: int, chunk_overlap: int, separators: List[str]
+    ) -> None:
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self._separators = separators
+
+    def _find_split_end(self, text: str, start: int, max_end: int) -> int:
+        """Find a natural split boundary before max_end using configured separators."""
+        if max_end >= len(text):
+            return len(text)
+
+        for separator in self._separators:
+            if not separator:
+                continue
+            split_at = text.rfind(separator, start, max_end)
+            if split_at > start:
+                return split_at + len(separator)
+
+        return max_end
+
+    def split_documents(self, documents: List[Document]) -> List[Document]:
+        chunks: List[Document] = []
+
+        for document in documents:
+            text = document.page_content or ""
+            if len(text) <= self.chunk_size:
+                chunks.append(document)
+                continue
+
+            start = 0
+            while start < len(text):
+                max_end = min(start + self.chunk_size, len(text))
+                end = self._find_split_end(text, start, max_end)
+                chunk_text = text[start:end]
+                if not chunk_text:
+                    break
+                chunks.append(
+                    Document(page_content=chunk_text, metadata=dict(document.metadata))
+                )
+                if end >= len(text):
+                    break
+                start = max(end - self.chunk_overlap, start + 1)
+
+        return chunks
 
 
 class DocumentProcessor:
@@ -38,26 +103,12 @@ class DocumentProcessor:
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self._separators = list(DEFAULT_SEPARATORS)
 
-        # Configure text splitter with MediaWiki-aware separators
-        # Prioritize MediaWiki section headers to keep related content together
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=[
-                "\n## ",  # Markdown level 2 headers
-                "\n# ",  # Markdown level 1 headers
-                "\n\n",  # Paragraph breaks
-                "==",  # MediaWiki section markers
-                "=",  # MediaWiki single markers
-                "'''",  # MediaWiki bold text
-                "{{",  # MediaWiki templates
-                "*",  # List markers
-                "\n",  # Line breaks
-                ". ",  # Sentence endings
-                " ",  # Word breaks
-                "",  # Character splits (last resort)
-            ],
+            separators=self._separators,
         )
 
         logger.info(
@@ -95,10 +146,10 @@ class DocumentProcessor:
         self.chunk_overlap = chunk_overlap
 
         # Recreate text splitter with new settings
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=self.text_splitter._separators,  # Reuse existing separators
+            separators=self._separators,
         )
 
         logger.info(
@@ -115,3 +166,25 @@ class DocumentProcessor:
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
         }
+
+    def _create_text_splitter(
+        self, chunk_size: int, chunk_overlap: int, separators: List[str]
+    ) -> Any:
+        """Create langchain splitter when available, otherwise use fallback."""
+        if os.getenv("BISQ_DISABLE_TRANSFORMERS", "").lower() in ("1", "true", "yes"):
+            logger.info("Using fallback text splitter (BISQ_DISABLE_TRANSFORMERS set)")
+            return _SimpleCharacterTextSplitter(chunk_size, chunk_overlap, separators)
+
+        try:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+            return RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=separators,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Falling back to simple splitter due to import/init error: {e}"
+            )
+            return _SimpleCharacterTextSplitter(chunk_size, chunk_overlap, separators)

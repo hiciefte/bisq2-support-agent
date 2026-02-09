@@ -12,7 +12,7 @@ Usage:
     from app.metrics.tor_metrics import tor_connection_status
     from app.metrics.matrix_metrics import matrix_auth_total
     from app.metrics.training_metrics import training_pairs_processed
-    from app.metrics.task_metrics import instrument_faq_extraction
+    from app.metrics.task_metrics import instrument_wiki_update
     from app.metrics.llm_extraction_metrics import messages_filtered_total
 """
 

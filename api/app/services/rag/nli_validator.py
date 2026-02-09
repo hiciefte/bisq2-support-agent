@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -11,17 +12,24 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Try to import transformers, but make it optional
-try:
-    from transformers import pipeline
+pipeline = None
+HAS_TRANSFORMERS = False
 
-    HAS_TRANSFORMERS = True
-except ImportError:
-    HAS_TRANSFORMERS = False
-    logger.warning(
-        "transformers not installed. NLI validation will return neutral scores. "
-        "Install with: pip install transformers"
-    )
+if os.getenv("BISQ_DISABLE_TRANSFORMERS", "").lower() not in ("1", "true", "yes"):
+    # Try to import transformers, but make it optional
+    try:
+        from transformers import pipeline as hf_pipeline
+
+        pipeline = hf_pipeline
+
+        HAS_TRANSFORMERS = True
+    except ImportError:
+        logger.warning(
+            "transformers not installed. NLI validation will return neutral scores. "
+            "Install with: pip install transformers"
+        )
+else:
+    logger.info("transformers import disabled via BISQ_DISABLE_TRANSFORMERS")
 
 
 @dataclass
@@ -57,7 +65,7 @@ class NLIValidator:
         self._cache_hits = 0
         self._cache_misses = 0
 
-        if HAS_TRANSFORMERS:
+        if pipeline is not None:
             try:
                 self.nli_pipeline = pipeline(
                     "text-classification",

@@ -12,17 +12,26 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Generator
+from typing import TYPE_CHECKING, Generator
 from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
-from app.core.config import Settings, get_settings
-from app.db.run_migrations import run_migrations
-from app.services.faq_service import FAQService
-from app.services.feedback_service import FeedbackService
-from app.services.simplified_rag_service import SimplifiedRAGService
-from fastapi.testclient import TestClient
+
+# Avoid importing heavyweight transformers/torch stack during test collection.
+os.environ.setdefault("BISQ_DISABLE_TRANSFORMERS", "1")
+os.environ.setdefault("USE_TORCH", "0")
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("USE_FLAX", "0")
+
+from app.core.config import Settings, get_settings  # noqa: E402
+from app.db.run_migrations import run_migrations  # noqa: E402
+from app.services.faq_service import FAQService  # noqa: E402
+from app.services.feedback_service import FeedbackService  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+if TYPE_CHECKING:
+    from app.services.simplified_rag_service import SimplifiedRAGService
 
 
 @pytest.fixture(autouse=True)
@@ -326,7 +335,7 @@ def mock_embeddings():
 @pytest.fixture
 def rag_service(
     test_settings: Settings, mock_llm, mock_embeddings
-) -> SimplifiedRAGService:
+) -> "SimplifiedRAGService":
     """Create a SimplifiedRAGService instance with mocked LLM.
 
     This fixture provides a RAG service for testing without making actual
@@ -340,6 +349,8 @@ def rag_service(
     Returns:
         SimplifiedRAGService: RAG service with mocked dependencies
     """
+    from app.services.simplified_rag_service import SimplifiedRAGService
+
     service = SimplifiedRAGService(settings=test_settings)
 
     # Replace the real LLM and embeddings with mocks

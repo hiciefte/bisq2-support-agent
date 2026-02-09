@@ -44,10 +44,10 @@ class TestQdrantHybridRetriever:
     @pytest.fixture
     def mock_embeddings(self):
         """Create mock embeddings."""
-        with patch("langchain_openai.OpenAIEmbeddings") as mock:
+        with patch("app.services.rag.embeddings_provider.LiteLLMEmbeddings") as mock:
             embeddings = MagicMock()
             embeddings.embed_query.return_value = [0.1] * 1536
-            mock.return_value = embeddings
+            mock.from_settings.return_value = embeddings
             yield embeddings
 
     def test_initialization(self, mock_settings, mock_qdrant_client, mock_embeddings):
@@ -231,10 +231,10 @@ class TestBM25TokenizerIntegration:
     @pytest.fixture
     def mock_embeddings(self):
         """Create mock embeddings."""
-        with patch("langchain_openai.OpenAIEmbeddings") as mock:
+        with patch("app.services.rag.embeddings_provider.LiteLLMEmbeddings") as mock:
             embeddings = MagicMock()
             embeddings.embed_query.return_value = [0.1] * 1536
-            mock.return_value = embeddings
+            mock.from_settings.return_value = embeddings
             yield embeddings
 
     def test_retriever_loads_vocabulary_on_init(

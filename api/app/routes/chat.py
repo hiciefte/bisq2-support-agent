@@ -1,12 +1,18 @@
+import hashlib
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional, cast
 
+from app.channels.gateway import ChannelGateway
+from app.channels.models import ChannelType
+from app.channels.models import ChatMessage as ChannelChatMessage
+from app.channels.models import GatewayError, IncomingMessage, UserContext
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel
@@ -29,7 +35,7 @@ QUERY_ERRORS = Counter(
 )
 
 
-class ChatMessage(BaseModel):
+class ChatMessageRequest(BaseModel):
     role: str
     content: str
 
@@ -58,7 +64,7 @@ class McpToolUsage(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
-    chat_history: Optional[List[ChatMessage]] = None
+    chat_history: Optional[List[ChatMessageRequest]] = None
 
     model_config = {"extra": "allow"}  # Allow extra fields in the request payload
 
@@ -72,11 +78,59 @@ class QueryResponse(BaseModel):
     routing_action: Optional[str] = None
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = None
-    emotion: Optional[str] = None
-    emotion_intensity: Optional[float] = None
     forwarded_to_human: bool = False
     # MCP tools metadata - detailed info about tools used for live Bisq 2 data
     mcp_tools_used: Optional[List[McpToolUsage]] = None
+
+
+def _gateway_error_to_status(error: GatewayError) -> int:
+    """Convert GatewayError to HTTP status code."""
+    from app.channels.models import ErrorCode
+
+    error_status_map = {
+        ErrorCode.RATE_LIMIT_EXCEEDED: 429,
+        ErrorCode.AUTHENTICATION_FAILED: 401,
+        ErrorCode.AUTHORIZATION_FAILED: 403,
+        ErrorCode.INVALID_MESSAGE: 400,
+        ErrorCode.VALIDATION_ERROR: 400,
+        ErrorCode.PII_DETECTED: 400,
+        ErrorCode.MESSAGE_TOO_LARGE: 413,
+        ErrorCode.CHANNEL_UNAVAILABLE: 503,
+        ErrorCode.SERVICE_UNAVAILABLE: 503,
+        ErrorCode.REQUIRES_HUMAN_ESCALATION: 503,
+        ErrorCode.RAG_SERVICE_ERROR: 500,
+        ErrorCode.INTERNAL_ERROR: 500,
+    }
+    return error_status_map.get(error.error_code, 500)
+
+
+def _derive_web_user_context(request: Request) -> tuple[str, str]:
+    """Derive a stable, privacy-preserving user/session identifier for web traffic."""
+    session_cookie = request.cookies.get("session_id") or request.cookies.get(
+        "bisq_session_id"
+    )
+    if session_cookie:
+        token = session_cookie.strip()
+    else:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        client_host = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+        token = "|".join([forwarded_for, client_host, user_agent]).strip()
+        if not token or token.replace("|", "").strip() == "":
+            token = str(uuid.uuid4())
+
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    session_id = f"web_{digest[:32]}"
+    user_id = f"user_{digest[:24]}"
+    return user_id, session_id
+
+
+def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
+    """Normalize incoming chat roles to supported channel model roles."""
+    if role in ("user", "assistant", "system"):
+        return cast(Literal["user", "assistant", "system"], role)
+    logger.warning("Unknown chat role '%s' normalized to 'assistant'", role)
+    return "assistant"
 
 
 @router.api_route("/query", methods=["POST"])
@@ -84,7 +138,7 @@ async def query(
     request: Request,
     settings: Settings = Depends(get_settings),
 ):
-    """Process a query and return a response with sources."""
+    """Process a query through the Channel Gateway and return a response with sources."""
     logger.info("Received request to /query endpoint")
     # SECURITY: Only log safe headers, not all headers which may contain tokens
     logger.info(
@@ -97,8 +151,16 @@ async def query(
     start_time = time.time()
 
     try:
-        # Get RAG service from app state
-        rag_service = request.app.state.rag_service
+        # Get gateway from app state
+        gateway = getattr(request.app.state, "channel_gateway", None)
+        if gateway is None:
+            logger.error("Channel gateway not initialized")
+            QUERY_ERRORS.labels(error_type="service_unavailable").inc()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Channel gateway not initialized",
+            )
+        gateway = cast(ChannelGateway, gateway)
 
         # Use the automatically parsed payload from Body
         data = await request.json()
@@ -111,7 +173,6 @@ async def query(
         # Validate against our model
         try:
             logger.debug("Attempting to validate request data...")
-            # Get field names using model_json_schema instead of model_fields.keys()
             expected_fields = list(
                 QueryRequest.model_json_schema()["properties"].keys()
             )
@@ -129,7 +190,7 @@ async def query(
             QUERY_ERRORS.labels(error_type="validation").inc()
             raise ValidationError(detail=str(e)) from e
 
-        # Get response from simplified RAG service
+        # Log chat history info
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
         if query_request.chat_history:
             logger.info(
@@ -141,50 +202,88 @@ async def query(
         else:
             logger.info("No chat history provided in the request")
 
-        result = await rag_service.query(
-            query_request.question, query_request.chat_history
+        # Convert to channel message format
+        chat_history = None
+        if query_request.chat_history:
+            chat_history = [
+                ChannelChatMessage(
+                    role=_normalize_chat_role(msg.role),
+                    content=msg.content,
+                )
+                for msg in query_request.chat_history
+            ]
+
+        # Create incoming message for gateway
+        user_id, session_id = _derive_web_user_context(request)
+        incoming = IncomingMessage(
+            message_id=f"web_{uuid.uuid4()}",
+            channel=ChannelType.WEB,
+            question=query_request.question,
+            chat_history=chat_history,
+            user=UserContext(
+                user_id=user_id,
+                session_id=session_id,
+                channel_user_id=None,
+                auth_token=None,
+            ),
+            channel_signature=None,
         )
 
-        # Convert sources to the expected format
-        # Use `or "all"` to handle None values (not just missing keys)
+        # Process through gateway
+        result = await gateway.process_message(incoming)
+
+        # Handle gateway error
+        if isinstance(result, GatewayError):
+            logger.warning(f"Gateway returned error: {result.error_code}")
+            QUERY_ERRORS.labels(error_type=result.error_code.value).inc()
+            return JSONResponse(
+                status_code=_gateway_error_to_status(result),
+                content={
+                    "detail": result.error_message,
+                    "error_code": result.error_code.value,
+                    "details": result.details,
+                },
+            )
+
+        # Convert OutgoingMessage to QueryResponse format (backward compatibility)
         formatted_sources = [
             Source(
-                title=source["title"],
-                type=source["type"],
-                content=source["content"],
-                protocol=source.get("protocol") or "all",
-                # Wiki source link fields
-                url=source.get("url"),
-                section=source.get("section"),
-                similarity_score=source.get("similarity_score"),
+                title=source.title,
+                type=source.category or "wiki",
+                content="",  # OutgoingMessage uses DocumentReference without content
+                protocol="all",
+                url=source.url,
+                section=None,
+                similarity_score=source.relevance_score,
             )
-            for source in result["sources"]
+            for source in result.sources
         ]
 
+        metadata = result.metadata
+
         response_data = QueryResponse(
-            answer=result["answer"],
+            answer=result.answer,
             sources=formatted_sources,
-            response_time=result["response_time"],
-            # Phase 1 metadata
-            confidence=result.get("confidence"),
-            routing_action=result.get("routing_action"),
-            detected_version=result.get("detected_version"),
-            version_confidence=result.get("version_confidence"),
-            emotion=result.get("emotion"),
-            emotion_intensity=result.get("emotion_intensity"),
-            forwarded_to_human=result.get("forwarded_to_human", False),
-            # MCP tools metadata
-            mcp_tools_used=result.get("mcp_tools_used"),
+            response_time=(
+                (metadata.processing_time_ms / 1000.0)
+                if metadata and metadata.processing_time_ms is not None
+                else 0.0
+            ),
+            # Phase 1 metadata from gateway metadata
+            confidence=metadata.confidence_score if metadata else None,
+            routing_action=metadata.routing_action if metadata else None,
+            detected_version=metadata.detected_version if metadata else None,
+            version_confidence=metadata.version_confidence if metadata else None,
+            forwarded_to_human=result.requires_human,
+            mcp_tools_used=None,
         )
 
         # Log response size and validate JSON serializability
         response_dict = response_data.model_dump()
         try:
-            import json
-
             response_json = json.dumps(response_dict)
             logger.info(
-                f"Response prepared: answer_length={len(result['answer'])}, "
+                f"Response prepared: answer_length={len(result.answer)}, "
                 f"sources_count={len(formatted_sources)}, "
                 f"total_size={len(response_json)} bytes"
             )
@@ -197,6 +296,8 @@ async def query(
             ) from e
 
         return JSONResponse(content=response_dict)
+    except (ValidationError, BaseAppException, HTTPException):
+        raise
     except Exception:
         logger.exception("Unexpected error processing /query")
         QUERY_ERRORS.labels(error_type="internal_error").inc()
