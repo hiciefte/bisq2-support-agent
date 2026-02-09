@@ -5,6 +5,7 @@ into normalized ReactionEvents for processing.
 """
 
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -27,6 +28,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
     """
 
     channel_id: str = "matrix"
+    _MAX_TRACKED_REACTIONS: int = 10_000
 
     def __init__(
         self,
@@ -36,23 +38,25 @@ class MatrixReactionHandler(ReactionHandlerBase):
     ):
         super().__init__(runtime, processor, emoji_rating_map)
         self._callback_registered = False
-        # Track reaction_event_id -> target message_event_id for redaction
-        self._reaction_to_message: Dict[str, str] = {}
-        # Track reaction_event_id -> sender for redaction
-        self._reaction_to_sender: Dict[str, str] = {}
+        # Track reaction_event_id -> target message_event_id for redaction (bounded)
+        self._reaction_to_message: OrderedDict[str, str] = OrderedDict()
+        # Track reaction_event_id -> sender for redaction (bounded)
+        self._reaction_to_sender: OrderedDict[str, str] = OrderedDict()
 
     async def start_listening(self) -> None:
-        """Register nio callback for m.reaction events."""
+        """Register nio callbacks for m.reaction and m.room.redaction events."""
         client = self.runtime.resolve("matrix_client")
         client.add_event_callback(self._on_reaction_event, "m.reaction")
+        client.add_event_callback(self._on_redaction_event, "m.room.redaction")
         self._callback_registered = True
         self._logger.info("Matrix reaction listener started")
 
     async def stop_listening(self) -> None:
-        """Remove nio callback."""
+        """Remove nio callbacks."""
         client = self.runtime.resolve_optional("matrix_client")
         if client and self._callback_registered:
             client.remove_event_callback(self._on_reaction_event)
+            client.remove_event_callback(self._on_redaction_event)
             self._callback_registered = False
             self._logger.info("Matrix reaction listener stopped")
 
@@ -85,12 +89,16 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 )
                 return
 
-            # Track for redaction handling
+            # Track for redaction handling (bounded to prevent memory leak)
             reaction_event_id = getattr(event, "event_id", None)
             sender = getattr(event, "sender", "unknown")
             if reaction_event_id:
                 self._reaction_to_message[reaction_event_id] = target_event_id
                 self._reaction_to_sender[reaction_event_id] = sender
+                # Evict oldest entries if over limit
+                while len(self._reaction_to_message) > self._MAX_TRACKED_REACTIONS:
+                    self._reaction_to_message.popitem(last=False)
+                    self._reaction_to_sender.popitem(last=False)
 
             ts = getattr(event, "server_timestamp", None)
             if ts:

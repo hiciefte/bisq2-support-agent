@@ -143,7 +143,8 @@ class TestFeedbackReactionsTable:
     def _insert_feedback(self, conn, msg_id="m1"):
         conn.execute(
             "INSERT INTO feedback (message_id, question, answer, rating, timestamp) "
-            f"VALUES ('{msg_id}', 'Q', 'A', 1, '2024-01-01T00:00:00Z')"
+            "VALUES (?, 'Q', 'A', 1, '2024-01-01T00:00:00Z')",
+            (msg_id,),
         )
         return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 

@@ -44,12 +44,8 @@ class Bisq2WebSocketClient:
     def __init__(
         self,
         url: str,
-        max_reconnect_attempts: int = 10,
-        base_reconnect_delay: float = 1.0,
     ):
         self.url = url
-        self.max_reconnect_attempts = max_reconnect_attempts
-        self.base_reconnect_delay = base_reconnect_delay
         self._ws: Any = None
         self._connected = False
         self._sequence: int = 0
@@ -111,16 +107,21 @@ class Bisq2WebSocketClient:
         if parameter is not None:
             request["parameter"] = parameter
 
+        expected_id = str(self._sequence)
         await self._ws.send(json.dumps(request))
         logger.debug(
             "Sent subscribe request for topic %s (seq=%d)", topic, self._sequence
         )
 
-        # Wait for subscription response
-        raw = await self._ws.recv()
-        response = json.loads(raw)
-        self._subscriptions.append(topic)
-        return response
+        # Wait for subscription response, buffering non-matching messages
+        while True:
+            raw = await self._ws.recv()
+            response = json.loads(raw)
+            if response.get("requestId") == expected_id:
+                self._subscriptions.append(topic)
+                return response
+            # Non-matching message — dispatch as event
+            await self._dispatch_event(response)
 
     def on_event(self, callback: EventCallback) -> None:
         """Register an event callback.

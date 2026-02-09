@@ -92,7 +92,7 @@ def _type_check(value: Any, expected: str) -> bool:
     if expected == "string":
         return isinstance(value, str)
     if expected == "integer":
-        return isinstance(value, int)
+        return isinstance(value, int) and not isinstance(value, bool)
     if expected == "boolean":
         return isinstance(value, bool)
     if expected == "object":

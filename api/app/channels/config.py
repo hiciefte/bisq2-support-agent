@@ -42,6 +42,15 @@ class ReactionConfig(BaseModel):
         description="Salt for reactor identity hashing (must be stable across deployments)",
     )
 
+    @model_validator(mode="after")
+    def validate_salt_when_enabled(self) -> "ReactionConfig":
+        """Ensure a non-empty salt is provided when reactions are enabled."""
+        if self.enabled and not self.reactor_identity_salt.get_secret_value():
+            raise ValueError(
+                "reactor_identity_salt must be set when reactions are enabled"
+            )
+        return self
+
 
 # =============================================================================
 # Channel-Specific Configurations

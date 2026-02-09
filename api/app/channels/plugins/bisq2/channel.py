@@ -155,15 +155,20 @@ class Bisq2Channel(ChannelBase):
             # Track sent message for reaction correlation
             tracker = self.runtime.resolve_optional("sent_message_tracker")
             if tracker:
-                tracker.track(
-                    channel_id="bisq2",
-                    external_message_id=external_message_id,
-                    internal_message_id=getattr(message, "message_id", ""),
-                    question=getattr(message, "original_question", "") or "",
-                    answer=message.answer,
-                    user_id=getattr(getattr(message, "user", None), "user_id", ""),
-                    sources=[],
-                )
+                try:
+                    tracker.track(
+                        channel_id="bisq2",
+                        external_message_id=external_message_id,
+                        internal_message_id=getattr(message, "message_id", ""),
+                        question=getattr(message, "original_question", "") or "",
+                        answer=message.answer,
+                        user_id=getattr(getattr(message, "user", None), "user_id", ""),
+                        sources=[],
+                    )
+                except Exception:
+                    self._logger.debug(
+                        "Failed to track sent message for reactions", exc_info=True
+                    )
 
             self._logger.info(
                 "Sent message to Bisq2 conversation %s (messageId=%s)",

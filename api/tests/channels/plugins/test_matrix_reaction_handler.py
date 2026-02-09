@@ -102,20 +102,26 @@ class TestMatrixReactionHandlerListening:
         await handler.start_listening()
 
         mock_runtime.resolve.assert_called_with("matrix_client")
-        mock_client.add_event_callback.assert_called_once()
+        # Two callbacks registered: reaction + redaction
+        assert mock_client.add_event_callback.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_start_listening_callback_target(self, handler, mock_runtime):
-        """Callback is registered for the handler's _on_reaction_event."""
+    async def test_start_listening_callback_targets(self, handler, mock_runtime):
+        """Callbacks are registered for reaction and redaction events."""
         mock_client = MagicMock()
         mock_client.add_event_callback = MagicMock()
         mock_runtime.resolve.return_value = mock_client
 
         await handler.start_listening()
 
-        cb_args = mock_client.add_event_callback.call_args
-        # First arg should be the handler's callback method
-        assert callable(cb_args[0][0])
+        calls = mock_client.add_event_callback.call_args_list
+        assert len(calls) == 2
+        # Both should be callable handlers
+        assert callable(calls[0][0][0])
+        assert callable(calls[1][0][0])
+        # Verify event types
+        assert calls[0][0][1] == "m.reaction"
+        assert calls[1][0][1] == "m.room.redaction"
 
     @pytest.mark.asyncio
     async def test_stop_listening_removes_callback(self, handler, mock_runtime):
@@ -131,7 +137,8 @@ class TestMatrixReactionHandlerListening:
 
         await handler.stop_listening()
 
-        mock_client.remove_event_callback.assert_called_once()
+        # Two callbacks removed: reaction + redaction
+        assert mock_client.remove_event_callback.call_count == 2
 
     @pytest.mark.asyncio
     async def test_stop_listening_noop_when_not_started(self, handler, mock_runtime):
@@ -141,11 +148,12 @@ class TestMatrixReactionHandlerListening:
         await handler.stop_listening()
 
     @pytest.mark.asyncio
-    async def test_start_listening_handles_missing_client(self, handler, mock_runtime):
-        """start_listening handles missing matrix_client gracefully."""
+    async def test_start_listening_raises_on_missing_client(
+        self, handler, mock_runtime
+    ):
+        """start_listening propagates KeyError when matrix_client not registered."""
         mock_runtime.resolve.side_effect = KeyError("matrix_client")
 
-        # Should not raise, just log
         with pytest.raises(KeyError):
             await handler.start_listening()
 

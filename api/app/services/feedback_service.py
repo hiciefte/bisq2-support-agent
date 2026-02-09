@@ -608,7 +608,6 @@ class FeedbackService:
         question: str,
         answer: str,
         rating: str,
-        user_id: str,
         channel: str,
         feedback_method: str = "reaction",
         external_message_id: Optional[str] = None,
@@ -643,10 +642,15 @@ class FeedbackService:
                     reaction_emoji=reaction_emoji or "",
                     feedback_id=existing["feedback_id"],
                 )
+                # Also update the feedback entry's rating to match new emoji
+                self.repository.update_feedback_rating(
+                    existing["feedback_id"], rating_int
+                )
                 logger.info(
-                    "Updated existing reaction: channel=%s ext_id=%s",
+                    "Updated existing reaction: channel=%s ext_id=%s rating=%s",
                     channel,
                     external_message_id,
+                    rating,
                 )
             else:
                 # Create new feedback entry

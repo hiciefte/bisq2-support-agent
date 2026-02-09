@@ -162,6 +162,17 @@ class ChannelBootstrapper:
         tracker = SentMessageTracker()
         runtime.register("sent_message_tracker", tracker)
 
+        # Ensure feedback_service is available on runtime (singleton pattern)
+        if runtime.feedback_service is None:
+            try:
+                from app.services.feedback_service import FeedbackService
+
+                runtime.feedback_service = FeedbackService()
+            except Exception:
+                logger.warning(
+                    "Could not initialize FeedbackService for reaction processor"
+                )
+
         salt = getattr(self.settings, "REACTOR_IDENTITY_SALT", "")
         processor = ReactionProcessor(
             tracker=tracker,

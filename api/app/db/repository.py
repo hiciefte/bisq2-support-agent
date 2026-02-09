@@ -397,6 +397,25 @@ class FeedbackRepository:
 
             return [dict(row) for row in cursor.fetchall()]
 
+    def update_feedback_rating(self, feedback_id: int, rating: int) -> bool:
+        """Update the rating for a feedback entry by ID.
+
+        Args:
+            feedback_id: Internal feedback row ID.
+            rating: New rating value (0=negative, 1=positive).
+
+        Returns:
+            True if updated, False if not found.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE feedback SET rating = ? WHERE id = ?",
+                (rating, feedback_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_feedback_explanation(self, message_id: str, explanation: str) -> bool:
         """
         Update the explanation for an existing feedback entry.

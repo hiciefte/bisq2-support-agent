@@ -206,7 +206,6 @@ class ReactionProcessor:
             "rating": (
                 "positive" if event.rating == ReactionRating.POSITIVE else "negative"
             ),
-            "user_id": record.user_id,
             "channel": event.channel_id,
             "feedback_method": "reaction",
             "external_message_id": event.external_message_id,

@@ -6,7 +6,6 @@ Covers:
 - Event callback dispatch
 - JSON parsing of WebSocket messages
 - Sequence number tracking
-- Reconnection with exponential backoff
 - Error handling
 """
 
@@ -30,15 +29,10 @@ class TestBisq2WebSocketClientConstruction:
         assert client.url == "ws://localhost:8090/websocket"
         assert client.is_connected is False
 
-    def test_custom_reconnect_settings(self):
-        """Custom reconnect settings are stored."""
-        client = Bisq2WebSocketClient(
-            url="ws://localhost:8090/websocket",
-            max_reconnect_attempts=5,
-            base_reconnect_delay=2.0,
-        )
-        assert client.max_reconnect_attempts == 5
-        assert client.base_reconnect_delay == 2.0
+    def test_url_stored(self):
+        """URL is stored on construction."""
+        client = Bisq2WebSocketClient(url="ws://example:9090/websocket")
+        assert client.url == "ws://example:9090/websocket"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +126,12 @@ class TestBisq2WebSocketClientSubscription:
         mock_ws.send = AsyncMock()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
-                {"responseType": "SubscriptionResponse", "success": True, "payload": []}
+                {
+                    "responseType": "SubscriptionResponse",
+                    "requestId": "1",
+                    "success": True,
+                    "payload": [],
+                }
             )
         )
         client._ws = mock_ws
@@ -257,10 +256,26 @@ class TestBisq2WebSocketClientSequenceTracking:
 
         mock_ws = AsyncMock()
         mock_ws.send = AsyncMock()
+        # Return matching requestId for each subscribe call
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"responseType": "SubscriptionResponse", "success": True, "payload": []}
-            )
+            side_effect=[
+                json.dumps(
+                    {
+                        "responseType": "SubscriptionResponse",
+                        "requestId": "1",
+                        "success": True,
+                        "payload": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "responseType": "SubscriptionResponse",
+                        "requestId": "2",
+                        "success": True,
+                        "payload": [],
+                    }
+                ),
+            ]
         )
         client._ws = mock_ws
         client._connected = True

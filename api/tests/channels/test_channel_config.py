@@ -269,11 +269,19 @@ class TestReactionConfig:
 
     @pytest.mark.unit
     def test_enabled_reaction_config(self):
-        """ReactionConfig can be enabled."""
+        """ReactionConfig can be enabled when salt is provided."""
         from app.channels.config import ReactionConfig
 
-        config = ReactionConfig(enabled=True)
+        config = ReactionConfig(enabled=True, reactor_identity_salt="test-salt")
         assert config.enabled is True
+
+    def test_enabled_reaction_config_requires_salt(self):
+        """ReactionConfig rejects enabled=True without a salt."""
+        from app.channels.config import ReactionConfig
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="reactor_identity_salt"):
+            ReactionConfig(enabled=True)
 
     @pytest.mark.unit
     def test_custom_emoji_map(self):
