@@ -126,7 +126,7 @@ class ChannelBootstrapper:
                 logger.info(f"Channel '{channel_id}' loaded successfully")
 
             except Exception as e:
-                logger.exception(f"Failed to load channel '{channel_id}': {e}")
+                logger.exception(f"Failed to load channel '{channel_id}'")
                 result.errors.append((channel_id, e))
 
         # Log summary

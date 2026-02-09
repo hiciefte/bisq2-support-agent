@@ -78,6 +78,12 @@ const parseStoredMessages = (rawValue: string | null): Message[] => {
 
         return parsed
             .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+            .filter(
+                (item) =>
+                    typeof item.id === "string" &&
+                    typeof item.content === "string" &&
+                    (item.role === "user" || item.role === "assistant"),
+            )
             .map((item) => ({
                 ...item,
                 timestamp: typeof item.timestamp === "string" ? new Date(item.timestamp) : new Date(),
@@ -285,9 +291,6 @@ export const useChatMessages = () => {
 
     const clearChatHistory = () => {
         setMessages([])
-        if (typeof window !== 'undefined') {
-            localStorage.removeItem(CHAT_STORAGE_KEY)
-        }
     }
 
     return {

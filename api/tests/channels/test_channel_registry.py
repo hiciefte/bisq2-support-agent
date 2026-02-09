@@ -87,6 +87,20 @@ class TestChannelRegistryRegistration:
         with pytest.raises(ChannelNotFoundError):
             registry.unregister(channel_id="nonexistent")
 
+    @pytest.mark.unit
+    def test_unregister_unknown_handle_raises_channel_not_found(
+        self, mock_channel_plugin_factory
+    ):
+        """Unknown handle raises ChannelNotFoundError (not ValueError)."""
+        from app.channels.registry import ChannelNotFoundError, ChannelRegistry
+
+        registry = ChannelRegistry()
+        plugin = mock_channel_plugin_factory(channel_id="test-channel")
+        registry.register(plugin)
+
+        with pytest.raises(ChannelNotFoundError):
+            registry.unregister(handle="missing-handle")
+
 
 class TestChannelRegistryLifecycle:
     """Test lifecycle management."""
@@ -213,6 +227,52 @@ class TestChannelRegistryLifecycle:
 
         plugin.stop.assert_called_once()
         plugin.start.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_restart_keeps_started_state_when_stop_fails(
+        self, mock_channel_plugin_factory
+    ):
+        """Restart should preserve started state/order when stop phase fails."""
+        from app.channels.registry import ChannelRegistry
+
+        registry = ChannelRegistry()
+        plugin = mock_channel_plugin_factory(channel_id="test-channel")
+        plugin.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+
+        registry.register(plugin)
+        await registry.start_all()
+
+        with pytest.raises(RuntimeError, match="Failed to stop channel"):
+            await registry.restart("test-channel")
+
+        status = registry.get_status("test-channel")
+        assert status["started"] is True
+        assert "test-channel" in registry._started_order
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_restart_marks_stopped_when_start_fails_after_stop(
+        self, mock_channel_plugin_factory
+    ):
+        """Restart should leave channel stopped when start phase fails."""
+        from app.channels.registry import ChannelRegistry
+
+        registry = ChannelRegistry()
+        plugin = mock_channel_plugin_factory(channel_id="test-channel")
+
+        registry.register(plugin)
+        await registry.start_all()
+
+        plugin.start = AsyncMock(side_effect=RuntimeError("start failed"))
+
+        with pytest.raises(RuntimeError, match="Failed to start channel"):
+            await registry.restart("test-channel")
+
+        status = registry.get_status("test-channel")
+        assert status["started"] is False
+        assert status["healthy"] is False
+        assert "test-channel" not in registry._started_order
 
 
 class TestChannelRegistryStateManagement:

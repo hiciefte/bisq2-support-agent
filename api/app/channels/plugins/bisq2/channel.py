@@ -185,8 +185,8 @@ class Bisq2Channel(ChannelBase):
             self._last_poll_since = export_timestamp
             return incoming_messages
 
-        except Exception as e:
-            self._logger.error(f"Error polling Bisq2 API: {e}")
+        except Exception:
+            self._logger.exception("Error polling Bisq2 API")
             return []
 
     def _transform_bisq_message(self, msg: Dict[str, Any]) -> Optional[IncomingMessage]:

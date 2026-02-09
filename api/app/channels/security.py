@@ -94,7 +94,7 @@ class PIIDetector:
             r"\b[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}\b",
             re.IGNORECASE,
         ),
-        PIIType.IBAN: re.compile(r"\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b"),
+        PIIType.IBAN: re.compile(r"\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b", re.IGNORECASE),
         PIIType.CREDIT_CARD: re.compile(
             r"\b(?:4\d{3}|5[1-5]\d{2}|6011|3[47]\d{2})[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"
         ),
@@ -244,7 +244,7 @@ class SensitiveDataFilter(logging.Filter):
         """Redact sensitive data from log record."""
         if hasattr(record, "msg") and isinstance(record.msg, str):
             for key in self.SENSITIVE_KEYS:
-                pattern = rf"{key}[\"']?\s*[:=]\s*[\"']?[\w\-]+[\"']?"
+                pattern = rf"{key}[\"']?\s*[:=]\s*[\"']?[^\s\"']+[\"']?"
                 record.msg = re.sub(
                     pattern, f"{key}=[REDACTED]", record.msg, flags=re.IGNORECASE
                 )

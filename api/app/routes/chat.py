@@ -12,7 +12,7 @@ from app.channels.models import ChatMessage as ChannelChatMessage
 from app.channels.models import GatewayError, IncomingMessage, UserContext
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel
@@ -129,6 +129,7 @@ def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
     """Normalize incoming chat roles to supported channel model roles."""
     if role in ("user", "assistant", "system"):
         return cast(Literal["user", "assistant", "system"], role)
+    logger.warning("Unknown chat role '%s' normalized to 'assistant'", role)
     return "assistant"
 
 
@@ -151,7 +152,15 @@ async def query(
 
     try:
         # Get gateway from app state
-        gateway: ChannelGateway = request.app.state.channel_gateway
+        gateway = getattr(request.app.state, "channel_gateway", None)
+        if gateway is None:
+            logger.error("Channel gateway not initialized")
+            QUERY_ERRORS.labels(error_type="service_unavailable").inc()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Channel gateway not initialized",
+            )
+        gateway = cast(ChannelGateway, gateway)
 
         # Use the automatically parsed payload from Body
         data = await request.json()
@@ -287,7 +296,7 @@ async def query(
             ) from e
 
         return JSONResponse(content=response_dict)
-    except (ValidationError, BaseAppException):
+    except (ValidationError, BaseAppException, HTTPException):
         raise
     except Exception:
         logger.exception("Unexpected error processing /query")

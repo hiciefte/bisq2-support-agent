@@ -70,6 +70,8 @@ async def channel_lifespan(
     app: FastAPI,
     rag_service: Optional[RAGServiceProtocol] = None,
     register_default_hooks: bool = True,
+    rate_limit_capacity: int = 20,
+    rate_limit_refill_rate: float = 1.0,
     valid_tokens: Optional[Iterable[str]] = None,
 ):
     """Async context manager for channel gateway lifecycle.
@@ -83,6 +85,8 @@ async def channel_lifespan(
         rag_service: RAG service for query processing.
             If None, will attempt to get from app.state.rag_service.
         register_default_hooks: Whether to register default middleware hooks.
+        rate_limit_capacity: Token bucket capacity for rate limiting.
+        rate_limit_refill_rate: Token refill rate per second.
         valid_tokens: Optional token whitelist for authenticated channels.
 
     Yields:
@@ -102,6 +106,8 @@ async def channel_lifespan(
     gateway = create_channel_gateway(
         rag_service=rag_service,
         register_default_hooks=register_default_hooks,
+        rate_limit_capacity=rate_limit_capacity,
+        rate_limit_refill_rate=rate_limit_refill_rate,
         valid_tokens=valid_tokens,
     )
     app.state.channel_gateway = gateway

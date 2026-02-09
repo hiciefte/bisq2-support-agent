@@ -337,6 +337,14 @@ class TestPIIProtection:
         assert findings[0][0] == PIIType.IBAN
 
     @pytest.mark.security
+    def test_iban_detection_is_case_insensitive(self, pii_detector: PIIDetector):
+        """IBAN detection should work for lowercase input too."""
+        text = "Account: gb29nw bk60161331926819".replace(" ", "")
+        findings = pii_detector.detect(text)
+        assert len(findings) == 1
+        assert findings[0][0] == PIIType.IBAN
+
+    @pytest.mark.security
     def test_pii_redaction(self, pii_detector: PIIDetector):
         """PII should be redacted correctly."""
         text = "Email: test@example.com and card 4111-1111-1111-1111"

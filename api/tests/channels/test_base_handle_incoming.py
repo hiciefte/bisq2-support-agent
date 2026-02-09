@@ -314,6 +314,23 @@ class TestChannelBaseHandleIncoming:
         assert len(result.sources) == 1
         assert result.sources[0].category == "faq"
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_incoming_returns_error_message_when_rag_fails(
+        self, mock_runtime, incoming_message
+    ):
+        """handle_incoming returns a safe fallback response when RAG query raises."""
+        mock_runtime.rag_service.query.side_effect = RuntimeError("RAG unavailable")
+        channel = ConcreteTestChannel(mock_runtime)
+
+        result = await channel.handle_incoming(incoming_message)
+
+        assert isinstance(result, OutgoingMessage)
+        assert result.requires_human is True
+        assert result.metadata.rag_strategy == "error"
+        assert result.metadata.model_name == "unavailable"
+        assert result.in_reply_to == incoming_message.message_id
+
 
 class TestChannelTypeProperty:
     """Test channel_type property for different channels."""

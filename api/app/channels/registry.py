@@ -159,7 +159,9 @@ class ChannelRegistry:
             ChannelNotFoundError: If channel not found.
             ValueError: If neither handle nor channel_id provided.
         """
-        if handle and handle in self._handles:
+        if handle:
+            if handle not in self._handles:
+                raise ChannelNotFoundError(handle)
             channel_id = self._handles[handle]
         elif not channel_id:
             raise ValueError("Must provide either handle or channel_id")
@@ -254,10 +256,12 @@ class ChannelRegistry:
         sorted_entries = sorted(self._entries.items(), key=lambda x: x[1].priority)
 
         for channel_id, entry in sorted_entries:
+            startup_hook_ran = False
             try:
                 # Call on_startup hook if available
                 if hasattr(entry.plugin, "on_startup"):
                     await entry.plugin.on_startup()
+                    startup_hook_ran = True
 
                 # Start with timeout
                 await asyncio.wait_for(entry.plugin.start(), timeout=timeout)
@@ -272,6 +276,14 @@ class ChannelRegistry:
                 entry.error = e
                 error = ChannelStartupError(channel_id, e)
                 errors.append(error)
+                if startup_hook_ran and hasattr(entry.plugin, "on_shutdown"):
+                    try:
+                        await entry.plugin.on_shutdown()
+                    except Exception:
+                        logger.exception(
+                            "Channel '%s' on_shutdown hook failed after startup timeout",
+                            channel_id,
+                        )
                 logger.exception(
                     f"Channel '{channel_id}' start timed out after {timeout}s"
                 )
@@ -284,6 +296,14 @@ class ChannelRegistry:
                 entry.error = e
                 error = ChannelStartupError(channel_id, e)
                 errors.append(error)
+                if startup_hook_ran and hasattr(entry.plugin, "on_shutdown"):
+                    try:
+                        await entry.plugin.on_shutdown()
+                    except Exception:
+                        logger.exception(
+                            "Channel '%s' on_shutdown hook failed after startup error",
+                            channel_id,
+                        )
                 logger.exception(f"Channel '{channel_id}' failed to start")
 
                 if not continue_on_error:
@@ -344,22 +364,64 @@ class ChannelRegistry:
         if not entry:
             raise ChannelNotFoundError(channel_id)
 
-        # Stop if running
+        # Stop phase
         if entry.started:
-            await asyncio.wait_for(entry.plugin.stop(), timeout=timeout)
-            if hasattr(entry.plugin, "on_shutdown"):
-                await entry.plugin.on_shutdown()
+            try:
+                await asyncio.wait_for(entry.plugin.stop(), timeout=timeout)
+            except Exception as e:
+                stop_error = RuntimeError(
+                    f"Failed to stop channel '{channel_id}' during restart: {e}"
+                )
+                entry.error = stop_error
+                entry.healthy = False
+                logger.exception(
+                    "Channel '%s' stop phase failed during restart", channel_id
+                )
+                # Keep started=True and start order unchanged when stop fails.
+                raise stop_error from e
+
             entry.started = False
             if channel_id in self._started_order:
                 self._started_order.remove(channel_id)
 
-        # Start
-        if hasattr(entry.plugin, "on_startup"):
-            await entry.plugin.on_startup()
-        await asyncio.wait_for(entry.plugin.start(), timeout=timeout)
+            try:
+                if hasattr(entry.plugin, "on_shutdown"):
+                    await asyncio.wait_for(entry.plugin.on_shutdown(), timeout=timeout)
+            except Exception as e:
+                shutdown_error = RuntimeError(
+                    f"Failed to run on_shutdown for channel '{channel_id}' during restart: {e}"
+                )
+                entry.error = shutdown_error
+                entry.healthy = False
+                logger.exception(
+                    "Channel '%s' on_shutdown phase failed during restart", channel_id
+                )
+                raise shutdown_error from e
+
+        # Start phase
+        try:
+            if hasattr(entry.plugin, "on_startup"):
+                await asyncio.wait_for(entry.plugin.on_startup(), timeout=timeout)
+            await asyncio.wait_for(entry.plugin.start(), timeout=timeout)
+        except Exception as e:
+            start_error = RuntimeError(
+                f"Failed to start channel '{channel_id}' during restart: {e}"
+            )
+            entry.started = False
+            entry.healthy = False
+            entry.error = start_error
+            if channel_id in self._started_order:
+                self._started_order.remove(channel_id)
+            logger.exception(
+                "Channel '%s' start phase failed during restart", channel_id
+            )
+            raise start_error from e
+
         entry.started = True
         entry.healthy = True
-        self._started_order.append(channel_id)
+        entry.error = None
+        if channel_id not in self._started_order:
+            self._started_order.append(channel_id)
 
         logger.info(f"Restarted channel '{channel_id}'")
 

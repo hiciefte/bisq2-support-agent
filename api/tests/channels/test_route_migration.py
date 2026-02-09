@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.models import ChannelType, ErrorCode, IncomingMessage, UserContext
+from fastapi import HTTPException
 
 # =============================================================================
 # Gateway Dependency Tests
@@ -161,6 +162,26 @@ class TestQueryRouteWithGateway:
         assert response.status_code == 429
         payload = json.loads(response.body)
         assert payload["error_code"] == ErrorCode.RATE_LIMIT_EXCEEDED.value
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_query_route_returns_503_when_gateway_not_initialized(self):
+        """Query route raises a clear 503 when gateway is missing from app state."""
+        from app.routes.chat import query
+
+        request = MagicMock()
+        request.app.state = SimpleNamespace()
+        request.method = "POST"
+        request.headers = {"content-type": "application/json", "user-agent": "pytest"}
+        request.cookies = {}
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.json = AsyncMock(return_value={"question": "Test question"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await query(request=request, settings=MagicMock())
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "Channel gateway not initialized"
 
     @pytest.mark.unit
     def test_gateway_error_status_map_includes_additional_codes(self):
