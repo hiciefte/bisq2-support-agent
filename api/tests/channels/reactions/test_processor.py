@@ -312,6 +312,22 @@ class TestProcessErrorHandling:
         assert result is False
 
     @pytest.mark.asyncio()
+    async def test_process_returns_false_when_service_unavailable(self, tracker):
+        """process() returns False when feedback_service is missing."""
+        svc = MagicMock(spec=[])  # no store_reaction_feedback method
+        p = ReactionProcessor(tracker=tracker, feedback_service=svc)
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.POSITIVE,
+            raw_reaction="\U0001f44d",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await p.process(event)
+        assert result is False
+
+    @pytest.mark.asyncio()
     async def test_revoke_returns_false_on_error(self, processor, feedback_service):
         feedback_service.revoke_reaction_feedback.side_effect = RuntimeError("db error")
         result = await processor.revoke_reaction(

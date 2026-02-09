@@ -253,13 +253,17 @@ class ReactionProcessor:
             return False
 
     def _store_feedback(self, feedback_data: Dict[str, Any]) -> None:
-        """Store feedback via FeedbackService (synchronous)."""
+        """Store feedback via FeedbackService (synchronous).
+
+        Raises RuntimeError when the service is unavailable so that
+        callers (process()) can distinguish success from silent no-op.
+        """
         if self.feedback_service and hasattr(
             self.feedback_service, "store_reaction_feedback"
         ):
             self.feedback_service.store_reaction_feedback(**feedback_data)
         else:
-            logger.warning(
+            raise RuntimeError(
                 "FeedbackService not available or missing store_reaction_feedback"
             )
 
