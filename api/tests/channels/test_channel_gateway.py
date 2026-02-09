@@ -31,7 +31,7 @@ class TestChannelGatewayRouting:
 
         mock_rag_service.query.assert_called_once()
         call_args = mock_rag_service.query.call_args
-        assert sample_incoming_message.question in str(call_args)
+        assert call_args.kwargs["question"] == sample_incoming_message.question
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -64,6 +64,7 @@ class TestChannelGatewayRouting:
         # Verify chat_history was passed
         call_args = mock_rag_service.query.call_args
         assert call_args is not None
+        assert call_args.kwargs.get("chat_history") is not None
 
 
 class TestChannelGatewayHooks:

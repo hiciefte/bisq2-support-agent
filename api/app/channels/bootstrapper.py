@@ -126,7 +126,7 @@ class ChannelBootstrapper:
                 logger.info(f"Channel '{channel_id}' loaded successfully")
 
             except Exception as e:
-                logger.error(f"Failed to load channel '{channel_id}': {e}")
+                logger.exception(f"Failed to load channel '{channel_id}': {e}")
                 result.errors.append((channel_id, e))
 
         # Log summary
@@ -155,15 +155,17 @@ class ChannelBootstrapper:
 
         Reads module paths from settings.CHANNEL_PLUGINS or uses defaults.
         """
-        modules = getattr(
-            self.settings,
-            "CHANNEL_PLUGINS",
-            [
-                "app.channels.plugins.web.channel",
-                "app.channels.plugins.matrix.channel",
-                "app.channels.plugins.bisq2.channel",
-            ],
-        )
+        default_modules = [
+            "app.channels.plugins.web.channel",
+            "app.channels.plugins.matrix.channel",
+            "app.channels.plugins.bisq2.channel",
+        ]
+        modules = getattr(self.settings, "CHANNEL_PLUGINS", default_modules)
+
+        if modules == default_modules:
+            logger.debug(
+                "CHANNEL_PLUGINS not configured, using default channel module list"
+            )
 
         for module_path in modules:
             try:

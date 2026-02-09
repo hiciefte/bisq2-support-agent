@@ -10,7 +10,6 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-import portalocker
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
 from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
@@ -27,8 +26,6 @@ class FAQService:
 
     _instance: Optional["FAQService"] = None
     _instance_lock = threading.Lock()
-    _faq_file_path: Path
-    _file_lock: Optional[portalocker.Lock] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -43,14 +40,8 @@ class FAQService:
             self.settings = settings
             data_dir = Path(self.settings.DATA_DIR)
 
-            # Ensure data directory exists before creating locks/files
+            # Ensure data directory exists before creating data files.
             data_dir.mkdir(parents=True, exist_ok=True)
-
-            # Ensure lock file parent directory exists
-            lock_file_path = data_dir / "faq_service.lock"
-            lock_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-            self._file_lock = portalocker.Lock(str(lock_file_path), timeout=10)
 
             # Initialize SQLite FAQ repository for CRUD operations
             logger.info("Using SQLite FAQ storage")

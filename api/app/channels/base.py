@@ -17,6 +17,7 @@ from app.channels.models import (
     OutgoingMessage,
     ResponseMetadata,
 )
+from app.channels.response_builder import build_metadata, build_sources
 
 if TYPE_CHECKING:
     from app.channels.runtime import ChannelRuntime
@@ -274,6 +275,9 @@ class ChannelBase(ABC):
 
         start_time = time.time()
 
+        if self.runtime.rag_service is None:
+            raise RuntimeError("RAG service not configured in channel runtime")
+
         # Build chat history for RAG service
         chat_history = self._format_chat_history(message)
 
@@ -328,20 +332,7 @@ class ChannelBase(ABC):
         Returns:
             List of DocumentReference objects.
         """
-        import uuid
-
-        sources = []
-        for source in rag_response.get("sources", []):
-            sources.append(
-                DocumentReference(
-                    document_id=source.get("document_id", str(uuid.uuid4())),
-                    title=source.get("title", "Unknown"),
-                    url=source.get("url"),
-                    relevance_score=source.get("relevance_score", 0.5),
-                    category=source.get("category"),
-                )
-            )
-        return sources
+        return build_sources(rag_response)
 
     def _build_metadata(
         self, rag_response: dict, processing_time_ms: float
@@ -357,11 +348,8 @@ class ChannelBase(ABC):
         Returns:
             ResponseMetadata object.
         """
-        return ResponseMetadata(
+        return build_metadata(
+            rag_response=rag_response,
             processing_time_ms=processing_time_ms,
-            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
-            model_name=rag_response.get("model_name", "unknown"),
-            tokens_used=rag_response.get("tokens_used"),
-            confidence_score=rag_response.get("confidence_score"),
             hooks_executed=[],
         )

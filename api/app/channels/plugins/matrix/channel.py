@@ -3,6 +3,7 @@
 Wraps existing Matrix integration into channel plugin architecture.
 """
 
+import asyncio
 from typing import Set
 
 from app.channels.base import ChannelBase
@@ -80,7 +81,7 @@ class MatrixChannel(ChannelBase):
             self._is_connected = True
             self._logger.info("Matrix channel started - connection established")
         except Exception as e:
-            self._logger.error(f"Failed to connect to Matrix homeserver: {e}")
+            self._logger.exception(f"Failed to connect to Matrix homeserver: {e}")
             self._is_connected = False
 
     async def stop(self) -> None:
@@ -96,7 +97,7 @@ class MatrixChannel(ChannelBase):
             try:
                 await conn_manager.disconnect()
             except Exception as e:
-                self._logger.error(f"Error disconnecting from Matrix: {e}")
+                self._logger.exception(f"Error disconnecting from Matrix: {e}")
 
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
@@ -125,13 +126,16 @@ class MatrixChannel(ChannelBase):
 
         try:
             # Send text message via nio client
-            response = await client.room_send(
-                room_id=target,
-                message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": message.answer,
-                },
+            response = await asyncio.wait_for(
+                client.room_send(
+                    room_id=target,
+                    message_type="m.room.message",
+                    content={
+                        "msgtype": "m.text",
+                        "body": message.answer,
+                    },
+                ),
+                timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
             )
 
             # Check for successful send (has event_id)
@@ -146,8 +150,16 @@ class MatrixChannel(ChannelBase):
                 self._logger.error(f"Failed to send message to {target}: {error_msg}")
                 return False
 
+        except asyncio.TimeoutError:
+            self._logger.error(
+                f"Timed out sending message to Matrix room {target} "
+                f"after {self.MATRIX_OP_TIMEOUT_SECONDS}s"
+            )
+            return False
         except Exception as e:
-            self._logger.error(f"Error sending message to Matrix room {target}: {e}")
+            self._logger.exception(
+                f"Error sending message to Matrix room {target}: {e}"
+            )
             return False
 
     # handle_incoming() inherited from ChannelBase
@@ -174,7 +186,10 @@ class MatrixChannel(ChannelBase):
             return False
 
         try:
-            response = await client.join(room_id)
+            response = await asyncio.wait_for(
+                client.join(room_id),
+                timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+            )
 
             # Check for successful join (has room_id)
             if hasattr(response, "room_id") and response.room_id:
@@ -186,8 +201,14 @@ class MatrixChannel(ChannelBase):
                 self._logger.error(f"Failed to join room {room_id}: {error_msg}")
                 return False
 
+        except asyncio.TimeoutError:
+            self._logger.error(
+                f"Timed out joining Matrix room {room_id} "
+                f"after {self.MATRIX_OP_TIMEOUT_SECONDS}s"
+            )
+            return False
         except Exception as e:
-            self._logger.error(f"Error joining Matrix room {room_id}: {e}")
+            self._logger.exception(f"Error joining Matrix room {room_id}: {e}")
             return False
 
     async def leave_room(self, room_id: str) -> bool:
@@ -212,7 +233,10 @@ class MatrixChannel(ChannelBase):
             return False
 
         try:
-            response = await client.room_leave(room_id)
+            response = await asyncio.wait_for(
+                client.room_leave(room_id),
+                timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+            )
 
             # Check for successful leave (has room_id or no error)
             if hasattr(response, "room_id") and response.room_id:
@@ -224,6 +248,14 @@ class MatrixChannel(ChannelBase):
                 self._logger.error(f"Failed to leave room {room_id}: {error_msg}")
                 return False
 
-        except Exception as e:
-            self._logger.error(f"Error leaving Matrix room {room_id}: {e}")
+        except asyncio.TimeoutError:
+            self._logger.error(
+                f"Timed out leaving Matrix room {room_id} "
+                f"after {self.MATRIX_OP_TIMEOUT_SECONDS}s"
+            )
             return False
+        except Exception as e:
+            self._logger.exception(f"Error leaving Matrix room {room_id}: {e}")
+            return False
+
+    MATRIX_OP_TIMEOUT_SECONDS = 30.0

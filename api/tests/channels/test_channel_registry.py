@@ -384,7 +384,7 @@ class TestChannelRegistryErrorHandling:
         registry = ChannelRegistry()
 
         async def slow_start():
-            await asyncio.sleep(10)  # Very slow
+            await asyncio.sleep(1)  # Long enough to exceed timeout=0.1
 
         plugin = mock_channel_plugin_factory(channel_id="slow-channel")
         plugin.start = AsyncMock(side_effect=slow_start)

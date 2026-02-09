@@ -42,7 +42,10 @@ class SimpleChatPromptTemplate:
         return cls(template)
 
     def format(self, **kwargs: Any) -> str:
-        return self._template.format(**kwargs)
+        result = self._template
+        for key, value in kwargs.items():
+            result = result.replace(f"{{{key}}}", str(value))
+        return result
 
 
 class RAGPromptNotInitializedError(RuntimeError):

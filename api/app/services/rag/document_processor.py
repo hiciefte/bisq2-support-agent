@@ -41,9 +41,22 @@ class _SimpleCharacterTextSplitter:
         self.chunk_overlap = chunk_overlap
         self._separators = separators
 
+    def _find_split_end(self, text: str, start: int, max_end: int) -> int:
+        """Find a natural split boundary before max_end using configured separators."""
+        if max_end >= len(text):
+            return len(text)
+
+        for separator in self._separators:
+            if not separator:
+                continue
+            split_at = text.rfind(separator, start, max_end)
+            if split_at > start:
+                return split_at + len(separator)
+
+        return max_end
+
     def split_documents(self, documents: List[Document]) -> List[Document]:
         chunks: List[Document] = []
-        step = max(1, self.chunk_size - self.chunk_overlap)
 
         for document in documents:
             text = document.page_content or ""
@@ -51,13 +64,19 @@ class _SimpleCharacterTextSplitter:
                 chunks.append(document)
                 continue
 
-            for start in range(0, len(text), step):
-                chunk_text = text[start : start + self.chunk_size]
+            start = 0
+            while start < len(text):
+                max_end = min(start + self.chunk_size, len(text))
+                end = self._find_split_end(text, start, max_end)
+                chunk_text = text[start:end]
                 if not chunk_text:
-                    continue
+                    break
                 chunks.append(
                     Document(page_content=chunk_text, metadata=dict(document.metadata))
                 )
+                if end >= len(text):
+                    break
+                start = max(end - self.chunk_overlap, start + 1)
 
         return chunks
 
@@ -84,11 +103,12 @@ class DocumentProcessor:
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self._separators = list(DEFAULT_SEPARATORS)
 
         self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=DEFAULT_SEPARATORS,
+            separators=self._separators,
         )
 
         logger.info(
@@ -129,9 +149,7 @@ class DocumentProcessor:
         self.text_splitter = self._create_text_splitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=list(
-                self.text_splitter._separators
-            ),  # Reuse existing separators
+            separators=self._separators,
         )
 
         logger.info(

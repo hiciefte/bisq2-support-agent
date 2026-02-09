@@ -75,8 +75,20 @@ class TestBisq2ChannelConfig:
         """Export batch size must be within bounds."""
         from app.channels.config import Bisq2ChannelConfig
 
+        config = Bisq2ChannelConfig(export_batch_size=10)
+        assert config.export_batch_size == 10
+
         config = Bisq2ChannelConfig(export_batch_size=500)
         assert config.export_batch_size == 500
+
+        config = Bisq2ChannelConfig(export_batch_size=1000)
+        assert config.export_batch_size == 1000
+
+        with pytest.raises(ValidationError):
+            Bisq2ChannelConfig(export_batch_size=9)
+
+        with pytest.raises(ValidationError):
+            Bisq2ChannelConfig(export_batch_size=1001)
 
 
 class TestWebChannelConfig:
@@ -210,7 +222,7 @@ class TestChannelsConfig:
             WebChannelConfig,
         )
 
-        with pytest.raises(ValidationError, match="(?i)at least one"):
+        with pytest.raises(ValidationError, match=r"(?i)at least one"):
             ChannelsConfig(
                 bisq2=Bisq2ChannelConfig(enabled=False),
                 web=WebChannelConfig(enabled=False),

@@ -15,6 +15,18 @@ from app.channels.models import (
     OutgoingMessage,
 )
 
+
+@pytest.fixture(autouse=True)
+def restore_channel_types():
+    """Restore global channel type registry after each test."""
+    from app.channels.registry import _CHANNEL_TYPES
+
+    snapshot = dict(_CHANNEL_TYPES)
+    yield
+    _CHANNEL_TYPES.clear()
+    _CHANNEL_TYPES.update(snapshot)
+
+
 # =============================================================================
 # Test Channel Classes for Testing
 # =============================================================================
@@ -168,8 +180,7 @@ class TestRegisterChannelDecorator:
         )
 
         # Clear any existing registration for this test
-        if "test_channel" in _CHANNEL_TYPES:
-            del _CHANNEL_TYPES["test_channel"]
+        _CHANNEL_TYPES.pop("test_channel", None)
 
         @register_channel("test_channel")
         class TestChannel(ChannelBase):
@@ -197,9 +208,6 @@ class TestRegisterChannelDecorator:
         types = get_registered_channel_types()
         assert "test_channel" in types
         assert types["test_channel"] is TestChannel
-
-        # Cleanup
-        del _CHANNEL_TYPES["test_channel"]
 
     @pytest.mark.unit
     def test_get_registered_channel_types_returns_copy(self):
@@ -283,9 +291,6 @@ class TestChannelBootstrapper:
         assert "test_enabled" in result.loaded
         assert len(result.errors) == 0
 
-        # Cleanup
-        del _CHANNEL_TYPES["test_enabled"]
-
     @pytest.mark.unit
     def test_bootstrap_skips_unregistered_channels(self):
         """bootstrap() skips channels that have no registered class."""
@@ -338,9 +343,6 @@ class TestChannelBootstrapper:
         assert ChannelWithMockedSetup.setup_called is True
         assert "setup_test" in result.loaded
 
-        # Cleanup
-        del _CHANNEL_TYPES["setup_test"]
-
     @pytest.mark.unit
     def test_bootstrap_handles_setup_failure(self):
         """bootstrap() handles exceptions in setup_dependencies gracefully."""
@@ -367,9 +369,6 @@ class TestChannelBootstrapper:
         assert len(result.errors) == 1
         assert result.errors[0][0] == "failing_setup"
         assert "failing_setup" not in result.loaded
-
-        # Cleanup
-        del _CHANNEL_TYPES["failing_setup"]
 
     @pytest.mark.unit
     def test_bootstrap_imports_channel_modules(self):

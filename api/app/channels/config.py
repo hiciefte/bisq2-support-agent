@@ -5,7 +5,7 @@ Pydantic models for channel-specific configuration with validation.
 
 from typing import List
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 # =============================================================================
 # Base Configuration
@@ -43,7 +43,7 @@ class Bisq2ChannelConfig(ChannelConfigBase):
 class WebChannelConfig(ChannelConfigBase):
     """Web chat configuration."""
 
-    cors_origins: List[str] = Field(default=["*"])
+    cors_origins: List[str] = Field(default_factory=lambda: ["*"])
     max_chat_history: int = Field(default=10, ge=0, le=50)
 
 
@@ -53,7 +53,7 @@ class MatrixChannelConfig(ChannelConfigBase):
     enabled: bool = False  # Disabled by default
     homeserver_url: str = ""
     user_id: str = ""
-    password: str = ""
+    password: SecretStr = SecretStr("")
     rooms: List[str] = Field(default_factory=list)
     session_file: str = "matrix_session.json"
     poll_interval_seconds: int = Field(default=5, ge=1, le=60)

@@ -4,6 +4,7 @@ Implements per-user rate limiting using token bucket algorithm.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from app.channels.hooks import BasePreProcessingHook, HookPriority
@@ -38,6 +39,18 @@ class RateLimitHook(BasePreProcessingHook):
         self.capacity = capacity
         self.refill_rate = refill_rate
         self._buckets: Dict[str, TokenBucket] = {}
+        self._stale_bucket_ttl_seconds = (
+            (self.capacity / self.refill_rate) * 2 if self.refill_rate > 0 else 3600.0
+        )
+
+    def _prune_stale_buckets(self, now: datetime) -> None:
+        """Prune stale token buckets to prevent unbounded memory growth."""
+        self._buckets = {
+            uid: bucket
+            for uid, bucket in self._buckets.items()
+            if (now - bucket.last_refill).total_seconds()
+            < self._stale_bucket_ttl_seconds
+        }
 
     def _get_bucket(self, user_id: str) -> TokenBucket:
         """Get or create token bucket for user.
@@ -49,6 +62,7 @@ class RateLimitHook(BasePreProcessingHook):
             TokenBucket for the user.
         """
         if user_id not in self._buckets:
+            self._prune_stale_buckets(datetime.now(timezone.utc))
             self._buckets[user_id] = TokenBucket(
                 capacity=self.capacity, refill_rate=self.refill_rate
             )

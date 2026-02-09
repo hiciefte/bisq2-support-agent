@@ -45,6 +45,13 @@ class AuthenticationHook(BasePreProcessingHook):
         self._valid_tokens = valid_tokens or set()
         self._skip_channels = skip_channels or {ChannelType.WEB}
 
+        if not self._valid_tokens:
+            self._logger.warning(
+                "AuthenticationHook initialized without valid_tokens. "
+                "Any non-empty token will be accepted for authenticated channels "
+                "not in skip_channels."
+            )
+
     async def execute(self, message: IncomingMessage) -> Optional[GatewayError]:
         """Validate authentication for incoming message.
 

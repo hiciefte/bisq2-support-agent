@@ -8,13 +8,15 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from app.channels.gateway import ChannelGateway, RAGServiceProtocol
+from app.channels.gateway import ChannelGateway
 from app.channels.middleware import (
     AuthenticationHook,
     MetricsHook,
+    MetricsPostHook,
     PIIFilterHook,
     RateLimitHook,
 )
+from app.channels.runtime import RAGServiceProtocol
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -48,9 +50,11 @@ def create_channel_gateway(
             )
         )
         gateway.register_pre_hook(AuthenticationHook())
-        gateway.register_pre_hook(MetricsHook())
+        metrics_hook = MetricsHook()
+        gateway.register_pre_hook(metrics_hook)
 
         # Register post-processing hooks
+        gateway.register_post_hook(MetricsPostHook(metrics_hook))
         gateway.register_post_hook(PIIFilterHook())
 
         logger.info("Registered default gateway hooks")
@@ -84,9 +88,10 @@ async def channel_lifespan(
         if hasattr(app.state, "rag_service"):
             rag_service = app.state.rag_service
         else:
-            logger.warning("No RAG service available, gateway will not be initialized")
-            yield
-            return
+            raise RuntimeError(
+                "No RAG service available - cannot initialize channel gateway. "
+                "Ensure RAG service is started before channel lifespan."
+            )
 
     # Create and store gateway
     gateway = create_channel_gateway(

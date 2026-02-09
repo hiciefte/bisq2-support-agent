@@ -3,6 +3,8 @@
 TDD tests for migrating /query route to use Channel Gateway.
 """
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -92,11 +94,10 @@ class TestQueryRouteWithGateway:
     @pytest.mark.asyncio
     async def test_query_route_uses_gateway_when_available(self):
         """Query route uses gateway.process_message when gateway is initialized."""
-        from app.channels.gateway import ChannelGateway
         from app.channels.models import OutgoingMessage, ResponseMetadata
+        from app.routes.chat import query
 
-        # Create mock gateway
-        mock_gateway = MagicMock(spec=ChannelGateway)
+        mock_gateway = MagicMock()
         mock_gateway.process_message = AsyncMock(
             return_value=OutgoingMessage(
                 message_id="resp-001",
@@ -104,7 +105,7 @@ class TestQueryRouteWithGateway:
                 in_reply_to="msg-001",
                 answer="Test answer from gateway",
                 sources=[],
-                user=UserContext(user_id="web_anonymous"),
+                user=UserContext(user_id="web_test_user"),
                 metadata=ResponseMetadata(
                     processing_time_ms=100.0,
                     rag_strategy="retrieval",
@@ -113,25 +114,32 @@ class TestQueryRouteWithGateway:
             )
         )
 
-        # Verify gateway.process_message was called correctly
-        incoming = IncomingMessage(
-            message_id="msg-001",
-            channel=ChannelType.WEB,
-            question="Test question",
-            user=UserContext(user_id="web_anonymous"),
-        )
+        request = MagicMock()
+        request.app.state.channel_gateway = mock_gateway
+        request.method = "POST"
+        request.headers = {"content-type": "application/json", "user-agent": "pytest"}
+        request.cookies = {}
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.json = AsyncMock(return_value={"question": "Test question"})
 
-        result = await mock_gateway.process_message(incoming)
-        assert result.answer == "Test answer from gateway"
+        response = await query(request=request, settings=MagicMock())
+
+        assert response.status_code == 200
+        payload = json.loads(response.body)
+        assert payload["answer"] == "Test answer from gateway"
+        mock_gateway.process_message.assert_called_once()
+        routed_message = mock_gateway.process_message.call_args.args[0]
+        assert isinstance(routed_message, IncomingMessage)
+        assert routed_message.question == "Test question"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_query_route_handles_gateway_error(self):
         """Query route returns HTTP error when gateway returns GatewayError."""
-        from app.channels.gateway import ChannelGateway
         from app.channels.models import GatewayError
+        from app.routes.chat import query
 
-        mock_gateway = MagicMock(spec=ChannelGateway)
+        mock_gateway = MagicMock()
         mock_gateway.process_message = AsyncMock(
             return_value=GatewayError(
                 error_code=ErrorCode.RATE_LIMIT_EXCEEDED,
@@ -140,16 +148,19 @@ class TestQueryRouteWithGateway:
             )
         )
 
-        incoming = IncomingMessage(
-            message_id="msg-001",
-            channel=ChannelType.WEB,
-            question="Test question",
-            user=UserContext(user_id="web_anonymous"),
-        )
+        request = MagicMock()
+        request.app.state.channel_gateway = mock_gateway
+        request.method = "POST"
+        request.headers = {"content-type": "application/json", "user-agent": "pytest"}
+        request.cookies = {}
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.json = AsyncMock(return_value={"question": "Test question"})
 
-        result = await mock_gateway.process_message(incoming)
-        assert isinstance(result, GatewayError)
-        assert result.error_code == ErrorCode.RATE_LIMIT_EXCEEDED
+        response = await query(request=request, settings=MagicMock())
+
+        assert response.status_code == 429
+        payload = json.loads(response.body)
+        assert payload["error_code"] == ErrorCode.RATE_LIMIT_EXCEEDED.value
 
 
 # =============================================================================

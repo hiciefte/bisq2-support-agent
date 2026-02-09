@@ -299,6 +299,5 @@ class TestChannelTypeProperty:
     @pytest.mark.unit
     def test_channel_type_abstract_by_default(self):
         """Channels must implement channel_type property."""
-        # The base class should have an abstract channel_type property
-        # that subclasses override to return their ChannelType
-        assert hasattr(ChannelBase, "channel_type")
+        with pytest.raises(TypeError, match="abstract"):
+            ChannelBase(runtime=MagicMock())

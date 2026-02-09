@@ -27,7 +27,7 @@ Trade-offs:
 - Schema changes must consider both systems
 
 Rationale:
-Both systems are low-volume (7 metrics + occasional feedback entries), have
+Both systems are low-volume (a handful of metrics + occasional feedback entries), have
 similar lifecycle requirements (persist indefinitely), and use identical
 technology (SQLite with simple CRUD operations). The operational benefits
 outweigh the coupling concerns at current scale.

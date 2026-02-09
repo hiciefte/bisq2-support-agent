@@ -5,14 +5,14 @@ Redacts sensitive information from log messages to prevent PII leakage.
 
 import logging
 import re
-from typing import Any, Pattern
+from typing import Any
 
 
 class PIIFilter(logging.Filter):
     """Logging filter that redacts PII from log messages."""
 
     # Compiled regex patterns for performance
-    PATTERNS: list[tuple[Pattern, str]] = [
+    PATTERNS: list[tuple[re.Pattern[str], str]] = [
         # Matrix access tokens (syt_*)
         (re.compile(r"syt_[a-zA-Z0-9_-]+"), "[MATRIX_TOKEN]"),
         # Email addresses

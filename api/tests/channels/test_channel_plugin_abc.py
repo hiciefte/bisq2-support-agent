@@ -27,10 +27,23 @@ class TestChannelProtocol:
         """Protocol should be runtime checkable for isinstance()."""
         from app.channels.base import ChannelProtocol
 
-        # Protocol should have __protocol_attrs__ or be runtime_checkable
-        assert hasattr(ChannelProtocol, "__protocol_attrs__") or hasattr(
-            ChannelProtocol, "_is_runtime_protocol"
-        )
+        class ConformingChannel:
+            channel_id = "test"
+            capabilities = set()
+
+            async def start(self):
+                pass
+
+            async def stop(self):
+                pass
+
+            async def send_message(self, target, message):
+                return True
+
+            def health_check(self):
+                return HealthStatus(healthy=True)
+
+        assert isinstance(ConformingChannel(), ChannelProtocol)
 
     @pytest.mark.unit
     def test_protocol_defines_channel_id_property(self):

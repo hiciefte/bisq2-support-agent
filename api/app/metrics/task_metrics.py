@@ -329,8 +329,7 @@ def record_bisq2_api_health(
     """
     Record Bisq2 API health check result.
 
-    This should be called during FAQ extraction to track whether
-    the Bisq2 API endpoint is reachable.
+    Track whether the Bisq2 API endpoint is reachable.
 
     Args:
         is_healthy: True if API responded successfully, False otherwise

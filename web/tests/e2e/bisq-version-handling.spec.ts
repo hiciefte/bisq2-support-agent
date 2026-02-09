@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 /**
  * Bisq Version Handling Tests
@@ -37,14 +37,14 @@ test.describe('Bisq Version Handling', () => {
   /**
    * Helper function to extract the last bot response text.
    *
-   * Two-phase approach:
+   * Three-phase approach:
    * 1. Wait for bot avatar (appears immediately when loading state starts)
    * 2. Wait for div.prose-chat (appears only after LLM response renders)
    * 3. Extract text from the last prose-chat element
    *
    * Throws on transient API errors so the retry mechanism can re-run the test.
    */
-  async function getLastBotResponse(page: any): Promise<string> {
+  async function getLastBotResponse(page: Page): Promise<string> {
     // Phase 1: Wait for bot avatar (indicates response loading started)
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 10000 });
 
@@ -72,6 +72,12 @@ test.describe('Bisq Version Handling', () => {
 
       await page.waitForTimeout(1000);
       attempts++;
+    }
+
+    if (responseText.length < 30) {
+      throw new Error(
+        `Bot response not received after ${maxAttempts}s. Got: "${responseText}"`
+      );
     }
 
     // If the API returned a transient error, throw to trigger retry
@@ -110,18 +116,7 @@ test.describe('Bisq Version Handling', () => {
 
     expect(hasValidResponse).toBeTruthy();
 
-    // Should include version context if Bisq 1 info was provided.
-    // The LLM may indicate the version context in many ways:
-    // - Explicit disclaimer ("Note: this is for Bisq 1")
-    // - Natural mention ("In Bisq 1, you can...")
-    // - UI badge showing version accuracy
-    // The key requirement is that the response clearly relates to Bisq 1.
-    if (responseLower.includes('bisq 1') || responseLower.includes('bisq1')) {
-      // Response already mentions Bisq 1, which provides sufficient
-      // version context. The user asked about Bisq 1 and the answer
-      // references it — no additional disclaimer is strictly needed.
-      // This assertion is satisfied by the hasValidResponse check above.
-    }
+    // Mentioning Bisq 1 directly is sufficient version context for this test.
   });
 
   test('should handle ambiguous questions appropriately', async ({ page }) => {
@@ -141,14 +136,14 @@ test.describe('Bisq Version Handling', () => {
     // For ambiguous questions, the bot should either:
     // 1. Default to Bisq 2 information (mentions Bisq 2 without Bisq 1)
     // 2. Ask for clarification (mentions both versions in a question format)
-    const mentionsBisq2 = /bisq 2|bisq2|bisq easy/i.test(responseLower);
-    const asksClarification = /which|are you using|do you mean|bisq 1.*or.*bisq 2|bisq 2.*or.*bisq 1/i.test(responseLower);
+    const mentionsBisq2 = /bisq 2|bisq2|bisq easy/.test(responseLower);
+    const asksClarification = /which|are you using|do you mean|bisq 1.*or.*bisq 2|bisq 2.*or.*bisq 1/.test(responseLower);
 
     // Should mention Bisq 2 in some form (either as answer or clarification)
     expect(mentionsBisq2).toBeTruthy();
 
     // If Bisq 1 is mentioned, it should be in a clarification question, not as a default answer
-    if (/bisq 1|bisq1/i.test(responseLower)) {
+    if (/bisq 1|bisq1/.test(responseLower)) {
       expect(asksClarification).toBeTruthy();
     }
   });
@@ -192,12 +187,9 @@ test.describe('Bisq Version Handling', () => {
     await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
 
-    // Wait for second response and get text from the full page
-    // (getLastBotResponse returns the last prose-chat, but we need to check
-    // full page since the Bisq 1 mention may be in either response)
-    await page.waitForTimeout(3000);
-    const pageContent = await page.content();
-    const responseLower = pageContent?.toLowerCase() || '';
+    // Wait for second response using the same robust helper
+    const secondResponse = await getLastBotResponse(page);
+    const responseLower = secondResponse.toLowerCase();
 
     // Should recognize the Bisq 1 context from follow-up
     const handlesBisq1Context =
@@ -231,16 +223,10 @@ test.describe('Bisq Version Handling', () => {
       responseLower.includes('difference') ||
       responseLower.includes('compared') ||
       responseLower.includes('whereas') ||
-      responseLower.includes('while') ||
       responseLower.includes('contrast') ||
       responseLower.includes('unlike') ||
-      responseLower.includes('however') ||
       responseLower.includes('on the other hand') ||
-      responseLower.includes('instead') ||
       responseLower.includes('rather') ||
-      responseLower.includes('but') ||
-      responseLower.includes('new') ||
-      responseLower.includes('previous') ||
       responseLower.includes('upgrade') ||
       responseLower.includes('successor') ||
       responseLower.includes('evolution');
@@ -281,7 +267,8 @@ test.describe('Bisq Version Handling', () => {
       responseLower.includes('i\'m unable') ||
       responseLower.includes('not able to');
 
-    expect(handlesBisq1 || !refusesOutright).toBeTruthy();
+    expect(handlesBisq1).toBeTruthy();
+    expect(refusesOutright).toBeFalsy();
   });
 
   test('should not refuse Bisq 1 questions outright', async ({ page }) => {

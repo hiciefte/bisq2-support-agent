@@ -241,7 +241,7 @@ class TestRateLimiting:
     def test_token_bucket_allows_within_capacity(self, token_bucket: TokenBucket):
         """Requests within capacity should be allowed."""
         for _ in range(10):
-            allowed, meta = token_bucket.consume()
+            allowed, _meta = token_bucket.consume()
             assert allowed is True
 
     @pytest.mark.security
@@ -252,9 +252,9 @@ class TestRateLimiting:
             token_bucket.consume()
 
         # Next request should be blocked
-        allowed, meta = token_bucket.consume()
+        allowed, _meta = token_bucket.consume()
         assert allowed is False
-        assert "retry_after_seconds" in meta
+        assert "retry_after_seconds" in _meta
 
     @pytest.mark.security
     def test_token_bucket_refills_over_time(self, token_bucket: TokenBucket):
@@ -267,7 +267,7 @@ class TestRateLimiting:
         token_bucket.last_refill = datetime.now(timezone.utc) - timedelta(seconds=5)
 
         # Should have refilled
-        allowed, meta = token_bucket.consume()
+        allowed, _meta = token_bucket.consume()
         assert allowed is True
 
     @pytest.mark.security
@@ -291,9 +291,9 @@ class TestRateLimiting:
         for _ in range(10):
             token_bucket.consume()
 
-        allowed, meta = token_bucket.consume()
+        allowed, _meta = token_bucket.consume()
         assert not allowed
-        assert meta["retry_after_seconds"] >= 1
+        assert _meta["retry_after_seconds"] >= 1
 
 
 # =============================================================================
@@ -406,11 +406,12 @@ class TestSecretsManagement:
     ):
         """Should rotate secrets and return new value."""
         new_secret = await environment_secret_store.rotate_secret("ROTATED_KEY")
-        assert len(new_secret) == 64  # 32 bytes hex encoded
-        stored = await environment_secret_store.get_secret("ROTATED_KEY")
-        assert stored == new_secret
-        # Cleanup
-        del os.environ["ROTATED_KEY"]
+        try:
+            assert len(new_secret) == 64  # 32 bytes hex encoded
+            stored = await environment_secret_store.get_secret("ROTATED_KEY")
+            assert stored == new_secret
+        finally:
+            os.environ.pop("ROTATED_KEY", None)
 
     @pytest.mark.security
     def test_sensitive_data_filter(self):

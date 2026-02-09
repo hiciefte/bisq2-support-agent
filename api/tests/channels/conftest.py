@@ -1,7 +1,7 @@
 """Shared fixtures for channel plugin tests."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
@@ -32,8 +32,8 @@ from app.channels.security import (
 
 
 @pytest.fixture
-def test_settings() -> MagicMock:
-    """Mock settings for testing."""
+def mock_channel_settings() -> MagicMock:
+    """Mock settings for channel-specific tests."""
     settings = MagicMock()
     settings.MAX_CHAT_HISTORY_LENGTH = 10
     settings.USE_CHANNEL_GATEWAY = True
@@ -159,7 +159,7 @@ def mock_rag_service() -> MagicMock:
 
 
 @pytest.fixture
-def mock_channel_plugin_factory() -> callable:
+def mock_channel_plugin_factory() -> Callable[..., MagicMock]:
     """Factory for creating mock channel plugins."""
 
     def _create_plugin(

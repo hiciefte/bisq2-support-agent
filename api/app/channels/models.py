@@ -3,7 +3,7 @@
 Standardized models for multi-channel message handling.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
@@ -70,7 +70,9 @@ class UserContext(BaseModel):
 class ChatMessage(BaseModel):
     """Individual message in conversation history."""
 
-    role: Literal["user", "assistant"] = Field(..., description="Message sender role")
+    role: Literal["user", "assistant", "system"] = Field(
+        ..., description="Message sender role"
+    )
     content: str = Field(..., description="Message content", max_length=4000)
     timestamp: Optional[datetime] = Field(default=None)
 
@@ -115,7 +117,7 @@ class IncomingMessage(BaseModel):
     )
 
     # Tracking
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("question")
     @classmethod
@@ -182,7 +184,7 @@ class GatewayError(BaseModel):
     error_message: str
     details: Optional[Dict[str, Any]] = None
     recoverable: bool = True
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class DocumentReference(BaseModel):
@@ -232,7 +234,7 @@ class OutgoingMessage(BaseModel):
     requires_human: bool = False
 
     # Tracking
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class HealthStatus(BaseModel):
@@ -240,5 +242,5 @@ class HealthStatus(BaseModel):
 
     healthy: bool
     message: Optional[str] = None
-    last_check: datetime = Field(default_factory=datetime.utcnow)
+    last_check: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     details: Dict[str, Any] = Field(default_factory=dict)

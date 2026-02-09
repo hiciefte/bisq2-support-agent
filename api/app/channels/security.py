@@ -6,9 +6,10 @@ Security infrastructure for channel plugin architecture.
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Protocol, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -82,11 +83,13 @@ class PIIType(str, Enum):
 class PIIDetector:
     """Detect personally identifiable information in text."""
 
-    PATTERNS = {
+    PATTERNS: ClassVar[Dict[PIIType, re.Pattern[str]]] = {
         PIIType.EMAIL: re.compile(
             r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", re.IGNORECASE
         ),
-        PIIType.BITCOIN_ADDRESS: re.compile(r"\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b"),
+        PIIType.BITCOIN_ADDRESS: re.compile(
+            r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b"
+        ),
         PIIType.TRADE_ID: re.compile(
             r"\b[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}\b",
             re.IGNORECASE,
@@ -109,14 +112,13 @@ class PIIDetector:
         """
         findings: List[Tuple[PIIType, str]] = []
         for pii_type, pattern in self.PATTERNS.items():
-            matches = pattern.findall(text)
-            for match in matches:
-                findings.append((pii_type, match))
+            for match in pattern.finditer(text):
+                findings.append((pii_type, match.group(0)))
         return findings
 
     def redact(self, text: str, replacement: str = "[REDACTED]") -> str:
         """Redact PII from text."""
-        for pii_type, pattern in self.PATTERNS.items():
+        for pattern in self.PATTERNS.values():
             text = pattern.sub(replacement, text)
         return text
 
@@ -149,7 +151,7 @@ class SecurityIncident(BaseModel):
     channel: Optional[str] = None
     user_id: Optional[str] = None
     details: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     severity: str = "warning"  # info, warning, error, critical
 
 
@@ -158,6 +160,7 @@ class SecurityIncidentHandler:
 
     def __init__(self) -> None:
         self.incident_logger = logging.getLogger("security")
+        # In-memory only (resets on process restart and is not shared across workers).
         self.abuse_counts: Dict[str, int] = {}
 
     async def report_incident(
@@ -354,6 +357,7 @@ class TokenBucket:
         self.refill_rate = refill_rate
         self.tokens = float(capacity)
         self.last_refill = datetime.now(timezone.utc)
+        self._lock = threading.Lock()
 
     def consume(self, tokens: int = 1) -> Tuple[bool, Dict[str, Any]]:
         """Try to consume tokens from the bucket.
@@ -362,17 +366,18 @@ class TokenBucket:
             (allowed, metadata) tuple
         """
 
-        now = datetime.now(timezone.utc)
-        elapsed = (now - self.last_refill).total_seconds()
+        with self._lock:
+            now = datetime.now(timezone.utc)
+            elapsed = (now - self.last_refill).total_seconds()
 
-        # Refill tokens
-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
-        self.last_refill = now
+            # Refill tokens
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+            self.last_refill = now
 
-        if self.tokens >= tokens:
-            self.tokens -= tokens
-            return True, {"tokens_remaining": int(self.tokens)}
-        else:
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return True, {"tokens_remaining": int(self.tokens)}
+
             tokens_needed = tokens - self.tokens
             retry_after = int(tokens_needed / self.refill_rate) + 1
             return False, {"retry_after_seconds": retry_after, "tokens_remaining": 0}

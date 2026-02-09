@@ -4,6 +4,7 @@ TDD tests for middleware implementations: rate limiting, PII filtering, metrics.
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 from app.channels.hooks import HookPriority
@@ -151,16 +152,17 @@ class TestRateLimitHook:
 
         hook = RateLimitHook(capacity=1, refill_rate=10.0)  # Fast refill for test
 
-        # Exhaust
-        await hook.execute(sample_incoming_message)
+        base_time = datetime.now(timezone.utc)
+        with patch("app.channels.security.datetime") as mock_datetime:
+            # First request consumes bucket at base_time, second request refills after 1s.
+            mock_datetime.now.side_effect = [
+                base_time,
+                base_time,
+                base_time + timedelta(seconds=1),
+            ]
+            await hook.execute(sample_incoming_message)
+            result = await hook.execute(sample_incoming_message)
 
-        # Manually advance time by manipulating bucket
-        bucket = hook._get_bucket(sample_incoming_message.user.user_id)
-        bucket.last_refill = datetime.now(timezone.utc) - timedelta(seconds=1)
-        bucket.tokens = 0
-
-        # Should now have tokens again
-        result = await hook.execute(sample_incoming_message)
         assert result is None
 
 
@@ -264,9 +266,7 @@ class TestPIIFilterHook:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_pii_filter_skipped_when_in_bypass_hooks(
-        self, sample_incoming_message
-    ):
+    async def test_pii_filter_skipped_when_in_bypass_hooks(self):
         """PII filter skipped when in bypass_hooks list."""
         from app.channels.middleware.pii_filter import PIIFilterHook
 
@@ -324,16 +324,17 @@ class TestMetricsHook:
     @pytest.mark.asyncio
     async def test_metrics_hook_records_response(self, sample_incoming_message):
         """MetricsHook records response metrics."""
-        from app.channels.middleware.metrics import MetricsHook
+        from app.channels.middleware.metrics import MetricsHook, MetricsPostHook
 
-        hook = MetricsHook()
+        metrics_hook = MetricsHook()
+        post_hook = MetricsPostHook(metrics_hook)
 
         outgoing = _make_outgoing("Test answer")
 
-        result = await hook.execute_post(sample_incoming_message, outgoing)
+        result = await post_hook.execute(sample_incoming_message, outgoing)
 
         assert result is None
-        assert hook.get_response_count() >= 1
+        assert metrics_hook.get_response_count() >= 1
 
     @pytest.mark.unit
     @pytest.mark.asyncio

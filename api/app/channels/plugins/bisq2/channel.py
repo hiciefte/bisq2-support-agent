@@ -87,7 +87,7 @@ class Bisq2Channel(ChannelBase):
             self._is_connected = True
             self._logger.info("Bisq2 channel started - API connection verified")
         except Exception as e:
-            self._logger.error(f"Failed to connect to Bisq2 API: {e}")
+            self._logger.exception(f"Failed to connect to Bisq2 API: {e}")
             self._is_connected = False
 
     async def stop(self) -> None:
@@ -143,12 +143,21 @@ class Bisq2Channel(ChannelBase):
             if not messages:
                 return []
 
+            # Filter already processed messages to avoid duplicates on polling.
+            new_messages = []
+            for msg in messages:
+                message_id = str(msg.get("messageId", "")).strip()
+                if message_id and message_id in self._seen_message_ids:
+                    continue
+                new_messages.append(msg)
+
             # Transform to IncomingMessage format
             incoming_messages = []
-            for msg in messages:
+            for msg in new_messages:
                 incoming = self._transform_bisq_message(msg)
                 if incoming:
                     incoming_messages.append(incoming)
+                    self._seen_message_ids.add(incoming.message_id)
 
             self._logger.info(
                 f"Polled {len(incoming_messages)} messages from Bisq2 API"
@@ -196,3 +205,7 @@ class Bisq2Channel(ChannelBase):
         except Exception as e:
             self._logger.warning(f"Failed to transform Bisq2 message: {e}")
             return None
+
+    def __init__(self, runtime) -> None:
+        super().__init__(runtime)
+        self._seen_message_ids: set[str] = set()

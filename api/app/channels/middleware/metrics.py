@@ -8,7 +8,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.channels.hooks import BasePreProcessingHook, HookPriority
+from app.channels.hooks import (
+    BasePostProcessingHook,
+    BasePreProcessingHook,
+    HookPriority,
+)
 from app.channels.models import (
     ChannelType,
     GatewayError,
@@ -20,9 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsHook(BasePreProcessingHook):
-    """Pre/Post-processing hook for metrics collection.
+    """Pre-processing hook for request metrics collection.
 
-    Collects request and response metrics for monitoring and analysis.
     This hook is designed to never block requests.
     """
 
@@ -54,35 +57,9 @@ class MetricsHook(BasePreProcessingHook):
                 f"Request recorded: channel={message.channel}, "
                 f"total_requests={self._request_count}"
             )
-        except Exception as e:
+        except Exception:
             # Never block on metrics errors
-            self._logger.error(f"Failed to record request metrics: {e}")
-
-        return None
-
-    async def execute_post(
-        self, incoming: IncomingMessage, outgoing: OutgoingMessage
-    ) -> Optional[GatewayError]:
-        """Record response metrics.
-
-        Args:
-            incoming: Original incoming message.
-            outgoing: Response message to record.
-
-        Returns:
-            Always returns None (never blocks).
-        """
-        try:
-            self._response_count += 1
-            self._last_response_time = datetime.now(timezone.utc)
-
-            self._logger.debug(
-                f"Response recorded: channel={incoming.channel}, "
-                f"total_responses={self._response_count}"
-            )
-        except Exception as e:
-            # Never block on metrics errors
-            self._logger.error(f"Failed to record response metrics: {e}")
+            self._logger.exception("Failed to record request metrics")
 
         return None
 
@@ -136,3 +113,28 @@ class MetricsHook(BasePreProcessingHook):
     def record_error(self) -> None:
         """Record an error occurrence."""
         self._error_count += 1
+
+
+class MetricsPostHook(BasePostProcessingHook):
+    """Post-processing hook for response metrics collection."""
+
+    def __init__(self, metrics_hook: MetricsHook):
+        super().__init__(name="metrics", priority=HookPriority.LOW)
+        self._metrics_hook = metrics_hook
+
+    async def execute(
+        self, incoming: IncomingMessage, outgoing: OutgoingMessage
+    ) -> Optional[GatewayError]:
+        """Record outgoing response metrics."""
+        try:
+            self._metrics_hook._response_count += 1
+            self._metrics_hook._last_response_time = datetime.now(timezone.utc)
+
+            self._logger.debug(
+                f"Response recorded: channel={incoming.channel}, "
+                f"total_responses={self._metrics_hook._response_count}"
+            )
+        except Exception:
+            # Never block on metrics errors
+            self._logger.exception("Failed to record response metrics")
+        return None

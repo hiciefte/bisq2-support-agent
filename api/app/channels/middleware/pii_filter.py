@@ -23,6 +23,8 @@ class PIIFilterHook(BasePostProcessingHook):
         replacement: Text to replace PII with (default: "[REDACTED]").
     """
 
+    _VALID_MODES = {"redact", "block"}
+
     def __init__(
         self,
         mode: str = "redact",
@@ -34,6 +36,10 @@ class PIIFilterHook(BasePostProcessingHook):
             mode: Operating mode - 'redact' or 'block'.
             replacement: Replacement text for redacted PII.
         """
+        if mode not in self._VALID_MODES:
+            raise ValueError(
+                f"Invalid PII filter mode '{mode}'. Must be one of {self._VALID_MODES}"
+            )
         super().__init__(name="pii_filter", priority=HookPriority.HIGH)
         self.mode = mode
         self.replacement = replacement

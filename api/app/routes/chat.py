@@ -1,9 +1,10 @@
+import hashlib
 import json
 import logging
 import time
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional, cast
 
 from app.channels.gateway import ChannelGateway
 from app.channels.models import ChannelType
@@ -34,7 +35,7 @@ QUERY_ERRORS = Counter(
 )
 
 
-class ChatMessage(BaseModel):
+class ChatMessageRequest(BaseModel):
     role: str
     content: str
 
@@ -63,7 +64,7 @@ class McpToolUsage(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
-    chat_history: Optional[List[ChatMessage]] = None
+    chat_history: Optional[List[ChatMessageRequest]] = None
 
     model_config = {"extra": "allow"}  # Allow extra fields in the request payload
 
@@ -100,6 +101,34 @@ def _gateway_error_to_status(error: GatewayError) -> int:
         ErrorCode.INTERNAL_ERROR: 500,
     }
     return error_status_map.get(error.error_code, 500)
+
+
+def _derive_web_user_context(request: Request) -> tuple[str, str]:
+    """Derive a stable, privacy-preserving user/session identifier for web traffic."""
+    session_cookie = request.cookies.get("session_id") or request.cookies.get(
+        "bisq_session_id"
+    )
+    if session_cookie:
+        token = session_cookie.strip()
+    else:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        client_host = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+        token = "|".join([forwarded_for, client_host, user_agent]).strip()
+        if not token:
+            token = str(uuid.uuid4())
+
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    session_id = f"web_{digest[:32]}"
+    user_id = f"user_{digest[:24]}"
+    return user_id, session_id
+
+
+def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
+    """Normalize incoming chat roles to supported channel model roles."""
+    if role in ("user", "assistant", "system"):
+        return cast(Literal["user", "assistant", "system"], role)
+    return "assistant"
 
 
 @router.api_route("/query", methods=["POST"])
@@ -168,21 +197,22 @@ async def query(
         if query_request.chat_history:
             chat_history = [
                 ChannelChatMessage(
-                    role="user" if msg.role == "user" else "assistant",
+                    role=_normalize_chat_role(msg.role),
                     content=msg.content,
                 )
                 for msg in query_request.chat_history
             ]
 
         # Create incoming message for gateway
+        user_id, session_id = _derive_web_user_context(request)
         incoming = IncomingMessage(
             message_id=f"web_{uuid.uuid4()}",
             channel=ChannelType.WEB,
             question=query_request.question,
             chat_history=chat_history,
             user=UserContext(
-                user_id="web_anonymous",
-                session_id=None,
+                user_id=user_id,
+                session_id=session_id,
                 channel_user_id=None,
                 auth_token=None,
             ),
@@ -219,13 +249,18 @@ async def query(
             for source in result.sources
         ]
 
+        metadata = result.metadata
+
         response_data = QueryResponse(
             answer=result.answer,
             sources=formatted_sources,
-            response_time=result.metadata.processing_time_ms
-            / 1000.0,  # Convert to seconds
+            response_time=(
+                (metadata.processing_time_ms / 1000.0)
+                if metadata and metadata.processing_time_ms is not None
+                else 0.0
+            ),
             # Phase 1 metadata from gateway metadata
-            confidence=result.metadata.confidence_score,
+            confidence=metadata.confidence_score if metadata else None,
             routing_action=None,  # Not tracked in gateway yet
             detected_version=None,  # Not tracked in gateway yet
             version_confidence=None,  # Not tracked in gateway yet
@@ -253,6 +288,8 @@ async def query(
             ) from e
 
         return JSONResponse(content=response_dict)
+    except (ValidationError, BaseAppException):
+        raise
     except Exception:
         logger.exception("Unexpected error processing /query")
         QUERY_ERRORS.labels(error_type="internal_error").inc()

@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import chromadb
 from app.core.config import get_settings
@@ -606,7 +606,7 @@ class SimplifiedRAGService:
 
     @instrument_stage("generation")
     async def _answer_from_context(
-        self, question: str, chat_history: List[Union[Dict[str, str], Any]]
+        self, question: str, chat_history: List[Dict[str, str]]
     ) -> dict:
         """Try to answer a question using only conversation history.
 

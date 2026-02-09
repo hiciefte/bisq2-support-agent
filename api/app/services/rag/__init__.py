@@ -49,13 +49,15 @@ _EXPORT_MAP = {
     ),
 }
 
-__all__ = list(_EXPORT_MAP.keys()) + ["VersionDetector"]
+__all__ = [*_EXPORT_MAP.keys(), "VersionDetector"]
 
 
 def __getattr__(name: str) -> Any:
     """Load exported symbols lazily at first access."""
     if name == "VersionDetector":
-        return __getattr__("ProtocolDetector")
+        value = __getattr__("ProtocolDetector")
+        globals()["VersionDetector"] = value
+        return value
 
     target = _EXPORT_MAP.get(name)
     if target is None:

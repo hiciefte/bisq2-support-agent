@@ -136,22 +136,25 @@ export async function loginAsAdmin(
 
       // Wait for the loading spinner to disappear (SecureAuth component finishes auth check)
       // The spinner has animate-spin class, wait for it to be gone
+      let spinnerSeen = false;
       try {
         await page.waitForSelector('svg.animate-spin', { state: 'attached', timeout: 2000 });
-        // If spinner found, wait for it to disappear
-        await page.waitForSelector('svg.animate-spin', { state: 'detached', timeout: 30000 });
+        spinnerSeen = true;
       } catch {
         // Spinner may not appear if auth check is fast, that's ok
       }
+      if (spinnerSeen) {
+        await page.waitForSelector('svg.animate-spin', { state: 'detached', timeout: 30000 });
+      }
 
       // Wait for either the login form or dashboard to appear (handles both logged-out and logged-in states)
-      const loginFormOrDashboard = await Promise.race([
-        page.waitForSelector('input#apiKey', { timeout: 20000 }).then(() => 'login'),
-        page.waitForSelector('text=Admin Dashboard', { timeout: 20000 }).then(() => 'dashboard'),
-        page.waitForSelector('h1:has-text("Overview")', { timeout: 20000 }).then(() => 'dashboard'),
-      ]);
+      const loginInput = page.locator('input#apiKey');
+      const dashboard = page
+        .locator('text=Admin Dashboard')
+        .or(page.locator('h1:has-text("Overview")'));
+      await loginInput.or(dashboard).first().waitFor({ timeout: 20000 });
 
-      if (loginFormOrDashboard === 'dashboard') {
+      if (await dashboard.first().isVisible()) {
         // Already authenticated, we're done
         console.log('loginAsAdmin: Already authenticated');
         return;
@@ -162,10 +165,7 @@ export async function loginAsAdmin(
       await page.click('button:has-text("Login")');
 
       // Wait for successful login - check for dashboard content
-      await Promise.race([
-        page.waitForSelector('text=Admin Dashboard', { timeout: 15000 }),
-        page.waitForSelector('h1:has-text("Overview")', { timeout: 15000 }),
-      ]);
+      await dashboard.first().waitFor({ timeout: 15000 });
       return; // Success
     } catch (error) {
       lastError = error as Error;

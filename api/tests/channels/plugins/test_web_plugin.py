@@ -143,9 +143,10 @@ class TestWebChannelMessageHandling:
         call_args = mock_rag_service.query.call_args
         assert call_args is not None
         # Verify chat_history was passed
-        assert (
-            call_args.kwargs.get("chat_history") is not None or len(call_args.args) > 1
-        )
+        assert call_args.kwargs.get("chat_history") == [
+            {"role": msg.role, "content": msg.content}
+            for msg in message.chat_history or []
+        ]
 
     @pytest.mark.unit
     @pytest.mark.asyncio

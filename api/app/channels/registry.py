@@ -272,20 +272,22 @@ class ChannelRegistry:
                 entry.error = e
                 error = ChannelStartupError(channel_id, e)
                 errors.append(error)
-                logger.error(f"Channel '{channel_id}' start timed out after {timeout}s")
+                logger.exception(
+                    f"Channel '{channel_id}' start timed out after {timeout}s"
+                )
 
                 if not continue_on_error:
-                    raise error
+                    raise error from e
 
             except Exception as e:
                 entry.healthy = False
                 entry.error = e
                 error = ChannelStartupError(channel_id, e)
                 errors.append(error)
-                logger.error(f"Channel '{channel_id}' failed to start: {e}")
+                logger.exception(f"Channel '{channel_id}' failed to start")
 
                 if not continue_on_error:
-                    raise error
+                    raise error from e
 
         return errors
 
@@ -341,11 +343,15 @@ class ChannelRegistry:
         # Stop if running
         if entry.started:
             await asyncio.wait_for(entry.plugin.stop(), timeout=timeout)
+            if hasattr(entry.plugin, "on_shutdown"):
+                await entry.plugin.on_shutdown()
             entry.started = False
             if channel_id in self._started_order:
                 self._started_order.remove(channel_id)
 
         # Start
+        if hasattr(entry.plugin, "on_startup"):
+            await entry.plugin.on_startup()
         await asyncio.wait_for(entry.plugin.start(), timeout=timeout)
         entry.started = True
         entry.healthy = True

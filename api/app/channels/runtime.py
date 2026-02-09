@@ -130,6 +130,8 @@ class ChannelRuntime:
     async def stop(self) -> None:
         """Stop the runtime."""
         self._is_started = False
+        for entry in self._services.values():
+            entry._cached_instance = None
         logger.info("Channel runtime stopped")
 
     # =========================================================================

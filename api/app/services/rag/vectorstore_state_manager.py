@@ -84,7 +84,9 @@ class VectorStoreStateManager:
             "pending_changes_count": len(self._pending_changes),
             "last_rebuild_time": self._last_rebuild_time,
             "last_rebuild_iso": (
-                datetime.fromtimestamp(self._last_rebuild_time).isoformat()
+                datetime.fromtimestamp(
+                    self._last_rebuild_time, tz=timezone.utc
+                ).isoformat()
                 if self._last_rebuild_time
                 else None
             ),

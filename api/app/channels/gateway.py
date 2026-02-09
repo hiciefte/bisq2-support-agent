@@ -6,37 +6,20 @@ Routes messages through pre/post hooks and RAG service.
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Union
 
 from app.channels.hooks import PostProcessingHook, PreProcessingHook
 from app.channels.models import (
-    DocumentReference,
     ErrorCode,
     GatewayError,
     IncomingMessage,
     OutgoingMessage,
-    ResponseMetadata,
 )
+from app.channels.response_builder import build_metadata, build_sources
+from app.channels.runtime import RAGServiceProtocol
 from app.channels.security import ErrorFactory
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# RAG Service Protocol
-# =============================================================================
-
-
-class RAGServiceProtocol(Protocol):
-    """Protocol for RAG service interface."""
-
-    async def query(
-        self,
-        question: str,
-        chat_history: Optional[List[Dict[str, str]]] = None,
-    ) -> Dict[str, Any]:
-        """Query the RAG service."""
-        ...
 
 
 # =============================================================================
@@ -121,9 +104,9 @@ class ChannelGateway:
                         )
                         return result
 
-                except Exception as e:
+                except Exception:
                     # Hook exception - log and continue
-                    logger.error(f"Pre-hook '{hook.name}' raised exception: {e}")
+                    logger.exception(f"Pre-hook '{hook.name}' raised exception")
                     # Continue processing despite hook failure
 
             # Execute RAG query
@@ -141,7 +124,7 @@ class ChannelGateway:
                 )
 
             except Exception as e:
-                logger.error(f"RAG service error: {e}")
+                logger.exception("RAG service error")
                 return ErrorFactory.rag_service_error(str(e))
 
             # Build outgoing message
@@ -173,9 +156,9 @@ class ChannelGateway:
                         )
                         return result
 
-                except Exception as e:
+                except Exception:
                     # Hook exception - log and continue
-                    logger.error(f"Post-hook '{post_hook.name}' raised exception: {e}")
+                    logger.exception(f"Post-hook '{post_hook.name}' raised exception")
 
             # Update final processing time
             outgoing.metadata.processing_time_ms = (time.time() - start_time) * 1000
@@ -248,26 +231,10 @@ class ChannelGateway:
         Returns:
             OutgoingMessage ready for sending.
         """
-        # Extract sources from RAG response
-        sources = []
-        for source in rag_response.get("sources", []):
-            sources.append(
-                DocumentReference(
-                    document_id=source.get("document_id", str(uuid.uuid4())),
-                    title=source.get("title", "Unknown"),
-                    url=source.get("url"),
-                    relevance_score=source.get("relevance_score", 0.5),
-                    category=source.get("category"),
-                )
-            )
-
-        # Build metadata
-        metadata = ResponseMetadata(
+        sources = build_sources(rag_response)
+        metadata = build_metadata(
+            rag_response=rag_response,
             processing_time_ms=processing_time_ms,
-            rag_strategy=rag_response.get("rag_strategy", "retrieval"),
-            model_name=rag_response.get("model_name", "unknown"),
-            tokens_used=rag_response.get("tokens_used"),
-            confidence_score=rag_response.get("confidence_score"),
             hooks_executed=hooks_executed,
         )
 

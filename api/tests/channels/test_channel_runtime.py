@@ -32,14 +32,17 @@ class TestChannelRuntimeRegistration:
 
         runtime = ChannelRuntime(settings=MagicMock())
 
+        class FactoryService:
+            name = "from_factory"
+
         def factory():
-            return MagicMock(name="from_factory")
+            return FactoryService()
 
         runtime.register_factory("test_service", factory)
         resolved = runtime.resolve("test_service")
 
         assert resolved is not None
-        assert resolved._mock_name == "from_factory"
+        assert resolved.name == "from_factory"
 
     @pytest.mark.unit
     def test_register_instance_directly(self):
@@ -72,14 +75,14 @@ class TestChannelRuntimeRegistration:
         from app.channels.runtime import ChannelRuntime
 
         runtime = ChannelRuntime(settings=MagicMock())
-        service1 = MagicMock(name="service1")
-        service2 = MagicMock(name="service2")
+        service1 = type("Service1", (), {"name": "service1"})()
+        service2 = type("Service2", (), {"name": "service2"})()
 
         runtime.register("test_service", service1)
         runtime.register("test_service", service2, allow_override=True)
 
         resolved = runtime.resolve("test_service")
-        assert resolved._mock_name == "service2"
+        assert resolved.name == "service2"
 
 
 class TestChannelRuntimeResolution:
