@@ -81,7 +81,7 @@ class TestChannelBaseHandleIncoming:
                 "rag_strategy": "retrieval",
                 "model_name": "gpt-4",
                 "tokens_used": 100,
-                "confidence_score": 0.95,
+                "confidence": 0.95,
                 "suggested_questions": ["Follow up?"],
                 "requires_human": False,
             }

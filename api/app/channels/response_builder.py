@@ -31,6 +31,11 @@ def build_metadata(
         rag_strategy=rag_response.get("rag_strategy", "retrieval"),
         model_name=rag_response.get("model_name", "unknown"),
         tokens_used=rag_response.get("tokens_used"),
-        confidence_score=rag_response.get("confidence_score"),
+        confidence_score=rag_response.get("confidence"),
+        routing_action=rag_response.get("routing_action"),
+        detected_version=rag_response.get("detected_version"),
+        version_confidence=rag_response.get("version_confidence"),
+        emotion=rag_response.get("emotion"),
+        emotion_intensity=rag_response.get("emotion_intensity"),
         hooks_executed=hooks_executed or [],
     )

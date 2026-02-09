@@ -261,13 +261,13 @@ async def query(
             ),
             # Phase 1 metadata from gateway metadata
             confidence=metadata.confidence_score if metadata else None,
-            routing_action=None,  # Not tracked in gateway yet
-            detected_version=None,  # Not tracked in gateway yet
-            version_confidence=None,  # Not tracked in gateway yet
-            emotion=None,  # Not tracked in gateway yet
-            emotion_intensity=None,  # Not tracked in gateway yet
+            routing_action=metadata.routing_action if metadata else None,
+            detected_version=metadata.detected_version if metadata else None,
+            version_confidence=metadata.version_confidence if metadata else None,
+            emotion=metadata.emotion if metadata else None,
+            emotion_intensity=metadata.emotion_intensity if metadata else None,
             forwarded_to_human=result.requires_human,
-            mcp_tools_used=None,  # Not tracked in gateway yet
+            mcp_tools_used=None,
         )
 
         # Log response size and validate JSON serializability

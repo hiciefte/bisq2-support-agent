@@ -205,6 +205,11 @@ class ResponseMetadata(BaseModel):
     model_name: str
     tokens_used: Optional[int] = None
     confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    routing_action: Optional[str] = None
+    detected_version: Optional[str] = None
+    version_confidence: Optional[float] = None
+    emotion: Optional[str] = None
+    emotion_intensity: Optional[float] = None
     hooks_executed: List[str] = Field(default_factory=list)
 
 
