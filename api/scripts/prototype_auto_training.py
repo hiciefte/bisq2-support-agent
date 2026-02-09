@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import aisuite  # noqa: E402
 from app.core.config import Settings  # noqa: E402
+from app.services.rag.embeddings_provider import LiteLLMEmbeddings  # noqa: E402
 from app.services.simplified_rag_service import SimplifiedRAGService  # noqa: E402
 from app.services.training.comparison_engine import AnswerComparisonEngine  # noqa: E402
 from app.services.training.matrix_export_parser import MatrixExportParser  # noqa: E402
@@ -27,7 +28,6 @@ from app.services.training.substantive_filter import (  # noqa: E402
     SubstantiveAnswerFilter,
 )
 from app.services.wiki_service import WikiService  # noqa: E402
-from langchain_openai import OpenAIEmbeddings  # noqa: E402
 
 
 async def main(export_file: str, sample_size: int = 20):
@@ -42,7 +42,7 @@ async def main(export_file: str, sample_size: int = 20):
     # Initialize components
     print("[1/5] Initializing components...")
     ai_client = aisuite.Client()
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    embeddings = LiteLLMEmbeddings.from_settings(settings)
 
     parser = MatrixExportParser()
     answer_filter = SubstantiveAnswerFilter(ai_client)

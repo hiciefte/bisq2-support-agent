@@ -2,7 +2,7 @@
 Qdrant Hybrid Retriever with semantic + BM25 search.
 
 This module implements hybrid search combining:
-- Dense vectors (semantic similarity via OpenAI embeddings)
+- Dense vectors (semantic similarity via configurable embeddings)
 - Sparse vectors (BM25 keyword matching)
 
 The combination provides better retrieval quality than semantic-only search,
@@ -26,14 +26,14 @@ logger = logging.getLogger(__name__)
 class QdrantHybridRetriever(HybridRetrieverProtocol):
     """Hybrid retriever using Qdrant for semantic + keyword search.
 
-    This retriever combines dense vector search (OpenAI embeddings) with
+    This retriever combines dense vector search (multi-provider embeddings) with
     sparse vector search (BM25) for improved retrieval quality.
 
     Features:
     - Configurable semantic/keyword weight balance
     - Protocol-aware filtering (bisq_easy, multisig_v1, all)
     - Automatic connection management and health checks
-    - LangChain OpenAI embeddings for dense vectors
+    - Multi-provider embeddings via LiteLLM for dense vectors
 
     Attributes:
         settings: Application settings with Qdrant configuration
@@ -54,7 +54,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         Args:
             settings: Application settings with Qdrant configuration
             client: Optional pre-configured QdrantClient (for testing)
-            embeddings: Optional embedding model (defaults to OpenAI)
+            embeddings: Optional embedding model (defaults to LiteLLM multi-provider)
             bm25_tokenizer: Optional BM25 tokenizer (defaults to loading from file)
         """
         self.settings = settings
@@ -66,7 +66,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         else:
             self._client = self._create_client()
 
-        # Initialize embeddings (use provided or create OpenAI)
+        # Initialize embeddings (use provided or create via multi-provider abstraction)
         if embeddings is not None:
             self._embeddings = embeddings
         else:
@@ -97,17 +97,14 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         )
 
     def _create_embeddings(self):
-        """Create embedding model for dense vectors.
+        """Create embedding model for dense vectors using multi-provider abstraction.
 
         Returns:
-            OpenAI embeddings model via LangChain
+            LiteLLM embeddings model with configurable provider
         """
-        from langchain_openai import OpenAIEmbeddings
+        from app.services.rag.embeddings_provider import LiteLLMEmbeddings
 
-        return OpenAIEmbeddings(
-            model=self.settings.OPENAI_EMBEDDING_MODEL,
-            openai_api_key=self.settings.OPENAI_API_KEY,
-        )
+        return LiteLLMEmbeddings.from_settings(self.settings)
 
     def _load_bm25_tokenizer(self) -> BM25SparseTokenizer:
         """Load BM25 tokenizer from vocabulary file.
