@@ -208,8 +208,6 @@ class ResponseMetadata(BaseModel):
     routing_action: Optional[str] = None
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = None
-    emotion: Optional[str] = None
-    emotion_intensity: Optional[float] = None
     hooks_executed: List[str] = Field(default_factory=list)
 
 

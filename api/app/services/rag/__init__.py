@@ -17,7 +17,6 @@ _EXPORT_MAP = {
     ),
     "DocumentProcessor": ("app.services.rag.document_processor", "DocumentProcessor"),
     "DocumentRetriever": ("app.services.rag.document_retriever", "DocumentRetriever"),
-    "EmpathyDetector": ("app.services.rag.empathy_detector", "EmpathyDetector"),
     "EvaluationResult": ("app.services.rag.evaluation", "EvaluationResult"),
     "HybridRetrieverProtocol": (
         "app.services.rag.interfaces",

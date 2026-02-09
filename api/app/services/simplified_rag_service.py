@@ -28,7 +28,6 @@ from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
-from app.services.rag.empathy_detector import EmpathyDetector
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
@@ -152,7 +151,7 @@ class SimplifiedRAGService:
 
         # Initialize Phase 1 components
         self.version_detector = ProtocolDetector()
-        self.empathy_detector = EmpathyDetector()
+
         self.conversation_state_manager = ConversationStateManager()
 
         # Initialize source weights
@@ -769,18 +768,6 @@ class SimplifiedRAGService:
                         "feedback_created": False,
                     }
 
-            # Detect emotional state for empathetic response
-            emotion, emotion_intensity = await self.empathy_detector.detect_emotion(
-                preprocessed_question
-            )
-            response_modifier = self.empathy_detector.get_response_modifier(
-                emotion, emotion_intensity
-            )
-            if response_modifier:
-                logger.info(
-                    f"Detected emotion: {emotion} (intensity: {emotion_intensity:.2f})"
-                )
-
             # Update conversation state
             conv_id = self.conversation_state_manager.generate_conversation_id(
                 chat_history
@@ -1055,8 +1042,6 @@ class SimplifiedRAGService:
                 "routing_action": routing_action.action,
                 "detected_version": detected_version,
                 "version_confidence": version_confidence,
-                "emotion": emotion,
-                "emotion_intensity": emotion_intensity,
                 "mcp_tools_used": mcp_tools_used,
                 "original_language": original_language,
                 "translated": was_translated,

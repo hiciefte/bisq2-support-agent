@@ -35,7 +35,5 @@ def build_metadata(
         routing_action=rag_response.get("routing_action"),
         detected_version=rag_response.get("detected_version"),
         version_confidence=rag_response.get("version_confidence"),
-        emotion=rag_response.get("emotion"),
-        emotion_intensity=rag_response.get("emotion_intensity"),
         hooks_executed=hooks_executed or [],
     )

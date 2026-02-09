@@ -78,8 +78,6 @@ class QueryResponse(BaseModel):
     routing_action: Optional[str] = None
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = None
-    emotion: Optional[str] = None
-    emotion_intensity: Optional[float] = None
     forwarded_to_human: bool = False
     # MCP tools metadata - detailed info about tools used for live Bisq 2 data
     mcp_tools_used: Optional[List[McpToolUsage]] = None
@@ -264,8 +262,6 @@ async def query(
             routing_action=metadata.routing_action if metadata else None,
             detected_version=metadata.detected_version if metadata else None,
             version_confidence=metadata.version_confidence if metadata else None,
-            emotion=metadata.emotion if metadata else None,
-            emotion_intensity=metadata.emotion_intensity if metadata else None,
             forwarded_to_human=result.requires_human,
             mcp_tools_used=None,
         )
