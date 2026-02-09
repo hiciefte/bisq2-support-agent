@@ -7,7 +7,12 @@ import logging
 from typing import Optional
 
 from app.channels.hooks import BasePostProcessingHook, HookPriority
-from app.channels.models import GatewayError, IncomingMessage, OutgoingMessage
+from app.channels.models import (
+    DocumentReference,
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+)
 from app.channels.security import ErrorFactory, PIIDetector
 
 logger = logging.getLogger(__name__)
@@ -57,8 +62,19 @@ class PIIFilterHook(BasePostProcessingHook):
         Returns:
             None if clean/redacted, GatewayError if blocked.
         """
-        # Detect PII in response
+        # Detect PII in response text and source metadata.
         findings = self._detector.detect(outgoing.answer)
+        source_fields_with_pii: list[tuple[DocumentReference, str, str]] = []
+
+        for source in outgoing.sources:
+            for field_name in ("document_id", "title", "url", "category"):
+                raw_value = getattr(source, field_name)
+                if not isinstance(raw_value, str) or not raw_value:
+                    continue
+                field_findings = self._detector.detect(raw_value)
+                if field_findings:
+                    findings.extend(field_findings)
+                    source_fields_with_pii.append((source, field_name, raw_value))
 
         if not findings:
             return None
@@ -74,6 +90,10 @@ class PIIFilterHook(BasePostProcessingHook):
 
         # Redact mode: replace PII with replacement text
         outgoing.answer = self._detector.redact(outgoing.answer, self.replacement)
+        for source, field_name, raw_value in source_fields_with_pii:
+            setattr(
+                source, field_name, self._detector.redact(raw_value, self.replacement)
+            )
 
         self._logger.info(
             f"PII redacted from response for message {incoming.message_id}"

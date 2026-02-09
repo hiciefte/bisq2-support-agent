@@ -434,10 +434,11 @@ class ErrorFactory:
     def rag_service_error(original_error: str) -> "GatewayError":
         from app.channels.models import ErrorCode, GatewayError
 
+        logger.error("RAG service failure: %s", original_error)
         return GatewayError(
             error_code=ErrorCode.RAG_SERVICE_ERROR,
             error_message="Failed to generate response",
-            details={"original_error": original_error},
+            details={"reason": "internal_service_error"},
             recoverable=True,
         )
 

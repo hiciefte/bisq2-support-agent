@@ -186,7 +186,12 @@ class ChannelBootstrapper:
         if getattr(self.settings, "WEB_CHANNEL_ENABLED", True):
             enabled.append("web")
 
-        if getattr(self.settings, "MATRIX_ENABLED", False):
+        matrix_enabled = getattr(
+            self.settings,
+            "MATRIX_CHANNEL_ENABLED",
+            getattr(self.settings, "MATRIX_ENABLED", False),
+        )
+        if matrix_enabled:
             enabled.append("matrix")
 
         if getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False):

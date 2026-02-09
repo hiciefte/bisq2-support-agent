@@ -278,31 +278,58 @@ class ChannelBase(ABC):
         if self.runtime.rag_service is None:
             raise RuntimeError("RAG service not configured in channel runtime")
 
-        # Build chat history for RAG service
-        chat_history = self._format_chat_history(message)
+        try:
+            # Build chat history for RAG service
+            chat_history = self._format_chat_history(message)
 
-        # Query RAG service
-        rag_response = await self.runtime.rag_service.query(
-            question=message.question,
-            chat_history=chat_history,
-        )
+            # Query RAG service
+            rag_response = await self.runtime.rag_service.query(
+                question=message.question,
+                chat_history=chat_history,
+            )
 
-        # Build response components
-        sources = self._build_sources(rag_response)
-        processing_time = (time.time() - start_time) * 1000
-        metadata = self._build_metadata(rag_response, processing_time)
+            # Build response components
+            sources = self._build_sources(rag_response)
+            processing_time = (time.time() - start_time) * 1000
+            metadata = self._build_metadata(rag_response, processing_time)
 
-        return OutgoingMessage(
-            message_id=str(uuid.uuid4()),
-            in_reply_to=message.message_id,
-            channel=self.channel_type,
-            answer=rag_response.get("answer", ""),
-            sources=sources,
-            user=message.user,
-            metadata=metadata,
-            suggested_questions=rag_response.get("suggested_questions"),
-            requires_human=rag_response.get("requires_human", False),
-        )
+            return OutgoingMessage(
+                message_id=str(uuid.uuid4()),
+                in_reply_to=message.message_id,
+                channel=self.channel_type,
+                answer=rag_response.get("answer", ""),
+                sources=sources,
+                user=message.user,
+                metadata=metadata,
+                suggested_questions=rag_response.get("suggested_questions"),
+                requires_human=rag_response.get("requires_human", False),
+            )
+        except Exception:
+            self._logger.exception(
+                "Error handling incoming message for channel '%s'", self.channel_id
+            )
+            processing_time = (time.time() - start_time) * 1000
+            return OutgoingMessage(
+                message_id=str(uuid.uuid4()),
+                in_reply_to=message.message_id,
+                channel=self.channel_type,
+                answer="I encountered an internal error while processing your request.",
+                sources=[],
+                user=message.user,
+                metadata=ResponseMetadata(
+                    processing_time_ms=processing_time,
+                    rag_strategy="error",
+                    model_name="unavailable",
+                    tokens_used=None,
+                    confidence_score=None,
+                    routing_action=None,
+                    detected_version=None,
+                    version_confidence=None,
+                    hooks_executed=[],
+                ),
+                suggested_questions=None,
+                requires_human=True,
+            )
 
     def _format_chat_history(self, message: IncomingMessage) -> list | None:
         """Format chat history for RAG service.

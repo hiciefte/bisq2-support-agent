@@ -301,6 +301,7 @@ class ChannelRegistry:
             List of errors that occurred during shutdown.
         """
         errors: List[Exception] = []
+        stopped_channels: List[str] = []
 
         # Stop in reverse order
         for channel_id in reversed(self._started_order.copy()):
@@ -311,6 +312,7 @@ class ChannelRegistry:
             try:
                 await asyncio.wait_for(entry.plugin.stop(), timeout=timeout)
                 entry.started = False
+                stopped_channels.append(channel_id)
 
                 # Call on_shutdown hook if available
                 if hasattr(entry.plugin, "on_shutdown"):
@@ -321,9 +323,11 @@ class ChannelRegistry:
             except Exception as e:
                 entry.error = e
                 errors.append(e)
-                logger.error(f"Channel '{channel_id}' stop error: {e}")
+                logger.exception(f"Channel '{channel_id}' stop error")
 
-        self._started_order.clear()
+        for channel_id in stopped_channels:
+            if channel_id in self._started_order:
+                self._started_order.remove(channel_id)
         return errors
 
     async def restart(self, channel_id: str, timeout: float = 30.0) -> None:

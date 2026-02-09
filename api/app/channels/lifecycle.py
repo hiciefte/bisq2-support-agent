@@ -6,7 +6,7 @@ and cleanup during FastAPI application lifespan.
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Iterable, Optional
 
 from app.channels.gateway import ChannelGateway
 from app.channels.middleware import (
@@ -27,6 +27,7 @@ def create_channel_gateway(
     register_default_hooks: bool = False,
     rate_limit_capacity: int = 20,
     rate_limit_refill_rate: float = 1.0,
+    valid_tokens: Optional[Iterable[str]] = None,
 ) -> ChannelGateway:
     """Create and configure channel gateway.
 
@@ -35,6 +36,7 @@ def create_channel_gateway(
         register_default_hooks: Whether to register default middleware hooks.
         rate_limit_capacity: Token bucket capacity for rate limiting.
         rate_limit_refill_rate: Token refill rate per second.
+        valid_tokens: Optional token whitelist for authenticated channels.
 
     Returns:
         Configured ChannelGateway instance.
@@ -49,7 +51,8 @@ def create_channel_gateway(
                 refill_rate=rate_limit_refill_rate,
             )
         )
-        gateway.register_pre_hook(AuthenticationHook())
+        token_set = set(valid_tokens) if valid_tokens is not None else None
+        gateway.register_pre_hook(AuthenticationHook(valid_tokens=token_set))
         metrics_hook = MetricsHook()
         gateway.register_pre_hook(metrics_hook)
 
@@ -67,6 +70,7 @@ async def channel_lifespan(
     app: FastAPI,
     rag_service: Optional[RAGServiceProtocol] = None,
     register_default_hooks: bool = True,
+    valid_tokens: Optional[Iterable[str]] = None,
 ):
     """Async context manager for channel gateway lifecycle.
 
@@ -79,6 +83,7 @@ async def channel_lifespan(
         rag_service: RAG service for query processing.
             If None, will attempt to get from app.state.rag_service.
         register_default_hooks: Whether to register default middleware hooks.
+        valid_tokens: Optional token whitelist for authenticated channels.
 
     Yields:
         None
@@ -97,6 +102,7 @@ async def channel_lifespan(
     gateway = create_channel_gateway(
         rag_service=rag_service,
         register_default_hooks=register_default_hooks,
+        valid_tokens=valid_tokens,
     )
     app.state.channel_gateway = gateway
 

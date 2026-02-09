@@ -44,13 +44,24 @@ test.describe('Bisq Version Handling', () => {
    *
    * Throws on transient API errors so the retry mechanism can re-run the test.
    */
-  async function getLastBotResponse(page: Page): Promise<string> {
+  async function getLastBotResponse(
+    page: Page,
+    previousProseCount?: number,
+  ): Promise<string> {
     // Phase 1: Wait for bot avatar (indicates response loading started)
     await page.waitForSelector('img[alt="Bisq AI"]', { timeout: 10000 });
 
-    // Phase 2: Wait for prose-chat to appear (actual LLM response rendered).
-    // This can take a while if the API is under load, so use a generous timeout.
-    await page.waitForSelector('div.prose-chat', { timeout: 50000 });
+    // Phase 2: Wait for new prose-chat to appear when caller provides baseline count.
+    // Fallback to simple selector wait for first response in conversation.
+    if (typeof previousProseCount === 'number') {
+      await page.waitForFunction(
+        (prevCount) => document.querySelectorAll('div.prose-chat').length > prevCount,
+        previousProseCount,
+        { timeout: 50000 },
+      );
+    } else {
+      await page.waitForSelector('div.prose-chat', { timeout: 50000 });
+    }
 
     // Phase 3: Poll until the prose-chat content has meaningful text.
     // The element may exist briefly before text is fully populated.
@@ -183,12 +194,13 @@ test.describe('Bisq Version Handling', () => {
     // Second question: Switch to Bisq 1
     inputField = page.getByRole('textbox');
     await inputField.click();
+    const proseCountBeforeSecondQuestion = await page.locator('div.prose-chat').count();
     await inputField.pressSequentially('How about in Bisq 1?', { delay: 50 });
     await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 5000 });
     await page.click('button[type="submit"]');
 
     // Wait for second response using the same robust helper
-    const secondResponse = await getLastBotResponse(page);
+    const secondResponse = await getLastBotResponse(page, proseCountBeforeSecondQuestion);
     const responseLower = secondResponse.toLowerCase();
 
     // Should recognize the Bisq 1 context from follow-up

@@ -3,8 +3,11 @@
 Wraps existing Bisq2 API integration into channel plugin architecture.
 """
 
-import uuid
-from typing import Any, Dict, List, Optional, Set
+import hashlib
+import json
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any, Deque, Dict, List, Optional, Set
 
 from app.channels.base import ChannelBase
 from app.channels.models import (
@@ -39,6 +42,11 @@ class Bisq2Channel(ChannelBase):
         for message in messages:
             response = await channel.handle_incoming(message)
     """
+
+    _last_poll_since: Optional[datetime]
+    _seen_message_ids: set[str]
+    _seen_message_order: Deque[str]
+    _max_seen_message_ids: int
 
     @property
     def channel_id(self) -> str:
@@ -137,19 +145,31 @@ class Bisq2Channel(ChannelBase):
 
         try:
             # Export messages from Bisq2 API
-            result = await bisq_api.export_chat_messages()
+            result = await bisq_api.export_chat_messages(since=self._last_poll_since)
+            if "messages" not in result:
+                self._logger.warning(
+                    "Bisq2 API export response missing 'messages'; skipping poll cycle"
+                )
+                return []
             messages = result.get("messages", [])
 
+            export_timestamp = self._extract_export_timestamp(result)
+            if export_timestamp is None:
+                export_timestamp = datetime.now(timezone.utc)
+
             if not messages:
+                self._last_poll_since = export_timestamp
                 return []
 
             # Filter already processed messages to avoid duplicates on polling.
             new_messages = []
             for msg in messages:
-                message_id = str(msg.get("messageId", "")).strip()
-                if message_id and message_id in self._seen_message_ids:
+                message_id = self._derive_message_id(msg)
+                if message_id in self._seen_message_ids:
                     continue
-                new_messages.append(msg)
+                msg_with_id = dict(msg)
+                msg_with_id["messageId"] = message_id
+                new_messages.append(msg_with_id)
 
             # Transform to IncomingMessage format
             incoming_messages = []
@@ -157,11 +177,12 @@ class Bisq2Channel(ChannelBase):
                 incoming = self._transform_bisq_message(msg)
                 if incoming:
                     incoming_messages.append(incoming)
-                    self._seen_message_ids.add(incoming.message_id)
+                    self._mark_seen(incoming.message_id)
 
             self._logger.info(
                 f"Polled {len(incoming_messages)} messages from Bisq2 API"
             )
+            self._last_poll_since = export_timestamp
             return incoming_messages
 
         except Exception as e:
@@ -178,7 +199,9 @@ class Bisq2Channel(ChannelBase):
             IncomingMessage or None if transformation fails.
         """
         try:
-            message_id = msg.get("messageId", str(uuid.uuid4()))
+            message_id = str(msg.get("messageId", "")).strip()
+            if not message_id:
+                message_id = self._derive_message_id(msg)
             author = msg.get("author", "unknown")
             text = msg.get("message", "")
 
@@ -208,4 +231,49 @@ class Bisq2Channel(ChannelBase):
 
     def __init__(self, runtime) -> None:
         super().__init__(runtime)
-        self._seen_message_ids: set[str] = set()
+        self._last_poll_since = None
+        self._seen_message_ids = set()
+        self._seen_message_order = deque()
+        self._max_seen_message_ids = 10000
+
+    def _derive_message_id(self, msg: Dict[str, Any]) -> str:
+        """Derive a stable message ID when API messageId is missing."""
+        message_id = str(msg.get("messageId", "")).strip()
+        if message_id:
+            return message_id
+
+        stable_payload = {
+            "conversationId": msg.get("conversationId", ""),
+            "author": msg.get("author", ""),
+            "message": msg.get("message", ""),
+            "date": msg.get("date", ""),
+        }
+        payload = json.dumps(stable_payload, sort_keys=True, ensure_ascii=True)
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"derived-{digest}"
+
+    def _mark_seen(self, message_id: str) -> None:
+        """Track seen message IDs with bounded memory usage."""
+        if message_id in self._seen_message_ids:
+            return
+
+        self._seen_message_ids.add(message_id)
+        self._seen_message_order.append(message_id)
+
+        while len(self._seen_message_order) > self._max_seen_message_ids:
+            oldest = self._seen_message_order.popleft()
+            self._seen_message_ids.discard(oldest)
+
+    def _extract_export_timestamp(self, result: Dict[str, Any]) -> Optional[datetime]:
+        """Extract export timestamp from Bisq API payload."""
+        export_date = result.get("exportDate")
+        if not isinstance(export_date, str) or not export_date.strip():
+            return None
+
+        try:
+            parsed = datetime.fromisoformat(export_date.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None

@@ -170,7 +170,7 @@ class ChannelGateway:
             return GatewayError(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 error_message="Internal processing error",
-                details={"error": str(e)},
+                details={"reason": "internal_gateway_error"},
                 recoverable=True,
             )
 

@@ -193,7 +193,7 @@ class DocumentReference(BaseModel):
     document_id: str
     title: str
     url: Optional[str] = None
-    relevance_score: float = Field(..., ge=0.0, le=1.0)
+    relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
     category: Optional[str] = None  # bisq1/bisq2/general
 
 
