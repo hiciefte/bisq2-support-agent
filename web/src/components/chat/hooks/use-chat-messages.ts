@@ -9,6 +9,7 @@ import type { Message } from "../types/chat.types"
 
 // Constants
 const MAX_CHAT_HISTORY_LENGTH = 8
+const CHAT_STORAGE_KEY = "bisq_chat_messages"
 
 // Utility function to generate UUID with fallback
 const generateUUID = (): string => {
@@ -64,15 +65,32 @@ const getRandomLoadingMessage = (avgTime: number): string => {
     return loadingMessages[randomIndex].replace('{time}', timeString)
 }
 
-export const useChatMessages = () => {
-    // Load messages from localStorage on initial render
-    const [messages, setMessages] = useState<Message[]>(() => {
-        if (typeof window !== 'undefined') {
-            const savedMessages = localStorage.getItem('bisq_chat_messages')
-            return savedMessages ? JSON.parse(savedMessages) : []
-        }
+const parseStoredMessages = (rawValue: string | null): Message[] => {
+    if (!rawValue) {
         return []
-    })
+    }
+
+    try {
+        const parsed: unknown = JSON.parse(rawValue)
+        if (!Array.isArray(parsed)) {
+            return []
+        }
+
+        return parsed
+            .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+            .map((item) => ({
+                ...item,
+                timestamp: typeof item.timestamp === "string" ? new Date(item.timestamp) : new Date(),
+            } as Message))
+    } catch {
+        return []
+    }
+}
+
+export const useChatMessages = () => {
+    // Start empty to keep server/client first render consistent, then hydrate from storage on mount.
+    const [messages, setMessages] = useState<Message[]>([])
+    const [storageHydrated, setStorageHydrated] = useState(false)
 
     const [input, setInput] = useState("")
     const [isLoading, setIsLoading] = useState(false)
@@ -87,26 +105,39 @@ export const useChatMessages = () => {
         }
         saveTimeoutRef.current = setTimeout(() => {
             if (typeof window !== 'undefined') {
-                localStorage.setItem('bisq_chat_messages', JSON.stringify(msgs))
+                localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(msgs))
             }
         }, 1000)
+    }, [])
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return
+        }
+
+        setMessages(parseStoredMessages(localStorage.getItem(CHAT_STORAGE_KEY)))
+        setStorageHydrated(true)
     }, [])
 
     // Save messages to localStorage whenever they change (debounced)
     // Also clear localStorage when messages array becomes empty to avoid stale rehydration
     useEffect(() => {
+        if (!storageHydrated) {
+            return
+        }
+
         if (messages.length > 0) {
             debouncedSaveToLocalStorage(messages)
         } else {
             // Clear localStorage when messages are emptied
-            localStorage.removeItem('bisq_chat_messages')
+            localStorage.removeItem(CHAT_STORAGE_KEY)
         }
         return () => {
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
         }
-    }, [messages, debouncedSaveToLocalStorage])
+    }, [messages, debouncedSaveToLocalStorage, storageHydrated])
 
     // Fetch global stats on component mount
     useEffect(() => {
@@ -255,7 +286,7 @@ export const useChatMessages = () => {
     const clearChatHistory = () => {
         setMessages([])
         if (typeof window !== 'undefined') {
-            localStorage.removeItem('bisq_chat_messages')
+            localStorage.removeItem(CHAT_STORAGE_KEY)
         }
     }
 
