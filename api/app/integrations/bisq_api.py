@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
 from app.core.config import Settings
@@ -135,3 +135,56 @@ class Bisq2API:
 
         # Unreachable: loop always returns on success or terminal failure
         return {}
+
+    async def send_support_message(
+        self,
+        channel_id: str,
+        text: str,
+        citation: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send a support message to a Bisq2 channel.
+
+        Args:
+            channel_id: Bisq2 channel ID (e.g. "support.support").
+            text: Message text to send.
+            citation: Optional citation text (original question).
+
+        Returns:
+            Response dict with messageId and timestamp, or empty dict on 404.
+
+        Raises:
+            aiohttp.ClientError: On connection/HTTP errors.
+        """
+        endpoint = f"/api/v1/support/channels/{channel_id}/messages"
+        body: Dict[str, Any] = {"text": text}
+        if citation is not None:
+            body["citation"] = citation
+        return await self._make_request("POST", endpoint, json=body)
+
+    async def send_reaction(
+        self,
+        channel_id: str,
+        message_id: str,
+        reaction_id: int,
+        is_removed: bool = False,
+    ) -> Dict[str, Any]:
+        """Send a reaction to a message in a Bisq2 channel.
+
+        Args:
+            channel_id: Bisq2 channel ID.
+            message_id: ID of the message to react to.
+            reaction_id: Bisq2 Reaction enum ordinal (0=THUMBS_UP, etc.).
+            is_removed: Whether to remove the reaction.
+
+        Returns:
+            Response dict (usually empty on 204).
+
+        Raises:
+            aiohttp.ClientError: On connection/HTTP errors.
+        """
+        endpoint = f"/api/v1/support/channels/{channel_id}/{message_id}/reactions"
+        body: Dict[str, Any] = {
+            "reactionId": reaction_id,
+            "isRemoved": is_removed,
+        }
+        return await self._make_request("POST", endpoint, json=body)

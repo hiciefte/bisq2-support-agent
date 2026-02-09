@@ -25,12 +25,9 @@ class Bisq2Channel(ChannelBase):
     This plugin wraps the existing bisq_api.py functionality to integrate
     with the channel plugin architecture. The Bisq2 channel:
     - Polls Bisq2 API for new support conversations
+    - Sends responses via REST API
+    - Receives reactions via WebSocket subscription
     - Processes incoming questions through the RAG service
-
-    Note: This is a polling-only channel. The Bisq2 API only supports
-    exporting conversations (read-only). FAQ extraction from resolved
-    conversations is handled by the training pipeline (Bisq2SyncService),
-    not by this channel plugin.
 
     Example:
         runtime = ChannelRuntime(settings=settings, rag_service=rag)
@@ -55,14 +52,12 @@ class Bisq2Channel(ChannelBase):
 
     @property
     def capabilities(self) -> Set[ChannelCapability]:
-        """Return supported capabilities.
-
-        Note: Bisq2 API is read-only (export/polling only), so SEND_RESPONSES
-        is not supported. FAQ extraction is handled by the training pipeline.
-        """
+        """Return supported capabilities."""
         return {
             ChannelCapability.RECEIVE_MESSAGES,
             ChannelCapability.POLL_CONVERSATIONS,
+            ChannelCapability.SEND_RESPONSES,
+            ChannelCapability.REACTIONS,
         }
 
     @property
@@ -98,31 +93,90 @@ class Bisq2Channel(ChannelBase):
             self._logger.exception(f"Failed to connect to Bisq2 API: {e}")
             self._is_connected = False
 
+        # Wire reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("bisq2_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.start_listening()
+                self._logger.info("Bisq2 reaction handler started")
+            except Exception:
+                self._logger.exception("Failed to start Bisq2 reaction handler")
+
     async def stop(self) -> None:
         """Stop the Bisq2 channel."""
         self._logger.info("Stopping Bisq2 channel")
+
+        # Stop reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("bisq2_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.stop_listening()
+                self._logger.info("Bisq2 reaction handler stopped")
+            except Exception:
+                self._logger.debug(
+                    "Error stopping Bisq2 reaction handler", exc_info=True
+                )
+
         self._is_connected = False
         self._logger.info("Bisq2 channel stopped")
 
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
-        """Send response back to Bisq2 conversation.
-
-        Note: The Bisq2 API is read-only (export endpoint only). Sending
-        responses back to Bisq2 support system is not supported. This method
-        always returns False.
+        """Send response back to Bisq2 conversation via REST API.
 
         Args:
             target: Conversation ID in Bisq2 system.
             message: Response message to send.
 
         Returns:
-            False - Bisq2 API does not support sending messages.
+            True if message was sent successfully, False otherwise.
         """
-        self._logger.warning(
-            f"send_message called for Bisq2 conversation {target}, "
-            "but Bisq2 API does not support sending responses"
-        )
-        return False
+        bisq_api = self.runtime.resolve_optional("bisq2_api")
+        if not bisq_api:
+            self._logger.warning(
+                "Bisq2API not registered in runtime, cannot send message"
+            )
+            return False
+
+        try:
+            citation = getattr(message, "original_question", None)
+            response = await bisq_api.send_support_message(
+                channel_id=target,
+                text=message.answer,
+                citation=citation,
+            )
+
+            external_message_id = response.get("messageId")
+            if not external_message_id:
+                self._logger.warning(
+                    "Bisq2 API send_support_message returned no messageId"
+                )
+                return False
+
+            # Track sent message for reaction correlation
+            tracker = self.runtime.resolve_optional("sent_message_tracker")
+            if tracker:
+                tracker.track(
+                    channel_id="bisq2",
+                    external_message_id=external_message_id,
+                    internal_message_id=getattr(message, "message_id", ""),
+                    question=getattr(message, "original_question", "") or "",
+                    answer=message.answer,
+                    user_id=getattr(getattr(message, "user", None), "user_id", ""),
+                    sources=[],
+                )
+
+            self._logger.info(
+                "Sent message to Bisq2 conversation %s (messageId=%s)",
+                target,
+                external_message_id,
+            )
+            return True
+
+        except Exception:
+            self._logger.exception(
+                "Failed to send message to Bisq2 conversation %s", target
+            )
+            return False
 
     # handle_incoming() inherited from ChannelBase
 

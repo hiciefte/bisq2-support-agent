@@ -3,7 +3,7 @@
 TDD tests for the Bisq2 channel plugin that wraps existing bisq_api.py logic.
 
 Note: FAQ extraction is handled by the training pipeline (Bisq2SyncService),
-not by the channel plugin. The Bisq2 API is read-only (export/polling only).
+not by the channel plugin. Bisq2 sends responses via REST API.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -62,14 +62,14 @@ class TestBisq2ChannelProperties:
         assert ChannelCapability.EXTRACT_FAQS not in channel.capabilities
 
     @pytest.mark.unit
-    def test_capabilities_exclude_send_responses(self):
-        """Bisq2Channel does NOT support sending responses (API is read-only)."""
+    def test_capabilities_include_send_responses(self):
+        """Bisq2Channel supports sending responses via REST API."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel
         from app.channels.runtime import ChannelRuntime
 
         runtime = MagicMock(spec=ChannelRuntime)
         channel = Bisq2Channel(runtime)
-        assert ChannelCapability.SEND_RESPONSES not in channel.capabilities
+        assert ChannelCapability.SEND_RESPONSES in channel.capabilities
 
 
 class TestBisq2ChannelLifecycle:
@@ -219,12 +219,13 @@ class TestBisq2ChannelMessageHandling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_send_message_returns_false(self):
-        """send_message returns False (Bisq2 API is read-only)."""
+    async def test_send_message_returns_false_without_api(self):
+        """send_message returns False when bisq2_api is not registered."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel
         from app.channels.runtime import ChannelRuntime
 
         runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=None)
         channel = Bisq2Channel(runtime)
 
         outgoing = MagicMock(spec=OutgoingMessage)
