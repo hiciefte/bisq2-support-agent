@@ -183,6 +183,20 @@ class Bisq2Channel(ChannelBase):
             )
             return False
 
+    def get_delivery_target(self, metadata: dict[str, Any]) -> str:
+        """Extract Bisq2 conversation ID from channel metadata."""
+        return metadata.get("conversation_id", "")
+
+    def format_escalation_message(
+        self, username: str, escalation_id: int, support_handle: str
+    ) -> str:
+        """Format escalation message for Bisq2 chat."""
+        return (
+            f"Your question has been escalated to {support_handle} for review. "
+            f"A support team member will respond in this conversation. "
+            f"(Reference: #{escalation_id})"
+        )
+
     # handle_incoming() inherited from ChannelBase
 
     async def poll_conversations(self) -> List[IncomingMessage]:

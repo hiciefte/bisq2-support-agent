@@ -52,6 +52,12 @@ class ConcreteTestChannel(ChannelBase):
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
         return True
 
+    def get_delivery_target(self, metadata):
+        return ""
+
+    def format_escalation_message(self, username, escalation_id, support_handle):
+        return f"Escalated #{escalation_id}"
+
 
 # =============================================================================
 # Tests for handle_incoming Base Implementation

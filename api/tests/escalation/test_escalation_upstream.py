@@ -1,8 +1,9 @@
-"""Tests for upstream prerequisites: requires_human wiring in RAGService."""
+"""Tests for upstream prerequisites: requires_human wiring + channel adapters."""
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.channels.runtime import ChannelRuntime
 from app.models.response_action import ResponseAction
 
 
@@ -114,3 +115,82 @@ class TestRequiresHumanWiring:
         # Should still get a response, and requires_human defaults False
         assert "answer" in response
         assert response.get("requires_human", False) is False
+
+
+# =============================================================================
+# E02: Channel adapter abstract methods
+# =============================================================================
+
+
+def _make_runtime() -> MagicMock:
+    """Create a minimal mock ChannelRuntime for channel instantiation."""
+    runtime = MagicMock(spec=ChannelRuntime)
+    runtime.resolve = MagicMock()
+    runtime.resolve_optional = MagicMock(return_value=None)
+    runtime.settings = MagicMock()
+    runtime.rag_service = MagicMock()
+    return runtime
+
+
+class TestChannelAdapterNewMethods:
+    """Verify channel adapters implement get_delivery_target and format_escalation_message."""
+
+    # -- WebChannel --
+
+    def test_web_channel_has_get_delivery_target(self):
+        """WebChannel implements get_delivery_target()."""
+        from app.channels.plugins.web.channel import WebChannel
+
+        channel = WebChannel(_make_runtime())
+        assert hasattr(channel, "get_delivery_target")
+        # Web has no push delivery — returns empty string
+        result = channel.get_delivery_target({})
+        assert result == ""
+
+    def test_web_channel_has_format_escalation_message(self):
+        """WebChannel implements format_escalation_message()."""
+        from app.channels.plugins.web.channel import WebChannel
+
+        channel = WebChannel(_make_runtime())
+        assert hasattr(channel, "format_escalation_message")
+        msg = channel.format_escalation_message("alice", 42, "@support")
+        assert isinstance(msg, str)
+        assert len(msg) > 0
+
+    # -- MatrixChannel --
+
+    def test_matrix_channel_has_get_delivery_target(self):
+        """MatrixChannel implements get_delivery_target()."""
+        from app.channels.plugins.matrix.channel import MatrixChannel
+
+        channel = MatrixChannel(_make_runtime())
+        result = channel.get_delivery_target({"room_id": "!abc:server"})
+        assert result == "!abc:server"
+
+    def test_matrix_channel_has_format_escalation_message(self):
+        """MatrixChannel implements format_escalation_message()."""
+        from app.channels.plugins.matrix.channel import MatrixChannel
+
+        channel = MatrixChannel(_make_runtime())
+        msg = channel.format_escalation_message("alice", 42, "@support:bisq.network")
+        assert isinstance(msg, str)
+        assert len(msg) > 0
+
+    # -- Bisq2Channel --
+
+    def test_bisq2_channel_has_get_delivery_target(self):
+        """Bisq2Channel implements get_delivery_target()."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+
+        channel = Bisq2Channel(_make_runtime())
+        result = channel.get_delivery_target({"conversation_id": "conv-123"})
+        assert result == "conv-123"
+
+    def test_bisq2_channel_has_format_escalation_message(self):
+        """Bisq2Channel implements format_escalation_message()."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+
+        channel = Bisq2Channel(_make_runtime())
+        msg = channel.format_escalation_message("bob", 99, "Bisq Support")
+        assert isinstance(msg, str)
+        assert len(msg) > 0

@@ -3,7 +3,7 @@
 Wraps existing web chat functionality into channel plugin architecture.
 """
 
-from typing import Set
+from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
@@ -76,5 +76,19 @@ class WebChannel(ChannelBase):
         # Web channel doesn't push - responses are returned via HTTP
         self._logger.debug(f"Web channel send_message called for {target}")
         return True
+
+    def get_delivery_target(self, metadata: dict[str, Any]) -> str:
+        """Web has no push delivery — responses are polled from DB."""
+        return ""
+
+    def format_escalation_message(
+        self, username: str, escalation_id: int, support_handle: str
+    ) -> str:
+        """Format escalation message for web chat UI."""
+        return (
+            f"Your question has been forwarded to our support team. "
+            f"A staff member will review and respond shortly. "
+            f"(Reference: #{escalation_id})"
+        )
 
     # handle_incoming() inherited from ChannelBase

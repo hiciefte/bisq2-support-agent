@@ -4,7 +4,7 @@ Wraps existing Matrix integration into channel plugin architecture.
 """
 
 import asyncio
-from typing import Set
+from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
@@ -196,6 +196,20 @@ class MatrixChannel(ChannelBase):
                 f"Error sending message to Matrix room {target}: {e}"
             )
             return False
+
+    def get_delivery_target(self, metadata: dict[str, Any]) -> str:
+        """Extract Matrix room ID from channel metadata."""
+        return metadata.get("room_id", "")
+
+    def format_escalation_message(
+        self, username: str, escalation_id: int, support_handle: str
+    ) -> str:
+        """Format escalation message for Matrix room."""
+        return (
+            f"Your question has been escalated to {support_handle} for review. "
+            f"A support team member will respond in this room. "
+            f"(Reference: #{escalation_id})"
+        )
 
     # handle_incoming() inherited from ChannelBase
 

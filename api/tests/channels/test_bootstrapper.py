@@ -9,11 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.channels.base import ChannelBase
-from app.channels.models import (
-    ChannelCapability,
-    ChannelType,
-    OutgoingMessage,
-)
+from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +54,12 @@ class MockChannelForBootstrap(ChannelBase):
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
         return True
 
+    def get_delivery_target(self, metadata):
+        return ""
+
+    def format_escalation_message(self, username, escalation_id, support_handle):
+        return f"Escalated #{escalation_id}"
+
 
 class MockChannelWithDeps(ChannelBase):
     """Mock channel with external dependencies."""
@@ -89,6 +91,12 @@ class MockChannelWithDeps(ChannelBase):
 
     async def send_message(self, target: str, message: OutgoingMessage) -> bool:
         return True
+
+    def get_delivery_target(self, metadata):
+        return ""
+
+    def format_escalation_message(self, username, escalation_id, support_handle):
+        return f"Escalated #{escalation_id}"
 
 
 # =============================================================================
@@ -204,6 +212,14 @@ class TestRegisterChannelDecorator:
 
             async def send_message(self, target, message) -> bool:
                 return True
+
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
 
         types = get_registered_channel_types()
         assert "test_channel" in types
