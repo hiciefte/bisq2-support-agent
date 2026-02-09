@@ -145,10 +145,32 @@ class ChannelBootstrapper:
         Returns:
             ChannelRuntime configured with settings and RAG service.
         """
-        return ChannelRuntime(
+        runtime = ChannelRuntime(
             settings=self.settings,
             rag_service=self.rag_service,
         )
+
+        # Register shared reaction services
+        self._register_reaction_services(runtime)
+
+        return runtime
+
+    def _register_reaction_services(self, runtime: ChannelRuntime) -> None:
+        """Register SentMessageTracker and ReactionProcessor in runtime."""
+        from app.channels.reactions import ReactionProcessor, SentMessageTracker
+
+        tracker = SentMessageTracker()
+        runtime.register("sent_message_tracker", tracker)
+
+        salt = getattr(self.settings, "REACTOR_IDENTITY_SALT", "")
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=runtime.feedback_service,
+            reactor_identity_salt=salt,
+        )
+        runtime.register("reaction_processor", processor)
+
+        logger.debug("Registered reaction services (tracker + processor)")
 
     def _import_channel_modules(self) -> None:
         """Import channel modules to trigger @register_channel decorators.

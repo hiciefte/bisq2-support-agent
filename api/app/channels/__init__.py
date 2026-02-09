@@ -57,6 +57,15 @@ from app.channels.models import (
     ResponseMetadata,
     UserContext,
 )
+from app.channels.reactions import (
+    ReactionEvent,
+    ReactionHandlerBase,
+    ReactionHandlerProtocol,
+    ReactionProcessor,
+    ReactionRating,
+    SentMessageRecord,
+    SentMessageTracker,
+)
 from app.channels.registry import (
     ChannelAlreadyRegisteredError,
     ChannelNotFoundError,
@@ -119,10 +128,17 @@ __all__ = [
     "PostProcessingHook",
     "PreProcessingHook",
     "RateLimitConfig",
+    "ReactionEvent",
+    "ReactionHandlerBase",
+    "ReactionHandlerProtocol",
+    "ReactionProcessor",
+    "ReactionRating",
     "ResponseMetadata",
     "SecurityIncidentHandler",
     "SecurityIncidentType",
     "SensitiveDataFilter",
+    "SentMessageRecord",
+    "SentMessageTracker",
     "ServiceAlreadyRegisteredError",
     "ServiceNotFoundError",
     "TokenBucket",

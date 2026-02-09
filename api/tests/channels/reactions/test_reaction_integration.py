@@ -647,3 +647,71 @@ class TestBisq2ChannelReactionWiring:
         await channel.start()
 
         assert channel.is_connected is True
+
+
+# ---------------------------------------------------------------------------
+# ChannelBootstrapper registers reaction services
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrapperReactionWiring:
+    """Test that bootstrapper registers SentMessageTracker and ReactionProcessor."""
+
+    def test_bootstrap_registers_tracker(self):
+        """Bootstrap registers sent_message_tracker in runtime."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.REACTOR_IDENTITY_SALT = "test-salt"
+
+        rag = MagicMock()
+        bs = ChannelBootstrapper(settings=settings, rag_service=rag)
+        result = bs.bootstrap()
+
+        tracker = result.runtime.resolve_optional("sent_message_tracker")
+        assert tracker is not None
+
+    def test_bootstrap_registers_processor(self):
+        """Bootstrap registers reaction_processor in runtime."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.REACTOR_IDENTITY_SALT = "test-salt"
+
+        rag = MagicMock()
+        bs = ChannelBootstrapper(settings=settings, rag_service=rag)
+        result = bs.bootstrap()
+
+        processor = result.runtime.resolve_optional("reaction_processor")
+        assert processor is not None
+
+    def test_processor_uses_tracker(self):
+        """ReactionProcessor is wired to the same SentMessageTracker."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+        from app.channels.reactions import ReactionProcessor, SentMessageTracker
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.REACTOR_IDENTITY_SALT = "test-salt"
+
+        rag = MagicMock()
+        bs = ChannelBootstrapper(settings=settings, rag_service=rag)
+        result = bs.bootstrap()
+
+        tracker = result.runtime.resolve("sent_message_tracker")
+        processor = result.runtime.resolve("reaction_processor")
+
+        assert isinstance(tracker, SentMessageTracker)
+        assert isinstance(processor, ReactionProcessor)
+        assert processor.tracker is tracker
