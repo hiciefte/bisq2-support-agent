@@ -22,7 +22,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_upstream.py::TestRequiresHumanWiring -v"
 
   - id: E02
-    status: todo
+    status: done
     title: "Abstract methods on ChannelBase + all plugins"
     phase: "0b"
     changes:
@@ -40,7 +40,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_upstream.py::TestChannelAdapterNewMethods -v"
 
   - id: E03
-    status: todo
+    status: done
     title: "Decision lock ADR"
     phase: "0c"
     changes:
