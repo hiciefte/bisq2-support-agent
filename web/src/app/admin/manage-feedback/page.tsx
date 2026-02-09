@@ -1,18 +1,16 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, FormEvent } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-// Removed unused Table imports
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-// Removed unused Checkbox import
 import {
   Loader2,
   MessageCircle,
@@ -24,7 +22,11 @@ import {
   RotateCcw,
   Download,
   X,
-  Trash2
+  Trash2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { makeAuthenticatedRequest } from '@/lib/auth';
@@ -99,6 +101,16 @@ interface FeedbackStats {
   feedback_by_method?: Record<string, ChannelMethodStats>;
 }
 
+// Custom hook for debounced values
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
 export default function ManageFeedbackPage() {
   // Authentication state - handled by SecureAuth wrapper at layout level
 
@@ -123,6 +135,9 @@ export default function ManageFeedbackPage() {
     page_size: 25,
     sort_by: 'newest'
   });
+
+  // Debounce search text to avoid excessive API calls
+  const debouncedSearchText = useDebounce(filters.search_text, 300);
 
   // UI state
   const [activeTab, setActiveTab] = useState<'all' | 'negative' | 'needs_faq'>('all');
@@ -172,18 +187,22 @@ export default function ManageFeedbackPage() {
     'Account'
   ];
 
-  // Check if there are any active filters
-  const hasActiveFilters = filters.search_text ||
-    filters.rating !== 'all' ||
-    filters.date_from ||
-    filters.date_to ||
-    filters.channel !== 'all' ||
-    filters.feedback_method !== 'all' ||
-    filters.issues.length > 0 ||
-    filters.source_types.length > 0 ||
-    filters.needs_faq;
+  // Compute active filter count and boolean
+  const activeFilterCount = useMemo(() => {
+    return [
+      filters.search_text,
+      filters.rating !== 'all',
+      filters.date_from,
+      filters.date_to,
+      filters.channel !== 'all',
+      filters.feedback_method !== 'all',
+      filters.issues.length > 0,
+      filters.source_types.length > 0,
+      filters.needs_faq
+    ].filter(Boolean).length;
+  }, [filters]);
 
-  // Note: Issue types and source types are available from the backend API
+  const hasActiveFilters = activeFilterCount > 0;
 
   // Refs to track previous data hashes for smart updates
   const previousFeedbackHashRef = useRef<string>('');
@@ -207,8 +226,8 @@ export default function ManageFeedbackPage() {
   }, []);
 
   const fetchFeedbackList = useCallback(async () => {
-    // Adjust filters based on active tab
-    const adjustedFilters = { ...filters };
+    // Adjust filters based on active tab, using debounced search text
+    const adjustedFilters = { ...filters, search_text: debouncedSearchText };
     if (activeTab === 'negative') {
       adjustedFilters.rating = 'negative';
     } else if (activeTab === 'needs_faq') {
@@ -222,7 +241,6 @@ export default function ManageFeedbackPage() {
         if (Array.isArray(value)) {
           params.append(key, value.join(','));
         } else if (value instanceof Date) {
-          // Convert Date objects to ISO date strings
           params.append(key, format(value, 'yyyy-MM-dd'));
         } else {
           params.append(key, value.toString());
@@ -246,7 +264,7 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
-  }, [filters, activeTab]);
+  }, [filters, activeTab, debouncedSearchText]);
 
   const fetchStats = useCallback(async () => {
     const response = await makeAuthenticatedRequest('/admin/feedback/stats');
@@ -465,55 +483,46 @@ export default function ManageFeedbackPage() {
   };
 
   const getIssueColor = (issue: string) => {
-    const colors = {
-      'inaccurate': 'bg-red-100 text-red-800',
-      'too_technical': 'bg-yellow-100 text-yellow-800',
-      'too_verbose': 'bg-blue-100 text-blue-800',
-      'confusing': 'bg-purple-100 text-purple-800',
-      'not_helpful': 'bg-gray-100 text-gray-800'
+    const colors: Record<string, string> = {
+      'inaccurate': 'bg-red-500/15 text-red-400 border border-red-500/20',
+      'too_technical': 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20',
+      'too_verbose': 'bg-blue-500/15 text-blue-400 border border-blue-500/20',
+      'confusing': 'bg-purple-500/15 text-purple-400 border border-purple-500/20',
+      'not_helpful': 'bg-muted text-muted-foreground border border-border'
     };
-    return colors[issue as keyof typeof colors] || 'bg-gray-100 text-gray-800';
+    return colors[issue] || 'bg-muted text-muted-foreground border border-border';
   };
 
   const getChannelBadge = (channel?: string) => {
     const badges: Record<string, { label: string; className: string }> = {
-      'web': { label: 'Web', className: 'bg-blue-100 text-blue-800' },
-      'matrix': { label: 'Matrix', className: 'bg-green-100 text-green-800' },
-      'bisq2': { label: 'Bisq2', className: 'bg-orange-100 text-orange-800' },
+      'web': { label: 'Web', className: 'bg-blue-500/15 text-blue-400 border border-blue-500/25' },
+      'matrix': { label: 'Matrix', className: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' },
+      'bisq2': { label: 'Bisq2', className: 'bg-orange-500/15 text-orange-400 border border-orange-500/25' },
     };
-    return badges[channel || 'web'] || { label: channel || 'web', className: 'bg-gray-100 text-gray-800' };
+    return badges[channel || 'web'] || { label: channel || 'web', className: 'bg-muted text-muted-foreground border border-border' };
   };
 
   // Authentication is handled by SecureAuth wrapper in layout
 
   return (
-    <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
+    <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Feedback Management</h1>
-            <p className="text-muted-foreground">Monitor and analyze user feedback for the support assistant</p>
+            <h1 className="text-2xl font-bold tracking-tight">Feedback Management</h1>
+            <p className="text-sm text-muted-foreground mt-1">Monitor and analyze user feedback for the support assistant</p>
           </div>
           <div className="flex gap-2">
-              <Button onClick={() => setShowFilters(!showFilters)} variant="outline" size="sm" className="border-border hover:border-primary">
+              <Button onClick={() => setShowFilters(!showFilters)} variant="outline" size="sm" className={`border-border transition-colors ${showFilters ? 'bg-accent border-primary' : 'hover:border-primary'}`}>
                 <Filter className="mr-2 h-4 w-4" />
                 Filters
                 {hasActiveFilters && (
-                  <Badge variant="secondary" className="ml-2 px-1.5 py-0.5 text-xs">
-                    {[
-                      filters.search_text && 'text',
-                      filters.rating !== 'all' && 'rating',
-                      filters.date_from && 'date',
-                      filters.channel !== 'all' && 'channel',
-                      filters.feedback_method !== 'all' && 'method',
-                      filters.issues.length && `${filters.issues.length} issue${filters.issues.length > 1 ? 's' : ''}`,
-                      filters.source_types.length && `${filters.source_types.length} source${filters.source_types.length > 1 ? 's' : ''}`,
-                      filters.needs_faq && 'needs FAQ'
-                    ].filter(Boolean).length}
+                  <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs rounded-full">
+                    {activeFilterCount}
                   </Badge>
                 )}
               </Button>
-              <Button onClick={exportFeedback} variant="outline" size="sm" className="border-border hover:border-primary">
+              <Button onClick={exportFeedback} variant="outline" size="sm" className="border-border hover:border-primary" disabled={!feedbackData || feedbackData.feedback_items.length === 0}>
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </Button>
@@ -522,34 +531,50 @@ export default function ManageFeedbackPage() {
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-            <strong className="font-bold">Error: </strong>
-            <span className="block sm:inline">{error}</span>
+          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg" role="alert">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span className="text-sm">{error}</span>
+            <button onClick={() => setError(null)} className="ml-auto text-red-400/60 hover:text-red-400 transition-colors">
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
 
         {/* Tabs */}
-        <div className="bg-card rounded-lg shadow-sm border border-border">
-          <div className="flex space-x-1 border-b border-border px-6 pt-4">
-            <button
-              className={`px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${activeTab === 'all' ? 'border-b-2 border-primary text-primary bg-accent' : 'text-muted-foreground hover:text-card-foreground hover:bg-accent'}`}
-              onClick={() => setActiveTab('all')}
-            >
-          All Feedback
-        </button>
-            <button
-              className={`px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${activeTab === 'negative' ? 'border-b-2 border-primary text-primary bg-accent' : 'text-muted-foreground hover:text-card-foreground hover:bg-accent'}`}
-              onClick={() => setActiveTab('negative')}
-            >
-          Negative Only
-        </button>
-            <button
-              className={`px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${activeTab === 'needs_faq' ? 'border-b-2 border-primary text-primary bg-accent' : 'text-muted-foreground hover:text-card-foreground hover:bg-accent'}`}
-              onClick={() => setActiveTab('needs_faq')}
-                >
-              Needs FAQ Creation
-            </button>
+        <div className="bg-card rounded-lg border border-border">
+          <div className="flex space-x-1 px-4 pt-3 pb-0">
+            {([
+              { key: 'all' as const, label: 'All Feedback', count: stats?.total_feedback },
+              { key: 'negative' as const, label: 'Negative Only', count: stats?.negative_count },
+              { key: 'needs_faq' as const, label: 'Needs FAQ', count: stats?.needs_faq_count },
+            ]).map(tab => (
+              <button
+                key={tab.key}
+                className={`px-4 py-2.5 font-medium text-sm rounded-t-lg transition-all relative ${
+                  activeTab === tab.key
+                    ? 'text-primary'
+                    : 'text-muted-foreground hover:text-card-foreground'
+                }`}
+                onClick={() => setActiveTab(tab.key)}
+              >
+                <span className="flex items-center gap-2">
+                  {tab.label}
+                  {tab.count !== undefined && tab.count > 0 && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      activeTab === tab.key
+                        ? 'bg-primary/15 text-primary'
+                        : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  )}
+                </span>
+                {activeTab === tab.key && (
+                  <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -557,24 +582,33 @@ export default function ManageFeedbackPage() {
         {stats && stats.feedback_by_channel && Object.keys(stats.feedback_by_channel).length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Feedback by Channel</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Feedback by Channel</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {Object.entries(stats.feedback_by_channel).map(([channel, data]) => {
                     const badge = getChannelBadge(channel);
-                    const rate = data.total > 0 ? ((data.positive / data.total) * 100).toFixed(0) : '0';
+                    const rateNum = data.total > 0 ? (data.positive / data.total) * 100 : 0;
+                    const rate = rateNum.toFixed(0);
                     return (
-                      <div key={channel} className="flex items-center justify-between text-sm">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
-                          {badge.label}
-                        </span>
-                        <div className="flex items-center gap-3">
-                          <span className="text-muted-foreground">{data.total} total</span>
-                          <span className="text-green-600">{data.positive} +</span>
-                          <span className="text-red-600">{data.negative} -</span>
-                          <span className="font-medium">{rate}% helpful</span>
+                      <div key={channel} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+                            {badge.label}
+                          </span>
+                          <div className="flex items-center gap-3 text-xs">
+                            <span className="text-muted-foreground">{data.total}</span>
+                            <span className="text-emerald-400 inline-flex items-center gap-0.5"><ThumbsUp className="h-3 w-3" />{data.positive}</span>
+                            <span className="text-red-400 inline-flex items-center gap-0.5"><ThumbsDown className="h-3 w-3" />{data.negative}</span>
+                            <span className="font-semibold text-card-foreground tabular-nums">{rate}%</span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary/60 rounded-full transition-all duration-500"
+                            style={{ width: `${rateNum}%` }}
+                          />
                         </div>
                       </div>
                     );
@@ -583,24 +617,33 @@ export default function ManageFeedbackPage() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Feedback by Method</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Feedback by Method</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {stats.feedback_by_method && Object.entries(stats.feedback_by_method).map(([method, data]) => {
                     const label = method === 'web_dialog' ? 'Web Dialog' : method === 'reaction' ? 'Reaction' : method;
-                    const rate = data.total > 0 ? ((data.positive / data.total) * 100).toFixed(0) : '0';
+                    const rateNum = data.total > 0 ? (data.positive / data.total) * 100 : 0;
+                    const rate = rateNum.toFixed(0);
                     return (
-                      <div key={method} className="flex items-center justify-between text-sm">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                          {label}
-                        </span>
-                        <div className="flex items-center gap-3">
-                          <span className="text-muted-foreground">{data.total} total</span>
-                          <span className="text-green-600">{data.positive} +</span>
-                          <span className="text-red-600">{data.negative} -</span>
-                          <span className="font-medium">{rate}% helpful</span>
+                      <div key={method} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
+                            {label}
+                          </span>
+                          <div className="flex items-center gap-3 text-xs">
+                            <span className="text-muted-foreground">{data.total}</span>
+                            <span className="text-emerald-400 inline-flex items-center gap-0.5"><ThumbsUp className="h-3 w-3" />{data.positive}</span>
+                            <span className="text-red-400 inline-flex items-center gap-0.5"><ThumbsDown className="h-3 w-3" />{data.negative}</span>
+                            <span className="font-semibold text-card-foreground tabular-nums">{rate}%</span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary/60 rounded-full transition-all duration-500"
+                            style={{ width: `${rateNum}%` }}
+                          />
                         </div>
                       </div>
                     );
@@ -612,264 +655,315 @@ export default function ManageFeedbackPage() {
         )}
 
         {/* Filters Panel */}
-      {showFilters && (
-        <Card>
-          <CardHeader className="relative">
-            <Button
-              onClick={() => setShowFilters(false)}
-              variant="outline"
-              size="sm"
-              className="absolute right-2 top-2 h-8 w-8 p-0"
-              aria-label="Close filters"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-            <CardTitle>Filters</CardTitle>
-            <CardDescription>Filter feedback by various criteria</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Search Text</Label>
-                <Input
-                  placeholder="Search in questions, answers..."
-                  value={filters.search_text}
-                  onChange={(e) => handleFilterChange('search_text', e.target.value)}
-                />
+      <div className={`grid transition-all duration-300 ease-in-out ${showFilters ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className="overflow-hidden">
+          <Card className="border-primary/20">
+            <CardContent className="pt-5 pb-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="space-y-1.5 lg:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Search</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search questions, answers, feedback text..."
+                      value={filters.search_text}
+                      onChange={(e) => handleFilterChange('search_text', e.target.value)}
+                      className="pl-9"
+                    />
+                    {filters.search_text && (
+                      <button
+                        onClick={() => handleFilterChange('search_text', '')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Channel</Label>
+                  <Select
+                    value={filters.channel}
+                    onValueChange={(value) => handleFilterChange('channel', value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="All channels" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Channels</SelectItem>
+                      <SelectItem value="web">Web</SelectItem>
+                      <SelectItem value="matrix">Matrix</SelectItem>
+                      <SelectItem value="bisq2">Bisq2</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Feedback Method</Label>
+                  <Select
+                    value={filters.feedback_method}
+                    onValueChange={(value) => handleFilterChange('feedback_method', value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="All methods" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Methods</SelectItem>
+                      <SelectItem value="web_dialog">Web Dialog</SelectItem>
+                      <SelectItem value="reaction">Reaction</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Date From</Label>
+                  <DatePicker
+                    value={filters.date_from}
+                    onChange={(date) => handleFilterChange('date_from', date)}
+                    placeholder="Select start date"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Date To</Label>
+                  <DatePicker
+                    value={filters.date_to}
+                    onChange={(date) => handleFilterChange('date_to', date)}
+                    placeholder="Select end date"
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>Channel</Label>
-                <Select
-                  value={filters.channel}
-                  onValueChange={(value) => handleFilterChange('channel', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All channels" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Channels</SelectItem>
-                    <SelectItem value="web">Web</SelectItem>
-                    <SelectItem value="matrix">Matrix</SelectItem>
-                    <SelectItem value="bisq2">Bisq2</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Feedback Method</Label>
-                <Select
-                  value={filters.feedback_method}
-                  onValueChange={(value) => handleFilterChange('feedback_method', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All methods" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Methods</SelectItem>
-                    <SelectItem value="web_dialog">Web Dialog</SelectItem>
-                    <SelectItem value="reaction">Reaction</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Date From</Label>
-                <DatePicker
-                  value={filters.date_from}
-                  onChange={(date) => handleFilterChange('date_from', date)}
-                  placeholder="Select start date"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Date To</Label>
-                <DatePicker
-                  value={filters.date_to}
-                  onChange={(date) => handleFilterChange('date_to', date)}
-                  placeholder="Select end date"
-                />
-              </div>
-            </div>
-            <div className="flex justify-between items-center">
-              <Button onClick={resetFilters} variant="outline" size="sm">
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Reset Filters
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              {hasActiveFilters && (
+                <div className="flex items-center pt-1">
+                  <Button onClick={resetFilters} variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground h-7 text-xs">
+                    <RotateCcw className="mr-1.5 h-3 w-3" />
+                    Reset all filters
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
       {/* Feedback List */}
       <Card>
-        <CardHeader>
-          <CardTitle>
-            Feedback List
-            {feedbackData && (
-              <span className="text-sm font-normal text-muted-foreground ml-2">
-                ({feedbackData.total_count} items)
-              </span>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">
+                Feedback List
+              </CardTitle>
+              <CardDescription className="mt-0.5">
+                {activeTab === 'all' && 'All user feedback'}
+                {activeTab === 'negative' && 'Negative feedback requiring attention'}
+                {activeTab === 'needs_faq' && 'Feedback that would benefit from FAQ creation'}
+                {feedbackData && (
+                  <span className="ml-1 tabular-nums">
+                    -- {feedbackData.total_count} {feedbackData.total_count === 1 ? 'item' : 'items'}
+                  </span>
+                )}
+              </CardDescription>
+            </div>
+            {/* Top pagination for quick navigation */}
+            {feedbackData && feedbackData.total_pages > 1 && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="tabular-nums">Page {filters.page} of {feedbackData.total_pages}</span>
+              </div>
             )}
-          </CardTitle>
-          <CardDescription>
-            {activeTab === 'all' && 'All user feedback'}
-            {activeTab === 'negative' && 'Negative feedback only'}
-            {activeTab === 'needs_faq' && 'Feedback that would benefit from FAQ creation'}
-          </CardDescription>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            /* Skeleton loading state */
+            <div className="space-y-3">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="border border-border rounded-lg p-4 animate-pulse">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="h-4 w-4 bg-muted rounded-full" />
+                    <div className="h-3 w-32 bg-muted rounded" />
+                    <div className="h-4 w-12 bg-muted rounded-full" />
+                  </div>
+                  <div className="h-3 w-3/4 bg-muted rounded mb-2" />
+                  <div className="h-3 w-1/2 bg-muted rounded" />
+                </div>
+              ))}
             </div>
           ) : !feedbackData || feedbackData.feedback_items.length === 0 ? (
-            <div className="text-center py-12">
-              <MessageCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold">No Feedback Found</h3>
-              <p className="text-muted-foreground">No feedback matches your current filters.</p>
+            /* Enhanced empty state */
+            <div className="text-center py-16">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-muted mb-4">
+                <MessageCircle className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="text-base font-semibold mb-1">No feedback found</h3>
+              <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
+                {hasActiveFilters
+                  ? 'No feedback matches your current filters. Try adjusting or resetting them.'
+                  : activeTab === 'negative'
+                    ? 'No negative feedback recorded. That is a good sign.'
+                    : activeTab === 'needs_faq'
+                      ? 'No feedback currently needs FAQ creation.'
+                      : 'No feedback has been submitted yet.'}
+              </p>
+              {hasActiveFilters && (
+                <Button onClick={resetFilters} variant="outline" size="sm">
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  Reset filters
+                </Button>
+              )}
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {feedbackData.feedback_items.map((feedback) => (
-                <Card key={feedback.message_id} className="border-l-4 border-l-gray-200">
-                  <CardContent className="p-4">
+                <div
+                  key={feedback.message_id}
+                  className={`group relative border rounded-lg transition-colors hover:bg-accent/30 cursor-pointer ${
+                    feedback.is_positive
+                      ? 'border-l-2 border-l-primary/50 border-t border-r border-b border-border'
+                      : 'border-l-2 border-l-red-500/50 border-t border-r border-b border-border'
+                  }`}
+                  onClick={() => openFeedbackDetail(feedback)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openFeedbackDetail(feedback); }}
+                >
+                  <div className="p-4">
                     <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center space-x-2">
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        {/* Meta row */}
+                        <div className="flex items-center gap-2 flex-wrap">
                           {feedback.is_positive ? (
-                            <ThumbsUp className="h-5 w-5 text-primary" />
+                            <ThumbsUp className="h-3.5 w-3.5 text-primary shrink-0" />
                           ) : (
-                            <ThumbsDown className="h-5 w-5 text-red-500" />
+                            <ThumbsDown className="h-3.5 w-3.5 text-red-400 shrink-0" />
                           )}
-                          <span className="text-sm text-muted-foreground">
+                          <span className="text-xs text-muted-foreground tabular-nums">
                             {formatDate(feedback.timestamp)}
                           </span>
                           {(() => {
                             const badge = getChannelBadge(feedback.channel);
                             return (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
                                 {badge.label}
                               </span>
                             );
                           })()}
                           {feedback.feedback_method === 'reaction' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
                               {feedback.reaction_emoji || 'Reaction'}
                             </span>
                           )}
                           {feedback.has_no_source_response && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                              No Source Available
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
+                              No Source
                             </span>
                           )}
                         </div>
 
-                        <div>
-                          <span className="font-medium text-sm text-muted-foreground">Question:</span>
-                          <p className="text-sm mt-1">{feedback.question}</p>
-                        </div>
+                        {/* Question text */}
+                        <p className="text-sm leading-relaxed line-clamp-2">{feedback.question}</p>
 
+                        {/* User feedback text (if negative) */}
                         {feedback.explanation && (
-                          <div>
-                            <span className="font-medium text-sm text-muted-foreground">User Feedback:</span>
-                            <p className="text-sm mt-1 text-red-700">{feedback.explanation}</p>
-                          </div>
+                          <p className="text-xs text-red-400/80 line-clamp-1 mt-0.5">
+                            &ldquo;{feedback.explanation}&rdquo;
+                          </p>
                         )}
 
-                        {feedback.issues && feedback.issues.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {feedback.issues.map((issue, idx) => (
-                              <span key={idx} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getIssueColor(issue)}`}>
+                        {/* Issue badges and action buttons row */}
+                        <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                          {feedback.issues && feedback.issues.length > 0 && (
+                            feedback.issues.map((issue, idx) => (
+                              <span key={idx} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getIssueColor(issue)}`}>
                                 {issue.replace('_', ' ')}
                               </span>
-                            ))}
-                          </div>
-                        )}
+                            ))
+                          )}
 
-                        {feedback.is_negative && !feedback.is_processed && (
-                          <div className="pt-1">
+                          {feedback.is_processed && feedback.faq_id && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/15 text-primary border border-primary/25">
+                              FAQ Created
+                            </span>
+                          )}
+
+                          {feedback.is_negative && !feedback.is_processed && (
                             <Button
-                              onClick={() => openCreateFAQ(feedback)}
+                              onClick={(e) => { e.stopPropagation(); openCreateFAQ(feedback); }}
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
+                              className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
                             >
-                              <PlusCircle className="h-4 w-4 mr-1" />
+                              <PlusCircle className="h-3 w-3 mr-1" />
                               Create FAQ
                             </Button>
-                          </div>
-                        )}
-
-                        {feedback.is_processed && feedback.faq_id && (
-                          <div className="pt-1">
-                            <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                              ✓ FAQ Created
-                            </span>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-1 ml-4">
+                      {/* Action buttons - visible on hover only */}
+                      <div className="flex items-center gap-0.5 ml-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
                         <Button
-                          onClick={() => openFeedbackDetail(feedback)}
+                          onClick={(e) => { e.stopPropagation(); openFeedbackDetail(feedback); }}
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
                           aria-label="View feedback details"
                         >
-                          <Eye className="h-4 w-4" />
+                          <Eye className="h-3.5 w-3.5" />
                         </Button>
                         <Button
-                          onClick={() => openDeleteConfirmation(feedback)}
+                          onClick={(e) => { e.stopPropagation(); openDeleteConfirmation(feedback); }}
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-red-400"
                           aria-label="Delete feedback"
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               ))}
 
               {/* Pagination */}
               {feedbackData && feedbackData.total_pages > 1 && (
-                <div className="flex items-center justify-between px-2 py-4">
-                  <div className="flex items-center space-x-6 lg:space-x-8">
-                    <div className="flex items-center space-x-2">
-                      <p className="text-sm font-medium">
-                        Showing {((filters.page - 1) * filters.page_size) + 1} to {Math.min(filters.page * filters.page_size, feedbackData.total_count)} of {feedbackData.total_count} entries
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-between pt-4 border-t border-border mt-2">
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {((filters.page - 1) * filters.page_size) + 1}--{Math.min(filters.page * filters.page_size, feedbackData.total_count)} of {feedbackData.total_count}
+                  </p>
+                  <div className="flex items-center gap-1">
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => handleFilterChange('page', Math.max(1, filters.page - 1))}
                       disabled={filters.page <= 1}
+                      aria-label="Previous page"
                     >
-                      Previous
+                      <ChevronLeft className="h-4 w-4" />
                     </Button>
-                    <div className="flex items-center space-x-1">
-                      {Array.from({ length: Math.min(5, feedbackData.total_pages) }, (_, i) => {
-                        const pageNum = Math.max(1, Math.min(feedbackData.total_pages - 4, filters.page - 2)) + i;
-                        if (pageNum > feedbackData.total_pages) return null;
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={pageNum === filters.page ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => handleFilterChange('page', pageNum)}
-                          >
-                            {pageNum}
-                          </Button>
-                        );
-                      })}
-                    </div>
+                    {Array.from({ length: Math.min(5, feedbackData.total_pages) }, (_, i) => {
+                      const pageNum = Math.max(1, Math.min(feedbackData.total_pages - 4, filters.page - 2)) + i;
+                      if (pageNum > feedbackData.total_pages) return null;
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={pageNum === filters.page ? "default" : "ghost"}
+                          size="icon"
+                          className={`h-8 w-8 text-xs ${pageNum === filters.page ? '' : 'text-muted-foreground'}`}
+                          onClick={() => handleFilterChange('page', pageNum)}
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => handleFilterChange('page', Math.min(feedbackData.total_pages, filters.page + 1))}
                       disabled={filters.page >= feedbackData.total_pages}
+                      aria-label="Next page"
                     >
-                      Next
+                      <ChevronRight className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
@@ -881,104 +975,88 @@ export default function ManageFeedbackPage() {
 
       {/* Feedback Detail Dialog */}
       <Dialog open={showFeedbackDetail} onOpenChange={setShowFeedbackDetail}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto [&>button]:hidden">
-          <DialogHeader className="relative">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto [&>button]:hidden">
+          <DialogHeader className="relative pb-3">
             <DialogClose asChild>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="absolute right-0 top-0 h-8 w-8 p-0"
+                className="absolute right-0 top-0 h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
                 aria-label="Close dialog"
               >
                 <X className="h-4 w-4" />
               </Button>
             </DialogClose>
-            <DialogTitle>Feedback Details</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Feedback Details
+              {selectedFeedback && (
+                selectedFeedback.is_positive ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary">
+                    <ThumbsUp className="h-3 w-3" /> Positive
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/15 text-red-400">
+                    <ThumbsDown className="h-3 w-3" /> Negative
+                  </span>
+                )
+              )}
+            </DialogTitle>
             <DialogDescription>
-              Complete feedback information and response details
+              Full feedback record and response context
             </DialogDescription>
           </DialogHeader>
           {selectedFeedback && (
-            <div className="space-y-4">
-              {/* Basic Info Grid */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Rating:</span>
-                  <div className="flex items-center space-x-2 mt-1">
-                    {selectedFeedback.is_positive ? (
-                      <ThumbsUp className="h-4 w-4 text-primary" />
-                    ) : (
-                      <ThumbsDown className="h-4 w-4 text-red-500" />
-                    )}
-                    <span>{selectedFeedback.is_positive ? 'Positive' : 'Negative'}</span>
-                  </div>
-                </div>
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Message ID:</span>
-                  <p className="mt-1">{selectedFeedback.message_id}</p>
-                </div>
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Timestamp:</span>
-                  <p className="mt-1">{formatDate(selectedFeedback.timestamp)}</p>
-                </div>
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Channel:</span>
-                  <div className="mt-1">
-                    {(() => {
-                      const badge = getChannelBadge(selectedFeedback.channel);
-                      return (
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
-                          {badge.label}
-                        </span>
-                      );
-                    })()}
-                    {selectedFeedback.feedback_method === 'reaction' && (
-                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                        {selectedFeedback.reaction_emoji || 'Reaction'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {selectedFeedback.has_no_source_response && (
-                  <div>
-                    <span className="font-medium text-card-foreground font-medium">No Source Available:</span>
-                    <div className="mt-1">
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                        Yes
-                      </span>
-                    </div>
-                  </div>
+            <div className="space-y-5">
+              {/* Metadata bar */}
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground pb-3 border-b border-border">
+                <span className="tabular-nums">{formatDate(selectedFeedback.timestamp)}</span>
+                <span className="text-border">|</span>
+                {(() => {
+                  const badge = getChannelBadge(selectedFeedback.channel);
+                  return (
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
+                      {badge.label}
+                    </span>
+                  );
+                })()}
+                {selectedFeedback.feedback_method === 'reaction' && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
+                    {selectedFeedback.reaction_emoji || 'Reaction'}
+                  </span>
                 )}
+                {selectedFeedback.has_no_source_response && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
+                    No Source
+                  </span>
+                )}
+                {selectedFeedback.metadata?.response_time && (
+                  <>
+                    <span className="text-border">|</span>
+                    <span className="tabular-nums">{selectedFeedback.metadata.response_time.toFixed(2)}s response</span>
+                  </>
+                )}
+                <span className="text-border">|</span>
+                <span className="font-mono text-[10px] text-muted-foreground/60 truncate max-w-[200px]" title={selectedFeedback.message_id}>
+                  {selectedFeedback.message_id}
+                </span>
               </div>
-
-              {/* Performance Metrics */}
-              {selectedFeedback.metadata && (
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  {selectedFeedback.metadata.response_time && (
-                    <div>
-                      <span className="font-medium text-card-foreground font-medium">Response Time:</span>
-                      <p className="mt-1">{selectedFeedback.metadata.response_time.toFixed(2)}s</p>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Question & Answer */}
-              <div>
-                <span className="font-medium text-card-foreground font-medium">Question:</span>
-                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{selectedFeedback.question}</p>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Question</span>
+                <p className="text-sm p-3 bg-accent rounded-lg text-card-foreground leading-relaxed">{selectedFeedback.question}</p>
               </div>
 
-              <div>
-                <span className="font-medium text-card-foreground font-medium">Answer:</span>
-                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{selectedFeedback.answer}</p>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Answer</span>
+                <div className="text-sm p-3 bg-accent rounded-lg text-card-foreground leading-relaxed whitespace-pre-wrap">{selectedFeedback.answer}</div>
               </div>
 
               {/* User Feedback */}
               {selectedFeedback.explanation && (
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">User Feedback:</span>
-                  <p className="mt-1 p-3 bg-red-50 rounded border-l-4 border-red-200 text-red-900">{selectedFeedback.explanation}</p>
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">User Feedback</span>
+                  <p className="text-sm p-3 bg-red-500/10 rounded-lg border-l-2 border-red-500/40 text-red-400 leading-relaxed">{selectedFeedback.explanation}</p>
                 </div>
               )}
 
@@ -989,9 +1067,9 @@ export default function ManageFeedbackPage() {
 
               {/* Issues */}
               {selectedFeedback.issues && selectedFeedback.issues.length > 0 && (
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Issues Identified:</span>
-                  <div className="flex flex-wrap gap-2 mt-2">
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Issues Identified</span>
+                  <div className="flex flex-wrap gap-1.5">
                     {selectedFeedback.issues.map((issue, idx) => (
                       <span key={idx} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getIssueColor(issue)}`}>
                         {issue.replace('_', ' ')}
@@ -1003,18 +1081,18 @@ export default function ManageFeedbackPage() {
 
               {/* Sources Used */}
               {selectedFeedback.sources_used && selectedFeedback.sources_used.length > 0 && (
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Sources Used:</span>
-                  <div className="mt-1 space-y-2">
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sources Used</span>
+                  <div className="space-y-2">
                     {selectedFeedback.sources_used.map((source, idx) => (
-                      <div key={idx} className="p-3 border rounded-lg bg-blue-50">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="font-medium text-blue-900">{source.title}</span>
-                          <span className="px-2 py-1 bg-blue-200 text-blue-800 rounded text-xs font-medium">
+                      <div key={idx} className="p-3 border border-border rounded-lg bg-accent/50">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="font-medium text-sm text-card-foreground">{source.title}</span>
+                          <span className="px-2 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/20 rounded text-[10px] font-medium">
                             {source.type}
                           </span>
                         </div>
-                        <div className="text-card-foreground font-medium text-sm">{source.content.substring(0, 300)}...</div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{source.content.substring(0, 300)}{source.content.length > 300 ? '...' : ''}</p>
                       </div>
                     ))}
                   </div>
@@ -1023,18 +1101,18 @@ export default function ManageFeedbackPage() {
 
               {/* Available Sources (if different from sources_used) */}
               {selectedFeedback.sources && selectedFeedback.sources.length > 0 && (
-                <div>
-                  <span className="font-medium text-card-foreground font-medium">Available Sources:</span>
-                  <div className="mt-1 space-y-2">
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Available Sources</span>
+                  <div className="space-y-2">
                     {selectedFeedback.sources.map((source, idx) => (
-                      <div key={idx} className="p-3 border rounded-lg bg-accent">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="font-medium text-card-foreground">{source.title}</span>
-                          <span className="px-2 py-1 bg-muted text-muted-foreground rounded text-xs font-medium">
+                      <div key={idx} className="p-3 border border-border rounded-lg bg-accent/30">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="font-medium text-sm text-card-foreground">{source.title}</span>
+                          <span className="px-2 py-0.5 bg-muted text-muted-foreground border border-border rounded text-[10px] font-medium">
                             {source.type}
                           </span>
                         </div>
-                        <div className="text-muted-foreground text-sm">{source.content.substring(0, 200)}...</div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{source.content.substring(0, 200)}{source.content.length > 200 ? '...' : ''}</p>
                       </div>
                     ))}
                   </div>
@@ -1115,7 +1193,7 @@ export default function ManageFeedbackPage() {
               {faqForm.additional_notes && (
                 <div>
                   <Label>User Feedback</Label>
-                  <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
+                  <div className="mt-1 p-3 bg-red-500/10 rounded-lg border border-red-500/20 text-red-400 text-sm leading-relaxed">
                     {faqForm.additional_notes}
                   </div>
                 </div>
