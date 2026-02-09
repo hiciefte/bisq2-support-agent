@@ -246,6 +246,7 @@ class ChannelGateway:
             sources=sources,
             user=incoming.user,
             metadata=metadata,
+            original_question=incoming.question,
             suggested_questions=rag_response.get("suggested_questions"),
             requires_human=rag_response.get("requires_human", False),
         )

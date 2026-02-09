@@ -301,6 +301,7 @@ class ChannelBase(ABC):
                 sources=sources,
                 user=message.user,
                 metadata=metadata,
+                original_question=message.question,
                 suggested_questions=rag_response.get("suggested_questions"),
                 requires_human=rag_response.get("requires_human", False),
             )

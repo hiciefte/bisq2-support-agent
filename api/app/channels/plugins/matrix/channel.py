@@ -49,6 +49,7 @@ class MatrixChannel(ChannelBase):
             ChannelCapability.PERSISTENT_CONNECTION,
             ChannelCapability.RECEIVE_MESSAGES,
             ChannelCapability.SEND_RESPONSES,
+            ChannelCapability.REACTIONS,
         }
 
     @property
@@ -84,6 +85,15 @@ class MatrixChannel(ChannelBase):
             self._logger.exception(f"Failed to connect to Matrix homeserver: {e}")
             self._is_connected = False
 
+        # Wire reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.start_listening()
+                self._logger.info("Matrix reaction handler started")
+            except Exception as e:
+                self._logger.warning(f"Failed to start reaction handler: {e}")
+
     async def stop(self) -> None:
         """Stop the Matrix channel.
 
@@ -98,6 +108,14 @@ class MatrixChannel(ChannelBase):
                 await conn_manager.disconnect()
             except Exception as e:
                 self._logger.exception(f"Error disconnecting from Matrix: {e}")
+
+        # Stop reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.stop_listening()
+            except Exception as e:
+                self._logger.warning(f"Failed to stop reaction handler: {e}")
 
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
@@ -143,6 +161,23 @@ class MatrixChannel(ChannelBase):
                 self._logger.debug(
                     f"Message sent to {target}, event_id: {response.event_id}"
                 )
+                # Track for reaction correlation
+                tracker = self.runtime.resolve_optional("sent_message_tracker")
+                if tracker:
+                    try:
+                        tracker.track(
+                            channel_id="matrix",
+                            external_message_id=response.event_id,
+                            internal_message_id=getattr(message, "message_id", ""),
+                            question=getattr(message, "original_question", "") or "",
+                            answer=message.answer,
+                            user_id=getattr(
+                                getattr(message, "user", None), "user_id", ""
+                            ),
+                            sources=[],
+                        )
+                    except Exception as e:
+                        self._logger.warning(f"Failed to track sent message: {e}")
                 return True
             else:
                 # Error response

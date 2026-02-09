@@ -38,6 +38,7 @@ class ChannelCapability(str, Enum):
     PERSISTENT_CONNECTION = "persistent"
     TEXT_MESSAGES = "text_messages"
     CHAT_HISTORY = "chat_history"
+    REACTIONS = "reactions"
 
 
 class UserContext(BaseModel):
@@ -231,6 +232,9 @@ class OutgoingMessage(BaseModel):
 
     # Metadata
     metadata: ResponseMetadata
+
+    # Original question for reaction tracking
+    original_question: Optional[str] = None
 
     # Optional features
     suggested_questions: Optional[List[str]] = None
