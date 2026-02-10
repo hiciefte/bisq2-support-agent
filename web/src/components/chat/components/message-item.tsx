@@ -14,6 +14,8 @@ import { SourceBadges } from "./source-badges"
 import { ConfidenceBadge } from "./confidence-badge"
 import { LiveDataContent } from "./live-data-content"
 import { MarkdownContent } from "./markdown-content"
+import { HumanReviewBadge } from "./human-review-badge"
+import { HumanResponseSection } from "./human-response-section"
 import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
@@ -118,6 +120,14 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                             />
                         )}
                     </div>
+                )}
+
+                {/* Escalation indicators */}
+                {isAssistant && message.requires_human && !message.staff_response && (
+                    <HumanReviewBadge />
+                )}
+                {isAssistant && message.staff_response && (
+                    <HumanResponseSection response={message.staff_response} />
                 )}
             </div>
         </div>

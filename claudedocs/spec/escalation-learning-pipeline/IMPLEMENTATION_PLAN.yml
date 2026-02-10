@@ -147,7 +147,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_bisq2_websocket.py -v"
 
   - id: E09
-    status: in_progress
+    status: done
     title: "Learning + FAQ integration"
     phase: "6"
     changes:
@@ -163,7 +163,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_learning.py -v"
 
   - id: E10
-    status: todo
+    status: in_progress
     title: "Frontend -- admin queue + chat UI"
     phase: "7"
     changes:

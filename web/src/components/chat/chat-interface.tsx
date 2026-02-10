@@ -5,7 +5,7 @@
  * Refactored to use modular hooks and components
  */
 
-import { FormEvent, useCallback } from "react"
+import { FormEvent, useCallback, useEffect, useMemo } from "react"
 import { PrivacyWarningModal } from "@/components/privacy/privacy-warning-modal"
 import { MessageList } from "./components/message-list"
 import { ChatInput } from "./components/chat-input"
@@ -14,6 +14,7 @@ import { ChatProvider } from "./context"
 import { useChatMessages } from "./hooks/use-chat-messages"
 import { useChatScroll } from "./hooks/use-chat-scroll"
 import { useFeedback } from "./hooks/use-feedback"
+import { useEscalationPolling } from "./hooks/use-escalation-polling"
 
 // Convert seconds to a human-readable format
 const formatResponseTime = (seconds: number): string => {
@@ -48,6 +49,46 @@ const ChatInterface = () => {
         handleRating,
         submitFeedbackExplanation
     } = useFeedback({ messages, setMessages })
+
+    // Find the most recent escalated message that hasn't received a staff response yet
+    const pendingEscalation = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i]
+            if (msg.requires_human && msg.escalation_message_id && !msg.staff_response) {
+                return { messageId: msg.escalation_message_id, msgId: msg.id }
+            }
+        }
+        return null
+    }, [messages])
+
+    // Poll for escalation resolution
+    const escalationPoll = useEscalationPolling(
+        pendingEscalation?.messageId ?? null,
+        !!pendingEscalation
+    )
+
+    // When polling resolves, update the message with the staff response
+    useEffect(() => {
+        if (
+            escalationPoll.status === 'resolved' &&
+            escalationPoll.staffAnswer &&
+            pendingEscalation
+        ) {
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.id === pendingEscalation.msgId
+                        ? {
+                              ...msg,
+                              staff_response: {
+                                  answer: escalationPoll.staffAnswer!,
+                                  responded_at: escalationPoll.respondedAt || new Date().toISOString(),
+                              },
+                          }
+                        : msg
+                )
+            )
+        }
+    }, [escalationPoll.status, escalationPoll.staffAnswer, escalationPoll.respondedAt, pendingEscalation, setMessages])
 
     // Format average response time for display
     const formattedAvgTime = formatResponseTime(avgResponseTime)
