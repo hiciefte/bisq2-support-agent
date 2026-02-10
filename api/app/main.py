@@ -25,6 +25,7 @@ from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import (
     alertmanager,
     chat,
+    escalation_polling,
     feedback_routes,
     health,
     metrics_update,
@@ -469,6 +470,9 @@ app.include_router(metrics_update.router, tags=["Metrics"])
 app.include_router(
     public_faqs.router, tags=["Public FAQs"]
 )  # Public FAQ endpoints (no auth required)
+app.include_router(
+    escalation_polling.router, tags=["Escalations"]
+)  # User polling endpoint (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 app.include_router(

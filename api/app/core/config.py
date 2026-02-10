@@ -335,6 +335,14 @@ class Settings(BaseSettings):
         description="Comma-separated list of trusted staff full Matrix IDs for auto-training",
     )
 
+    # Escalation Learning Pipeline Settings
+    ESCALATION_DB_PATH: str = "data/escalations.db"
+    ESCALATION_CLAIM_TTL_MINUTES: int = 30
+    ESCALATION_AUTO_CLOSE_HOURS: int = 24
+    ESCALATION_DELIVERY_MAX_RETRIES: int = 3
+    ESCALATION_RETENTION_DAYS: int = 90
+    ESCALATION_ENABLED: bool = True
+
     # Environment settings
     ENVIRONMENT: str = "development"
 

@@ -91,7 +91,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_concurrency.py -v"
 
   - id: E06
-    status: in_progress
+    status: done
     title: "Gateway EscalationPostHook"
     phase: "3"
     changes:
@@ -109,7 +109,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_hook.py -v"
 
   - id: E07
-    status: todo
+    status: in_progress
     title: "Admin + polling API"
     phase: "4"
     changes:

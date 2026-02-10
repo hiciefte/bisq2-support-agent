@@ -8,9 +8,18 @@ This package organizes admin routes by domain:
 - analytics: Dashboard and metrics (2 endpoints)
 - vectorstore: Vector store management (2 endpoints)
 - training: Auto-training pipeline management (9 endpoints)
+- escalations: Escalation learning pipeline (7 endpoints)
 """
 
-from app.routes.admin import analytics, auth, faqs, feedback, training, vectorstore
+from app.routes.admin import (
+    analytics,
+    auth,
+    escalations,
+    faqs,
+    feedback,
+    training,
+    vectorstore,
+)
 from fastapi import FastAPI
 
 
@@ -29,11 +38,13 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(analytics.router)
     app.include_router(vectorstore.router)
     app.include_router(training.router)
+    app.include_router(escalations.router)
 
 
 __all__ = [
     "analytics",
     "auth",
+    "escalations",
     "faqs",
     "feedback",
     "include_admin_routers",
