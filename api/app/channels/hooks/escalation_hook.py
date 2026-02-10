@@ -10,8 +10,20 @@ from typing import Optional
 from app.channels.hooks import BasePostProcessingHook, HookPriority
 from app.channels.models import GatewayError, IncomingMessage, OutgoingMessage
 from app.models.escalation import EscalationCreate
+from prometheus_client import Counter
 
 logger = logging.getLogger(__name__)
+
+ESCALATION_CREATED = Counter(
+    "escalation_created_total",
+    "Total escalations created",
+    ["channel"],
+)
+ESCALATION_HOOK_ERRORS = Counter(
+    "escalation_hook_errors_total",
+    "Errors during escalation hook execution",
+    ["channel"],
+)
 
 _GENERIC_ESCALATION_MSG = (
     "Your question has been forwarded to our support team. "
@@ -42,10 +54,21 @@ class EscalationPostHook(BasePostProcessingHook):
         if not outgoing.requires_human:
             return None
 
+        channel = incoming.channel.value
         try:
             escalation = await self._create_escalation(incoming, outgoing)
             self._replace_answer(incoming, outgoing, escalation.id)
+            ESCALATION_CREATED.labels(channel=channel).inc()
+            logger.info(
+                "Escalation created",
+                extra={
+                    "escalation_id": escalation.id,
+                    "channel": channel,
+                    "message_id": incoming.message_id,
+                },
+            )
         except Exception:
+            ESCALATION_HOOK_ERRORS.labels(channel=channel).inc()
             logger.exception(
                 "Failed to create escalation for message %s", incoming.message_id
             )

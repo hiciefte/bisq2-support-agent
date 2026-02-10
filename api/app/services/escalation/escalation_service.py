@@ -19,8 +19,25 @@ from app.models.escalation import (
     EscalationUpdate,
     UserPollResponse,
 )
+from prometheus_client import Counter, Histogram
 
 logger = logging.getLogger(__name__)
+
+ESCALATION_LIFECYCLE = Counter(
+    "escalation_lifecycle_total",
+    "Escalation state transitions",
+    ["action"],
+)
+ESCALATION_DELIVERY = Counter(
+    "escalation_delivery_total",
+    "Delivery outcomes by channel",
+    ["channel", "outcome"],
+)
+ESCALATION_RESPONSE_TIME = Histogram(
+    "escalation_response_time_seconds",
+    "Time from creation to staff response",
+    buckets=[60, 300, 600, 1800, 3600, 7200, 14400, 43200, 86400],
+)
 
 
 class EscalationService:
@@ -55,7 +72,9 @@ class EscalationService:
     async def create_escalation(self, data: EscalationCreate) -> Escalation:
         """Create a new escalation. Idempotent on message_id."""
         try:
-            return await self.repository.create(data)
+            result = await self.repository.create(data)
+            ESCALATION_LIFECYCLE.labels(action="created").inc()
+            return result
         except DuplicateEscalationError:
             logger.info(
                 "Duplicate escalation for message_id=%s, returning existing",
@@ -98,6 +117,11 @@ class EscalationService:
                 )
 
         now = datetime.now(timezone.utc)
+        ESCALATION_LIFECYCLE.labels(action="claimed").inc()
+        logger.info(
+            "Escalation claimed",
+            extra={"escalation_id": escalation_id, "staff_id": staff_id},
+        )
         return await self.repository.update(
             escalation_id,
             EscalationUpdate(
@@ -156,11 +180,30 @@ class EscalationService:
                 responded_at=now,
             ),
         )
+        ESCALATION_LIFECYCLE.labels(action="responded").inc()
+
+        # Track response time
+        if escalation.created_at:
+            delta = (now - escalation.created_at).total_seconds()
+            ESCALATION_RESPONSE_TIME.observe(delta)
+
+        logger.info(
+            "Escalation responded",
+            extra={
+                "escalation_id": escalation_id,
+                "channel": escalation.channel,
+                "staff_id": staff_id,
+            },
+        )
 
         # Attempt delivery (non-blocking)
+        channel = escalation.channel
         try:
             delivered = await self.response_delivery.deliver(updated, staff_answer)
-            if not delivered:
+            if delivered:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
+            else:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
                 logger.warning("Delivery failed for escalation %d", escalation_id)
                 await self.repository.update(
                     escalation_id,
@@ -170,6 +213,7 @@ class EscalationService:
                     ),
                 )
         except Exception:
+            ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
             logger.exception("Delivery error for escalation %d", escalation_id)
 
         # Record learning
@@ -258,6 +302,7 @@ class EscalationService:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
         now = datetime.now(timezone.utc)
+        ESCALATION_LIFECYCLE.labels(action="closed").inc()
         return await self.repository.update(
             escalation_id,
             EscalationUpdate(

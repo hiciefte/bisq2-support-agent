@@ -163,7 +163,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_learning.py -v"
 
   - id: E10
-    status: in_progress
+    status: done
     title: "Frontend -- admin queue + chat UI"
     phase: "7"
     changes:
@@ -188,7 +188,7 @@ tasks:
       - "cd web && npm run lint"
 
   - id: E11
-    status: todo
+    status: in_progress
     title: "Reliability + security gates"
     phase: "8"
     changes:
