@@ -76,7 +76,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_repository.py -v"
 
   - id: E05
-    status: in_progress
+    status: done
     title: "Service layer -- lifecycle orchestration"
     phase: "2"
     changes:
@@ -91,7 +91,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_concurrency.py -v"
 
   - id: E06
-    status: todo
+    status: in_progress
     title: "Gateway EscalationPostHook"
     phase: "3"
     changes:
