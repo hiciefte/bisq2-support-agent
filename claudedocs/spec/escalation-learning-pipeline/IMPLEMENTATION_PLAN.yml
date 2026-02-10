@@ -109,7 +109,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_hook.py -v"
 
   - id: E07
-    status: in_progress
+    status: done
     title: "Admin + polling API"
     phase: "4"
     changes:
@@ -127,7 +127,7 @@ tasks:
       - "pytest api/tests/routes/test_escalation_endpoints.py -v"
 
   - id: E08
-    status: todo
+    status: in_progress
     title: "Response delivery + Bisq2 WS"
     phase: "5"
     changes:
