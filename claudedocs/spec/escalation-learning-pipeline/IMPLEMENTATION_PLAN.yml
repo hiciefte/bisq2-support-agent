@@ -188,7 +188,7 @@ tasks:
       - "cd web && npm run lint"
 
   - id: E11
-    status: in_progress
+    status: done
     title: "Reliability + security gates"
     phase: "8"
     changes:
@@ -204,7 +204,7 @@ tasks:
       - "pytest api/tests/routes/test_escalation_endpoints.py -v --timeout=10"
 
   - id: E12
-    status: todo
+    status: done
     title: "Rollout -- feature flags + deploy"
     phase: "9"
     changes:

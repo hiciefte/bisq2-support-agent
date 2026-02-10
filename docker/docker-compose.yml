@@ -171,6 +171,9 @@ services:
       - HYBRID_KEYWORD_WEIGHT=${HYBRID_KEYWORD_WEIGHT:-0.4}
       - COLBERT_TOP_N=${COLBERT_TOP_N:-5}
       - ENABLE_COLBERT_RERANK=${ENABLE_COLBERT_RERANK:-true}
+      # Escalation pipeline feature flags
+      - ESCALATION_ENABLED=${ESCALATION_ENABLED:-true}
+      - ESCALATION_BISQ2_WS_ENABLED=${ESCALATION_BISQ2_WS_ENABLED:-false}
     expose:
       - "8000"
     networks:

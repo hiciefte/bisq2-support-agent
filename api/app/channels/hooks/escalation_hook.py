@@ -43,14 +43,24 @@ class EscalationPostHook(BasePostProcessingHook):
     - Delegates message formatting to adapter.format_escalation_message()
     """
 
-    def __init__(self, escalation_service, channel_registry):
+    def __init__(self, escalation_service, channel_registry, settings=None):
         super().__init__(name="escalation", priority=HookPriority.HIGH)
         self.escalation_service = escalation_service
         self.channel_registry = channel_registry
+        self._settings = settings
+
+    def _is_enabled(self) -> bool:
+        """Check ESCALATION_ENABLED feature flag."""
+        if self._settings is None:
+            return True
+        return getattr(self._settings, "ESCALATION_ENABLED", True)
 
     async def execute(
         self, incoming: IncomingMessage, outgoing: OutgoingMessage
     ) -> Optional[GatewayError]:
+        if not self._is_enabled():
+            return None
+
         if not outgoing.requires_human:
             return None
 

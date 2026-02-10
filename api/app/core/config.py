@@ -342,6 +342,8 @@ class Settings(BaseSettings):
     ESCALATION_DELIVERY_MAX_RETRIES: int = 3
     ESCALATION_RETENTION_DAYS: int = 90
     ESCALATION_ENABLED: bool = True
+    ESCALATION_BISQ2_WS_ENABLED: bool = False
+    ESCALATION_POLL_TIMEOUT_MINUTES: int = 30
 
     # Environment settings
     ENVIRONMENT: str = "development"
