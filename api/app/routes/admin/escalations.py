@@ -47,18 +47,15 @@ async def get_escalation_service():
     """
     global _escalation_service
     if _escalation_service is None:
+        import os
+
         from app.core.config import get_settings
         from app.services.escalation.escalation_repository import EscalationRepository
         from app.services.escalation.escalation_service import EscalationService
 
         settings = get_settings()
-        repo = EscalationRepository(
-            db_path=(
-                settings.ESCALATION_DB_PATH
-                if hasattr(settings, "ESCALATION_DB_PATH")
-                else "data/escalations.db"
-            )
-        )
+        db_path = os.path.join(settings.DATA_DIR, "escalations.db")
+        repo = EscalationRepository(db_path=db_path)
         await repo.initialize()
         _escalation_service = EscalationService(
             repository=repo,
