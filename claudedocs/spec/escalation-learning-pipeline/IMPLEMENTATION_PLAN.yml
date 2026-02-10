@@ -127,7 +127,7 @@ tasks:
       - "pytest api/tests/routes/test_escalation_endpoints.py -v"
 
   - id: E08
-    status: in_progress
+    status: done
     title: "Response delivery + Bisq2 WS"
     phase: "5"
     changes:
@@ -147,7 +147,7 @@ tasks:
       - "pytest api/tests/escalation/test_escalation_bisq2_websocket.py -v"
 
   - id: E09
-    status: todo
+    status: in_progress
     title: "Learning + FAQ integration"
     phase: "6"
     changes:
