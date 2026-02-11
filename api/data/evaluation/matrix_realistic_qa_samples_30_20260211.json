@@ -1,0 +1,512 @@
+[
+  {
+    "question": "In Bisq 1, what happens if a mediation proposal is not accepted and the case moves to arbitration?",
+    "ground_truth": "In Bisq 1, mediation proposals require acceptance by both traders. If either party does not accept or respond, the case can move to arbitration, where a final payout decision is made under the dispute-resolution rules.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.8999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$CgKJcp0xUW_hi14rY7KssZt5YBGcxDHdeHzGPQzLswQ",
+      "answer_event_id": "$QyUpJYpNtWZIKj6aOr-TgmcYWGzCV0RHGY2yNhzu0C0",
+      "review_id": "matrix_eval_001",
+      "review_status": "edited",
+      "sample_index": 0
+    }
+  },
+  {
+    "question": "What does the BuyerVerifiesPreparedDelayedPayoutTx error usually indicate, and how should I troubleshoot it?",
+    "ground_truth": "This error usually indicates an inconsistent trade/DAO state rather than a normal wallet sync issue. Rebuild DAO state from resources first, then re-check the trade. If it persists, collect logs and escalate to support.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$QaD4870B5jnot1IGAZWHDIePsEFqfcfTIUDhLGN4gTw",
+      "answer_event_id": "$DIPfoFoPmwR1Rza_2S47X1q0mqijj7RIHAX_ZfgpJ84",
+      "review_id": "matrix_eval_002",
+      "review_status": "edited",
+      "sample_index": 1
+    }
+  },
+  {
+    "question": "How does buying Bitcoin with ACH work in Bisq Easy?",
+    "ground_truth": "In Bisq Easy, the seller shares ACH payment details in trade chat. The buyer sends fiat directly to the seller account and the seller releases BTC after confirming payment.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_ecf75afc-7278-44ee-ae0d-7f4f382e5bb2",
+      "answer_event_id": "bisq2_abc2e29c-59e1-4f7d-bc95-c65f67a6ee56",
+      "review_id": "matrix_eval_003",
+      "review_status": "edited",
+      "sample_index": 2
+    }
+  },
+  {
+    "question": "How can I recover a Bisq 2 profile when the app no longer starts after reinstall/restore attempts?",
+    "ground_truth": "Create a fresh data directory/profile first, then migrate only required private profile data from backup instead of overwriting the whole directory. Keep the original directory as backup in case rollback is needed.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$NuyGxBGdTdCeCY_EyC5jCXEnapUgXeJuC1hskqtMy9U",
+      "answer_event_id": "$63OUNv2yb79U4CTqJSJx0HF-AE_PvgL6BgBYoueP03A",
+      "review_id": "matrix_eval_004",
+      "review_status": "edited",
+      "sample_index": 3
+    }
+  },
+  {
+    "question": "Do I need a Lightning wallet to use Bisq Easy?",
+    "ground_truth": "Use a Lightning wallet only for Lightning trades. For on-chain trades, use a regular Bitcoin wallet. Many users also use the Bisq 1 wallet for later multisig trading.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_1574c63c-7085-4e53-968d-04bca6b3cb84",
+      "answer_event_id": "bisq2_ddf001ea-dbe5-4c95-819e-62109a8a727a",
+      "review_id": "matrix_eval_005",
+      "review_status": "edited",
+      "sample_index": 4
+    }
+  },
+  {
+    "question": "In Bisq 1 arbitration, how are disputed payouts and reimbursement handled?",
+    "ground_truth": "In arbitration, the final payout is decided through the Bisq 1 dispute process. Operational reimbursement mechanics are handled through the DAO reimbursement framework, not by ad-hoc trader negotiation.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$xe362z5KS41dwhMlgp1HtDyw3YKh1m1aVNSFk_ibr4E",
+      "answer_event_id": "$GHm3iibg2wmZeUUv5UKO_1upRZ6etaPDRYkl45BhOOc",
+      "review_id": "matrix_eval_006",
+      "review_status": "edited",
+      "sample_index": 5
+    }
+  },
+  {
+    "question": "Do I need reputation to use Bisq Easy, and what if I cannot run Bisq 1 yet?",
+    "ground_truth": "Reputation is mainly needed for selling BTC at higher limits/premiums in Bisq Easy. New users can still buy BTC without reputation, then use that BTC for Bisq 1 deposits. If Bisq 1 install fails, follow the official installation troubleshooting guide.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_68f422c4-76c0-479e-9126-87e874b60869",
+      "answer_event_id": "bisq2_2090738f-13e1-4af1-bd1c-d521593a3021",
+      "review_id": "matrix_eval_007",
+      "review_status": "edited",
+      "sample_index": 6
+    }
+  },
+  {
+    "question": "If I paid fiat in Bisq 1 but BTC was not released, how is the issue resolved?",
+    "ground_truth": "Open mediation in Bisq 1. Trades are protected by multisig/security-deposit mechanics and a formal dispute flow: mediation first, then arbitration if unresolved.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$rYTuqjw3-dN81D5Fz9Dnmhv-mmIWZNiygl7R_YxkCus",
+      "answer_event_id": "$OR-PTh_hRhmtupa2Pa98CKs6duiZ7F7QIqiFHz5UmT0",
+      "review_id": "matrix_eval_008",
+      "review_status": "edited",
+      "sample_index": 7
+    }
+  },
+  {
+    "question": "In a Bisq 1 SEPA trade, what should a seller do if the incoming payment name does not match expected details?",
+    "ground_truth": "Do not finalize blindly. Open mediation so payment details and trade terms can be verified and the correct remediation (for example refund/retry path) can be applied.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$bLeQ9I7DbvX3nnFwwrceszyuIXe-Vj5Ft5m3JsqKBLA",
+      "answer_event_id": "$8qfYKOTP0T6bb1ziSQ63MStJjUIQjMa9G9Ce4C6bN3Q",
+      "review_id": "matrix_eval_009",
+      "review_status": "edited",
+      "sample_index": 8
+    }
+  },
+  {
+    "question": "Can I send fiat to Bisq directly to buy stablecoins?",
+    "ground_truth": "No. Bisq does not custody fiat. In Bisq Easy you pay fiat directly to the BTC seller, and current Bisq Easy trading is fiat-for-BTC.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_0179b700-6be5-4ac7-a09d-8a111daea228",
+      "answer_event_id": "bisq2_b910f310-06a3-40bc-a0cc-c461e0708c1f",
+      "review_id": "matrix_eval_010",
+      "review_status": "edited",
+      "sample_index": 9
+    }
+  },
+  {
+    "question": "What should I do when a trade fails with a market-price tolerance/protocol error and no valid deposit transaction?",
+    "ground_truth": "If no valid deposit transaction exists, the trade cannot complete. Move it to failed trades, recover/reconcile funds using failed-trade guidance, and retry with a fresh offer once state is healthy.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$yYziT1fskXCSI3kc93UtqCYXT4b7M3Unv_OA7KK1cLU",
+      "answer_event_id": "$RiWITx0sgH4VLGZ3anA5iQ4DNBBcv4rvrEUqOUNpu9E",
+      "review_id": "matrix_eval_011",
+      "review_status": "edited",
+      "sample_index": 10
+    }
+  },
+  {
+    "question": "My bank transfer failed and both peers want to cancel an open Bisq 1 trade. What is the proper process?",
+    "ground_truth": "Use the Bisq 1 support workflow and notify the mediator that both peers agree to cancel. The mediator can issue the appropriate proposal to safely unwind the trade state.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$mzrBjqVieyuEqbdE-9ixSRHmQf7WAgRIfnfzXz-lq0M",
+      "answer_event_id": "$0IiE6J6tahw2XsLAm1-BSFG27d1kA0lZdwzm0f8DQC4",
+      "review_id": "matrix_eval_012",
+      "review_status": "edited",
+      "sample_index": 11
+    }
+  },
+  {
+    "question": "Maker fee is confirmed but deposit transaction fails or is missing. How should this be handled?",
+    "ground_truth": "This is typically treated as a failed-trade state. Verify spendable UTXOs/wallet sync, then move the trade to failed and follow reimbursement/recovery guidance for affected fees.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$4B1jkXdSvgPsfYCirYvrG8Pt4U4jEu3jIw4Fhg838qw",
+      "answer_event_id": "$JNU47mXzqqy7UwEZYQgHzqBkPlsSvhH_6ZZxuLvYMCo",
+      "review_id": "matrix_eval_013",
+      "review_status": "edited",
+      "sample_index": 12
+    }
+  },
+  {
+    "question": "Can I export a CSV of Bisq Easy trades for taxes?",
+    "ground_truth": "Bisq Easy does not provide full historical CSV export. Keep your own trade records for tax reporting.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_1e2cbd5b-cc32-44d4-bed9-b686d9627de3",
+      "answer_event_id": "bisq2_3016da04-f1e1-4de0-b93e-fa7be85abdef",
+      "review_id": "matrix_eval_014",
+      "review_status": "edited",
+      "sample_index": 13
+    }
+  },
+  {
+    "question": "How do I start burning or bonding BSQ for reputation?",
+    "ground_truth": "Use the Reputation workflow and acquire BSQ via Bisq 1 first. Then perform burn/bond actions according to the reputation instructions.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_207f92d5-5816-46bc-ae29-1cebaf2d5c37",
+      "answer_event_id": "bisq2_b0f1cc7f-33e1-44e7-bb92-56f05a1ed232",
+      "review_id": "matrix_eval_015",
+      "review_status": "edited",
+      "sample_index": 14
+    }
+  },
+  {
+    "question": "Is Bisq Easy only for buying Bitcoin?",
+    "ground_truth": "Bisq Easy is BTC-focused. For broader pairs such as altcoins, use Bisq 1 multisig markets.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_a43761ca-278b-4111-af24-fbd7e65ca2ba",
+      "answer_event_id": "bisq2_cfff9cde-3ecd-48b0-b200-847375dba9a5",
+      "review_id": "matrix_eval_016",
+      "review_status": "edited",
+      "sample_index": 15
+    }
+  },
+  {
+    "question": "How long should I wait for BTC release after sending fiat in Bisq Easy?",
+    "ground_truth": "Expected release follows payment-method timing and seller confirmation. If the seller remains unresponsive beyond the expected window, open mediation.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_2cb1cecd-6ff9-49be-809a-8c30e7449255",
+      "answer_event_id": "bisq2_31128ec5-ebab-4f86-8690-60d93c80de0d",
+      "review_id": "matrix_eval_017",
+      "review_status": "edited",
+      "sample_index": 16
+    }
+  },
+  {
+    "question": "What should I do if trade protocol execution fails with VerifyPeersAccountAgeWitness-related errors?",
+    "ground_truth": "Treat it as a protocol failure: open mediation and include error details. Connectivity/Tor state can prevent required witness/account data propagation, so sync/connectivity checks are part of troubleshooting.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$QBidsBd1pCWws0t6_4_Ei72fIGKYqT8NSg0aPRjs-70",
+      "answer_event_id": "$fee53a3DQmUf1BC4j8aYKgSgZqF6IMxnrn9--2x6gvE",
+      "review_id": "matrix_eval_018",
+      "review_status": "edited",
+      "sample_index": 17
+    }
+  },
+  {
+    "question": "Why can failed trades show inconsistent transaction counts or amounts in the UI?",
+    "ground_truth": "Failed attempts can leave partial fee/deposit artifacts, so UI transaction lists may look inconsistent until recovery/sync is complete. Use failed-trade recovery flow and verify on-chain state before retrying.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$9IoS3fgqPf2QMbWYVK4fsiQPXgpSwgcVvdViuW8B1AQ",
+      "answer_event_id": "$W79155ZMj0kktpHFEXlU85dT3wwI6IH5Hxs7TeQzLsk",
+      "review_id": "matrix_eval_019",
+      "review_status": "edited",
+      "sample_index": 18
+    }
+  },
+  {
+    "question": "Do I need both Bisq 1 and Bisq 2?",
+    "ground_truth": "Today they serve different roles: Bisq Easy (Bisq 2) for simpler BTC-fiat flow, and Bisq 1 for multisig/altcoin trading and BSQ-based reputation actions.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_eca3a90f-f441-4097-947a-e1c6aca76e64",
+      "answer_event_id": "bisq2_826ad885-542f-4802-9f04-a84ab2cd506f",
+      "review_id": "matrix_eval_020",
+      "review_status": "edited",
+      "sample_index": 19
+    }
+  },
+  {
+    "question": "If the deposit transaction is confirmed on-chain but the Bisq trade still appears stuck, what should I do?",
+    "ground_truth": "Run SPV resync first for wallet-chain inconsistency, then re-check trade state. Use DAO resync only for DAO-specific issues. If still blocked, proceed through mediation/arbitration workflow.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$AwaxgxzlxoEO_EyfxhwYtJFXUC3wo62qOW0EEt1ulf8",
+      "answer_event_id": "$d1sbJoR1y8B2151k_xxLr17uUUlnCbAkQdOlp8PEjSQ",
+      "review_id": "matrix_eval_021",
+      "review_status": "edited",
+      "sample_index": 20
+    }
+  },
+  {
+    "question": "What does \"offer deactivated because BTC fee transaction not found\" mean, and how do I recover?",
+    "ground_truth": "It means the maker-fee/deposit flow did not complete correctly and the offer/trade is effectively failed. Move it to failed trades, recover funds per failed-trade guidance, then recreate the offer.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$gYRucEazEl16MQSSFqr76p-d1DbJbsdmFo4ZngixYs0",
+      "answer_event_id": "$DaayG7SnhW0wnkHK1wrJ0h9lA9ytnmXK--8dbB-O_W8",
+      "review_id": "matrix_eval_022",
+      "review_status": "edited",
+      "sample_index": 21
+    }
+  },
+  {
+    "question": "In Bisq 1, if deposit is mined but payment details do not appear from peer, what should the buyer do?",
+    "ground_truth": "Perform SPV resync and inspect trade details/contract state. If required peer data is still missing or unresponsive, open mediation and continue through official dispute flow.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$hX4KdyOq4JAcZXkCoWsElFpfDppD1Vb7G98UXQQtaH0",
+      "answer_event_id": "$xcAKI0uCj1f_n0gBxfco6fTmkBxe-cXbu39l5b45Df4",
+      "review_id": "matrix_eval_023",
+      "review_status": "edited",
+      "sample_index": 22
+    }
+  },
+  {
+    "question": "An Altcoin Instant/Bisq 1 trade started but protocol state is not progressing. What is the recommended path?",
+    "ground_truth": "First complete wallet/sync troubleshooting so trade actions are available. If protocol state remains stuck, open mediation and follow support/dispute workflow rather than waiting indefinitely.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$sDg7vfVsTlKao0HMrGUb_M_xtgKs6fLki0ZCda2c0KA",
+      "answer_event_id": "$9-qnUTkUsqEtdAPtl_J8XdtJDHEocRZzxTA_Lh4Yi_A",
+      "review_id": "matrix_eval_024",
+      "review_status": "edited",
+      "sample_index": 23
+    }
+  },
+  {
+    "question": "After confirming payment received, a trade shows cancelled/output errors. What should be checked?",
+    "ground_truth": "Check whether payout already happened from multisig on-chain. If status is inconsistent, open mediation and provide deposit/payout transaction IDs for investigation.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.7999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$rx785mTvA-C_xXFKIRql6ewqjO6UpuMJxfZCZVTK0pY",
+      "answer_event_id": "$JkOUgRFKsGd0yYP6k_F_EhzF0iHtzt4ymIEaVGznF28",
+      "review_id": "matrix_eval_025",
+      "review_status": "edited",
+      "sample_index": 24
+    }
+  },
+  {
+    "question": "Is Bisq Easy BTC-only?",
+    "ground_truth": "Yes, Bisq Easy is BTC-only at this stage. Bisq 1 supports multisig trading including altcoins.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_16cca65c-0e6b-4e06-b270-452a74b6b088",
+      "answer_event_id": "bisq2_976cae1f-0f45-411a-a2a3-e3c9cec47734",
+      "review_id": "matrix_eval_026",
+      "review_status": "edited",
+      "sample_index": 25
+    }
+  },
+  {
+    "question": "Should I use On-Chain or Lightning as the default receive method?",
+    "ground_truth": "Choose On-Chain if you are unsure. Use Lightning only when you intentionally receive via Lightning and have a correctly configured LN wallet.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "bisq2_10ea4642-7fbc-44cc-9da1-e5b7c50744e2",
+      "answer_event_id": "bisq2_211ca6ba-36f4-4e3c-b2e9-38f7f35de913",
+      "review_id": "matrix_eval_027",
+      "review_status": "edited",
+      "sample_index": 26
+    }
+  },
+  {
+    "question": "When can arbitration be opened in Bisq 1, and what if a trader will be temporarily unavailable?",
+    "ground_truth": "Arbitration can only be opened after defined timeout windows (commonly 10 days altcoin / 20 days fiat after deposit context). If unavailable, inform mediator in advance so case handling is documented.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.8999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$4ZAP0x2bjZJRN0MNjC1fyLSDKZ6xoixnX9MhTERSwEI",
+      "answer_event_id": "$6OMF6lO4LbHKQ5t2XYN17ntxip8_Fy1pKT0Dr_lKwi8",
+      "review_id": "matrix_eval_028",
+      "review_status": "edited",
+      "sample_index": 27
+    }
+  },
+  {
+    "question": "Why can Bisq 2 overview show zero total buying/selling even when trades were completed?",
+    "ground_truth": "Bisq 2 currently minimizes persistent historical stats for privacy by design; overview values may reflect limited current-profile/session context rather than full long-term trade history.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.95,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$X3Hf0RjHiALaZk1wcjd3zuD_2GvOEFKwth8LrVOYND0",
+      "answer_event_id": "$b3P-CAZKayCIb940T1mP5-H4ZJEiajgnoHskucx0_VA",
+      "review_id": "matrix_eval_029",
+      "review_status": "edited",
+      "sample_index": 28
+    }
+  },
+  {
+    "question": "Why can BSQ balance appear sufficient but trade-fee payment still fail in Bisq 1?",
+    "ground_truth": "Fee payment requires spendable BSQ UTXOs and correct fee context (for example BSQ swap vs fiat-trade fee path). Stale wallet state or fragmented/unspendable outputs can trigger insufficient-balance errors.",
+    "contexts": [],
+    "metadata": {
+      "source": "Curated mixed benchmark (Matrix + Bisq2 support export)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.8999999999999999,
+      "question_sender": "",
+      "answer_sender": "",
+      "question_event_id": "$9Jvn3M_m9_3MbcgyJ0mmSlIAnRRehahbhdcEzqnRRNs",
+      "answer_event_id": "$j2Ey8NSzw0ckMMtNL2BoxMOBgHqxPEI3vF8gkhNWAEE",
+      "review_id": "matrix_eval_030",
+      "review_status": "edited",
+      "sample_index": 29
+    }
+  }
+]
