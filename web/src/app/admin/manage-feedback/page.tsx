@@ -158,6 +158,38 @@ export default function ManageFeedbackPage() {
   // Debounce search text to avoid excessive API calls
   const debouncedSearchText = useDebounce(filters.search_text, 300);
 
+  // Stable filter payload for API calls; search_text only updates after debounce.
+  const stableFilters = useMemo(
+    () => ({
+      rating: filters.rating,
+      date_from: filters.date_from,
+      date_to: filters.date_to,
+      channel: filters.channel,
+      feedback_method: filters.feedback_method,
+      issues: filters.issues,
+      source_types: filters.source_types,
+      search_text: debouncedSearchText,
+      needs_faq: filters.needs_faq,
+      page: filters.page,
+      page_size: filters.page_size,
+      sort_by: filters.sort_by,
+    }),
+    [
+      debouncedSearchText,
+      filters.rating,
+      filters.date_from,
+      filters.date_to,
+      filters.channel,
+      filters.feedback_method,
+      filters.issues,
+      filters.source_types,
+      filters.needs_faq,
+      filters.page,
+      filters.page_size,
+      filters.sort_by,
+    ],
+  );
+
   // UI state
   const [activeTab, setActiveTab] = useState<'all' | 'negative' | 'needs_faq'>('needs_faq');
   const [showFilters, setShowFilters] = useState(false);
@@ -244,7 +276,7 @@ export default function ManageFeedbackPage() {
 
   const fetchFeedbackList = useCallback(async () => {
     // Adjust filters based on active tab, using debounced search text
-    const adjustedFilters = { ...filters, search_text: debouncedSearchText };
+    const adjustedFilters = { ...stableFilters };
     if (activeTab === 'negative') {
       adjustedFilters.rating = 'negative';
     } else if (activeTab === 'needs_faq') {
@@ -270,7 +302,7 @@ export default function ManageFeedbackPage() {
     if (response.ok) {
       const data = await response.json();
 
-      if (data.total_pages > 0 && filters.page > data.total_pages) {
+      if (data.total_pages > 0 && stableFilters.page > data.total_pages) {
         setFilters(prev => (
           prev.page > data.total_pages
             ? { ...prev, page: data.total_pages }
@@ -279,7 +311,7 @@ export default function ManageFeedbackPage() {
         return;
       }
 
-      if (data.total_pages === 0 && filters.page !== 1) {
+      if (data.total_pages === 0 && stableFilters.page !== 1) {
         setFilters(prev => (prev.page !== 1 ? { ...prev, page: 1 } : prev));
         return;
       }
@@ -295,7 +327,7 @@ export default function ManageFeedbackPage() {
     } else {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
-  }, [filters, activeTab, debouncedSearchText]);
+  }, [stableFilters, activeTab]);
 
   const fetchStats = useCallback(async () => {
     const response = await makeAuthenticatedRequest('/admin/feedback/stats');

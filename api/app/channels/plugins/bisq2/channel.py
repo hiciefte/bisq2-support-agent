@@ -166,7 +166,7 @@ class Bisq2Channel(ChannelBase):
                         sources=[],
                     )
                 except Exception:
-                    self._logger.debug(
+                    self._logger.warning(
                         "Failed to track sent message for reactions", exc_info=True
                     )
 

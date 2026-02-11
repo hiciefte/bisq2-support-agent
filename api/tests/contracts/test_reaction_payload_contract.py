@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 import pytest
+from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
 from app.channels.reactions import ReactionEvent, ReactionRating
 
 # =============================================================================
@@ -69,6 +70,7 @@ SUBSCRIPTION_REQUEST_FIELDS: Dict[str, str] = {
     "requestType": "string",
     "requestId": "string",
     "topic": "string",
+    "parameter": "string|optional",
 }
 
 # Bisq2 Reaction enum ordinals
@@ -104,10 +106,21 @@ def _type_check(value: Any, expected: str) -> bool:
 
 def _validate_payload(payload: Dict[str, Any], schema: Dict[str, str]) -> None:
     """Assert that payload has exactly the expected fields with correct types."""
-    missing = set(schema.keys()) - set(payload.keys())
+    required_fields = {
+        field
+        for field, expected in schema.items()
+        if not expected.endswith("|optional")
+    }
+    missing = required_fields - set(payload.keys())
     assert not missing, f"Missing fields: {missing}"
+    extra = set(payload.keys()) - set(schema.keys())
+    assert not extra, f"Unexpected fields: {extra}"
 
     for field, expected_type in schema.items():
+        if field not in payload:
+            continue
+        if expected_type.endswith("|optional"):
+            expected_type = expected_type.removesuffix("|optional")
         assert _type_check(
             payload[field], expected_type
         ), f"Field '{field}': expected {expected_type}, got {type(payload[field]).__name__} ({payload[field]!r})"
@@ -122,7 +135,7 @@ class TestSendMessageRequestContract:
     """Python agent builds request payloads matching Java SendSupportMessageRequest."""
 
     def test_message_request_minimal(self):
-        """Minimal request: text only, no citation."""
+        """Minimal request: text only; citation intentionally omitted."""
         payload = {"text": "You can download Bisq from bisq.network."}
         _validate_payload(payload, {"text": "string"})
         assert "citation" not in payload or payload["citation"] is None
@@ -383,35 +396,25 @@ class TestReactionMappingContract:
 
     def test_mapped_reactions_cover_positive_negative(self):
         """At least one POSITIVE and one NEGATIVE mapping exists."""
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
-
         ratings = set(BISQ2_REACTION_MAP.values())
         assert ReactionRating.POSITIVE in ratings
         assert ReactionRating.NEGATIVE in ratings
 
     def test_thumbs_up_is_positive(self):
         """THUMBS_UP(0) -> POSITIVE (core contract)."""
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
-
         assert BISQ2_REACTION_MAP["THUMBS_UP"] == ReactionRating.POSITIVE
 
     def test_thumbs_down_is_negative(self):
         """THUMBS_DOWN(1) -> NEGATIVE (core contract)."""
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
-
         assert BISQ2_REACTION_MAP["THUMBS_DOWN"] == ReactionRating.NEGATIVE
 
     def test_unmapped_reactions_not_in_map(self):
         """LAUGH(3) and PARTY(5) are intentionally unmapped (dropped)."""
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
-
         assert "LAUGH" not in BISQ2_REACTION_MAP
         assert "PARTY" not in BISQ2_REACTION_MAP
 
     def test_all_mapped_reactions_have_valid_java_ordinals(self):
         """Every mapped reaction name corresponds to a valid Java enum ordinal."""
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
-
         for name in BISQ2_REACTION_MAP:
             assert name in BISQ2_REACTIONS, f"{name} not in Java Reaction enum"
 
@@ -422,8 +425,6 @@ class TestReactionMappingContract:
             "messageId": "msg-abc",
             "senderUserProfileId": "user-xyz",
         }
-
-        from app.channels.plugins.bisq2.reaction_handler import BISQ2_REACTION_MAP
 
         rating = BISQ2_REACTION_MAP.get(ws_payload["reaction"])
         assert rating == ReactionRating.POSITIVE

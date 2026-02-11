@@ -14,7 +14,7 @@ import pytest
 
 @pytest.fixture()
 def migrated_db(tmp_path):
-    """Create an in-memory DB with base schema + migration 003 applied."""
+    """Create a temporary file-backed SQLite DB with migration 003 applied."""
     db_path = str(tmp_path / "test.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

@@ -95,12 +95,21 @@ class SentMessageTracker:
     TTL-based expiry ensures bounded memory usage.
     """
 
-    def __init__(self, ttl_hours: int = 24):
+    def __init__(self, ttl_hours: int = 24, max_size: int = 10_000):
         self.ttl_hours = ttl_hours
+        self._max_size = max_size
         self._records: Dict[str, SentMessageRecord] = {}
+        self._track_count: int = 0
+        self._purge_interval: int = 100
 
     def _key(self, channel_id: str, external_message_id: str) -> str:
         return f"{channel_id}:{external_message_id}"
+
+    def _purge_expired(self) -> None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.ttl_hours)
+        expired_keys = [k for k, v in self._records.items() if v.timestamp < cutoff]
+        for key in expired_keys:
+            del self._records[key]
 
     def track(
         self,
@@ -113,6 +122,10 @@ class SentMessageTracker:
         sources: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Track a sent message for future reaction correlation."""
+        if len(self._records) >= self._max_size:
+            oldest_key = min(self._records, key=lambda k: self._records[k].timestamp)
+            del self._records[oldest_key]
+
         key = self._key(channel_id, external_message_id)
         self._records[key] = SentMessageRecord(
             internal_message_id=internal_message_id,
@@ -124,6 +137,9 @@ class SentMessageTracker:
             timestamp=datetime.now(timezone.utc),
             sources=sources,
         )
+        self._track_count += 1
+        if self._track_count % self._purge_interval == 0:
+            self._purge_expired()
 
     def lookup(
         self, channel_id: str, external_message_id: str

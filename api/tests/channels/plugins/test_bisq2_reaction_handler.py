@@ -104,7 +104,7 @@ class TestBisq2ReactionHandlerListening:
         )
         mock_ws_client.on_event = MagicMock()
 
-        mock_runtime.resolve.return_value = mock_ws_client
+        mock_runtime.resolve_optional.return_value = mock_ws_client
 
         await handler.start_listening()
 

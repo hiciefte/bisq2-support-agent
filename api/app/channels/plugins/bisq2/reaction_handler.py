@@ -51,7 +51,11 @@ class Bisq2ReactionHandler(ReactionHandlerBase):
 
     async def start_listening(self) -> None:
         """Connect to Bisq2 WebSocket and subscribe to reactions topic."""
-        ws_client = self.runtime.resolve("bisq2_websocket_client")
+        ws_client = self.runtime.resolve_optional("bisq2_websocket_client")
+        if ws_client is None:
+            raise RuntimeError(
+                "bisq2_websocket_client must be registered before start_listening"
+            )
         self._ws_client = ws_client
 
         await ws_client.connect()

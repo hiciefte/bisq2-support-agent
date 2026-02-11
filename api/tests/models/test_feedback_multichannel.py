@@ -322,3 +322,23 @@ class TestFeedbackStatsResponseExtensions:
         )
         assert "web" in resp.feedback_by_channel
         assert "matrix" in resp.feedback_by_channel
+
+    def test_feedback_by_method_populated(self):
+        """feedback_by_method can be populated."""
+        resp = FeedbackStatsResponse(
+            total_feedback=10,
+            positive_count=8,
+            negative_count=2,
+            helpful_rate=0.8,
+            common_issues={},
+            recent_negative_count=1,
+            needs_faq_count=0,
+            source_effectiveness={},
+            feedback_by_month={},
+            feedback_by_method={
+                "web_dialog": {"positive": 5, "negative": 1},
+                "reaction": {"positive": 3, "negative": 1},
+            },
+        )
+        assert "web_dialog" in resp.feedback_by_method
+        assert "reaction" in resp.feedback_by_method

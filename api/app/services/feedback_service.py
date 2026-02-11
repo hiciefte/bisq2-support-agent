@@ -624,6 +624,11 @@ class FeedbackService:
         Returns True if feedback was stored/updated.
         """
         try:
+            if rating not in ("positive", "negative"):
+                logger.warning(
+                    "Unexpected rating value for reaction feedback: %s; defaulting to negative",
+                    rating,
+                )
             rating_int = 1 if rating == "positive" else 0
 
             # Check for existing reaction

@@ -343,6 +343,7 @@ class ChannelBase(ABC):
                 answer="I encountered an internal error while processing your request.",
                 sources=[],
                 user=message.user,
+                original_question=message.question,
                 metadata=ResponseMetadata(
                     processing_time_ms=processing_time,
                     rag_strategy="error",
