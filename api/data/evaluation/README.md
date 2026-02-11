@@ -197,3 +197,17 @@ Guideline for this repository:
 - Store full metrics in machine-readable artifacts (`api/data/evaluation_results/*.json` and `api/data/evaluation/benchmarks/*.json`).
 - Keep documentation focused on methodology and reproducibility, not raw per-run dumps.
 - If needed, document only the latest **approved baseline summary** (single table with date + commit + key metrics), and link to the exact result artifact.
+
+### Baseline Comparison (2026-02-11)
+
+These are the currently available comparison runs across the three requested git states (30 samples each):
+
+| State | Commit | Backend | Artifact | Faithfulness | Answer Relevancy | Context Precision | Context Recall |
+|---|---|---|---|---:|---:|---:|---:|
+| Chroma-only baseline | `7c75417` | chromadb | `api/data/evaluation_results/chromadb_7c75417_ragas30_fixed.json` | 0.3884 | 0.0000 | 0.5594 | 0.2222 |
+| Initial Qdrant setup | `824b7b8` | qdrant | `api/data/evaluation_results/qdrant_824b7b8_ragas30.json` | 0.4545 | 0.0000 | 0.5474 | 0.2500 |
+| Current setup | `efa7bae` | qdrant | `api/data/evaluation_results/qdrant_efa7bae_ragas30.json` | 0.4199 | 0.5785 | 0.6422 | 0.3889 |
+
+Notes:
+- The two Qdrant artifacts above still contain `"system": "chromadb"` due to a legacy label in the older evaluation script output; backend attribution here follows the run setup and artifact naming.
+- `answer_similarity` and `answer_correctness` are `null` in these runs and therefore excluded from the summary table.
