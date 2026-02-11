@@ -483,7 +483,7 @@ async def run_evaluation(
     Args:
         samples_path: Path to baseline samples JSON
         output_path: Path to save results
-        backend: Retriever backend name (chromadb, qdrant, hybrid)
+        backend: Retriever backend name (qdrant)
         max_samples: Optional limit on number of samples
 
     Returns:
@@ -767,7 +767,7 @@ def main():
         "--backend",
         type=str,
         default="qdrant",
-        choices=["chromadb", "qdrant", "hybrid"],
+        choices=["qdrant"],
         help="Label for results (actual backend is configured server-side, default: qdrant)",
     )
     parser.add_argument(

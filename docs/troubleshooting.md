@@ -4,36 +4,39 @@ This document provides solutions for common issues you might encounter with the 
 
 ## API Service Issues
 
-### RAG Service Cleanup Error
+### Qdrant Index Initialization Errors
 
-If you see an error like this in your API logs:
+If the API starts but retrieval fails, you may see errors about missing Qdrant collections or index readiness.
+
+Typical symptoms:
 
 ```
-ERROR: Application shutdown failed. Exiting.
-AttributeError: 'Chroma' object has no attribute 'persist'
+Qdrant retriever health check failed
 ```
 
-This is caused by a compatibility issue with the Chroma DB version. To fix it:
+or
 
-1. Edit the RAG service file:
+```
+Collection <name> not found
+```
+
+To fix:
+
+1. Ensure Qdrant is running:
    ```bash
-   nano /path/to/bisq2-support-agent/api/app/services/simplified_rag_service.py
+   docker compose -f docker/docker-compose.yml ps qdrant
    ```
 
-2. Find the `cleanup` method (around line 537) and modify it to check if the vectorstore has the persist method before calling it:
-   ```python
-   async def cleanup(self):
-       """Clean up resources."""
-       logger.info("Cleaning up RAG service resources...")
-       # Check if vectorstore has persist method before calling it
-       if hasattr(self.vectorstore, 'persist'):
-           self.vectorstore.persist()
-       logger.info("RAG service cleanup complete")
+2. Rebuild the Qdrant index from current wiki/FAQ sources:
+   ```bash
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api \
+     python -m app.scripts.rebuild_qdrant_index --force
    ```
 
-3. Restart the API service:
+3. Restart API and re-check health:
    ```bash
    docker compose -f docker/docker-compose.yml restart api
+   curl http://localhost:8000/health
    ```
 
 ## Bisq API Connection Issues
@@ -192,7 +195,7 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 2. Check the FAQ extractor logs:
    ```bash
-   cat /path/to/bisq2-support-agent/logs/faq-extractor-*.log
+   docker compose -f docker/docker-compose.yml logs scheduler
    ```
 
 3. Verify the OpenAI API key is valid:

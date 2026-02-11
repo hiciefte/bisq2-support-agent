@@ -1,9 +1,5 @@
 """
-Index state tracking and manual rebuild coordination.
-
-This is the Qdrant-only successor to the old Chroma "vectorstore" state manager.
-It tracks whether the search index is out of sync with source data and
-coordinates manual rebuild operations.
+Index state tracking and manual rebuild coordination for Qdrant.
 """
 
 import logging

@@ -133,10 +133,7 @@ async def lifespan(app: FastAPI):
     await rag_service.setup()
 
     # Eager load ColBERT reranker if enabled and using Qdrant backend
-    if (
-        settings.RETRIEVER_BACKEND in ("qdrant", "hybrid")
-        and settings.ENABLE_COLBERT_RERANK
-    ):
+    if settings.RETRIEVER_BACKEND == "qdrant" and settings.ENABLE_COLBERT_RERANK:
         logger.info("Eager loading ColBERT reranker model...")
         try:
             if rag_service.colbert_reranker:

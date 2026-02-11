@@ -1,9 +1,4 @@
-"""
-Qdrant index management (build, rebuild, and change detection).
-
-This module replaces the previous ChromaDB-based vectorstore management.
-The app now uses Qdrant as the only vector database.
-"""
+"""Qdrant index management (build, rebuild, and change detection)."""
 
 import hashlib
 import json

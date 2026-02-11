@@ -2,186 +2,109 @@
 
 ## Overview
 
-The Bisq Support Agent uses a **hybrid RAG (Retrieval Augmented Generation)** system combining:
+The Bisq Support Agent uses a hybrid Retrieval Augmented Generation (RAG) pipeline with a Qdrant-backed index.
 
-1. **Metadata Filtering**: Protocol-based document prioritization (Bisq Easy vs Bisq 1)
-2. **Keyword Search**: BM25 sparse vector search for exact term matching
-3. **Semantic Search**: Dense vector embeddings for meaning-based retrieval
-4. **Weighted Fusion**: Configurable combination of keyword and semantic scores
+Core stages:
 
-## Architecture Diagram
+1. Protocol/version detection (Bisq Easy vs Bisq 1)
+2. Multi-stage protocol filtering
+3. Hybrid retrieval (dense + sparse/BM25)
+4. Weighted fusion and deduplication
+5. Optional ColBERT reranking
+6. Context assembly and LLM generation
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          User Query                                  │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Version Detection                                 │
-│              (Bisq Easy / Bisq 1 / Unknown)                         │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                Multi-Stage Protocol Filtering                        │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
-│  │ Stage 1: Primary │→ │ Stage 2: General │→ │ Stage 3: Fallback│  │
-│  │ protocol-specific│  │ if < 4 docs      │  │ if < 3 docs      │  │
-│  └──────────────────┘  └──────────────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Hybrid Search                                   │
-│  ┌─────────────────────────┐    ┌─────────────────────────────┐    │
-│  │   Semantic Search       │    │     Keyword Search          │    │
-│  │   (Dense Vectors)       │    │     (BM25 Sparse)           │    │
-│  │   Weight: 0.7           │    │     Weight: 0.3             │    │
-│  └─────────────────────────┘    └─────────────────────────────┘    │
-│                    │                        │                       │
-│                    └──────────┬─────────────┘                       │
-│                               ▼                                     │
-│                    Min-Max Normalization                            │
-│                               ▼                                     │
-│                    Weighted Score Fusion                            │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│              Deduplication & Optional ColBERT Reranking             │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Context Assembly                                  │
-│              (Wiki docs + FAQs → Prompt)                            │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LLM Generation                                    │
-│              (AISuite → OpenAI gpt-4o-mini)                         │
-└─────────────────────────────────────────────────────────────────────┘
+## Request Flow
+
+```text
+User Query
+  -> Protocol Detector
+  -> Protocol-Aware Retrieval Stages
+     -> Qdrant Dense Search
+     -> Qdrant Sparse (BM25) Search
+     -> Weighted Fusion (semantic + keyword)
+  -> Deduplication
+  -> Optional ColBERT Rerank
+  -> Prompt Assembly
+  -> LLM Response
 ```
 
-## Key Components
+## Main Components
 
-### 1. Document Retriever
+### RAG Orchestration
 
-**Location**: `api/app/services/rag/document_retriever.py`
+- `api/app/services/simplified_rag_service.py`
+- Loads wiki + FAQ documents
+- Rebuilds/validates Qdrant index via index manager
+- Initializes retriever and response generation chain
 
-Implements multi-stage retrieval with protocol filtering:
+### Protocol-Aware Retrieval Logic
 
-```python
-# Bisq Easy Query Flow
-Stage 1: filter={"protocol": "bisq_easy"}, k=6
-Stage 2: filter={"protocol": "all"}, k=4 (if total < 4)
-Stage 3: filter={"protocol": "multisig_v1"}, k=2 (if total < 3)
-```
+- `api/app/services/rag/document_retriever.py`
+- Applies staged protocol filters (`bisq_easy`, `multisig_v1`, `all`)
+- Prioritizes relevant protocol content while preserving fallback behavior
 
-### 2. BM25 Tokenizer
+### Hybrid Retriever
 
-**Location**: `api/app/services/rag/bm25_tokenizer.py`
+- `api/app/services/rag/qdrant_hybrid_retriever.py`
+- Executes dense and sparse searches against Qdrant
+- Applies weighted score fusion
+- Handles filter translation and compatibility across qdrant-client versions
 
-Sparse vector search with:
-- K1 = 1.5 (term frequency saturation)
-- B = 0.75 (document length normalization)
-- 125-word stopword list
-- IDF weighting: `log((N - df + 0.5) / (df + 0.5) + 1)`
+### Index Management
 
-### 3. Qdrant Hybrid Retriever
+- `api/app/services/rag/qdrant_index_manager.py`
+- Maintains index metadata and freshness checks
+- Builds/rebuilds index from authoritative sources
 
-**Location**: `api/app/services/rag/qdrant_hybrid_retriever.py`
+### BM25 Sparse Vectors
 
-True hybrid search combining dense and sparse vectors:
-
-```python
-combined_score = (0.7 × normalized_dense) + (0.3 × normalized_sparse)
-```
-
-### 4. Prompt Manager
-
-**Location**: `api/app/services/rag/prompt_manager.py`
-
-Manages system prompts, chat history formatting, and context assembly.
-
-### 5. LLM Provider
-
-**Location**: `api/app/services/rag/llm_provider.py`
-
-AISuite wrapper for OpenAI API with configurable temperature and token limits.
-
-## Configuration Reference
-
-### Core Settings (`config.py`)
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `RETRIEVER_BACKEND` | `"chromadb"` | Backend: chromadb, qdrant, hybrid |
-| `HYBRID_SEMANTIC_WEIGHT` | 0.7 | Dense vector weight |
-| `HYBRID_KEYWORD_WEIGHT` | 0.3 | Sparse vector weight |
-| `ENABLE_COLBERT_RERANK` | True | Enable ColBERT reranking |
-| `COLBERT_TOP_N` | 5 | Final documents after rerank |
-| `MAX_CONTEXT_LENGTH` | 15000 | Max context chars for LLM |
-| `MAX_CHAT_HISTORY_LENGTH` | 10 | Conversation memory |
-
-### Embedding Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `OPENAI_EMBEDDING_MODEL` | `"text-embedding-3-small"` | Embedding model |
-| `EMBEDDING_DIMENSIONS` | 1536 | Vector dimensions |
-| `EMBEDDING_PROVIDER` | `"openai"` | Provider (openai, cohere, voyage) |
-
-### BM25 Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `BM25_K1` | 1.5 | Term frequency saturation |
-| `BM25_B` | 0.75 | Length normalization |
-| `BM25_VOCABULARY_FILE` | `"bm25_vocabulary.json"` | Vocabulary storage |
-
-## Protocol Metadata
-
-Documents are tagged with protocol for filtering:
-
-| Protocol Value | Display Name | Content Type |
-|----------------|--------------|--------------|
-| `bisq_easy` | Bisq Easy (Bisq 2) | Reputation-based trading |
-| `multisig_v1` | Multisig v1 (Bisq 1) | 2-of-2 multisig trading |
-| `musig` | MuSig | Future protocol (reserved) |
-| `all` | General | Cross-protocol content |
+- `api/app/services/rag/bm25_tokenizer.py`
+- Produces sparse vectors used by Qdrant hybrid search
+- Controlled by BM25 parameters and vocabulary file
 
 ## Data Sources
 
-### Wiki Documents
-- **Location**: `api/data/wiki/processed_wiki.jsonl`
-- **Type**: `"wiki"`
-- **Source Weight**: 1.1
+### Wiki
 
-### FAQ Documents
-- **Location**: `api/data/faqs.db` (SQLite)
-- **Type**: `"faq"`
-- **Source Weight**: 1.0
+- Source: `api/data/wiki/processed_wiki.jsonl`
+- Optional: `api/data/wiki/payment_methods_reference.jsonl`
+- Metadata includes protocol tags used for filtering
 
-## ChromaDB Vector Store
+### FAQ
 
-**Location**: `api/data/vectorstore/`
+- Source of truth: `api/data/faqs.db`
+- Includes manually managed and pipeline-extracted FAQs
 
-Settings:
-- k = 8 candidates per query
-- score_threshold = 0.3 (cosine similarity)
-- Distance metric: cosine
+## Configuration Reference
 
-## Current Limitations
+| Setting | Value / Default | Notes |
+|---|---|---|
+| `RETRIEVER_BACKEND` | app default: `qdrant` | Qdrant-only backend |
+| `RETRIEVER_BACKEND` in Docker Compose | default: `qdrant` | Effective runtime default in local/prod compose runs |
+| `HYBRID_SEMANTIC_WEIGHT` | `0.6` | Dense score contribution |
+| `HYBRID_KEYWORD_WEIGHT` | `0.4` | Sparse/BM25 score contribution |
+| `ENABLE_COLBERT_RERANK` | app default: `false` | Compose default currently enables it (`true`) |
+| `COLBERT_TOP_N` | `5` | Final docs retained after rerank |
+| `BM25_K1` | `1.5` | BM25 term frequency saturation |
+| `BM25_B` | `0.75` | BM25 document length normalization |
 
-1. **No Confidence Scoring**: All answers returned immediately without confidence-based routing
-2. **ChromaDB Single Node**: No horizontal scaling for vector store
-3. **No Query Expansion**: Single query without reformulation
+## Storage
+
+- Qdrant vectors: Docker volume `bisq2-qdrant-data`
+- BM25 vocabulary: `api/data/bm25_vocabulary.json` (runtime generated)
+- Qdrant index metadata: `api/data/qdrant_index_metadata.json` (runtime generated)
+
+## Evaluation References
+
+For reproducible retrieval evaluation, use:
+
+- `api/data/evaluation/matrix_realistic_qa_samples_30_20260211.json`
+- `api/data/evaluation/kb_snapshots/`
+- `api/data/evaluation/retrieval_strict.lock.json`
+- `api/app/scripts/retrieval_benchmark_harness.py`
 
 ## Related Documentation
 
-- **Retrieval Pipeline Details**: `.claude/docs/retrieval-pipeline.md`
-- **Knowledge Base System**: `.claude/docs/knowledge-base.md`
-- **Environment Configuration**: `.claude/docs/environment-config.md`
+- `README.md`
+- `docs/environment-configuration.md`
+- `api/data/evaluation/README.md`

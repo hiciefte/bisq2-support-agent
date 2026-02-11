@@ -206,7 +206,7 @@ start_services() {
     log_info "Waiting for services to become healthy..."
 
     # Wait for critical services to be healthy
-    # Increased timeout to 180s for API (FastAPI + ChromaDB initialization needs 60-90s)
+    # Increased timeout to 180s for API (FastAPI + retrieval/index initialization needs 60-90s)
     local api_healthy=0
     if ! wait_for_healthy "api" 180 "$docker_dir" "$compose_file"; then
         api_healthy=1

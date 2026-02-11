@@ -2,9 +2,8 @@
 """
 Record baseline RAGAS metrics for the current RAG system.
 
-This script queries the current ChromaDB-based RAG system with the baseline
-test samples and computes RAGAS evaluation metrics for comparison after
-the Qdrant migration.
+This script queries the current Qdrant-based RAG system with baseline
+test samples and computes RAGAS evaluation metrics.
 
 Usage:
     python -m api.app.scripts.record_baseline_metrics [--samples N] [--output PATH]
@@ -364,7 +363,7 @@ async def run_evaluation(
     # Build results
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "system": "chromadb",
+        "system": "qdrant",
         "samples_count": len(samples),
         "metrics": metrics,
         "avg_response_time": avg_response_time,

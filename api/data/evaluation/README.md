@@ -5,8 +5,8 @@ This directory contains evaluation data and results for comparing the RAG retrie
 ## Files
 
 - `matrix_realistic_qa_samples_30_20260211.json` - Current curated 30-question benchmark set (mixed Matrix + Bisq2 export, 15x `multisig_v1`, 15x `bisq_easy`)
-- `matrix_realistic_qa_review_30_20260211.json` - Human review file and curation notes for the current 30-question benchmark set
 - `qdrant_realistic_evaluation.json` - Historical Qdrant evaluation result (latest agreed reference)
+- `retrieval_strict.lock.json` - Canonical lockfile for reproducible benchmark runs
 - `kb_snapshots/` - Frozen knowledge-base snapshots (`wiki` + `faqs.db` + `bm25` inputs) for reproducible runs
 - `benchmarks/` - Repeated-run benchmark outputs and A/B comparison reports (create as needed)
 
@@ -57,20 +57,16 @@ After restore, rebuild the Qdrant index to ensure collection contents match the 
 
 ### Prerequisites
 
-1. API service running with desired backend:
+1. API service running with Qdrant backend (current runtime path):
 
    ```bash
-   # For ChromaDB (baseline):
-   RETRIEVER_BACKEND=chromadb docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d api
-
-   # For Qdrant hybrid (new system):
    RETRIEVER_BACKEND=qdrant docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d api qdrant
    ```
 
-2. Qdrant collection populated (if using Qdrant):
+2. Qdrant collection populated:
 
    ```bash
-   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.migrate_to_qdrant
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.rebuild_qdrant_index --force
    ```
 
 ### Running Evaluation
@@ -78,8 +74,8 @@ After restore, rebuild the Qdrant index to ensure collection contents match the 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.run_ragas_evaluation \
     --samples /data/evaluation/matrix_realistic_qa_samples_30_20260211.json \
-    --output /data/evaluation/[backend]_realistic_evaluation.json \
-    --backend [chromadb|qdrant]
+    --output /data/evaluation/qdrant_realistic_evaluation.json \
+    --backend qdrant
 ```
 
 Recommended options for comparable retrieval evaluation:
@@ -112,13 +108,51 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --kb-manifest /data/evaluation/kb_snapshots/kb_2026_02_11/manifest.json
 ```
 
+## Strict Reproducible Pipeline (Lockfile)
+
+Use a lockfile to pin all inputs/options for future apples-to-apples runs.
+
+### 1) Create lockfile once
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.retrieval_benchmark_harness lock \
+    --output /data/evaluation/retrieval_strict.lock.json \
+    --samples /data/evaluation/matrix_realistic_qa_samples_30_20260211.json \
+    --backend qdrant \
+    --run-name qdrant_strict \
+    --output-dir /data/evaluation/benchmarks \
+    --repeats 1 \
+    --bypass-hooks escalation \
+    --kb-manifest /data/evaluation/kb_snapshots/kb_2026_02_11/manifest.json \
+    --ragas-timeout 60 \
+    --ragas-max-retries 2 \
+    --ragas-max-wait 10 \
+    --ragas-max-workers 32 \
+    --ragas-batch-size 8
+```
+
+### 2) Run using lockfile
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.retrieval_benchmark_harness run \
+    --lock-file /data/evaluation/retrieval_strict.lock.json
+```
+
+`run --lock-file` enforces:
+- sample file SHA256
+- KB manifest SHA256 (if configured)
+- expected runtime environment values (`OPENAI_MODEL`, `OPENAI_EMBEDDING_MODEL`, API key presence)
+- API readiness (`/health` + probe query) before evaluation starts
+
+It also writes a runtime manifest alongside summary results.
+
 Compare two benchmark summaries:
 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.retrieval_benchmark_harness compare \
-    --baseline /data/evaluation/benchmarks/chromadb_initial.summary.json \
+    --baseline /data/evaluation/benchmarks/qdrant_baseline.summary.json \
     --candidate /data/evaluation/benchmarks/qdrant_current.summary.json \
-    --output /data/evaluation/benchmarks/chromadb_vs_qdrant.compare.json
+    --output /data/evaluation/benchmarks/qdrant_compare.json
 ```
 
 The compare report includes:
@@ -153,5 +187,13 @@ Review the generated `matrix_realistic_qa_review_*.json` before using the sample
 
 ## Notes
 
-- The `answer_relevancy` metric consistently returns 0.0/NaN due to a RAGAS configuration issue with OpenAIEmbeddings
+- On older git states, `answer_relevancy` may still be 0.0/NaN due to legacy RAGAS/OpenAIEmbeddings compatibility. Current scripts pass embeddings explicitly to avoid that on current code.
 - Keep the sample set and KB snapshot fixed when comparing git states; otherwise metric deltas are not comparable.
+
+## Metrics In Documentation
+
+Guideline for this repository:
+
+- Store full metrics in machine-readable artifacts (`api/data/evaluation_results/*.json` and `api/data/evaluation/benchmarks/*.json`).
+- Keep documentation focused on methodology and reproducibility, not raw per-run dumps.
+- If needed, document only the latest **approved baseline summary** (single table with date + commit + key metrics), and link to the exact result artifact.

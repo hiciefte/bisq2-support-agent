@@ -165,7 +165,7 @@ services:
       - LLM_EXTRACTION_BATCH_SIZE=${LLM_EXTRACTION_BATCH_SIZE:-10}
       - LLM_EXTRACTION_CACHE_TTL=${LLM_EXTRACTION_CACHE_TTL:-3600}
       - LLM_EXTRACTION_CACHE_SIZE=${LLM_EXTRACTION_CACHE_SIZE:-100}
-      # Retriever backend configuration (qdrant for hybrid search, chromadb for fallback)
+      # Retriever backend configuration (Qdrant-only runtime)
       - RETRIEVER_BACKEND=${RETRIEVER_BACKEND:-qdrant}
       - HYBRID_SEMANTIC_WEIGHT=${HYBRID_SEMANTIC_WEIGHT:-0.6}
       - HYBRID_KEYWORD_WEIGHT=${HYBRID_KEYWORD_WEIGHT:-0.4}
