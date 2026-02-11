@@ -356,7 +356,7 @@ pillow==12.1.1
     #   -r api/requirements.in
     #   matplotlib
     #   ragas
-pip-tools==7.5.2
+pip-tools==7.5.3
     # via -r api/requirements.in
 platformdirs==4.5.1
     # via
