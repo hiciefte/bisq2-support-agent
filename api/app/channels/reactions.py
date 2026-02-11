@@ -7,6 +7,7 @@ Provides channel-agnostic reaction handling:
 - ReactionHandlerBase: ABC for channel-specific handlers
 """
 
+import asyncio
 import hashlib
 import logging
 from abc import ABC, abstractmethod
@@ -231,7 +232,7 @@ class ReactionProcessor:
         }
 
         try:
-            self._store_feedback(feedback_data)
+            await asyncio.to_thread(self._store_feedback, feedback_data)
             return True
         except Exception:
             logger.exception(
@@ -256,7 +257,12 @@ class ReactionProcessor:
             if self.feedback_service and hasattr(
                 self.feedback_service, "revoke_reaction_feedback"
             ):
-                self._run_revoke(channel_id, external_message_id, reactor_hash)
+                await asyncio.to_thread(
+                    self._run_revoke,
+                    channel_id,
+                    external_message_id,
+                    reactor_hash,
+                )
                 return True
             logger.debug("FeedbackService unavailable for revocation")
             return False

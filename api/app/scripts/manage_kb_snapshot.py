@@ -246,7 +246,8 @@ def restore_snapshot(args: argparse.Namespace) -> int:
     backup_dir = None
     if args.backup_existing:
         backup_dir = (
-            snapshot_dir / f"restore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            snapshot_dir
+            / f"restore_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         )
         backup_dir.mkdir(parents=True, exist_ok=True)
 

@@ -518,7 +518,7 @@ class TestPollingEndpoint:
             responded_at=None,
             closed_at=None,
         )
-        mock_escalation_service.get_escalation_by_message_id.return_value = (
+        mock_escalation_service.repository.get_by_message_id.return_value = (
             pending_escalation
         )
 

@@ -350,7 +350,11 @@ class TestEscalationRepositoryMaintenance:
         await escalation_repository.initialize()
         esc = await escalation_repository.create(_make_create(message_id="msg-001"))
         await escalation_repository.update(
-            esc.id, EscalationUpdate(status=EscalationStatus.CLOSED)
+            esc.id,
+            EscalationUpdate(
+                status=EscalationStatus.CLOSED,
+                closed_at=datetime.now(timezone.utc),
+            ),
         )
         threshold = datetime.now(timezone.utc) + timedelta(seconds=1)
         count = await escalation_repository.purge_old(threshold)

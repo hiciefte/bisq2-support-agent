@@ -165,7 +165,9 @@ class EscalationService:
             and escalation.staff_id
             and escalation.staff_id != staff_id
         ):
-            if not self._is_claim_expired(escalation.claimed_at):
+            if escalation.claimed_at and not self._is_claim_expired(
+                escalation.claimed_at
+            ):
                 raise EscalationAlreadyClaimedError(
                     f"Escalation {escalation_id} claimed by " f"{escalation.staff_id}"
                 )

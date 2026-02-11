@@ -27,6 +27,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { makeAuthenticatedRequest } from '@/lib/auth'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { EscalationReviewPanel } from './EscalationReviewPanel'
 
 // --- Types ---
@@ -79,15 +80,6 @@ interface EscalationCounts {
 }
 
 // --- Helpers ---
-
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value)
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay)
-    return () => clearTimeout(handler)
-  }, [value, delay])
-  return debouncedValue
-}
 
 function formatTimeAgo(timestamp: string): string {
   const now = new Date()
@@ -171,7 +163,7 @@ export default function EscalationsPage() {
   const [selectedEscalation, setSelectedEscalation] = useState<EscalationItem | null>(null)
   const [showReviewPanel, setShowReviewPanel] = useState(false)
 
-  const debouncedSearchText = useDebounce(filters.search_text, 300)
+  const debouncedSearchText = useDebouncedValue(filters.search_text, 300)
 
   // Refs for smart refresh
   const previousDataHashRef = useRef<string>('')

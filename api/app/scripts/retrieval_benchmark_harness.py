@@ -35,9 +35,8 @@ from typing import Any
 # Keep import behavior consistent with existing evaluation scripts.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from app.scripts.run_ragas_evaluation import API_BASE_URL, run_evaluation  # noqa: E402
-
 DEFAULT_OUTPUT_DIR = "api/data/evaluation/benchmarks"
+DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 def _safe_mean(values: list[float]) -> float:
@@ -203,6 +202,8 @@ def _aggregate_runs(
 
 
 async def run_benchmark(args: argparse.Namespace) -> int:
+    from app.scripts.run_ragas_evaluation import run_evaluation
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -436,7 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--simple", action="store_true")
     run_parser.add_argument("--metrics", type=str, default=None)
     run_parser.add_argument("--bypass-hooks", type=str, default="escalation")
-    run_parser.add_argument("--api-url", type=str, default=API_BASE_URL)
+    run_parser.add_argument("--api-url", type=str, default=DEFAULT_API_BASE_URL)
     run_parser.add_argument(
         "--kb-manifest",
         type=str,
@@ -467,9 +468,8 @@ def main() -> int:
     args = parser.parse_args()
 
     # Keep API URL handling aligned with run_ragas_evaluation.
-    os.environ["API_BASE_URL"] = (
-        args.api_url if hasattr(args, "api_url") else API_BASE_URL
-    )
+    if hasattr(args, "api_url"):
+        os.environ["API_BASE_URL"] = args.api_url
 
     if args.command == "run":
         return asyncio.run(run_benchmark(args))

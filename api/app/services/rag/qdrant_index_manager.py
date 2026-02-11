@@ -306,7 +306,7 @@ class QdrantIndexManager:
             batch_dense = embeddings.embed_documents(batch_texts)
 
             points: List[rest.PointStruct] = []
-            for doc, dense_vec in zip(batch_docs, batch_dense):
+            for doc, dense_vec in zip(batch_docs, batch_dense, strict=True):
                 content = doc.page_content or ""
                 md = dict(doc.metadata) if doc.metadata else {}
 

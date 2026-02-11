@@ -118,6 +118,7 @@ class SimplifiedRAGService:
         self.embeddings = None
         self.retriever = None
         self.document_retriever = None  # Will be initialized after retriever
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self.llm = None
         self.rag_chain = None
         self.prompt = None
@@ -174,7 +175,17 @@ class SimplifiedRAGService:
         """
         if rebuild:
             logger.info("Immediate index rebuild requested by FAQ update")
-            asyncio.create_task(self.setup(force_rebuild=True))
+            task = asyncio.create_task(self.setup(force_rebuild=True))
+            self._background_tasks.add(task)
+
+            def _on_done(done_task: asyncio.Task[Any]) -> None:
+                self._background_tasks.discard(done_task)
+                try:
+                    done_task.result()
+                except Exception:
+                    logger.exception("FAQ-triggered rebuild task failed")
+
+            task.add_done_callback(_on_done)
         else:
             # New behavior - mark for manual rebuild
             logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
@@ -607,18 +618,23 @@ class SimplifiedRAGService:
             # Exception: comparison questions ("Bisq 1 vs Bisq 2") should be allowed through
             # even if we have no Bisq 1 docs, otherwise we can't produce a comparison response.
             question_lower = preprocessed_question.lower()
-            is_comparison_question = (
-                (
-                    re.search(r"\bbisq\s*1\b|\bbisq1\b", question_lower)
-                    and re.search(
-                        r"\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b", question_lower
-                    )
+            has_bisq_context = (
+                re.search(
+                    r"\bbisq\b|\bbisq\s*1\b|\bbisq1\b|\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b|\bmultisig\b|\bmultisig_v1\b",
+                    question_lower,
                 )
-                or "difference" in question_lower
+                is not None
+            )
+            has_generic_comparison_terms = (
+                "difference" in question_lower
                 or "compare" in question_lower
                 or "versus" in question_lower
                 or re.search(r"\bvs\b", question_lower) is not None
             )
+            is_comparison_question = (
+                re.search(r"\bbisq\s*1\b|\bbisq1\b", question_lower)
+                and re.search(r"\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b", question_lower)
+            ) or (has_bisq_context and has_generic_comparison_terms)
 
             if (
                 detected_version in ("Bisq 1", "multisig_v1")

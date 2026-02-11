@@ -19,7 +19,7 @@ from app.models.escalation import (
     GenerateFAQRequest,
     RespondRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -49,17 +49,17 @@ async def get_escalation_service(request: Request):
 
 @router.get("", response_model=EscalationListResponse)
 async def list_escalations(
-    status: Optional[EscalationStatus] = None,
+    status_filter: Optional[EscalationStatus] = Query(None, alias="status"),
     channel: Optional[str] = None,
     priority: Optional[EscalationPriority] = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     service=Depends(get_escalation_service),
 ) -> EscalationListResponse:
     """List escalations with optional filters.
 
     Args:
-        status: Filter by escalation status
+        status_filter: Filter by escalation status
         channel: Filter by channel identifier
         priority: Filter by priority level
         limit: Maximum number of results (1-100)
@@ -70,12 +70,16 @@ async def list_escalations(
         EscalationListResponse with paginated results
     """
     logger.info(
-        f"Admin request to list escalations: status={status}, channel={channel}, limit={limit}, offset={offset}"
+        "Admin request to list escalations: status=%s, channel=%s, limit=%s, offset=%s",
+        status_filter,
+        channel,
+        limit,
+        offset,
     )
 
     try:
         result = await service.list_escalations(
-            status=status,
+            status=status_filter,
             channel=channel,
             priority=priority,
             limit=limit,
@@ -85,7 +89,7 @@ async def list_escalations(
     except Exception as e:
         logger.error(f"Failed to list escalations: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list escalations",
         ) from e
 

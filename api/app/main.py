@@ -155,6 +155,8 @@ async def lifespan(app: FastAPI):
     app.state.wiki_service = wiki_service
 
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
+    app.state.escalation_service = None
+    app.state.escalation_init_failed = False
     try:
         from app.services.escalation.escalation_repository import EscalationRepository
         from app.services.escalation.escalation_service import EscalationService
@@ -173,7 +175,9 @@ async def lifespan(app: FastAPI):
         app.state.escalation_service = escalation_service
         logger.info("EscalationService initialized (singleton)")
     except Exception:
-        logger.exception("EscalationService init failed")
+        app.state.escalation_service = None
+        app.state.escalation_init_failed = True
+        logger.critical("EscalationService init failed", exc_info=True)
 
     # Initialize Channel Gateway with default middleware hooks
     logger.info("Initializing Channel Gateway...")

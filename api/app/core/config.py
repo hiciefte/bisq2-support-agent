@@ -336,7 +336,6 @@ class Settings(BaseSettings):
     )
 
     # Escalation Learning Pipeline Settings
-    ESCALATION_DB_PATH: str = "data/escalations.db"
     ESCALATION_CLAIM_TTL_MINUTES: int = 30
     ESCALATION_AUTO_CLOSE_HOURS: int = 24
     ESCALATION_DELIVERY_MAX_RETRIES: int = 3
@@ -355,6 +354,11 @@ class Settings(BaseSettings):
     )
 
     # Path properties that return complete paths
+    @property
+    def ESCALATION_DB_PATH(self) -> str:
+        """Complete path to the escalation SQLite database."""
+        return os.path.join(self.DATA_DIR, "escalations.db")
+
     @property
     def FAQ_DB_PATH(self) -> str:
         """Complete path to the FAQ SQLite database (authoritative source)"""

@@ -359,7 +359,7 @@ class TestEscalationServiceRespond:
 
         await service.respond_to_escalation(1, "Answer", "staff_1")
         # update should be called twice: first for response, then for delivery status
-        assert mock_repository.update.await_count >= 1
+        assert mock_repository.update.await_count == 2
 
     @pytest.mark.asyncio
     async def test_respond_nonexistent_raises_error(self, service, mock_repository):

@@ -321,15 +321,20 @@ class EscalationRepository:
             return cursor.rowcount
 
     async def purge_old(self, older_than: datetime) -> int:
-        """Delete closed/responded escalations older than retention threshold."""
+        """Delete resolved escalations older than retention threshold.
+
+        Retention is measured from resolution timestamps:
+        - closed escalations use `closed_at`
+        - responded escalations use `responded_at`
+        """
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
                 DELETE FROM escalations
-                WHERE status IN ('closed', 'responded')
-                AND created_at < ?
+                WHERE (status = 'closed' AND closed_at IS NOT NULL AND closed_at < ?)
+                   OR (status = 'responded' AND responded_at IS NOT NULL AND responded_at < ?)
                 """,
-                (older_than.isoformat(),),
+                (older_than.isoformat(), older_than.isoformat()),
             )
             await db.commit()
             return cursor.rowcount

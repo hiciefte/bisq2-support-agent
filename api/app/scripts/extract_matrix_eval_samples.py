@@ -10,6 +10,7 @@ It emits:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 # Keep import behavior aligned with other scripts in this repo.
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.core.config import get_settings  # noqa: E402
 from app.services.rag.protocol_detector import ProtocolDetector  # noqa: E402
@@ -97,6 +98,12 @@ class CandidatePair:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _hash_sender_identity(sender_id: str, *, salt: str) -> str:
+    normalized = (sender_id or "").strip().lower()
+    payload = f"{salt}matrix:{normalized}"
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _norm_space(text: str) -> str:
@@ -407,7 +414,9 @@ def select_samples(
     return selected[:max_samples], counts
 
 
-def _to_samples(selected: list[CandidatePair], room_name: str) -> list[dict[str, Any]]:
+def _to_samples(
+    selected: list[CandidatePair], room_name: str, sender_hash_salt: str
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for idx, c in enumerate(selected):
         rows.append(
@@ -420,8 +429,12 @@ def _to_samples(selected: list[CandidatePair], room_name: str) -> list[dict[str,
                     "room_name": room_name,
                     "protocol": c.protocol,
                     "protocol_confidence": c.protocol_confidence,
-                    "question_sender": c.question_sender,
-                    "answer_sender": c.answer_sender,
+                    "question_sender_hash": _hash_sender_identity(
+                        c.question_sender, salt=sender_hash_salt
+                    ),
+                    "answer_sender_hash": _hash_sender_identity(
+                        c.answer_sender, salt=sender_hash_salt
+                    ),
                     "question_event_id": c.question_event_id,
                     "answer_event_id": c.answer_event_id,
                     "question_ts": c.question_ts,
@@ -443,6 +456,7 @@ def _to_review(
     selected_counts: dict[str, int],
     reject_counts: Counter[str],
     extra_rejections: list[dict[str, Any]],
+    sender_hash_salt: str,
 ) -> dict[str, Any]:
     selected_rows = []
     for idx, c in enumerate(selected, start=1):
@@ -455,8 +469,12 @@ def _to_review(
                 "protocol_confidence": c.protocol_confidence,
                 "question": c.question,
                 "ground_truth": c.answer,
-                "question_sender": c.question_sender,
-                "answer_sender": c.answer_sender,
+                "question_sender_hash": _hash_sender_identity(
+                    c.question_sender, salt=sender_hash_salt
+                ),
+                "answer_sender_hash": _hash_sender_identity(
+                    c.answer_sender, salt=sender_hash_salt
+                ),
                 "question_event_id": c.question_event_id,
                 "answer_event_id": c.answer_event_id,
                 "question_ts": c.question_ts,
@@ -479,7 +497,24 @@ def _to_review(
             "rejected_counts": dict(reject_counts),
         },
         "selected": selected_rows,
-        "rejected_examples": extra_rejections[:200],
+        "rejected_examples": [
+            (
+                {
+                    **{
+                        k: v
+                        for k, v in row.items()
+                        if k not in {"question_sender", "answer_sender"}
+                    },
+                    "question_sender_hash": _hash_sender_identity(
+                        str(row.get("question_sender", "")), salt=sender_hash_salt
+                    ),
+                    "answer_sender_hash": _hash_sender_identity(
+                        str(row.get("answer_sender", "")), salt=sender_hash_salt
+                    ),
+                }
+            )
+            for row in extra_rejections[:200]
+        ],
     }
 
 
@@ -515,6 +550,11 @@ def main() -> int:
         "--staff-localparts",
         default="",
         help="Extra trusted staff localparts, comma-separated",
+    )
+    parser.add_argument(
+        "--sender-hash-salt",
+        default="",
+        help="Optional salt for anonymizing sender identities in output metadata.",
     )
     args = parser.parse_args()
 
@@ -564,7 +604,9 @@ def main() -> int:
         include_unknown=args.include_unknown,
     )
 
-    samples = _to_samples(selected, room_name=room_name)
+    samples = _to_samples(
+        selected, room_name=room_name, sender_hash_salt=args.sender_hash_salt
+    )
     review = _to_review(
         input_path=str(input_path),
         room_name=room_name,
@@ -574,6 +616,7 @@ def main() -> int:
         selected_counts=selected_counts,
         reject_counts=reject_counts,
         extra_rejections=rejected_examples,
+        sender_hash_salt=args.sender_hash_salt,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -14,9 +14,15 @@ def build_sources(rag_response: Mapping[str, Any]) -> List[DocumentReference]:
             title=source.get("title", "Unknown"),
             url=source.get("url"),
             # RAG service uses `similarity_score`; some older code uses `relevance_score`.
-            relevance_score=float(
-                source.get("relevance_score", source.get("similarity_score", 0.5))
-                or 0.5
+            relevance_score=(
+                float(raw_score)
+                if (
+                    raw_score := source.get(
+                        "relevance_score", source.get("similarity_score")
+                    )
+                )
+                is not None
+                else 0.5
             ),
             category=source.get("category") or source.get("type"),
             content=source.get("content"),

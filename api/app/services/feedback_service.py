@@ -673,13 +673,19 @@ class FeedbackService:
                 )
                 # Create reaction tracking record
                 if reactor_identity_hash and external_message_id:
-                    self.repository.upsert_reaction_tracking(
-                        channel=channel,
-                        external_message_id=external_message_id,
-                        reactor_identity_hash=reactor_identity_hash,
-                        reaction_emoji=reaction_emoji or "",
-                        feedback_id=feedback_id,
-                    )
+                    try:
+                        self.repository.upsert_reaction_tracking(
+                            channel=channel,
+                            external_message_id=external_message_id,
+                            reactor_identity_hash=reactor_identity_hash,
+                            reaction_emoji=reaction_emoji or "",
+                            feedback_id=feedback_id,
+                        )
+                    except Exception:
+                        # Best-effort rollback: avoid leaving orphaned feedback rows
+                        # when tracking upsert fails after insert commit.
+                        self.repository.delete_feedback(message_id)
+                        raise
                 logger.info(
                     "Stored new reaction feedback: channel=%s ext_id=%s feedback_id=%s",
                     channel,

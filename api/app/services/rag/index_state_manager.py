@@ -9,7 +9,7 @@ coordinates manual rebuild operations.
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class IndexStateManager:
         }
 
     async def execute_rebuild(
-        self, rebuild_callback: Callable[[], Any]
+        self, rebuild_callback: Callable[[], Awaitable[Any]]
     ) -> Dict[str, Any]:
         """Run rebuild_callback and update state based on success/failure."""
         if self._rebuild_in_progress:

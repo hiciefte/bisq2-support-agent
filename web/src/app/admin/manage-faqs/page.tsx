@@ -1680,7 +1680,7 @@ export default function ManageFaqsPage() {
                                             </SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="show_all">All Protocols</SelectItem>
-                                                {FAQ_PROTOCOL_OPTIONS.map((option) => (
+                                                {FAQ_PROTOCOL_OPTIONS.filter((option) => option.value !== "all").map((option) => (
                                                     <SelectItem key={option.value} value={option.value}>
                                                         {option.label}
                                                     </SelectItem>
