@@ -69,16 +69,17 @@ const ChatInterface = () => {
 
     // When polling resolves, update the message with the staff response
     useEffect(() => {
-        if (
-            escalationPoll.status === 'resolved' &&
-            escalationPoll.staffAnswer &&
-            pendingEscalation
-        ) {
+        if (escalationPoll.status !== "resolved" || !pendingEscalation) return
+
+        // Staff responded: attach staff response and mark escalation as resolved.
+        if (escalationPoll.resolution === "responded" && escalationPoll.staffAnswer) {
             setMessages(prev =>
                 prev.map(msg =>
                     msg.id === pendingEscalation.msgId
                         ? {
                               ...msg,
+                              escalation_resolution: "responded",
+                              escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
                               staff_response: {
                                   answer: escalationPoll.staffAnswer!,
                                   responded_at: escalationPoll.respondedAt || new Date().toISOString(),
@@ -87,8 +88,32 @@ const ChatInterface = () => {
                         : msg
                 )
             )
+            return
         }
-    }, [escalationPoll.status, escalationPoll.staffAnswer, escalationPoll.respondedAt, pendingEscalation, setMessages])
+
+        // Closed/dismissed without reply: stop showing "Support team notified" forever.
+        if (escalationPoll.resolution === "closed") {
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.id === pendingEscalation.msgId
+                        ? {
+                              ...msg,
+                              requires_human: false,
+                              escalation_resolution: "closed",
+                              escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
+                          }
+                        : msg
+                )
+            )
+        }
+    }, [
+        escalationPoll.status,
+        escalationPoll.staffAnswer,
+        escalationPoll.respondedAt,
+        escalationPoll.resolution,
+        pendingEscalation,
+        setMessages,
+    ])
 
     // Format average response time for display
     const formattedAvgTime = formatResponseTime(avgResponseTime)

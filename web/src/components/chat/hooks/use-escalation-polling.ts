@@ -7,17 +7,21 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE_URL } from "@/lib/config"
 
 type PollingStatus = 'idle' | 'polling' | 'resolved'
+type PollingResolution = 'responded' | 'closed' | null
 
 interface EscalationPollResult {
   status: PollingStatus
   staffAnswer: string | null
   respondedAt: string | null
+  resolution: PollingResolution
 }
 
 interface PollResponse {
   status: 'pending' | 'resolved'
   staff_answer?: string
   responded_at?: string
+  resolution?: 'responded' | 'closed'
+  closed_at?: string
 }
 
 // Polling intervals in milliseconds
@@ -33,6 +37,7 @@ export function useEscalationPolling(
   const [status, setStatus] = useState<PollingStatus>('idle')
   const [staffAnswer, setStaffAnswer] = useState<string | null>(null)
   const [respondedAt, setRespondedAt] = useState<string | null>(null)
+  const [resolution, setResolution] = useState<PollingResolution>(null)
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startTimeRef = useRef<number>(0)
@@ -56,17 +61,24 @@ export function useEscalationPolling(
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/escalations/poll/${messageId}`)
+      const response = await fetch(`${API_BASE_URL}/escalations/${messageId}/response`)
 
       if (!response.ok) return
 
       const data: PollResponse = await response.json()
 
-      if (data.status === 'resolved' && data.staff_answer) {
+      if (data.status === 'resolved') {
         setStatus('resolved')
-        setStaffAnswer(data.staff_answer)
-        setRespondedAt(data.responded_at || null)
-        cleanup()
+        setResolution(data.resolution ?? (data.staff_answer ? 'responded' : null))
+        setStaffAnswer(data.staff_answer ?? null)
+        setRespondedAt(data.responded_at || data.closed_at || null)
+
+        // Terminal states:
+        // - resolved+staff_answer: staff responded
+        // - resolved+resolution=closed: closed/dismissed without reply
+        if (data.staff_answer || data.resolution === "closed") {
+          cleanup()
+        }
       }
     } catch {
       // Silently continue polling on error
@@ -124,5 +136,5 @@ export function useEscalationPolling(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messageId, enabled])
 
-  return { status, staffAnswer, respondedAt }
+  return { status, staffAnswer, respondedAt, resolution }
 }

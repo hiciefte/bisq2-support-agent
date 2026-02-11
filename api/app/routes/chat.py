@@ -190,6 +190,21 @@ async def query(
             QUERY_ERRORS.labels(error_type="validation").inc()
             raise ValidationError(detail=str(e)) from e
 
+        # Optional: allow bypassing specific gateway hooks for local evaluation.
+        # This is useful for RAGAS runs where we want to score the raw RAG answer
+        # rather than an escalation placeholder message.
+        bypass_hooks: list[str] = []
+        if isinstance(data, dict) and isinstance(data.get("bypass_hooks"), list):
+            bypass_hooks = [
+                str(x)
+                for x in data.get("bypass_hooks", [])
+                if isinstance(x, str) and x.strip()
+            ][:10]
+
+        # Never allow hook bypass in production.
+        if settings.ENVIRONMENT.lower() == "production":
+            bypass_hooks = []
+
         # Log chat history info
         logger.info(f"Chat history type: {type(query_request.chat_history)}")
         if query_request.chat_history:
@@ -226,7 +241,9 @@ async def query(
                 channel_user_id=None,
                 auth_token=None,
             ),
+            bypass_hooks=bypass_hooks,
             channel_signature=None,
+            channel_metadata={},
         )
 
         # Process through gateway
@@ -250,10 +267,10 @@ async def query(
             Source(
                 title=source.title,
                 type=source.category or "wiki",
-                content="",  # OutgoingMessage uses DocumentReference without content
-                protocol="all",
+                content=source.content or "",
+                protocol=source.protocol or "all",
                 url=source.url,
-                section=None,
+                section=source.section,
                 similarity_score=source.relevance_score,
             )
             for source in result.sources

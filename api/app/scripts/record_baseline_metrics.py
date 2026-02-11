@@ -37,7 +37,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Default paths
-DEFAULT_SAMPLES_PATH = "api/data/evaluation/bisq_qa_baseline_samples.json"
+DEFAULT_SAMPLES_PATH = (
+    "api/data/evaluation/matrix_realistic_qa_samples_30_20260211.json"
+)
 DEFAULT_OUTPUT_PATH = "api/data/evaluation/baseline_scores.json"
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
@@ -93,6 +95,7 @@ def compute_ragas_metrics(
     """
     try:
         from datasets import Dataset  # type: ignore[import-not-found]
+        from langchain_openai import OpenAIEmbeddings  # type: ignore[import-not-found]
         from ragas import evaluate  # type: ignore[import-not-found]
 
         # Import metrics - handle both old and new API
@@ -136,9 +139,11 @@ def compute_ragas_metrics(
         }
         dataset = Dataset.from_dict(data)
 
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
         # Run evaluation
         logger.info("Computing RAGAS metrics...")
-        result = evaluate(dataset, metrics=metrics)
+        result = evaluate(dataset, metrics=metrics, embeddings=embeddings)
 
         # Extract scores - handle EvaluationResult object
         import math

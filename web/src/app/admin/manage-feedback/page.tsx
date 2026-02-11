@@ -1,16 +1,18 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo, FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
 import {
   Loader2,
   MessageCircle,
@@ -26,13 +28,28 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Bot,
+  Check,
+  Clock,
+  Pencil,
+  ChevronDown,
+  User
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
+import { MarkdownContent } from "@/components/chat/components/markdown-content";
+import { SourceBadges } from "@/components/chat/components/source-badges";
+import type { Source } from "@/components/chat/types/chat.types";
+import {
+  FAQ_CATEGORIES,
+  FAQ_PROTOCOL_OPTIONS,
+  inferFaqMetadata,
+  type FAQProtocol,
+} from "@/lib/faq-metadata";
 
 interface FeedbackItem {
   message_id: string;
@@ -44,16 +61,8 @@ interface FeedbackItem {
   feedback_method?: string;
   reaction_emoji?: string;
   conversation_history?: ConversationMessage[];
-  sources?: Array<{
-    title: string;
-    type: string;
-    content: string;
-  }>;
-  sources_used?: Array<{
-    title: string;
-    type: string;
-    content: string;
-  }>;
+  sources?: FeedbackSource[];
+  sources_used?: FeedbackSource[];
   metadata?: {
     explanation?: string;
     issues?: string[];
@@ -70,6 +79,16 @@ interface FeedbackItem {
   faq_id?: string;
   // Index signature for compatibility with useFeedbackDeletion hook
   [key: string]: unknown;
+}
+
+interface FeedbackSource {
+  title: string;
+  type: string;
+  content: string;
+  url?: string | null;
+  section?: string | null;
+  similarity_score?: number;
+  relevance_score?: number;
 }
 
 interface FeedbackListResponse {
@@ -140,24 +159,26 @@ export default function ManageFeedbackPage() {
   const debouncedSearchText = useDebounce(filters.search_text, 300);
 
   // UI state
-  const [activeTab, setActiveTab] = useState<'all' | 'negative' | 'needs_faq'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'negative' | 'needs_faq'>('needs_faq');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
   const [showFeedbackDetail, setShowFeedbackDetail] = useState(false);
+  const [detailPhase, setDetailPhase] = useState<"review" | "faq">("review");
 
   // FAQ creation state
-  const [showCreateFAQ, setShowCreateFAQ] = useState(false);
-  const [selectedFeedbackForFAQ, setSelectedFeedbackForFAQ] = useState<FeedbackItem | null>(null);
   const [faqForm, setFaqForm] = useState({
     message_id: '',
     suggested_question: '',
     suggested_answer: '',
     category: '',
+    protocol: 'all' as FAQProtocol,
     additional_notes: ''
   });
   const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
   const [customCategory, setCustomCategory] = useState('');
   const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [isEditingFaqAnswer, setIsEditingFaqAnswer] = useState(false);
+  const faqAnswerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Delete feedback hook
   const {
@@ -172,20 +193,6 @@ export default function ManageFeedbackPage() {
     await fetchData();
     setError(null);
   });
-
-  // Common FAQ categories
-  const predefinedCategories = [
-    'General',
-    'Trading',
-    'Reputation',
-    'Security',
-    'Payments',
-    'Technical',
-    'Bisq Easy',
-    'Bisq 2',
-    'Fees',
-    'Account'
-  ];
 
   // Compute active filter count and boolean
   const activeFilterCount = useMemo(() => {
@@ -225,6 +232,16 @@ export default function ManageFeedbackPage() {
     setIsLoading(false);
   }, []);
 
+  useEffect(() => {
+    if (!isEditingFaqAnswer) return;
+    requestAnimationFrame(() => {
+      if (!faqAnswerTextareaRef.current) return;
+      faqAnswerTextareaRef.current.focus();
+      faqAnswerTextareaRef.current.style.height = "auto";
+      faqAnswerTextareaRef.current.style.height = `${faqAnswerTextareaRef.current.scrollHeight}px`;
+    });
+  }, [isEditingFaqAnswer, showFeedbackDetail, detailPhase]);
+
   const fetchFeedbackList = useCallback(async () => {
     // Adjust filters based on active tab, using debounced search text
     const adjustedFilters = { ...filters, search_text: debouncedSearchText };
@@ -252,6 +269,20 @@ export default function ManageFeedbackPage() {
 
     if (response.ok) {
       const data = await response.json();
+
+      if (data.total_pages > 0 && filters.page > data.total_pages) {
+        setFilters(prev => (
+          prev.page > data.total_pages
+            ? { ...prev, page: data.total_pages }
+            : prev
+        ));
+        return;
+      }
+
+      if (data.total_pages === 0 && filters.page !== 1) {
+        setFilters(prev => (prev.page !== 1 ? { ...prev, page: 1 } : prev));
+        return;
+      }
 
       // Calculate hash of new data for comparison
       const dataHash = JSON.stringify(data);
@@ -329,11 +360,30 @@ export default function ManageFeedbackPage() {
   // Note: Login/logout handlers are managed by SecureAuth wrapper at layout level
 
   const handleFilterChange = (key: string, value: string | number | boolean | Date | undefined | string[]) => {
-    setFilters(prev => ({
+    setFilters((prev) => {
+      const nextFilters = {
+        ...prev,
+        [key]: value,
+      };
+
+      if (key !== "page") {
+        nextFilters.page = 1;
+      }
+
+      return nextFilters;
+    });
+  };
+
+  const handlePageChange = (page: number) => {
+    setFilters((prev) => ({
       ...prev,
-      [key]: value,
-      page: 1 // Reset to first page when filters change
+      page,
     }));
+  };
+
+  const handleTabChange = (tab: 'all' | 'negative' | 'needs_faq') => {
+    setActiveTab(tab);
+    setFilters(prev => ({ ...prev, page: 1 }));
   };
 
   const resetFilters = () => {
@@ -372,31 +422,62 @@ export default function ManageFeedbackPage() {
     return feedback;
   };
 
+  const initializeFaqDraft = (feedback: FeedbackItem) => {
+    const inferred = inferFaqMetadata({
+      question: feedback.question,
+      answer: feedback.answer,
+    });
+    setFaqForm({
+      message_id: feedback.message_id,
+      suggested_question: feedback.question,
+      suggested_answer: feedback.answer || '',
+      category: inferred.category,
+      protocol: inferred.protocol,
+      additional_notes: feedback.explanation || '',
+    });
+    setIsCustomCategory(false);
+    setCustomCategory('');
+    setIsEditingFaqAnswer(true);
+  };
+
+  const closeFeedbackDetailDialog = () => {
+    setShowFeedbackDetail(false);
+    setDetailPhase("review");
+    setSelectedFeedback(null);
+    setIsEditingFaqAnswer(false);
+  };
+
   const openFeedbackDetail = async (feedback: FeedbackItem) => {
     const fullFeedback = await fetchFullFeedbackDetails(feedback);
     setSelectedFeedback(fullFeedback);
+    initializeFaqDraft(fullFeedback);
+    setDetailPhase("review");
     setShowFeedbackDetail(true);
   };
 
   const openCreateFAQ = async (feedback: FeedbackItem) => {
     const fullFeedback = await fetchFullFeedbackDetails(feedback);
-    setSelectedFeedbackForFAQ(fullFeedback);
-
-    setFaqForm({
-      message_id: feedback.message_id,
-      suggested_question: feedback.question,
-      suggested_answer: '',
-      category: 'General',
-      additional_notes: feedback.explanation || ''
-    });
-    setIsCustomCategory(false);
-    setCustomCategory('');
-    setShowCreateFAQ(true);
+    setSelectedFeedback(fullFeedback);
+    initializeFaqDraft(fullFeedback);
+    setDetailPhase("faq");
+    setShowFeedbackDetail(true);
   };
 
-  const handleCreateFAQ = async (e: FormEvent) => {
-    e.preventDefault();
-
+  const handleCreateFAQ = async () => {
+    if (
+      !faqForm.suggested_question.trim() ||
+      !faqForm.suggested_answer.trim() ||
+      !faqForm.category.trim()
+    ) {
+      setError("Question, answer, category, and protocol are required to publish FAQ.");
+      return;
+    }
+    const normalized = inferFaqMetadata({
+      question: faqForm.suggested_question,
+      answer: faqForm.suggested_answer,
+      category: faqForm.category,
+      protocol: faqForm.protocol,
+    });
     setIsSubmittingFAQ(true);
     try {
       const response = await makeAuthenticatedRequest('/admin/feedback/create-faq', {
@@ -404,16 +485,21 @@ export default function ManageFeedbackPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(faqForm),
+        body: JSON.stringify({
+          ...faqForm,
+          category: normalized.category,
+          protocol: normalized.protocol,
+        }),
       });
 
       if (response.ok) {
-        setShowCreateFAQ(false);
+        closeFeedbackDetailDialog();
         setFaqForm({
           message_id: '',
           suggested_question: '',
           suggested_answer: '',
           category: '',
+          protocol: 'all',
           additional_notes: ''
         });
         setIsCustomCategory(false);
@@ -431,6 +517,14 @@ export default function ManageFeedbackPage() {
     } finally {
       setIsSubmittingFAQ(false);
     }
+  };
+
+  const handleFeedbackDetailOpenChange = (open: boolean) => {
+    if (!open) {
+      closeFeedbackDetailDialog();
+      return;
+    }
+    setShowFeedbackDetail(true);
   };
 
 
@@ -502,6 +596,35 @@ export default function ManageFeedbackPage() {
     return badges[channel || 'web'] || { label: channel || 'web', className: 'bg-muted text-muted-foreground border border-border' };
   };
 
+  const toChatSource = useCallback((source: FeedbackSource): Source => ({
+    title: source.title || "Untitled source",
+    type: (source.type || "").toLowerCase() === "wiki" ? "wiki" : "faq",
+    content: source.content || "",
+    url: source.url || undefined,
+    section: source.section || undefined,
+    similarity_score: typeof source.similarity_score === "number"
+      ? source.similarity_score
+      : typeof source.relevance_score === "number"
+        ? source.relevance_score
+        : undefined,
+  }), []);
+
+  const selectedSourcesUsed = useMemo(
+    () => (selectedFeedback?.sources_used || []).map(toChatSource),
+    [selectedFeedback, toChatSource],
+  );
+
+  const selectedSourcesAvailable = useMemo(
+    () => (selectedFeedback?.sources || []).map(toChatSource),
+    [selectedFeedback, toChatSource],
+  );
+
+  const faqDraftSource = useMemo(() => {
+    const sources = selectedFeedback?.sources_used || selectedFeedback?.sources || [];
+    if (sources.length === 0) return [] as Source[];
+    return sources.map(toChatSource);
+  }, [selectedFeedback, toChatSource]);
+
   // Authentication is handled by SecureAuth wrapper in layout
 
   return (
@@ -539,44 +662,6 @@ export default function ManageFeedbackPage() {
             </button>
           </div>
         )}
-
-
-        {/* Tabs */}
-        <div className="bg-card rounded-lg border border-border">
-          <div className="flex space-x-1 px-4 pt-3 pb-0">
-            {([
-              { key: 'all' as const, label: 'All Feedback', count: stats?.total_feedback },
-              { key: 'negative' as const, label: 'Negative Only', count: stats?.negative_count },
-              { key: 'needs_faq' as const, label: 'Needs FAQ', count: stats?.needs_faq_count },
-            ]).map(tab => (
-              <button
-                key={tab.key}
-                className={`px-4 py-2.5 font-medium text-sm rounded-t-lg transition-all relative ${
-                  activeTab === tab.key
-                    ? 'text-primary'
-                    : 'text-muted-foreground hover:text-card-foreground'
-                }`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                <span className="flex items-center gap-2">
-                  {tab.label}
-                  {tab.count !== undefined && tab.count > 0 && (
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      activeTab === tab.key
-                        ? 'bg-primary/15 text-primary'
-                        : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {tab.count}
-                    </span>
-                  )}
-                </span>
-                {activeTab === tab.key && (
-                  <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Channel Breakdown Stats */}
         {stats && stats.feedback_by_channel && Object.keys(stats.feedback_by_channel).length > 0 && (
@@ -653,6 +738,65 @@ export default function ManageFeedbackPage() {
             </Card>
           </div>
         )}
+
+        {/* Status Picker */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {([
+            {
+              key: "all" as const,
+              label: "All Feedback",
+              description: "Every rating and channel",
+              count: stats?.total_feedback ?? 0,
+              icon: MessageCircle,
+            },
+            {
+              key: "negative" as const,
+              label: "Negative",
+              description: "Needs review and improvement",
+              count: stats?.negative_count ?? 0,
+              icon: ThumbsDown,
+            },
+            {
+              key: "needs_faq" as const,
+              label: "Needs FAQ",
+              description: "High-value knowledge gaps",
+              count: stats?.needs_faq_count ?? 0,
+              icon: PlusCircle,
+            },
+          ]).map((item) => {
+            const isSelected = activeTab === item.key;
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => handleTabChange(item.key)}
+                className={`touch-manipulation text-left rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                  isSelected ? "ring-2 ring-primary ring-offset-2" : ""
+                }`}
+                aria-pressed={isSelected}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 rounded-lg bg-muted">
+                      <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{item.label}</p>
+                      <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-lg font-bold tabular-nums ${item.count > 0 ? "text-foreground" : "text-muted-foreground"}`}
+                    aria-label={`${item.label} count ${item.count}`}
+                  >
+                    {item.count}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
 
         {/* Filters Panel */}
       <div className={`grid transition-all duration-300 ease-in-out ${showFilters ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
@@ -757,7 +901,7 @@ export default function ManageFeedbackPage() {
                 {activeTab === 'needs_faq' && 'Feedback that would benefit from FAQ creation'}
                 {feedbackData && (
                   <span className="ml-1 tabular-nums">
-                    -- {feedbackData.total_count} {feedbackData.total_count === 1 ? 'item' : 'items'}
+                    · {feedbackData.total_count} {feedbackData.total_count === 1 ? 'item' : 'items'}
                   </span>
                 )}
               </CardDescription>
@@ -834,9 +978,13 @@ export default function ManageFeedbackPage() {
                           ) : (
                             <ThumbsDown className="h-3.5 w-3.5 text-red-400 shrink-0" />
                           )}
-                          <span className="text-xs text-muted-foreground tabular-nums">
+                          <time
+                            suppressHydrationWarning
+                            dateTime={feedback.timestamp}
+                            className="text-xs text-muted-foreground tabular-nums"
+                          >
                             {formatDate(feedback.timestamp)}
-                          </span>
+                          </time>
                           {(() => {
                             const badge = getChannelBadge(feedback.channel);
                             return (
@@ -927,14 +1075,14 @@ export default function ManageFeedbackPage() {
               {feedbackData && feedbackData.total_pages > 1 && (
                 <div className="flex items-center justify-between pt-4 border-t border-border mt-2">
                   <p className="text-xs text-muted-foreground tabular-nums">
-                    {((filters.page - 1) * filters.page_size) + 1}--{Math.min(filters.page * filters.page_size, feedbackData.total_count)} of {feedbackData.total_count}
+                    {((filters.page - 1) * filters.page_size) + 1}-{Math.min(filters.page * filters.page_size, feedbackData.total_count)} of {feedbackData.total_count}
                   </p>
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => handleFilterChange('page', Math.max(1, filters.page - 1))}
+                      onClick={() => handlePageChange(Math.max(1, filters.page - 1))}
                       disabled={filters.page <= 1}
                       aria-label="Previous page"
                     >
@@ -949,7 +1097,7 @@ export default function ManageFeedbackPage() {
                           variant={pageNum === filters.page ? "default" : "ghost"}
                           size="icon"
                           className={`h-8 w-8 text-xs ${pageNum === filters.page ? '' : 'text-muted-foreground'}`}
-                          onClick={() => handleFilterChange('page', pageNum)}
+                          onClick={() => handlePageChange(pageNum)}
                         >
                           {pageNum}
                         </Button>
@@ -959,7 +1107,7 @@ export default function ManageFeedbackPage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => handleFilterChange('page', Math.min(feedbackData.total_pages, filters.page + 1))}
+                      onClick={() => handlePageChange(Math.min(feedbackData.total_pages, filters.page + 1))}
                       disabled={filters.page >= feedbackData.total_pages}
                       aria-label="Next page"
                     >
@@ -974,248 +1122,403 @@ export default function ManageFeedbackPage() {
       </Card>
 
       {/* Feedback Detail Dialog */}
-      <Dialog open={showFeedbackDetail} onOpenChange={setShowFeedbackDetail}>
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto [&>button]:hidden">
-          <DialogHeader className="relative pb-3">
-            <DialogClose asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="absolute right-0 top-0 h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                aria-label="Close dialog"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </DialogClose>
-            <DialogTitle className="flex items-center gap-2">
-              Feedback Details
-              {selectedFeedback && (
-                selectedFeedback.is_positive ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary">
-                    <ThumbsUp className="h-3 w-3" /> Positive
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/15 text-red-400">
-                    <ThumbsDown className="h-3 w-3" /> Negative
-                  </span>
-                )
-              )}
-            </DialogTitle>
-            <DialogDescription>
-              Full feedback record and response context
-            </DialogDescription>
-          </DialogHeader>
-          {selectedFeedback && (
-            <div className="space-y-5">
-              {/* Metadata bar */}
-              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground pb-3 border-b border-border">
-                <span className="tabular-nums">{formatDate(selectedFeedback.timestamp)}</span>
-                <span className="text-border">|</span>
-                {(() => {
-                  const badge = getChannelBadge(selectedFeedback.channel);
-                  return (
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
-                      {badge.label}
-                    </span>
-                  );
-                })()}
-                {selectedFeedback.feedback_method === 'reaction' && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
-                    {selectedFeedback.reaction_emoji || 'Reaction'}
-                  </span>
-                )}
-                {selectedFeedback.has_no_source_response && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
-                    No Source
-                  </span>
-                )}
-                {selectedFeedback.metadata?.response_time && (
-                  <>
-                    <span className="text-border">|</span>
-                    <span className="tabular-nums">{selectedFeedback.metadata.response_time.toFixed(2)}s response</span>
-                  </>
-                )}
-                <span className="text-border">|</span>
-                <span className="font-mono text-[10px] text-muted-foreground/60 truncate max-w-[200px]" title={selectedFeedback.message_id}>
-                  {selectedFeedback.message_id}
-                </span>
-              </div>
-
-              {/* Question & Answer */}
-              <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Question</span>
-                <p className="text-sm p-3 bg-accent rounded-lg text-card-foreground leading-relaxed">{selectedFeedback.question}</p>
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Answer</span>
-                <div className="text-sm p-3 bg-accent rounded-lg text-card-foreground leading-relaxed whitespace-pre-wrap">{selectedFeedback.answer}</div>
-              </div>
-
-              {/* User Feedback */}
-              {selectedFeedback.explanation && (
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">User Feedback</span>
-                  <p className="text-sm p-3 bg-red-500/10 rounded-lg border-l-2 border-red-500/40 text-red-400 leading-relaxed">{selectedFeedback.explanation}</p>
-                </div>
-              )}
-
-              {/* Conversation History */}
-              {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
-                <ConversationHistory messages={selectedFeedback.conversation_history} />
-              )}
-
-              {/* Issues */}
-              {selectedFeedback.issues && selectedFeedback.issues.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Issues Identified</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedFeedback.issues.map((issue, idx) => (
-                      <span key={idx} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getIssueColor(issue)}`}>
-                        {issue.replace('_', ' ')}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sources Used */}
-              {selectedFeedback.sources_used && selectedFeedback.sources_used.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sources Used</span>
-                  <div className="space-y-2">
-                    {selectedFeedback.sources_used.map((source, idx) => (
-                      <div key={idx} className="p-3 border border-border rounded-lg bg-accent/50">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="font-medium text-sm text-card-foreground">{source.title}</span>
-                          <span className="px-2 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/20 rounded text-[10px] font-medium">
-                            {source.type}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{source.content.substring(0, 300)}{source.content.length > 300 ? '...' : ''}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Available Sources (if different from sources_used) */}
-              {selectedFeedback.sources && selectedFeedback.sources.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Available Sources</span>
-                  <div className="space-y-2">
-                    {selectedFeedback.sources.map((source, idx) => (
-                      <div key={idx} className="p-3 border border-border rounded-lg bg-accent/30">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="font-medium text-sm text-card-foreground">{source.title}</span>
-                          <span className="px-2 py-0.5 bg-muted text-muted-foreground border border-border rounded text-[10px] font-medium">
-                            {source.type}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{source.content.substring(0, 200)}{source.content.length > 200 ? '...' : ''}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Create FAQ Dialog */}
-      <Dialog open={showCreateFAQ} onOpenChange={setShowCreateFAQ}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Create FAQ from Feedback</DialogTitle>
-            <DialogDescription>
-              Transform this negative feedback into a helpful FAQ entry
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateFAQ}>
-            <div className="space-y-4">
-              <div>
-                <Label>Question</Label>
-                <Input
-                  value={faqForm.suggested_question}
-                  onChange={(e) => setFaqForm({...faqForm, suggested_question: e.target.value})}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Answer</Label>
-                <Textarea
-                  rows={6}
-                  placeholder="Provide an improved, accurate answer..."
-                  value={faqForm.suggested_answer}
-                  onChange={(e) => setFaqForm({...faqForm, suggested_answer: e.target.value})}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Category</Label>
-                <Select
-                  value={isCustomCategory ? 'custom' : faqForm.category}
-                  onValueChange={(value) => {
-                    if (value === 'custom') {
-                      setIsCustomCategory(true);
-                      setFaqForm({...faqForm, category: customCategory});
-                    } else {
-                      setIsCustomCategory(false);
-                      setFaqForm({...faqForm, category: value});
-                    }
-                  }}
-                  required
+      <Dialog open={showFeedbackDetail} onOpenChange={handleFeedbackDetailOpenChange}>
+        <DialogContent showClose={false} className="max-w-4xl max-h-[85vh] p-0 overflow-hidden flex flex-col">
+          <div className="relative px-6 pt-6">
+            <DialogHeader className="relative pb-3">
+              <DialogClose asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Close dialog"
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {predefinedCategories.map((cat) => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                    <SelectItem value="custom">+ Add Custom Category</SelectItem>
-                  </SelectContent>
-                </Select>
-                {isCustomCategory && (
-                  <Input
-                    className="mt-2"
-                    placeholder="Enter custom category..."
-                    value={customCategory}
-                    onChange={(e) => {
-                      setCustomCategory(e.target.value);
-                      setFaqForm({...faqForm, category: e.target.value});
-                    }}
-                    required
-                  />
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
+              <DialogTitle className="flex items-center gap-2">
+                {detailPhase === "review" ? "Feedback Review" : "Create FAQ"}
+                {selectedFeedback && (
+                  selectedFeedback.is_positive ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary">
+                      <ThumbsUp className="h-3 w-3" /> Positive
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/15 text-red-400">
+                      <ThumbsDown className="h-3 w-3" /> Negative
+                    </span>
+                  )
                 )}
-              </div>
-              {faqForm.additional_notes && (
-                <div>
-                  <Label>User Feedback</Label>
-                  <div className="mt-1 p-3 bg-red-500/10 rounded-lg border border-red-500/20 text-red-400 text-sm leading-relaxed">
-                    {faqForm.additional_notes}
-                  </div>
+              </DialogTitle>
+              <DialogDescription>
+                {detailPhase === "review"
+                  ? "Review full feedback context and decide the next action."
+                  : "Draft and publish an FAQ from this feedback record."}
+              </DialogDescription>
+              {selectedFeedback && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {(() => {
+                    const badge = getChannelBadge(selectedFeedback.channel);
+                    return (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
+                        {badge.label}
+                      </span>
+                    );
+                  })()}
+                  <span
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground"
+                    title={`Created ${formatDate(selectedFeedback.timestamp)}`}
+                    aria-label={`Created ${formatDate(selectedFeedback.timestamp)}`}
+                  >
+                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                  {selectedFeedback.feedback_method === 'reaction' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
+                      {selectedFeedback.reaction_emoji || 'Reaction'}
+                    </span>
+                  )}
+                  {selectedFeedback.has_no_source_response && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
+                      No source in answer
+                    </span>
+                  )}
+                  {selectedFeedback.issues?.map((issue, idx) => (
+                    <span key={`${issue}-${idx}`} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getIssueColor(issue)}`}>
+                      {issue.replace('_', ' ')}
+                    </span>
+                  ))}
+                  {selectedFeedback.is_processed && selectedFeedback.faq_id && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/15 text-primary border border-primary/25">
+                      FAQ Created
+                    </span>
+                  )}
                 </div>
               )}
-              {selectedFeedbackForFAQ?.conversation_history && selectedFeedbackForFAQ.conversation_history.length > 1 && (
-                <ConversationHistory messages={selectedFeedbackForFAQ.conversation_history} />
-              )}
-            </div>
-            <DialogFooter className="mt-6">
-              <Button type="button" variant="outline" onClick={() => {
-                setShowCreateFAQ(false);
-                setIsCustomCategory(false);
-                setCustomCategory('');
-              }}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmittingFAQ}>
-                {isSubmittingFAQ && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Create FAQ
-              </Button>
-            </DialogFooter>
-          </form>
+            </DialogHeader>
+          </div>
+
+          {selectedFeedback && (
+            <>
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 pb-6">
+                <div className="space-y-5 pt-1">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                        <CardTitle className="text-sm">Question</CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <MarkdownContent content={selectedFeedback.question} className="text-sm" />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center gap-2">
+                        <Bot className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                        <CardTitle className="text-sm">Answer</CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0 space-y-3">
+                      <MarkdownContent content={selectedFeedback.answer} className="text-sm" />
+                      {selectedFeedback.metadata?.response_time && (
+                        <div className="pt-3 border-t border-border/50 text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1.5 tabular-nums">
+                            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                            {selectedFeedback.metadata.response_time.toFixed(2)}s response
+                          </span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {selectedFeedback.explanation && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center gap-2">
+                          <MessageCircle className="h-4 w-4 text-red-300" aria-hidden="true" />
+                          <CardTitle className="text-sm">User Feedback</CardTitle>
+                        </div>
+                        <CardDescription>Submitted by the user about the answer above.</CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="text-sm p-3 bg-red-500/10 rounded-lg border-l-2 border-red-500/40 text-red-300 leading-relaxed">
+                          {selectedFeedback.explanation}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
+                    <ConversationHistory messages={selectedFeedback.conversation_history} />
+                  )}
+
+                  {(selectedSourcesUsed.length > 0 || selectedSourcesAvailable.length > 0) && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm">Sources</CardTitle>
+                        <CardDescription>Retrieval context used for the answer.</CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0 space-y-3">
+                        {selectedSourcesUsed.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs text-muted-foreground">Used in answer</p>
+                            <SourceBadges sources={selectedSourcesUsed} />
+                            <Collapsible>
+                              <CollapsibleTrigger asChild>
+                                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
+                                  Preview excerpts
+                                  <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                                </Button>
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="space-y-2 pt-2">
+                                {selectedFeedback.sources_used?.slice(0, 3).map((source, idx) => (
+                                  <div key={`${source.title}-${idx}`} className="p-3 rounded-lg border border-border bg-accent/40">
+                                    <p className="text-sm font-medium text-card-foreground">{source.title}</p>
+                                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                                      {source.content.substring(0, 320)}{source.content.length > 320 ? '...' : ''}
+                                    </p>
+                                  </div>
+                                ))}
+                              </CollapsibleContent>
+                            </Collapsible>
+                          </div>
+                        )}
+                        {selectedSourcesAvailable.length > 0 && (
+                          <div className={cn("space-y-2", selectedSourcesUsed.length > 0 && "pt-3 border-t border-border/50")}>
+                            <p className="text-xs text-muted-foreground">Available retrieval context</p>
+                            <SourceBadges sources={selectedSourcesAvailable} />
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
+                    <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+                      <div className="text-sm p-3 bg-emerald-500/10 rounded-lg border-l-2 border-emerald-500/40 text-emerald-400 leading-relaxed">
+                        Edit the FAQ draft and publish when ready.
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="feedback-faq-question" className="text-xs text-muted-foreground uppercase tracking-wider">Question</Label>
+                        <Input
+                          id="feedback-faq-question"
+                          value={faqForm.suggested_question}
+                          onChange={(e) => setFaqForm({ ...faqForm, suggested_question: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Bot className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                          <span className="font-medium text-sm">
+                            Suggested Answer
+                            {isEditingFaqAnswer && (
+                              <span className="ml-1 text-muted-foreground">(Editing)</span>
+                            )}
+                          </span>
+                          <div className="ml-auto flex items-center gap-2">
+                            {selectedFeedback.answer && faqForm.suggested_answer.trim() !== selectedFeedback.answer.trim() && (
+                              <Button
+                                type="button"
+                                variant="link"
+                                size="sm"
+                                className="h-7 px-0 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => setFaqForm({ ...faqForm, suggested_answer: selectedFeedback.answer || '' })}
+                              >
+                                Reset to original answer
+                              </Button>
+                            )}
+                            {isEditingFaqAnswer ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setIsEditingFaqAnswer(false)}
+                              >
+                                <Check className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                                Preview
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setIsEditingFaqAnswer(true)}
+                              >
+                                <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                                Edit
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div
+                          className={cn(
+                            "p-4 rounded-lg border min-h-[160px] transition-all",
+                            isEditingFaqAnswer
+                              ? "bg-background border-primary ring-1 ring-primary"
+                              : "bg-muted/30 border-border"
+                          )}
+                        >
+                          {isEditingFaqAnswer ? (
+                            <Textarea
+                              ref={faqAnswerTextareaRef}
+                              rows={10}
+                              placeholder="Provide an improved, accurate answer..."
+                              value={faqForm.suggested_answer}
+                              onChange={(e) => {
+                                setFaqForm({ ...faqForm, suggested_answer: e.target.value });
+                                e.target.style.height = "auto";
+                                e.target.style.height = `${e.target.scrollHeight}px`;
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  setIsEditingFaqAnswer(false);
+                                }
+                              }}
+                              className="min-h-[150px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
+                            />
+                          ) : (
+                            <div className="text-sm">
+                              {faqForm.suggested_answer.trim() ? (
+                                <MarkdownContent content={faqForm.suggested_answer} className="text-sm" />
+                              ) : (
+                                <p className="text-muted-foreground">No answer drafted yet.</p>
+                              )}
+                            </div>
+                          )}
+                          {(faqDraftSource.length > 0 || isEditingFaqAnswer) && (
+                            <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
+                              {faqDraftSource.length > 0 && <SourceBadges sources={faqDraftSource} />}
+                              {isEditingFaqAnswer && (
+                                <span className="text-[11px] text-muted-foreground">
+                                  Tip: press Escape to switch back to preview.
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="feedback-faq-category" className="text-xs text-muted-foreground uppercase tracking-wider">Category</Label>
+                          <Select
+                            value={isCustomCategory ? 'custom' : faqForm.category}
+                            onValueChange={(value) => {
+                              if (value === 'custom') {
+                                setIsCustomCategory(true);
+                                setFaqForm({ ...faqForm, category: customCategory });
+                              } else {
+                                setIsCustomCategory(false);
+                                setFaqForm({ ...faqForm, category: value });
+                              }
+                            }}
+                          >
+                            <SelectTrigger id="feedback-faq-category">
+                              <SelectValue placeholder="Select a category" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {FAQ_CATEGORIES.map((cat) => (
+                                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                              ))}
+                              <SelectItem value="custom">+ Add Custom Category</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {isCustomCategory && (
+                            <Input
+                              className="mt-2"
+                              placeholder="Enter custom category..."
+                              value={customCategory}
+                              onChange={(e) => {
+                                setCustomCategory(e.target.value);
+                                setFaqForm({ ...faqForm, category: e.target.value });
+                              }}
+                            />
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="feedback-faq-protocol" className="text-xs text-muted-foreground uppercase tracking-wider">Protocol</Label>
+                          <Select
+                            value={faqForm.protocol}
+                            onValueChange={(value) => setFaqForm({ ...faqForm, protocol: value as FAQProtocol })}
+                          >
+                            <SelectTrigger id="feedback-faq-protocol">
+                              <SelectValue placeholder="Select protocol" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {FAQ_PROTOCOL_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    {detailPhase === "review" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setDetailPhase("faq");
+                          setIsEditingFaqAnswer(true);
+                        }}
+                      >
+                        <PlusCircle className="h-3.5 w-3.5 mr-1.5" />
+                        Create FAQ Draft
+                      </Button>
+                    )}
+                    {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
+                      <Button
+                        size="sm"
+                        onClick={handleCreateFAQ}
+                        disabled={
+                          isSubmittingFAQ ||
+                          !faqForm.suggested_question.trim() ||
+                          !faqForm.suggested_answer.trim() ||
+                          !faqForm.category.trim()
+                        }
+                      >
+                        {isSubmittingFAQ && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Publish FAQ
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setDetailPhase("review");
+                          setIsEditingFaqAnswer(false);
+                        }}
+                        disabled={isSubmittingFAQ}
+                      >
+                        Back to Review
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

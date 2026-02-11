@@ -80,6 +80,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DatePicker } from "@/components/ui/date-picker";
 import { makeAuthenticatedRequest } from "@/lib/auth";
+import {
+    inferFaqMetadata,
+    FAQ_PROTOCOL_OPTIONS,
+    type FAQProtocol,
+} from "@/lib/faq-metadata";
 import debounce from "lodash.debounce";
 import { startOfDay, endOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -131,9 +136,9 @@ export default function ManageFaqsPage() {
     const [formData, setFormData] = useState({
         question: "",
         answer: "",
-        category: "",
+        category: "General",
         source: "Manual",
-        protocol: "bisq_easy" as "multisig_v1" | "bisq_easy" | "musig" | "all",
+        protocol: "bisq_easy" as FAQProtocol,
     });
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -413,6 +418,12 @@ export default function ManageFaqsPage() {
         setIsSubmitting(true);
         const endpoint = `/admin/faqs`;
         const method = "POST";
+        const normalizedMetadata = inferFaqMetadata({
+            question: formData.question,
+            answer: formData.answer,
+            category: formData.category,
+            protocol: formData.protocol as FAQProtocol,
+        });
 
         try {
             const response = await makeAuthenticatedRequest(endpoint, {
@@ -420,7 +431,11 @@ export default function ManageFaqsPage() {
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify({
+                    ...formData,
+                    category: normalizedMetadata.category,
+                    protocol: normalizedMetadata.protocol,
+                }),
             });
 
             if (response.ok) {
@@ -429,7 +444,7 @@ export default function ManageFaqsPage() {
                 setFormData({
                     question: "",
                     answer: "",
-                    category: "",
+                    category: "General",
                     source: "Manual",
                     protocol: "bisq_easy",
                 });
@@ -825,7 +840,7 @@ export default function ManageFaqsPage() {
     // US-003: Handle protocol assignment
     const handleSetProtocol = async (
         faq: FAQ,
-        protocol: "multisig_v1" | "bisq_easy" | "musig" | "all"
+        protocol: FAQProtocol
     ) => {
         // Optimistic UI update
         setFaqData((prev) => {
@@ -833,7 +848,7 @@ export default function ManageFaqsPage() {
             return {
                 ...prev,
                 faqs: prev.faqs.map((f) =>
-                    f.id === faq.id ? { ...f, protocol: protocol === "all" ? null : protocol } : f
+                    f.id === faq.id ? { ...f, protocol } : f
                 ),
             };
         });
@@ -847,19 +862,14 @@ export default function ManageFaqsPage() {
                     answer: faq.answer,
                     category: faq.category,
                     source: faq.source,
-                    protocol: protocol === "all" ? null : protocol,
+                    protocol,
                 }),
             });
 
             if (response.ok) {
                 const protocolDisplayName =
-                    protocol === "multisig_v1"
-                        ? "Multisig v1"
-                        : protocol === "bisq_easy"
-                          ? "Bisq Easy"
-                          : protocol === "musig"
-                            ? "MuSig"
-                            : "All";
+                    FAQ_PROTOCOL_OPTIONS.find((option) => option.value === protocol)?.label ??
+                    "All Protocols";
                 toast({
                     title: "Protocol Updated",
                     description: `FAQ protocol set to ${protocolDisplayName}`,
@@ -1137,7 +1147,7 @@ export default function ManageFaqsPage() {
         setFormData({
             question: "",
             answer: "",
-            category: "",
+            category: "General",
             source: "Manual",
             protocol: "bisq_easy",
         });
@@ -1670,10 +1680,11 @@ export default function ManageFaqsPage() {
                                             </SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="show_all">All Protocols</SelectItem>
-                                                <SelectItem value="multisig_v1">Bisq 1 (Multisig)</SelectItem>
-                                                <SelectItem value="bisq_easy">Bisq Easy</SelectItem>
-                                                <SelectItem value="musig">MuSig</SelectItem>
-                                                <SelectItem value="all">General (All)</SelectItem>
+                                                {FAQ_PROTOCOL_OPTIONS.map((option) => (
+                                                    <SelectItem key={option.value} value={option.value}>
+                                                        {option.label}
+                                                    </SelectItem>
+                                                ))}
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -2048,11 +2059,7 @@ export default function ManageFaqsPage() {
                                             onValueChange={(value) =>
                                                 setFormData({
                                                     ...formData,
-                                                    protocol: value as
-                                                        | "multisig_v1"
-                                                        | "bisq_easy"
-                                                        | "musig"
-                                                        | "all",
+                                                    protocol: value as FAQProtocol,
                                                 })
                                             }
                                         >
@@ -2060,14 +2067,13 @@ export default function ManageFaqsPage() {
                                                 <SelectValue placeholder="Select protocol" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="bisq_easy">
-                                                    Bisq Easy (Default)
-                                                </SelectItem>
-                                                <SelectItem value="multisig_v1">Bisq 1 (Multisig)</SelectItem>
-                                                <SelectItem value="musig">MuSig</SelectItem>
-                                                <SelectItem value="all">
-                                                    General (All Protocols)
-                                                </SelectItem>
+                                                {FAQ_PROTOCOL_OPTIONS.map((option) => (
+                                                    <SelectItem key={option.value} value={option.value}>
+                                                        {option.value === "bisq_easy"
+                                                            ? `${option.label} (Default)`
+                                                            : option.label}
+                                                    </SelectItem>
+                                                ))}
                                             </SelectContent>
                                         </Select>
                                     </div>

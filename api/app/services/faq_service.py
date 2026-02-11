@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.models.faq import FAQIdentifiedItem, FAQItem, FAQListResponse
+from app.services.faq.faq_metadata import normalize_faq_metadata
 from app.services.faq.faq_rag_loader import FAQRAGLoader
 from app.services.faq.faq_repository_sqlite import FAQRepositorySQLite
 from fastapi import Request
@@ -293,8 +294,23 @@ class FAQService:
         )
 
     def add_faq(self, faq_item: FAQItem) -> FAQIdentifiedItem:
-        """Adds a new FAQ to the FAQ file after checking for duplicates."""
-        result = self.repository.add_faq(faq_item)
+        """Adds a new FAQ after normalizing category and protocol metadata."""
+        normalized_category, normalized_protocol = normalize_faq_metadata(
+            question=faq_item.question,
+            answer=faq_item.answer,
+            category=faq_item.category,
+            protocol=faq_item.protocol,
+        )
+
+        normalized_item = faq_item.model_copy(
+            update={
+                "category": normalized_category,
+                "protocol": normalized_protocol,
+            },
+            deep=False,
+        )
+
+        result = self.repository.add_faq(normalized_item)
 
         # Only mark for rebuild if FAQ is verified
         if result and result.verified:

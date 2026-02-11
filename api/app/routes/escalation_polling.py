@@ -63,24 +63,32 @@ async def poll_escalation_response(
                 status="pending",
                 staff_answer=None,
                 responded_at=None,
+                resolution=None,
+                closed_at=None,
             )
         elif escalation.status == EscalationStatus.IN_REVIEW:
             return UserPollResponse(
                 status="pending",
                 staff_answer=None,
                 responded_at=None,
+                resolution=None,
+                closed_at=None,
             )
         elif escalation.status == EscalationStatus.RESPONDED:
             return UserPollResponse(
                 status="resolved",
                 staff_answer=escalation.staff_answer,
                 responded_at=escalation.responded_at,
+                resolution="responded",
+                closed_at=None,
             )
         elif escalation.status == EscalationStatus.CLOSED:
             return UserPollResponse(
                 status="resolved",
                 staff_answer=escalation.staff_answer,
                 responded_at=escalation.responded_at,
+                resolution="closed",
+                closed_at=escalation.closed_at,
             )
         else:
             # Unknown status, return pending to be safe
@@ -88,6 +96,8 @@ async def poll_escalation_response(
                 status="pending",
                 staff_answer=None,
                 responded_at=None,
+                resolution=None,
+                closed_at=None,
             )
 
     except HTTPException:

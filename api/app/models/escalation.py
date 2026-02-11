@@ -129,12 +129,12 @@ class EscalationFilters(BaseModel):
 
 
 class ClaimRequest(BaseModel):
-    staff_id: str = Field(..., min_length=1, max_length=128)
+    staff_id: str = Field(default="admin", min_length=1, max_length=128)
 
 
 class RespondRequest(BaseModel):
     staff_answer: str = Field(..., min_length=1, max_length=10000)
-    staff_id: str = Field(..., min_length=1, max_length=128)
+    staff_id: str = Field(default="admin", min_length=1, max_length=128)
 
     @field_validator("staff_answer", mode="before")
     @classmethod
@@ -153,10 +153,14 @@ class GenerateFAQRequest(BaseModel):
 
     @field_validator("category", mode="before")
     @classmethod
-    def validate_category(cls, v: str) -> str:
-        allowed = {"General", "Bisq 1", "Bisq 2"}
-        if v not in allowed:
-            raise ValueError(f"category must be one of {allowed}")
+    def normalize_category(cls, v: str) -> str:
+        # Keep categories flexible (frontend may offer more than the backend knows about).
+        # We only enforce "non-empty after stripping" and a sane max length.
+        v = v.strip() if isinstance(v, str) else v
+        if not v:
+            return "General"
+        if len(v) > 128:
+            raise ValueError("category must be 128 characters or fewer")
         return v
 
     @field_validator("protocol", mode="before")
@@ -188,6 +192,10 @@ class UserPollResponse(BaseModel):
     status: str
     staff_answer: Optional[str] = None
     responded_at: Optional[datetime] = None
+    # Backwards-compatible: polling historically only returned `status="resolved"`.
+    # This field disambiguates "answered by staff" vs "closed/dismissed without reply".
+    resolution: Optional[str] = None  # "responded" | "closed"
+    closed_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

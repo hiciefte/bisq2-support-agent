@@ -35,7 +35,7 @@ _GENERIC_ESCALATION_MSG = (
 class EscalationPostHook(BasePostProcessingHook):
     """PostProcessingHook that creates escalations for low-confidence answers.
 
-    Priority: HookPriority.HIGH (100) — runs before metrics.
+    Priority: HookPriority.NORMAL (200) — runs after PII filtering, before metrics.
 
     Behavior:
     - requires_human=False: pass through (return None)
@@ -44,7 +44,7 @@ class EscalationPostHook(BasePostProcessingHook):
     """
 
     def __init__(self, escalation_service, channel_registry, settings=None):
-        super().__init__(name="escalation", priority=HookPriority.HIGH)
+        super().__init__(name="escalation", priority=HookPriority.NORMAL)
         self.escalation_service = escalation_service
         self.channel_registry = channel_registry
         self._settings = settings
@@ -112,16 +112,17 @@ class EscalationPostHook(BasePostProcessingHook):
 
     def _replace_answer(self, incoming, outgoing, escalation_id: int):
         """Replace outgoing.answer with channel-specific escalation message."""
-        adapter = self.channel_registry.get(incoming.channel.value)
-        if adapter is not None:
-            username = incoming.user.channel_user_id or incoming.user.user_id
-            support_handle = "support"
-            outgoing.answer = adapter.format_escalation_message(
-                username=username,
-                escalation_id=escalation_id,
-                support_handle=support_handle,
-            )
-        else:
+        adapter = None
+        if self.channel_registry is not None:
+            try:
+                adapter = self.channel_registry.get(incoming.channel.value)
+            except Exception:
+                logger.exception(
+                    "Failed to resolve adapter for channel %s; using generic message",
+                    incoming.channel.value,
+                )
+
+        if adapter is None:
             logger.warning(
                 "No adapter found for channel %s, using generic message",
                 incoming.channel.value,
@@ -129,3 +130,12 @@ class EscalationPostHook(BasePostProcessingHook):
             outgoing.answer = _GENERIC_ESCALATION_MSG.format(
                 escalation_id=escalation_id
             )
+            return
+
+        username = incoming.user.channel_user_id or incoming.user.user_id
+        support_handle = "support"
+        outgoing.answer = adapter.format_escalation_message(
+            username=username,
+            escalation_id=escalation_id,
+            support_handle=support_handle,
+        )

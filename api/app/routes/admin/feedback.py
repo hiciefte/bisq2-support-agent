@@ -357,6 +357,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
             question=request.suggested_question or "Generated from feedback",
             answer=request.suggested_answer,
             category=request.category,
+            protocol=request.protocol,
             source="Feedback",  # Mark as created from feedback
         )
 

@@ -88,9 +88,9 @@ export async function getLastBotResponse(
             : await page.locator(PROSE_CHAT_SELECTOR).count();
 
     await page.waitForFunction(
-        (selector, baseline) => document.querySelectorAll(selector).length > baseline,
-        PROSE_CHAT_SELECTOR,
-        baselineCount,
+        ([selector, baseline]) =>
+            document.querySelectorAll(selector).length > baseline,
+        [PROSE_CHAT_SELECTOR, baselineCount] as [string, number],
         { timeout },
     );
 

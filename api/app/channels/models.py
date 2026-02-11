@@ -196,6 +196,11 @@ class DocumentReference(BaseModel):
     url: Optional[str] = None
     relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
     category: Optional[str] = None  # bisq1/bisq2/general
+    # Optional snippet + metadata. Used by web responses and evaluation (RAGAS),
+    # and safe to omit for channels that don't need full context.
+    content: Optional[str] = None
+    protocol: Optional[str] = None  # bisq_easy/multisig_v1/all
+    section: Optional[str] = None
 
 
 class ResponseMetadata(BaseModel):

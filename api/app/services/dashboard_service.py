@@ -177,8 +177,18 @@ class DashboardService:
                             "message_id": feedback.message_id,
                             "question": feedback.question,
                             "answer": feedback.answer,
-                            "explanation": feedback.explanation,
-                            "issues": feedback.issues,
+                            # Dashboard response model expects a string explanation.
+                            # Some negative feedback may have no explicit explanation but still be a
+                            # "no source" candidate; provide a stable reason string in that case.
+                            "explanation": (
+                                feedback.explanation
+                                or (
+                                    "Model indicated it had insufficient sources to answer reliably."
+                                    if feedback.has_no_source_response
+                                    else "Negative feedback"
+                                )
+                            ),
+                            "issues": feedback.issues or [],
                             "timestamp": feedback.timestamp,
                             "potential_category": self._suggest_faq_category(
                                 feedback.issues

@@ -143,13 +143,22 @@ class TestGenerateFAQRequest:
         assert req.category == "Bisq 2"
         assert req.protocol == "bisq_easy"
 
-    def test_invalid_category_rejected(self):
-        """Category not in allowed set raises ValidationError."""
+    def test_custom_category_accepted(self):
+        """Categories are intentionally flexible for escalation-generated FAQs."""
+        req = GenerateFAQRequest(
+            question="How?",
+            answer="Like this.",
+            category="Invalid Category",
+        )
+        assert req.category == "Invalid Category"
+
+    def test_overlong_category_rejected(self):
+        """Category > 128 chars raises ValidationError."""
         with pytest.raises(ValidationError):
             GenerateFAQRequest(
                 question="How?",
                 answer="Like this.",
-                category="Invalid Category",
+                category="x" * 129,
             )
 
     def test_invalid_protocol_rejected(self):

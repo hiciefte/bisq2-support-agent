@@ -19,7 +19,7 @@ from app.models.escalation import (
     GenerateFAQRequest,
     RespondRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -35,36 +35,16 @@ router = APIRouter(
     },
 )
 
-# Module-level service holder (lazy initialization pattern)
-_escalation_service = None
 
-
-async def get_escalation_service():
-    """Get or create the escalation service singleton.
-
-    Returns:
-        EscalationService instance
-    """
-    global _escalation_service
-    if _escalation_service is None:
-        import os
-
-        from app.core.config import get_settings
-        from app.services.escalation.escalation_repository import EscalationRepository
-        from app.services.escalation.escalation_service import EscalationService
-
-        settings = get_settings()
-        db_path = os.path.join(settings.DATA_DIR, "escalations.db")
-        repo = EscalationRepository(db_path=db_path)
-        await repo.initialize()
-        _escalation_service = EscalationService(
-            repository=repo,
-            response_delivery=None,  # Will be wired in E08
-            faq_service=None,  # Will be wired later
-            learning_engine=None,  # Will be wired later
-            settings=settings,
+async def get_escalation_service(request: Request):
+    """Get the shared EscalationService from app.state."""
+    service = getattr(request.app.state, "escalation_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Escalation service not available",
         )
-    return _escalation_service
+    return service
 
 
 @router.get("", response_model=EscalationListResponse)

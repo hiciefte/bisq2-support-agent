@@ -93,8 +93,9 @@ class FeedbackItem(BaseModel):
     external_message_id: Optional[str] = None
     reactor_identity_hash: Optional[str] = None
     reaction_emoji: Optional[str] = None
-    sources: Optional[List[Dict[str, str]]] = None
-    sources_used: Optional[List[Dict[str, str]]] = None
+    # Sources may include numeric similarity scores and optional fields.
+    sources: Optional[List[Dict[str, Any]]] = None
+    sources_used: Optional[List[Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
     processed: Optional[int] = Field(
         default=0, description="0=not processed, 1=processed into FAQ"
@@ -233,6 +234,10 @@ class CreateFAQFromFeedbackRequest(BaseModel):
     )
     suggested_answer: str = Field(description="The improved answer for the FAQ")
     category: str = Field(description="Category for the new FAQ")
+    protocol: Literal["multisig_v1", "bisq_easy", "musig", "all"] = Field(
+        default="all",
+        description="Protocol scope for the new FAQ",
+    )
     additional_notes: Optional[str] = Field(
         None, description="Additional context or notes"
     )
@@ -244,7 +249,7 @@ class FeedbackForFAQItem(BaseModel):
     message_id: str
     question: str
     answer: str
-    explanation: str
+    explanation: Optional[str] = None
     issues: List[str]
     timestamp: str
     potential_category: str

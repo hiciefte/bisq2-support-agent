@@ -16,6 +16,7 @@ import { LiveDataContent } from "./live-data-content"
 import { MarkdownContent } from "./markdown-content"
 import { HumanReviewBadge } from "./human-review-badge"
 import { HumanResponseSection } from "./human-response-section"
+import { HumanClosedSection } from "./human-closed-section"
 import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
@@ -123,8 +124,11 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                 )}
 
                 {/* Escalation indicators */}
-                {isAssistant && message.requires_human && !message.staff_response && (
+                {isAssistant && message.requires_human && !message.staff_response && message.escalation_resolution !== "closed" && (
                     <HumanReviewBadge />
+                )}
+                {isAssistant && message.escalation_resolution === "closed" && (
+                    <HumanClosedSection resolvedAt={message.escalation_resolved_at} />
                 )}
                 {isAssistant && message.staff_response && (
                     <HumanResponseSection response={message.staff_response} />

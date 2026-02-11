@@ -576,6 +576,7 @@ class TestPollingEndpoint:
         assert data["status"] == "resolved"
         assert data["staff_answer"] == "Final staff answer"
         assert data["responded_at"] is not None
+        assert data["resolution"] == "responded"
 
     def test_poll_closed_returns_resolved_without_answer(
         self, polling_client, mock_escalation_service
@@ -621,6 +622,8 @@ class TestPollingEndpoint:
         data = response.json()
         assert data["status"] == "resolved"
         assert data["staff_answer"] is None
+        assert data["resolution"] == "closed"
+        assert data["closed_at"] is not None
 
     def test_poll_invalid_uuid_returns_422(self, polling_client):
         """Test polling with invalid UUID format returns 422."""

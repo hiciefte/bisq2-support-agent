@@ -374,7 +374,7 @@ Current Question: {question}
 Instructions:
 - If the answer is clearly in the conversation above, provide it concisely
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
-- If this is a NEW topic not in the conversation, respond: "I don't have information about that in our knowledge base"
+- If this is a NEW topic not in the conversation, respond: "I don't have information about that in our Bisq 2 (Bisq Easy) knowledge base."
 - Keep your answer to 2-3 sentences maximum
 - You may use basic markdown: **bold** for warnings, `backticks` for technical terms
 

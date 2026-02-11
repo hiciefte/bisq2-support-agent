@@ -423,6 +423,72 @@ class BM25SparseTokenizer:
 
         return indices, values
 
+    def vectorize_document_static(self, text: str) -> Tuple[List[int], List[float]]:
+        """Vectorize a document without mutating vocabulary or corpus statistics.
+
+        Used during indexing when the tokenizer was already built from the full corpus
+        and we need stable BM25 weights.
+        """
+        tokens = self._extract_tokens(text)
+        if not tokens:
+            return [], []
+
+        term_counts = Counter(tokens)
+        doc_length = len(tokens)
+        avg_length = self._get_avg_doc_length()
+
+        indices: List[int] = []
+        values: List[float] = []
+
+        # Read-only access under lock for safety.
+        with self._update_lock:
+            for token, count in term_counts.items():
+                idx = self._token_to_index.get(token)
+                if idx is None:
+                    continue
+
+                tf = count
+                idf = self._get_idf(token)
+
+                numerator = tf * (self.K1 + 1)
+                denominator = tf + self.K1 * (
+                    1 - self.B + self.B * doc_length / avg_length
+                )
+                bm25_weight = idf * (numerator / denominator)
+
+                indices.append(idx)
+                values.append(float(bm25_weight))
+
+        return indices, values
+
+    def vectorize_query_static(self, text: str) -> Tuple[List[int], List[float]]:
+        """Vectorize a query without mutating vocabulary.
+
+        Tokens not present in the current vocabulary are ignored.
+        """
+        tokens = self._extract_tokens(text)
+        if not tokens:
+            return [], []
+
+        term_counts = Counter(tokens)
+        indices: List[int] = []
+        values: List[float] = []
+
+        with self._update_lock:
+            for token, count in term_counts.items():
+                idx = self._token_to_index.get(token)
+                if idx is None:
+                    continue
+
+                tf = 1 + math.log(count) if count > 1 else 1.0
+                idf = self._get_idf(token)
+                weight = tf * idf
+
+                indices.append(idx)
+                values.append(float(weight))
+
+        return indices, values
+
     def tokenize_query(self, text: str) -> Tuple[List[int], List[float]]:
         """Tokenize a query for searching.
 

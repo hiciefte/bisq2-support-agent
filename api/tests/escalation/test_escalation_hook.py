@@ -224,9 +224,9 @@ class TestEscalationPostHookExecution:
 class TestEscalationPostHookPriority:
     """Test hook ordering."""
 
-    def test_hook_priority_is_high(self, hook):
-        """Priority is HookPriority.HIGH (100)."""
-        assert hook.priority == HookPriority.HIGH
+    def test_hook_priority_is_normal(self, hook):
+        """Priority is HookPriority.NORMAL (200)."""
+        assert hook.priority == HookPriority.NORMAL
 
     def test_hook_name_is_escalation(self, hook):
         """Name is 'escalation'."""

@@ -17,6 +17,12 @@ import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
 import { type Period } from '@/types/dashboard';
 import { usePeriodStorage } from '@/hooks/usePeriodStorage';
+import {
+  FAQ_CATEGORIES,
+  FAQ_PROTOCOL_OPTIONS,
+  inferFaqMetadata,
+  type FAQProtocol,
+} from "@/lib/faq-metadata";
 
 interface FeedbackForFAQ {
   message_id: string;
@@ -66,6 +72,7 @@ export default function AdminOverview() {
     suggested_question: '',
     suggested_answer: '',
     category: '',
+    protocol: 'all' as FAQProtocol,
     additional_notes: ''
   });
   const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
@@ -176,11 +183,17 @@ export default function AdminOverview() {
       setError(errorMessage);
     }
 
+    const inferred = inferFaqMetadata({
+      question: item.question,
+      answer: item.answer,
+      category: item.potential_category || undefined,
+    });
     setFaqForm({
       message_id: item.message_id,
       suggested_question: item.question,
-      suggested_answer: '',
-      category: item.potential_category || 'General',
+      suggested_answer: item.answer || '',
+      category: inferred.category,
+      protocol: inferred.protocol,
       additional_notes: item.explanation || ''
     });
     setIsCustomCategory(false);
@@ -190,6 +203,17 @@ export default function AdminOverview() {
 
   const handleCreateFAQ = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!faqForm.suggested_question.trim() || !faqForm.suggested_answer.trim() || !faqForm.category.trim()) {
+      setError("Question, answer, category, and protocol are required.");
+      return;
+    }
+
+    const normalized = inferFaqMetadata({
+      question: faqForm.suggested_question,
+      answer: faqForm.suggested_answer,
+      category: faqForm.category,
+      protocol: faqForm.protocol,
+    });
 
     setIsSubmittingFAQ(true);
     try {
@@ -198,7 +222,11 @@ export default function AdminOverview() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(faqForm),
+        body: JSON.stringify({
+          ...faqForm,
+          category: normalized.category,
+          protocol: normalized.protocol,
+        }),
       });
 
       if (response.ok) {
@@ -208,6 +236,7 @@ export default function AdminOverview() {
           suggested_question: '',
           suggested_answer: '',
           category: '',
+          protocol: 'all',
           additional_notes: ''
         });
         setIsCustomCategory(false);
@@ -540,13 +569,31 @@ export default function AdminOverview() {
                   <SelectValue placeholder="Select a category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="General">General</SelectItem>
-                  <SelectItem value="Trading">Trading</SelectItem>
-                  <SelectItem value="Technical">Technical</SelectItem>
-                  <SelectItem value="Account">Account</SelectItem>
-                  <SelectItem value="Payment">Payment</SelectItem>
-                  <SelectItem value="Security">Security</SelectItem>
+                  {FAQ_CATEGORIES.map((category) => (
+                    <SelectItem key={category} value={category}>
+                      {category}
+                    </SelectItem>
+                  ))}
                   <SelectItem value="custom">Custom Category</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="protocol">Protocol</Label>
+              <Select
+                value={faqForm.protocol}
+                onValueChange={(value) => setFaqForm({ ...faqForm, protocol: value as FAQProtocol })}
+              >
+                <SelectTrigger id="protocol">
+                  <SelectValue placeholder="Select protocol" />
+                </SelectTrigger>
+                <SelectContent>
+                  {FAQ_PROTOCOL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -588,7 +635,15 @@ export default function AdminOverview() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmittingFAQ}>
+              <Button
+                type="submit"
+                disabled={
+                  isSubmittingFAQ ||
+                  !faqForm.suggested_question.trim() ||
+                  !faqForm.suggested_answer.trim() ||
+                  !faqForm.category.trim()
+                }
+              >
                 {isSubmittingFAQ ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />

@@ -44,18 +44,28 @@ const navigation = [
 export function AdminSidebar() {
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [pendingEscalations, setPendingEscalations] = useState(0)
+  const [feedbackNeedsFaqCount, setFeedbackNeedsFaqCount] = useState(0)
   const pathname = usePathname()
 
-  // Fetch pending escalation count
+  // Fetch sidebar badges (escalations + feedback needing FAQ)
   useEffect(() => {
     let isCancelled = false
 
     const fetchCounts = async () => {
       try {
-        const response = await makeAuthenticatedRequest('/admin/escalations/counts')
-        if (response.ok && !isCancelled) {
-          const data = await response.json()
+        const [escalationsResponse, feedbackStatsResponse] = await Promise.all([
+          makeAuthenticatedRequest("/admin/escalations/counts"),
+          makeAuthenticatedRequest("/admin/feedback/stats"),
+        ])
+
+        if (escalationsResponse.ok && !isCancelled) {
+          const data = await escalationsResponse.json()
           setPendingEscalations(data.pending || 0)
+        }
+
+        if (feedbackStatsResponse.ok && !isCancelled) {
+          const data = await feedbackStatsResponse.json()
+          setFeedbackNeedsFaqCount(data.needs_faq_count || 0)
         }
       } catch {
         // Silently ignore - counts are non-critical
@@ -139,6 +149,11 @@ export function AdminSidebar() {
               <div className="flex flex-col flex-1">
                 <div className="flex items-center gap-2">
                   <span>{item.name}</span>
+                  {item.name === "Feedback" && feedbackNeedsFaqCount > 0 && (
+                    <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-amber-500 text-black">
+                      {feedbackNeedsFaqCount}
+                    </span>
+                  )}
                   {item.name === "Escalations" && pendingEscalations > 0 && (
                     <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-red-500 text-white">
                       {pendingEscalations}

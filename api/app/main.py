@@ -154,12 +154,49 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
+    # Initialize EscalationService singleton for admin routes, polling, and hooks.
+    try:
+        from app.services.escalation.escalation_repository import EscalationRepository
+        from app.services.escalation.escalation_service import EscalationService
+
+        esc_db_path = os.path.join(settings.DATA_DIR, "escalations.db")
+        esc_repo = EscalationRepository(db_path=esc_db_path)
+        await esc_repo.initialize()
+
+        escalation_service = EscalationService(
+            repository=esc_repo,
+            response_delivery=None,  # Not wired yet (push delivery)
+            faq_service=faq_service,  # Required for /generate-faq
+            learning_engine=None,  # Not wired yet
+            settings=settings,
+        )
+        app.state.escalation_service = escalation_service
+        logger.info("EscalationService initialized (singleton)")
+    except Exception:
+        logger.exception("EscalationService init failed")
+
     # Initialize Channel Gateway with default middleware hooks
     logger.info("Initializing Channel Gateway...")
     channel_gateway = create_channel_gateway(
         rag_service=rag_service,
         register_default_hooks=True,
     )
+    # Register EscalationPostHook (only affects chat flow; admin/polling still work without it).
+    if getattr(settings, "ESCALATION_ENABLED", False):
+        service = getattr(app.state, "escalation_service", None)
+        if service is None:
+            logger.warning("ESCALATION_ENABLED but escalation_service is not available")
+        else:
+            from app.channels.hooks.escalation_hook import EscalationPostHook
+
+            channel_gateway.register_post_hook(
+                EscalationPostHook(
+                    escalation_service=service,
+                    channel_registry=None,
+                    settings=settings,
+                )
+            )
+            logger.info("Registered EscalationPostHook")
     app.state.channel_gateway = channel_gateway
     logger.info(
         f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"

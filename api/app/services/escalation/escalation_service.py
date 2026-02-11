@@ -198,43 +198,57 @@ class EscalationService:
 
         # Attempt delivery (non-blocking)
         channel = escalation.channel
-        try:
-            delivered = await self.response_delivery.deliver(updated, staff_answer)
-            if delivered:
-                ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
-            else:
-                ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
-                logger.warning("Delivery failed for escalation %d", escalation_id)
-                await self.repository.update(
-                    escalation_id,
-                    EscalationUpdate(
-                        delivery_status=EscalationDeliveryStatus.FAILED,
-                        delivery_error="Delivery returned False",
-                    ),
-                )
-        except Exception:
-            ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
-            logger.exception("Delivery error for escalation %d", escalation_id)
+        if self.response_delivery is not None:
+            try:
+                delivered = await self.response_delivery.deliver(updated, staff_answer)
+                if delivered:
+                    ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
+                else:
+                    ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
+                    logger.warning("Delivery failed for escalation %d", escalation_id)
+                    await self.repository.update(
+                        escalation_id,
+                        EscalationUpdate(
+                            delivery_status=EscalationDeliveryStatus.FAILED,
+                            delivery_error="Delivery returned False",
+                        ),
+                    )
+            except Exception:
+                ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
+                logger.exception("Delivery error for escalation %d", escalation_id)
+        else:
+            logger.debug(
+                "No response delivery configured, skipping for escalation %d",
+                escalation_id,
+            )
 
         # Record learning
-        try:
-            admin_action = (
-                "approved"
-                if staff_answer.strip() == escalation.ai_draft_answer.strip()
-                else "edited"
+        if self.learning_engine is not None:
+            try:
+                admin_action = (
+                    "approved"
+                    if staff_answer.strip() == escalation.ai_draft_answer.strip()
+                    else "edited"
+                )
+                self.learning_engine.record_review(
+                    question_id=f"escalation_{escalation.id}",
+                    confidence=escalation.confidence_score,
+                    admin_action=admin_action,
+                    routing_action=escalation.routing_action,
+                    metadata={
+                        "channel": escalation.channel,
+                        "staff_id": staff_id,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Learning engine error for escalation %d", escalation_id
+                )
+        else:
+            logger.debug(
+                "No learning engine configured, skipping for escalation %d",
+                escalation_id,
             )
-            self.learning_engine.record_review(
-                question_id=f"escalation_{escalation.id}",
-                confidence=escalation.confidence_score,
-                admin_action=admin_action,
-                routing_action=escalation.routing_action,
-                metadata={
-                    "channel": escalation.channel,
-                    "staff_id": staff_id,
-                },
-            )
-        except Exception:
-            logger.exception("Learning engine error for escalation %d", escalation_id)
 
         return updated
 
@@ -258,6 +272,9 @@ class EscalationService:
         escalation = await self.repository.get_by_id(escalation_id)
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        if self.faq_service is None:
+            raise RuntimeError("FAQ service not configured")
 
         if escalation.status not in (
             EscalationStatus.RESPONDED,
