@@ -1059,7 +1059,9 @@ async def trigger_matrix_sync(
             from app.channels.plugins.matrix.client.polling_state import (
                 PollingStateManager,
             )
-            from app.services.training.matrix_sync_service import MatrixSyncService
+            from app.channels.plugins.matrix.services.sync_service import (
+                MatrixSyncService,
+            )
 
             # Create polling state manager for Matrix
             polling_state = PollingStateManager(

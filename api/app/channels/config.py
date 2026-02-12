@@ -56,8 +56,9 @@ class ReactionConfig(BaseModel):
 # Channel-Specific Configurations
 # =============================================================================
 
-# Bisq2ChannelConfig lives in its domain module
+# Channel-specific configs live in their domain modules
 from app.channels.plugins.bisq2.config import Bisq2ChannelConfig  # noqa: E402
+from app.channels.plugins.matrix.config import MatrixChannelConfig  # noqa: E402
 
 
 class WebChannelConfig(ChannelConfigBase):
@@ -65,34 +66,6 @@ class WebChannelConfig(ChannelConfigBase):
 
     cors_origins: List[str] = Field(default_factory=list)
     max_chat_history: int = Field(default=10, ge=0, le=50)
-
-
-class MatrixChannelConfig(ChannelConfigBase):
-    """Matrix channel configuration."""
-
-    enabled: bool = False  # Disabled by default
-    homeserver_url: str = ""
-    user_id: str = ""
-    password: SecretStr = SecretStr("")
-    rooms: List[str] = Field(default_factory=list)
-    session_file: str = "matrix_session.json"
-    poll_interval_seconds: int = Field(default=5, ge=1, le=60)
-    reactions: ReactionConfig = Field(default_factory=ReactionConfig)
-
-    @model_validator(mode="after")
-    def validate_auth_config(self) -> "MatrixChannelConfig":
-        """Validate required fields when Matrix is enabled."""
-        if self.enabled:
-            if not self.homeserver_url:
-                raise ValueError("Matrix enabled but homeserver_url not set")
-            if not self.user_id:
-                raise ValueError("Matrix enabled but user_id not set")
-            if not self.rooms:
-                raise ValueError("Matrix enabled but no rooms configured")
-            for room in self.rooms:
-                if not room.startswith("!"):
-                    raise ValueError(f"Invalid room ID format: {room}")
-        return self
 
 
 # =============================================================================

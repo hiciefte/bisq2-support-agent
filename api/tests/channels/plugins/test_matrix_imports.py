@@ -32,3 +32,33 @@ class TestMatrixClientImports:
         from app.channels.plugins.matrix.metrics import matrix_auth_total
 
         assert matrix_auth_total is not None
+
+
+class TestMatrixServicesImports:
+    """Matrix services should be importable from plugins/matrix/services/."""
+
+    def test_sync_service_importable(self):
+        from app.channels.plugins.matrix.services.sync_service import (
+            MatrixSyncService,
+        )
+
+        assert MatrixSyncService is not None
+
+    def test_export_parser_importable(self):
+        from app.channels.plugins.matrix.services.export_parser import (
+            MatrixExportParser,
+        )
+
+        assert MatrixExportParser is not None
+
+    def test_alert_service_importable(self):
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
+
+        assert MatrixAlertService is not None
+
+    def test_matrix_config_importable(self):
+        from app.channels.plugins.matrix.config import MatrixChannelConfig
+
+        assert MatrixChannelConfig is not None

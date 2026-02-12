@@ -1,7 +1,7 @@
 """Tests for Matrix export parser."""
 
 import pytest
-from app.services.training.matrix_export_parser import (
+from app.channels.plugins.matrix.services.export_parser import (
     TRUSTED_STAFF_IDS,
     MatrixExportParser,
 )

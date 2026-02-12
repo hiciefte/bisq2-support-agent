@@ -269,7 +269,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Matrix alert service for Alertmanager notifications
     logger.info("Initializing MatrixAlertService...")
-    from app.services.alerting.matrix_alert_service import MatrixAlertService
+    from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
 
     matrix_alert_service = MatrixAlertService(settings)
     app.state.matrix_alert_service = matrix_alert_service

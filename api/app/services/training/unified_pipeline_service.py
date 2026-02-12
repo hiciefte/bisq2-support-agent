@@ -25,6 +25,7 @@ from app.channels.plugins.bisq2.client.api import Bisq2API
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
 from app.channels.plugins.matrix.client.polling_state import PollingStateManager
+from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
 # Import shared threshold constants from config
 from app.core.config import (
@@ -47,7 +48,6 @@ from app.metrics.training_metrics import (
 )
 from app.models.faq import FAQItem
 from app.services.rag.protocol_detector import ProtocolDetector, Source
-from app.services.training.matrix_sync_service import MatrixSyncService
 from app.services.training.unified_repository import (
     CalibrationStatus,
     UnifiedFAQCandidate,
