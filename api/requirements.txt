@@ -100,11 +100,11 @@ docstring-parser==0.15
     # via
     #   aisuite
     #   instructor
-fastapi==0.128.8
+fastapi==0.129.0
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
-filelock==3.20.3
+filelock==3.21.0
     # via
     #   datasets
     #   huggingface-hub
@@ -242,7 +242,7 @@ langsmith==0.7.1
     #   langchain-classic
     #   langchain-community
     #   langchain-core
-librt==0.7.8
+librt==0.8.0
     # via mypy
 litellm==1.80.0
     # via -r api/requirements.in
@@ -358,7 +358,7 @@ pillow==12.1.1
     #   ragas
 pip-tools==7.5.3
     # via -r api/requirements.in
-platformdirs==4.5.1
+platformdirs==4.6.0
     # via
     #   black
     #   virtualenv
