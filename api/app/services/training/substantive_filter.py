@@ -5,8 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, List, Tuple
 
+from app.models.training import QAPair
 from app.services.training.comparison_engine import extract_json_from_llm_response
-from app.services.training.matrix_export_parser import QAPair
 
 logger = logging.getLogger(__name__)
 

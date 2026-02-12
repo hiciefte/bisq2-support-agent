@@ -4,11 +4,11 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.core.pii_utils import PII_LLM_PATTERNS
+from app.models.training import QAPair
 
 logger = logging.getLogger(__name__)
 
@@ -38,24 +38,7 @@ TRUSTED_STAFF_IDS: Set[str] = {
 # PII patterns imported from centralized pii_utils.py (PII_LLM_PATTERNS)
 # Local patterns removed as part of Phase 3 Matrix code consolidation
 
-
-@dataclass
-class QAPair:
-    """A question-answer pair extracted from Matrix."""
-
-    question_event_id: str
-    question_text: str
-    question_sender: str
-    question_timestamp: datetime
-
-    answer_event_id: str
-    answer_text: str
-    answer_sender: str
-    answer_timestamp: datetime
-
-    # Metadata
-    thread_depth: int = 1  # How deep in reply chain
-    has_followup: bool = False
+# QAPair imported from app.models.training (shared across channels)
 
 
 class MatrixExportParser:
