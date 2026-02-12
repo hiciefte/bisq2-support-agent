@@ -17,6 +17,16 @@ class ConversationMessage(BaseModel):
         return v.strip()
 
 
+class ReactionSubmitRequest(BaseModel):
+    """Request model for reaction feedback (thumbs up/down)."""
+
+    message_id: str = Field(
+        pattern=r"^[a-zA-Z0-9_$:.\-]{1,256}$",
+        description="Message ID from chat response",
+    )
+    rating: int = Field(ge=0, le=1, description="0=negative, 1=positive")
+
+
 class FeedbackRequest(BaseModel):
     """Request model for submitting feedback."""
 
@@ -28,7 +38,7 @@ class FeedbackRequest(BaseModel):
     answer: str = Field(max_length=20000, description="Assistant answer")
     rating: int = Field(ge=0, le=1, description="0 for negative, 1 for positive")
     explanation: Optional[str] = Field(
-        None, max_length=5000, description="Feedback explanation"
+        None, max_length=2000, description="Feedback explanation"
     )
     channel: str = Field(
         default="web", description="Source channel (web, matrix, bisq2)"
@@ -50,10 +60,12 @@ class FeedbackRequest(BaseModel):
         None, max_length=50, description="Conversation context (max 50 messages)"
     )
     sources: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Source documents used in RAG response"
+        None, max_length=100, description="Source documents used in RAG response"
     )
     sources_used: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Source documents actually used in response generation"
+        None,
+        max_length=100,
+        description="Source documents actually used in response generation",
     )
 
     @field_validator("conversation_history")

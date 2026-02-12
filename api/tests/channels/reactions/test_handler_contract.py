@@ -2,10 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from app.channels.reactions import (
-    ReactionHandlerBase,
-    ReactionHandlerProtocol,
-)
+from app.channels.reactions import ReactionHandlerBase, ReactionHandlerProtocol
 
 
 class ValidHandler:

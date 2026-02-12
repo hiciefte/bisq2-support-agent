@@ -137,21 +137,17 @@ test.describe('Endpoint Security', () => {
       expect(data).toHaveProperty('answer');
     });
 
-    test('/api/feedback/submit - Feedback submission should work', async ({ request }) => {
-      const response = await request.post(`${BASE_URL}/api/feedback/submit`, {
+    test('/api/feedback/react - Reaction feedback should work', async ({ request }) => {
+      const response = await request.post(`${BASE_URL}/api/feedback/react`, {
         data: {
-          message_id: 'test-msg-id',
-          query: 'test query',
-          response: 'test response',
-          rating: 'helpful',
-          feedback_text: 'Security test feedback',
-          conversation_id: 'test-security-check'
+          message_id: 'web_test-msg-id',
+          rating: 1,
         }
       });
 
-      // Accept both 200 (successful) and 422 (validation error)
-      // Both indicate endpoint is accessible and working correctly
-      expect([200, 422]).toContain(response.status());
+      // Accept 200 (successful), 404 (untracked message), 422 (validation), or 503 (no processor)
+      // All indicate endpoint is accessible and working correctly
+      expect([200, 404, 422, 503]).toContain(response.status());
     });
   });
 

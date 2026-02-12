@@ -151,6 +151,11 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
+    # Create LearningEngine early so it can be wired to EscalationService
+    # State will be loaded later when unified_db_path is available
+    learning_engine = LearningEngine()
+    app.state.learning_engine = learning_engine
+
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
     app.state.escalation_service = None
     app.state.escalation_init_failed = False
@@ -166,7 +171,7 @@ async def lifespan(app: FastAPI):
             repository=esc_repo,
             response_delivery=None,  # Not wired yet (push delivery)
             faq_service=faq_service,  # Required for /generate-faq
-            learning_engine=None,  # Not wired yet
+            learning_engine=learning_engine,
             settings=settings,
         )
         app.state.escalation_service = escalation_service
@@ -202,6 +207,24 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"
     )
+
+    # Web-layer reaction services (separate from ChannelRuntime's pair in bootstrapper.py).
+    # This separation is intentional: HTTP layer (app.state) vs channel layer (ChannelRuntime)
+    # each manage their own tracker/processor lifecycle. New HTTP-based channels reuse
+    # this pair; new push-based channels get theirs via ChannelBootstrapper automatically.
+    from app.channels.reactions import ReactionProcessor, SentMessageTracker
+
+    sent_message_tracker = SentMessageTracker()
+    app.state.sent_message_tracker = sent_message_tracker
+
+    reactor_salt = getattr(settings, "REACTOR_IDENTITY_SALT", "")
+    reaction_processor = ReactionProcessor(
+        tracker=sent_message_tracker,
+        feedback_service=feedback_service,
+        reactor_identity_salt=reactor_salt,
+    )
+    app.state.reaction_processor = reaction_processor
+    logger.info("Registered SentMessageTracker and ReactionProcessor on app.state")
 
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
@@ -257,16 +280,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("MatrixAlertService not configured (MATRIX_ALERT_ROOM not set)")
 
-    # Initialize LearningEngine for adaptive threshold tuning
-    logger.info("Initializing LearningEngine...")
-    learning_engine = LearningEngine()
-    # Load persisted state from unified training database
+    # Load LearningEngine persisted state from unified training database
+    logger.info("Loading LearningEngine state...")
     unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
     learning_engine.load_state(unified_repo)
-    app.state.learning_engine = learning_engine
     logger.info(
-        f"LearningEngine initialized with thresholds: {learning_engine.get_current_thresholds()}"
+        f"LearningEngine state loaded with thresholds: {learning_engine.get_current_thresholds()}"
     )
+
+    # Wire AutoSendRouter with LearningEngine for dynamic thresholds
+    from app.services.rag.auto_send_router import AutoSendRouter
+
+    auto_send_router = AutoSendRouter(learning_engine=learning_engine)
+    app.state.auto_send_router = auto_send_router
+
+    # Inject the wired router into RAG service so query routing uses learned thresholds
+    rag_service.auto_send_router = auto_send_router
 
     # Yield control to the application
     yield

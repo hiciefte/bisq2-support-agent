@@ -198,8 +198,15 @@ class FeedbackService:
             self._feedback_cache = None
             self._last_load_time = None
 
-            # Apply feedback weights to improve future responses
-            await self.apply_feedback_weights_async(feedback_data)
+            # Apply feedback weights to improve future responses (best-effort)
+            try:
+                await self.apply_feedback_weights_async(feedback_data)
+            except Exception as e:
+                logger.warning(
+                    "Learning trigger failed after storing feedback %s (non-fatal): %s",
+                    feedback_id,
+                    e,
+                )
 
             return True
 

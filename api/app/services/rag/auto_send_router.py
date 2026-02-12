@@ -1,7 +1,7 @@
 """Auto-send router for confidence-based response routing."""
 
 import logging
-from typing import List
+from typing import Any, List, Optional, Tuple
 
 from app.models.response_action import ResponseAction
 from langchain_core.documents import Document
@@ -24,10 +24,34 @@ CONFIDENCE_HISTOGRAM = Histogram(
 
 
 class AutoSendRouter:
-    """Route responses based on confidence thresholds."""
+    """Route responses based on confidence thresholds.
+
+    Supports optional LearningEngine integration for dynamic threshold
+    calibration based on admin review patterns.
+    """
 
     HIGH_CONFIDENCE_THRESHOLD = 0.95
     MEDIUM_CONFIDENCE_THRESHOLD = 0.70
+
+    def __init__(self, learning_engine: Optional[Any] = None):
+        self._learning_engine = learning_engine
+
+    def _get_thresholds(self) -> Tuple[float, float]:
+        """Get current routing thresholds.
+
+        Uses LearningEngine thresholds if available and sufficiently trained,
+        otherwise falls back to static defaults.
+        """
+        if self._learning_engine is not None:
+            try:
+                history = self._learning_engine._review_history
+                min_samples = self._learning_engine.min_samples_for_update
+                if len(history) >= min_samples:
+                    t = self._learning_engine.get_current_thresholds()
+                    return t["auto_send_threshold"], t["queue_high_threshold"]
+            except Exception as e:
+                logger.warning("Failed to get LearningEngine thresholds: %s", e)
+        return self.HIGH_CONFIDENCE_THRESHOLD, self.MEDIUM_CONFIDENCE_THRESHOLD
 
     async def route_response(
         self,
@@ -54,7 +78,9 @@ class AutoSendRouter:
         # Record metrics
         CONFIDENCE_HISTOGRAM.observe(confidence)
 
-        if confidence >= self.HIGH_CONFIDENCE_THRESHOLD:
+        high_threshold, medium_threshold = self._get_thresholds()
+
+        if confidence >= high_threshold:
             logger.info(f"Auto-sending response (confidence={confidence:.2f})")
             action = ResponseAction(
                 action="auto_send",
@@ -64,7 +90,7 @@ class AutoSendRouter:
             ROUTING_DECISIONS.labels(action="auto_send").inc()
             return action
 
-        elif confidence >= self.MEDIUM_CONFIDENCE_THRESHOLD:
+        elif confidence >= medium_threshold:
             logger.info(f"Queueing for review (confidence={confidence:.2f})")
             action = ResponseAction(
                 action="queue_medium",

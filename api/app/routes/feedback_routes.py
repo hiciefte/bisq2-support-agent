@@ -1,11 +1,14 @@
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+from app.channels.reactions import ReactionEvent, ReactionRating
 from app.core.config import get_settings
 from app.core.exceptions import BaseAppException
-from app.models.feedback import FeedbackRequest
+from app.models.feedback import ReactionSubmitRequest
+from app.routes._web_identity import derive_web_user_context
 from app.services.feedback_service import get_feedback_service
 from fastapi import APIRouter, Request, status
 
@@ -13,41 +16,42 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/feedback/submit")
-async def submit_feedback(request: Request, feedback: FeedbackRequest):
-    """
-    Submit feedback for a chat response.
-    """
-    try:
-        # Get the Feedback service directly
-        feedback_service = get_feedback_service(request)
-
-        # Convert Pydantic model to dict
-        feedback_data = feedback.model_dump()
-
-        # Store feedback using the feedback service
-        await feedback_service.store_feedback(feedback_data)
-
-        # Add needs_feedback_followup flag for negative feedback
-        needs_followup = feedback.rating == 0
-
-        return {
-            "status": "success",
-            "message": "Feedback recorded successfully",
-            "success": True,
-            "needs_feedback_followup": needs_followup,
-        }
-
-    except BaseAppException:
-        # Let service-level exceptions bubble up to centralized error handler
-        raise
-    except Exception as e:
-        logger.error(f"Error recording feedback: {e!s}", exc_info=True)
+@router.post("/feedback/react")
+async def submit_reaction(request: Request, reaction: ReactionSubmitRequest):
+    """Submit reaction feedback via unified ReactionProcessor pipeline."""
+    processor = getattr(request.app.state, "reaction_processor", None)
+    if not processor:
         raise BaseAppException(
-            detail="An error occurred while recording your feedback",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_code="FEEDBACK_SUBMISSION_FAILED",
-        ) from e
+            detail="Reaction processor not available",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="REACTION_PROCESSOR_UNAVAILABLE",
+        )
+
+    user_id, _ = derive_web_user_context(request)
+
+    event = ReactionEvent(
+        channel_id="web",  # SECURITY: forced
+        external_message_id=reaction.message_id,
+        reactor_id=user_id,
+        rating=(
+            ReactionRating.POSITIVE if reaction.rating == 1 else ReactionRating.NEGATIVE
+        ),
+        raw_reaction="thumbs_up" if reaction.rating == 1 else "thumbs_down",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    success = await processor.process(event)
+    if not success:
+        raise BaseAppException(
+            detail="Message not tracked or expired",
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="MESSAGE_NOT_TRACKED",
+        )
+
+    return {
+        "success": True,
+        "needs_feedback_followup": reaction.rating == 0,
+    }
 
 
 @router.get("/feedback/stats")
@@ -102,6 +106,10 @@ async def submit_feedback_explanation(
     explanation_data: Dict[str, Any],
 ):
     """Submit explanation for negative feedback.
+
+    Channel-agnostic: works with any message_id format (web UUID,
+    Matrix event_id, Bisq2 hex). New channels only need UI to collect
+    explanations and POST here.
 
     This endpoint receives explanations about why an answer was unhelpful.
     It updates the existing feedback with the explanation and categorizes issues.

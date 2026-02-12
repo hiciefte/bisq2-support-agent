@@ -10,6 +10,7 @@ Provides channel-agnostic reaction handling:
 import asyncio
 import hashlib
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -190,6 +191,10 @@ class ReactionProcessor:
         self.feedback_service = feedback_service
         self.reactor_identity_salt = reactor_identity_salt
         self._untracked_count: int = 0
+        # Debounced learning trigger
+        self._learning_cooldown_seconds: float = 5.0
+        self._last_learning_trigger: float = 0.0
+        self._learning_lock: asyncio.Lock = asyncio.Lock()
 
     def hash_reactor_identity(self, channel_id: str, reactor_id: str) -> str:
         """Compute deterministic privacy-safe hash of reactor identity."""
@@ -233,7 +238,6 @@ class ReactionProcessor:
 
         try:
             await asyncio.to_thread(self._store_feedback, feedback_data)
-            return True
         except Exception:
             logger.exception(
                 "Failed to store reaction feedback: channel=%s ext_id=%s",
@@ -241,6 +245,31 @@ class ReactionProcessor:
                 event.external_message_id,
             )
             return False
+
+        # Trigger learning after successful storage (best-effort, debounced)
+        await self._trigger_learning()
+        return True
+
+    async def _trigger_learning(self) -> None:
+        """Trigger feedback weight recalculation with debounce.
+
+        Uses a cooldown window to prevent rapid-fire recalculations when
+        multiple reactions arrive in quick succession.
+        """
+        now = time.monotonic()
+        if now - self._last_learning_trigger < self._learning_cooldown_seconds:
+            return  # Within cooldown window
+
+        async with self._learning_lock:
+            # Double-check under lock
+            if now - self._last_learning_trigger < self._learning_cooldown_seconds:
+                return
+            try:
+                if hasattr(self.feedback_service, "apply_feedback_weights_async"):
+                    await self.feedback_service.apply_feedback_weights_async()
+                    self._last_learning_trigger = time.monotonic()
+            except Exception as e:
+                logger.warning("Learning trigger failed (non-fatal): %s", e)
 
     async def revoke_reaction(
         self,

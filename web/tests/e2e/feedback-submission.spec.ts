@@ -147,7 +147,7 @@ test.describe('Feedback Submission', () => {
 
     // Wait for the feedback submission response
     const responsePromise = page.waitForResponse(
-      response => response.url().includes('/feedback/submit') && response.status() === 200,
+      response => response.url().includes('/feedback/react') && response.status() === 200,
       { timeout: 15000 }
     );
 
@@ -263,7 +263,7 @@ test.describe('Feedback Submission', () => {
     // Wait longer to ensure conversation history is fully captured in state
     await page.waitForTimeout(3000);
 
-    // Give negative feedback - this triggers /feedback/submit with conversation_history
+    // Give negative feedback - this triggers /feedback/react with conversation_history
     const thumbsDownButton = page.locator('button[aria-label="Rate as unhelpful"]').last();
     await thumbsDownButton.click();
 

@@ -52,10 +52,10 @@ test.describe('Source Tracking in Feedback', () => {
     // Wait for feedback submission and capture request payload
     const [feedbackRequest, feedbackResponse] = await Promise.all([
       page.waitForRequest(request =>
-        request.url().includes('/feedback/submit') && request.method() === 'POST'
+        request.url().includes('/feedback/react') && request.method() === 'POST'
       ),
       page.waitForResponse(
-        response => response.url().includes('/feedback/submit') && response.status() === 200,
+        response => response.url().includes('/feedback/react') && response.status() === 200,
         { timeout: 10000 }
       ),
       thumbsUpButton.click()
@@ -106,10 +106,10 @@ test.describe('Source Tracking in Feedback', () => {
 
     const [feedbackRequest, feedbackResponse] = await Promise.all([
       page.waitForRequest(request =>
-        request.url().includes('/feedback/submit') && request.method() === 'POST'
+        request.url().includes('/feedback/react') && request.method() === 'POST'
       ),
       page.waitForResponse(
-        response => response.url().includes('/feedback/submit') && response.status() === 200,
+        response => response.url().includes('/feedback/react') && response.status() === 200,
         { timeout: 10000 }
       ),
       thumbsDownButton.click()
@@ -167,7 +167,7 @@ test.describe('Source Tracking in Feedback', () => {
     await thumbsUpButton.scrollIntoViewIfNeeded();
 
     const feedbackPromise = page.waitForResponse(
-      response => response.url().includes('/feedback/submit') && response.status() === 200,
+      response => response.url().includes('/feedback/react') && response.status() === 200,
       { timeout: 10000 }
     );
 
@@ -219,7 +219,7 @@ test.describe('Source Tracking in Feedback', () => {
     await thumbsUpButton.scrollIntoViewIfNeeded();
 
     const feedbackPromise = page.waitForResponse(
-      response => response.url().includes('/feedback/submit') && response.status() === 200,
+      response => response.url().includes('/feedback/react') && response.status() === 200,
       { timeout: 10000 }
     );
 

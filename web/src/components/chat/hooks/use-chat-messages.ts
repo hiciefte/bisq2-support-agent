@@ -432,7 +432,10 @@ export const useChatMessages = () => {
                 const answer = typeof payload.answer === "string" ? payload.answer : "";
 
                 const assistantMessage: Message = {
-                    id: generateUUID(),
+                    id:
+                        typeof payload.message_id === "string"
+                            ? payload.message_id
+                            : generateUUID(),
                     content: cleanupResponse(answer),
                     role: "assistant",
                     timestamp: new Date(),

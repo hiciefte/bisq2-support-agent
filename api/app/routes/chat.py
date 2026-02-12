@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import time
@@ -12,6 +11,7 @@ from app.channels.models import ChatMessage as ChannelChatMessage
 from app.channels.models import GatewayError, IncomingMessage, UserContext
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
+from app.routes._web_identity import derive_web_user_context
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram
@@ -73,6 +73,8 @@ class QueryResponse(BaseModel):
     answer: str
     sources: List[Source]
     response_time: float
+    # Message tracking for feedback correlation
+    message_id: Optional[str] = None
     # Phase 1 metadata fields
     confidence: Optional[float] = None
     routing_action: Optional[str] = None
@@ -102,27 +104,6 @@ def _gateway_error_to_status(error: GatewayError) -> int:
         ErrorCode.INTERNAL_ERROR: 500,
     }
     return error_status_map.get(error.error_code, 500)
-
-
-def _derive_web_user_context(request: Request) -> tuple[str, str]:
-    """Derive a stable, privacy-preserving user/session identifier for web traffic."""
-    session_cookie = request.cookies.get("session_id") or request.cookies.get(
-        "bisq_session_id"
-    )
-    if session_cookie:
-        token = session_cookie.strip()
-    else:
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        client_host = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-        token = "|".join([forwarded_for, client_host, user_agent]).strip()
-        if not token or token.replace("|", "").strip() == "":
-            token = str(uuid.uuid4())
-
-    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    session_id = f"web_{digest[:32]}"
-    user_id = f"user_{digest[:24]}"
-    return user_id, session_id
 
 
 def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
@@ -229,7 +210,7 @@ async def query(
             ]
 
         # Create incoming message for gateway
-        user_id, session_id = _derive_web_user_context(request)
+        user_id, session_id = derive_web_user_context(request)
         incoming = IncomingMessage(
             message_id=f"web_{uuid.uuid4()}",
             channel=ChannelType.WEB,
@@ -286,6 +267,7 @@ async def query(
                 if metadata and metadata.processing_time_ms is not None
                 else 0.0
             ),
+            message_id=incoming.message_id,
             # Phase 1 metadata from gateway metadata
             confidence=metadata.confidence_score if metadata else None,
             routing_action=metadata.routing_action if metadata else None,
@@ -311,6 +293,29 @@ async def query(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 error_code="RESPONSE_SERIALIZATION_FAILED",
             ) from e
+
+        # Track sent message for web reaction correlation
+        try:
+            tracker = getattr(request.app.state, "sent_message_tracker", None)
+            if tracker:
+                tracker.track(
+                    channel_id="web",
+                    external_message_id=incoming.message_id,
+                    internal_message_id=incoming.message_id,
+                    question=query_request.question,
+                    answer=result.answer,
+                    user_id=user_id,
+                    sources=[
+                        {
+                            "title": s.title,
+                            "content": s.content or "",
+                            "url": s.url,
+                        }
+                        for s in result.sources
+                    ],
+                )
+        except Exception:
+            logger.warning("Failed to track web message for reactions", exc_info=True)
 
         return JSONResponse(content=response_dict)
     except (ValidationError, BaseAppException, HTTPException):
