@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+from app.channels.plugins.web.identity import derive_web_user_context
 from app.channels.reactions import ReactionEvent, ReactionRating
 from app.core.config import get_settings
 from app.core.exceptions import BaseAppException
 from app.models.feedback import ReactionSubmitRequest
-from app.routes._web_identity import derive_web_user_context
 from app.services.feedback_service import get_feedback_service
 from fastapi import APIRouter, Request, status
 

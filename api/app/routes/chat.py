@@ -9,9 +9,9 @@ from app.channels.gateway import ChannelGateway
 from app.channels.models import ChannelType
 from app.channels.models import ChatMessage as ChannelChatMessage
 from app.channels.models import GatewayError, IncomingMessage, UserContext
+from app.channels.plugins.web.identity import derive_web_user_context
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
-from app.routes._web_identity import derive_web_user_context
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram

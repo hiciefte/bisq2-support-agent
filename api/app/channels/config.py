@@ -3,7 +3,7 @@
 Pydantic models for channel-specific configuration with validation.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
@@ -59,14 +59,7 @@ class ReactionConfig(BaseModel):
 # Channel-specific configs live in their domain modules
 from app.channels.plugins.bisq2.config import Bisq2ChannelConfig  # noqa: E402
 from app.channels.plugins.matrix.config import MatrixChannelConfig  # noqa: E402
-
-
-class WebChannelConfig(ChannelConfigBase):
-    """Web chat configuration."""
-
-    cors_origins: List[str] = Field(default_factory=list)
-    max_chat_history: int = Field(default=10, ge=0, le=50)
-
+from app.channels.plugins.web.config import WebChannelConfig  # noqa: E402
 
 # =============================================================================
 # Aggregate Configuration
