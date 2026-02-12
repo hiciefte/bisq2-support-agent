@@ -971,8 +971,8 @@ async def trigger_bisq_sync(
         # Get or create Bisq API client
         bisq_api = getattr(request.app.state, "bisq_api", None)
         if not bisq_api:
+            from app.channels.plugins.bisq2.client.api import Bisq2API
             from app.core.config import get_settings
-            from app.integrations.bisq_api import Bisq2API
 
             settings = get_settings()
             bisq_api = Bisq2API(settings)
@@ -981,7 +981,9 @@ async def trigger_bisq_sync(
         # Get or create state manager
         state_manager = getattr(request.app.state, "bisq_sync_state", None)
         if not state_manager:
-            from app.services.training.bisq_sync_state import BisqSyncStateManager
+            from app.channels.plugins.bisq2.client.sync_state import (
+                BisqSyncStateManager,
+            )
 
             state_manager = BisqSyncStateManager()
             request.app.state.bisq_sync_state = state_manager

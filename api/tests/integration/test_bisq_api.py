@@ -10,7 +10,7 @@ Covers:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from app.integrations.bisq_api import Bisq2API
+from app.channels.plugins.bisq2.client.api import Bisq2API
 
 # ---------------------------------------------------------------------------
 # Fixtures

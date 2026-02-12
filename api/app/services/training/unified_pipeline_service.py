@@ -20,15 +20,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, cast
 
+# Import sync services at module level for testability (mocking)
+from app.channels.plugins.bisq2.client.api import Bisq2API
+from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
+from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
+
 # Import shared threshold constants from config
 from app.core.config import (
     PIPELINE_AUTO_APPROVE_THRESHOLD,
     PIPELINE_DUPLICATE_FAQ_THRESHOLD,
     PIPELINE_SPOT_CHECK_THRESHOLD,
 )
-
-# Import sync services at module level for testability (mocking)
-from app.integrations.bisq_api import Bisq2API
 from app.integrations.matrix.polling_state import PollingStateManager
 from app.metrics.training_metrics import (
     record_duplicate_detection,
@@ -45,8 +47,6 @@ from app.metrics.training_metrics import (
 )
 from app.models.faq import FAQItem
 from app.services.rag.protocol_detector import ProtocolDetector, Source
-from app.services.training.bisq2_sync_service import Bisq2SyncService
-from app.services.training.bisq_sync_state import BisqSyncStateManager
 from app.services.training.matrix_sync_service import MatrixSyncService
 from app.services.training.unified_repository import (
     CalibrationStatus,

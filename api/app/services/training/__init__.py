@@ -1,7 +1,7 @@
 """Auto-training pipeline for extracting and validating Q&A pairs from Matrix."""
 
+from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 from app.models.training import QAPair
-from app.services.training.bisq_sync_state import BisqSyncStateManager
 from app.services.training.comparison_engine import (
     AnswerComparisonEngine,
     ComparisonResult,

@@ -10,7 +10,7 @@ from app.channels.models import (
     UserContext,
 )
 from app.channels.plugins.bisq2.channel import Bisq2Channel
-from app.integrations.bisq2_websocket import Bisq2WebSocketClient
+from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
 
 # ---------------------------------------------------------------------------
 # Bisq2WebSocketClient interface tests

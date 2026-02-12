@@ -13,7 +13,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from app.integrations.bisq2_websocket import Bisq2WebSocketClient
+from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -52,7 +52,7 @@ class TestBisq2WebSocketClientConnection:
         mock_ws.close = AsyncMock()
 
         with patch(
-            "app.integrations.bisq2_websocket.websockets_connect",
+            "app.channels.plugins.bisq2.client.websocket.websockets_connect",
             new=AsyncMock(return_value=mock_ws),
         ):
             await client.connect()
