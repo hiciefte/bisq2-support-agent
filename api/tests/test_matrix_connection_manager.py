@@ -13,7 +13,7 @@ except ImportError:
     pytestmark = pytest.mark.skip(reason="matrix-nio not installed")
 
 if NIO_AVAILABLE:
-    from app.integrations.matrix.connection_manager import ConnectionManager
+    from app.channels.plugins.matrix.client.connection_manager import ConnectionManager
 
 
 @pytest.fixture
@@ -57,7 +57,9 @@ class TestConnectionManagerInit:
 
     def test_init_without_nio_available(self, mock_client, mock_session_manager):
         """Test initialization fails when matrix-nio not available."""
-        with patch("app.integrations.matrix.connection_manager.NIO_AVAILABLE", False):
+        with patch(
+            "app.channels.plugins.matrix.client.connection_manager.NIO_AVAILABLE", False
+        ):
             with pytest.raises(ImportError, match="matrix-nio is not installed"):
                 ConnectionManager(
                     client=mock_client, session_manager=mock_session_manager

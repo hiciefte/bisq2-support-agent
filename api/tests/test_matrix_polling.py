@@ -13,7 +13,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from app.integrations.matrix.polling_state import PollingStateManager
+from app.channels.plugins.matrix.client.polling_state import PollingStateManager
 
 
 class TestSessionPersistence:

@@ -135,8 +135,12 @@ class MatrixAlertService:
                 return self._client
 
             # Import here to avoid circular imports
-            from app.integrations.matrix.connection_manager import ConnectionManager
-            from app.integrations.matrix.session_manager import SessionManager
+            from app.channels.plugins.matrix.client.connection_manager import (
+                ConnectionManager,
+            )
+            from app.channels.plugins.matrix.client.session_manager import (
+                SessionManager,
+            )
 
             homeserver = self.settings.MATRIX_HOMESERVER_URL
             user_id = self.settings.MATRIX_USER

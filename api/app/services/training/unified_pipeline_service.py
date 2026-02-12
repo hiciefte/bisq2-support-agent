@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Literal, Optional, cast
 from app.channels.plugins.bisq2.client.api import Bisq2API
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
+from app.channels.plugins.matrix.client.polling_state import PollingStateManager
 
 # Import shared threshold constants from config
 from app.core.config import (
@@ -31,7 +32,6 @@ from app.core.config import (
     PIPELINE_DUPLICATE_FAQ_THRESHOLD,
     PIPELINE_SPOT_CHECK_THRESHOLD,
 )
-from app.integrations.matrix.polling_state import PollingStateManager
 from app.metrics.training_metrics import (
     record_duplicate_detection,
     training_auto_approvals,

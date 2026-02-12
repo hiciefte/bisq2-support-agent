@@ -8,8 +8,10 @@ import pytest
 # Skip entire module if matrix-nio is not installed
 nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-from app.integrations.matrix.error_handler import CircuitBreaker  # noqa: E402
-from app.integrations.matrix.error_handler import ErrorHandler  # noqa: E402
+from app.channels.plugins.matrix.client.error_handler import ErrorHandler  # noqa: E402
+from app.channels.plugins.matrix.client.error_handler import (  # noqa: E402
+    CircuitBreaker,
+)
 
 # Import nio classes after importorskip (ErrorResponse used in tests)
 from nio import ErrorResponse  # noqa: E402
@@ -43,7 +45,9 @@ class TestErrorHandlerInit:
 
     def test_init_without_nio_available(self, mock_session_manager):
         """Test initialization fails when matrix-nio not available."""
-        with patch("app.integrations.matrix.error_handler.NIO_AVAILABLE", False):
+        with patch(
+            "app.channels.plugins.matrix.client.error_handler.NIO_AVAILABLE", False
+        ):
             with pytest.raises(ImportError, match="matrix-nio is not installed"):
                 ErrorHandler(session_manager=mock_session_manager)
 

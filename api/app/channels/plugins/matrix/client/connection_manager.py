@@ -10,7 +10,7 @@ except ImportError:
     NIO_AVAILABLE = False
     AsyncClient = None
 
-from app.metrics.matrix_metrics import matrix_connection_status
+from app.channels.plugins.matrix.metrics import matrix_connection_status
 
 logger = logging.getLogger(__name__)
 

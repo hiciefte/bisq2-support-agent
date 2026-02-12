@@ -20,7 +20,7 @@ except ImportError:
     AsyncClient = None
     RoomMessagesResponse = None
 
-from app.integrations.matrix.polling_state import PollingStateManager
+from app.channels.plugins.matrix.client.polling_state import PollingStateManager
 from app.metrics.training_metrics import (
     sync_duration_seconds,
     sync_last_status,
@@ -157,9 +157,11 @@ class MatrixSyncService:
             return self._client
 
         # Import here to avoid circular imports
-        from app.integrations.matrix.connection_manager import ConnectionManager
-        from app.integrations.matrix.error_handler import ErrorHandler
-        from app.integrations.matrix.session_manager import SessionManager
+        from app.channels.plugins.matrix.client.connection_manager import (
+            ConnectionManager,
+        )
+        from app.channels.plugins.matrix.client.error_handler import ErrorHandler
+        from app.channels.plugins.matrix.client.session_manager import SessionManager
 
         homeserver = self.settings.MATRIX_HOMESERVER_URL
         user_id = self.settings.MATRIX_USER

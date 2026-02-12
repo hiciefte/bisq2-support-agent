@@ -16,7 +16,7 @@ except ImportError:
     WhoamiError = None
     WhoamiResponse = None
 
-from app.metrics.matrix_metrics import (
+from app.channels.plugins.matrix.metrics import (
     matrix_auth_total,
     matrix_fresh_logins_total,
     matrix_session_restores_total,

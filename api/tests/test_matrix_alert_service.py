@@ -140,9 +140,11 @@ class TestMatrixAlertServiceConcurrency:
 
         with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
             with patch(
-                "app.integrations.matrix.connection_manager.ConnectionManager"
+                "app.channels.plugins.matrix.client.connection_manager.ConnectionManager"
             ) as mock_cm:
-                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                with patch(
+                    "app.channels.plugins.matrix.client.session_manager.SessionManager"
+                ):
                     mock_cm.return_value.connect = mock_connect
 
                     # Launch multiple concurrent calls
@@ -161,9 +163,11 @@ class TestMatrixAlertServiceConcurrency:
 
         with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
             with patch(
-                "app.integrations.matrix.connection_manager.ConnectionManager"
+                "app.channels.plugins.matrix.client.connection_manager.ConnectionManager"
             ) as mock_cm:
-                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                with patch(
+                    "app.channels.plugins.matrix.client.session_manager.SessionManager"
+                ):
                     mock_cm.return_value.connect = AsyncMock(
                         side_effect=Exception("Connection failed")
                     )

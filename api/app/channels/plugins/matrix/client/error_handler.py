@@ -14,7 +14,7 @@ except ImportError:
     ErrorResponse = None
     RoomMessagesError = None
 
-from app.metrics.matrix_metrics import (
+from app.channels.plugins.matrix.metrics import (
     matrix_api_calls_total,
     matrix_api_retry_total,
     matrix_auth_failures_total,

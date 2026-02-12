@@ -11,7 +11,7 @@ import pytest
 # Skip entire module if matrix-nio is not installed
 nio = pytest.importorskip("nio", reason="matrix-nio not installed")
 
-from app.integrations.matrix.session_manager import (  # noqa: E402
+from app.channels.plugins.matrix.client.session_manager import (  # noqa: E402
     MatrixAuthenticationError,
     SessionManager,
 )
@@ -77,7 +77,9 @@ class TestSessionManagerInit:
 
     def test_init_without_nio_available(self, mock_client, temp_session_file):
         """Test initialization fails when matrix-nio not available."""
-        with patch("app.integrations.matrix.session_manager.NIO_AVAILABLE", False):
+        with patch(
+            "app.channels.plugins.matrix.client.session_manager.NIO_AVAILABLE", False
+        ):
             with pytest.raises(ImportError, match="matrix-nio is not installed"):
                 SessionManager(
                     client=mock_client,
