@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
+from app.core.pii_utils import redact_for_logs
 from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
-from app.utils.logging import redact_pii
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -424,7 +424,9 @@ Answer:"""
                 preprocessed_question = question.strip()
 
                 # Log the question with privacy protection
-                logger.info(f"Processing question: {redact_pii(preprocessed_question)}")
+                logger.info(
+                    f"Processing question: {redact_for_logs(preprocessed_question)}"
+                )
 
                 # Set default chat history
                 if chat_history is None:
@@ -461,10 +463,10 @@ Answer:"""
 
                 # Log the complete prompt and context for debugging
                 logger.debug("=== DEBUG: Complete Prompt and Context ===")
-                logger.debug(f"Question: {redact_pii(preprocessed_question)}")
-                logger.debug(f"Chat History: {redact_pii(chat_history_str)}")
+                logger.debug(f"Question: {redact_for_logs(preprocessed_question)}")
+                logger.debug(f"Chat History: {redact_for_logs(chat_history_str)}")
                 logger.debug("Context:")
-                logger.debug(redact_pii(context))
+                logger.debug(redact_for_logs(context))
                 logger.debug("=== End Debug Log ===")
 
                 # Ensure prompt is initialized before formatting
@@ -529,7 +531,7 @@ Answer:"""
                             > self.settings.MAX_SAMPLE_LOG_LENGTH
                             else response_content
                         )
-                        logger.info(f"Content sample: {redact_pii(sample)}")
+                        logger.info(f"Content sample: {redact_for_logs(sample)}")
                     return response_content
                 else:
                     logger.warning("Empty response received from LLM")

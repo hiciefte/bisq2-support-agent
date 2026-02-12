@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
+from app.core.pii_utils import redact_for_logs
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
@@ -39,7 +40,6 @@ from app.utils.instrumentation import (
     track_tokens_and_cost,
     update_error_rate,
 )
-from app.utils.logging import redact_pii
 from app.utils.wiki_url_generator import generate_wiki_url
 from fastapi import Request
 
@@ -533,7 +533,7 @@ class SimplifiedRAGService:
                 }
 
             # Log the question with privacy protection
-            logger.info(f"Processing question: {redact_pii(question)}")
+            logger.info(f"Processing question: {redact_for_logs(question)}")
 
             # Preprocess the question
             preprocessed_question = question.strip()
@@ -801,7 +801,7 @@ class SimplifiedRAGService:
                     if len(response_text) > self.settings.MAX_SAMPLE_LOG_LENGTH
                     else response_text
                 )
-                logger.info(f"Content sample: {redact_pii(sample)}")
+                logger.info(f"Content sample: {redact_for_logs(sample)}")
 
             # Extract sources for the response with wiki URLs and similarity scores
             sources = []

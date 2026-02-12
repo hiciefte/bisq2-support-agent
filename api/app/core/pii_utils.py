@@ -48,6 +48,12 @@ PII_LOGGING_PATTERNS: Dict[str, str] = {
     **PII_CORE_PATTERNS,
     # Matrix access tokens (syt_*)
     "matrix_token": r"syt_[a-zA-Z0-9_-]+",
+    # Matrix user IDs (@username:server.domain)
+    "matrix_id": r"@[a-zA-Z0-9._-]+:[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+    # UUIDs (profile IDs, message IDs)
+    "uuid": r"\b[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\b",
+    # Long numeric sequences (IDs, account numbers)
+    "long_number": r"\b\d{8,}\b",
     # Phone numbers (various formats)
     "phone": r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
     # Credit card numbers

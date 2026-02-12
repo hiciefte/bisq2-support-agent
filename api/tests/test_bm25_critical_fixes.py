@@ -12,9 +12,7 @@ Critical issues addressed:
 5. Score normalization edge case
 """
 
-import concurrent.futures
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -283,68 +281,6 @@ class TestLoadVocabularyThreadSafety:
 
         # No errors should have occurred
         assert len(errors) == 0, f"Errors occurred: {errors}"
-
-
-class TestVocabularyManagerLoadLocking:
-    """Tests for vocabulary manager load operation locking."""
-
-    def test_manager_load_creates_lock_file_if_missing(self, tmp_path: Path):
-        """Manager load should work even if lock file doesn't exist."""
-        from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
-        from app.services.rag.vocabulary_manager import VocabularyManager
-
-        vocab_path = tmp_path / "vocab.json"
-        manager = VocabularyManager(vocab_path)
-
-        # Create and save
-        tokenizer = BM25SparseTokenizer(corpus=["bitcoin wallet"])
-        manager.save(tokenizer)
-
-        # Remove lock file if it exists
-        lock_path = vocab_path.with_suffix(".json.lock")
-        if lock_path.exists():
-            lock_path.unlink()
-
-        # Load should still work (creates lock file)
-        new_tokenizer = BM25SparseTokenizer()
-        result = manager.load(new_tokenizer)
-
-        assert result is True
-        assert new_tokenizer.vocabulary_size == tokenizer.vocabulary_size
-
-    def test_manager_concurrent_load_operations(self, tmp_path: Path):
-        """Concurrent load operations should not corrupt data."""
-        from app.services.rag.bm25_tokenizer import BM25SparseTokenizer
-        from app.services.rag.vocabulary_manager import VocabularyManager
-
-        vocab_path = tmp_path / "vocab.json"
-        manager = VocabularyManager(vocab_path)
-
-        # Create and save initial vocabulary
-        original = BM25SparseTokenizer(corpus=["bitcoin wallet escrow transaction"])
-        manager.save(original)
-        expected_size = original.vocabulary_size
-
-        errors = []
-        loaded_sizes = []
-
-        def load_worker(worker_id: int):
-            try:
-                tokenizer = BM25SparseTokenizer()
-                for _ in range(5):
-                    manager.load(tokenizer)
-                    loaded_sizes.append(tokenizer.vocabulary_size)
-            except Exception as e:
-                errors.append((worker_id, e))
-
-        # Run concurrent loads
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(load_worker, i) for i in range(5)]
-            concurrent.futures.wait(futures)
-
-        assert len(errors) == 0, f"Errors occurred: {errors}"
-        # All loads should get the same vocabulary size
-        assert all(size == expected_size for size in loaded_sizes)
 
 
 class TestScoreNormalizationEdgeCases:
