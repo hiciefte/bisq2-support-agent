@@ -22,9 +22,7 @@ class TestMatrixClientImports:
         assert SessionManager is not None
 
     def test_polling_state_importable(self):
-        from app.channels.plugins.matrix.client.polling_state import (
-            PollingStateManager,
-        )
+        from app.channels.plugins.matrix.client.polling_state import PollingStateManager
 
         assert PollingStateManager is not None
 
@@ -38,9 +36,7 @@ class TestMatrixServicesImports:
     """Matrix services should be importable from plugins/matrix/services/."""
 
     def test_sync_service_importable(self):
-        from app.channels.plugins.matrix.services.sync_service import (
-            MatrixSyncService,
-        )
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         assert MatrixSyncService is not None
 
