@@ -17,7 +17,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         await page.getByLabel('API Key').waitFor({ timeout: 10000 });
         await page.getByLabel('API Key').fill(ADMIN_API_KEY);
         await page.click('button:has-text("Login")');
-        await page.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
+        await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 10000 });
 
         // Navigate to FAQ management
         await page.click('a[href="/admin/manage-faqs"]');

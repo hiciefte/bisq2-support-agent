@@ -83,7 +83,7 @@ test.describe("FAQ Management", () => {
                 await page.click('button:has-text("Login")');
 
                 // Wait for authenticated UI to appear (sidebar with navigation)
-                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
+                await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 15000 });
 
                 // Navigate to FAQ management
                 await page.click('a[href="/admin/manage-faqs"]');
@@ -415,7 +415,7 @@ test.describe("FAQ Management", () => {
 
         // Since we share the browser context, we should already be authenticated
         // Wait for the authenticated UI to appear (will redirect to /admin/overview)
-        await page2.waitForSelector("text=Admin Dashboard", { timeout: 10000 });
+        await page2.waitForSelector("nav a[href='/admin/overview']", { timeout: 10000 });
         await page2.click('a[href="/admin/manage-faqs"]');
         await page2.waitForSelector("text=FAQ", { timeout: 10000 });
 

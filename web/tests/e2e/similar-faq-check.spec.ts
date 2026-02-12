@@ -96,7 +96,7 @@ test.describe("Similar FAQ Check", () => {
                 await page.click('button:has-text("Login")');
 
                 // Wait for authenticated UI
-                await page.waitForSelector("text=Admin Dashboard", { timeout: 20000 });
+                await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 20000 });
 
                 // Navigate to FAQ management
                 await page.click('a[href="/admin/manage-faqs"]');
