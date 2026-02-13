@@ -32,7 +32,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
     const isClarificationQuestion = message.routing_action === "needs_clarification"
     const hasConfidence = typeof message.confidence === "number" && !isClarificationQuestion
     const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
-    const canRate = message.id && !message.isThankYouMessage && onRating
+    const canRate = message.id && !message.isThankYouMessage && !message.staff_response && !message.escalation_resolution && onRating
 
     // Format timestamp for LiveDataBadge
     const formattedTimestamp = message.timestamp instanceof Date

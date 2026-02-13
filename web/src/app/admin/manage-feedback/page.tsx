@@ -120,6 +120,14 @@ interface FeedbackStats {
   feedback_by_method?: Record<string, ChannelMethodStats>;
 }
 
+interface EscalationMetrics {
+  total_routing_decisions: number;
+  auto_send_count: number;
+  queue_medium_count: number;
+  needs_human_count: number;
+  escalation_rate: number;
+}
+
 // Custom hook for debounced values
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -136,6 +144,7 @@ export default function ManageFeedbackPage() {
   // Data state
   const [feedbackData, setFeedbackData] = useState<FeedbackListResponse | null>(null);
   const [stats, setStats] = useState<FeedbackStats | null>(null);
+  const [escalationMetrics, setEscalationMetrics] = useState<EscalationMetrics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -348,6 +357,20 @@ export default function ManageFeedbackPage() {
     }
   }, []);
 
+  const fetchEscalationMetrics = useCallback(async () => {
+    try {
+      const response = await makeAuthenticatedRequest('/admin/dashboard/overview?period=30d');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.escalation_metrics) {
+          setEscalationMetrics(data.escalation_metrics);
+        }
+      }
+    } catch {
+      // Non-critical: escalation metrics are supplementary
+    }
+  }, []);
+
   const fetchData = useCallback(async (isBackgroundRefresh = false) => {
     // Save scroll position for background refreshes
     if (isBackgroundRefresh) {
@@ -362,7 +385,8 @@ export default function ManageFeedbackPage() {
     try {
       await Promise.all([
         fetchFeedbackList(),
-        fetchStats()
+        fetchStats(),
+        fetchEscalationMetrics()
       ]);
       setError(null);
     } catch (err) {
@@ -373,7 +397,7 @@ export default function ManageFeedbackPage() {
         setIsLoading(false);
       }
     }
-  }, [fetchFeedbackList, fetchStats]);
+  }, [fetchFeedbackList, fetchStats, fetchEscalationMetrics]);
 
   useEffect(() => {
     fetchData();
@@ -693,6 +717,53 @@ export default function ManageFeedbackPage() {
               <X className="h-4 w-4" />
             </button>
           </div>
+        )}
+
+        {/* Escalation Rate Card */}
+        {escalationMetrics && escalationMetrics.total_routing_decisions > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Escalation Rate</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-3">
+                <div className={cn(
+                  "text-3xl font-semibold tracking-tight tabular-nums",
+                  escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
+                    ? "text-emerald-400"
+                    : "text-amber-400"
+                )}>
+                  {escalationMetrics.escalation_rate.toFixed(1)}%
+                </div>
+                <span className={cn(
+                  "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium",
+                  escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
+                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
+                    : "bg-amber-500/15 text-amber-400 border border-amber-500/25"
+                )}>
+                  {escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
+                    ? "On target (5-15%)"
+                    : escalationMetrics.escalation_rate < 5
+                      ? "Below target"
+                      : "Above target"}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">Auto-send</p>
+                  <p className="font-medium tabular-nums">{escalationMetrics.auto_send_count.toLocaleString()}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">Queued</p>
+                  <p className="font-medium tabular-nums">{escalationMetrics.queue_medium_count.toLocaleString()}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">Needs human</p>
+                  <p className="font-medium tabular-nums">{escalationMetrics.needs_human_count.toLocaleString()}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Channel Breakdown Stats */}
@@ -1025,11 +1096,6 @@ export default function ManageFeedbackPage() {
                               </span>
                             );
                           })()}
-                          {feedback.feedback_method === 'reaction' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
-                              {feedback.reaction_emoji || 'Reaction'}
-                            </span>
-                          )}
                           {feedback.has_no_source_response && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
                               No Source
@@ -1262,6 +1328,40 @@ export default function ManageFeedbackPage() {
                           </span>
                         </div>
                       )}
+                      {(selectedSourcesUsed.length > 0 || selectedSourcesAvailable.length > 0) && (
+                        <div className="pt-3 border-t border-border/50 space-y-3">
+                          {selectedSourcesUsed.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs text-muted-foreground">Sources used</p>
+                              <SourceBadges sources={selectedSourcesUsed} />
+                              <Collapsible>
+                                <CollapsibleTrigger asChild>
+                                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
+                                    Preview excerpts
+                                    <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                                  </Button>
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="space-y-2 pt-2">
+                                  {selectedFeedback.sources_used?.slice(0, 3).map((source, idx) => (
+                                    <div key={`${source.title}-${idx}`} className="p-3 rounded-lg border border-border bg-accent/40">
+                                      <p className="text-sm font-medium text-card-foreground">{source.title}</p>
+                                      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                                        {source.content.substring(0, 320)}{source.content.length > 320 ? '...' : ''}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </CollapsibleContent>
+                              </Collapsible>
+                            </div>
+                          )}
+                          {selectedSourcesAvailable.length > 0 && (
+                            <div className={cn("space-y-2", selectedSourcesUsed.length > 0 && "pt-3 border-t border-border/50")}>
+                              <p className="text-xs text-muted-foreground">Available retrieval context</p>
+                              <SourceBadges sources={selectedSourcesAvailable} />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -1284,47 +1384,6 @@ export default function ManageFeedbackPage() {
 
                   {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
                     <ConversationHistory messages={selectedFeedback.conversation_history} />
-                  )}
-
-                  {(selectedSourcesUsed.length > 0 || selectedSourcesAvailable.length > 0) && (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Sources</CardTitle>
-                        <CardDescription>Retrieval context used for the answer.</CardDescription>
-                      </CardHeader>
-                      <CardContent className="pt-0 space-y-3">
-                        {selectedSourcesUsed.length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-xs text-muted-foreground">Used in answer</p>
-                            <SourceBadges sources={selectedSourcesUsed} />
-                            <Collapsible>
-                              <CollapsibleTrigger asChild>
-                                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
-                                  Preview excerpts
-                                  <ChevronDown className="h-3.5 w-3.5 ml-1" />
-                                </Button>
-                              </CollapsibleTrigger>
-                              <CollapsibleContent className="space-y-2 pt-2">
-                                {selectedFeedback.sources_used?.slice(0, 3).map((source, idx) => (
-                                  <div key={`${source.title}-${idx}`} className="p-3 rounded-lg border border-border bg-accent/40">
-                                    <p className="text-sm font-medium text-card-foreground">{source.title}</p>
-                                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                                      {source.content.substring(0, 320)}{source.content.length > 320 ? '...' : ''}
-                                    </p>
-                                  </div>
-                                ))}
-                              </CollapsibleContent>
-                            </Collapsible>
-                          </div>
-                        )}
-                        {selectedSourcesAvailable.length > 0 && (
-                          <div className={cn("space-y-2", selectedSourcesUsed.length > 0 && "pt-3 border-t border-border/50")}>
-                            <p className="text-xs text-muted-foreground">Available retrieval context</p>
-                            <SourceBadges sources={selectedSourcesAvailable} />
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
                   )}
 
                   {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (

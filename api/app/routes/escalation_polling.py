@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 # Create public router (no authentication required)
 router = APIRouter()
 
-# UUID v4 pattern for message_id validation
-UUID_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# Message ID pattern: optional channel prefix + UUID v4
+# Examples: "160541ae-..." (plain UUID) or "web_160541ae-..." (channel-prefixed)
+MESSAGE_ID_PATTERN = re.compile(
+    r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 
 
@@ -25,8 +26,8 @@ UUID_PATTERN = re.compile(
 async def poll_escalation_response(
     message_id: str = Path(
         ...,
-        description="Message ID (UUID) from the original question",
-        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        description="Message ID from the original question (UUID with optional channel prefix)",
+        pattern=r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     ),
     service=Depends(get_escalation_service),
 ) -> UserPollResponse:

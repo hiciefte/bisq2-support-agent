@@ -81,6 +81,9 @@ class QueryResponse(BaseModel):
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = None
     forwarded_to_human: bool = False
+    # Fields consumed by the web frontend for escalation polling
+    requires_human: bool = False
+    escalation_message_id: Optional[str] = None
     # MCP tools metadata - detailed info about tools used for live Bisq 2 data
     mcp_tools_used: Optional[List[McpToolUsage]] = None
 
@@ -274,6 +277,10 @@ async def query(
             detected_version=metadata.detected_version if metadata else None,
             version_confidence=metadata.version_confidence if metadata else None,
             forwarded_to_human=result.requires_human,
+            requires_human=result.requires_human,
+            escalation_message_id=(
+                incoming.message_id if result.requires_human else None
+            ),
             mcp_tools_used=None,
         )
 
@@ -313,6 +320,9 @@ async def query(
                         }
                         for s in result.sources
                     ],
+                    confidence_score=metadata.confidence_score if metadata else None,
+                    routing_action=metadata.routing_action if metadata else None,
+                    requires_human=result.requires_human,
                 )
         except Exception:
             logger.warning("Failed to track web message for reactions", exc_info=True)
