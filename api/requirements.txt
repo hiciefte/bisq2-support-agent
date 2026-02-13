@@ -104,7 +104,7 @@ fastapi==0.129.0
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
-filelock==3.21.0
+filelock==3.21.2
     # via
     #   datasets
     #   huggingface-hub
@@ -207,7 +207,7 @@ langchain-classic==1.0.1
     # via langchain-community
 langchain-community==0.4.1
     # via ragas
-langchain-core==1.2.11
+langchain-core==1.2.12
     # via
     #   -r api/requirements.in
     #   langchain
@@ -358,7 +358,7 @@ pillow==12.1.1
     #   ragas
 pip-tools==7.5.3
     # via -r api/requirements.in
-platformdirs==4.6.0
+platformdirs==4.7.0
     # via
     #   black
     #   virtualenv
