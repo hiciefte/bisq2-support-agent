@@ -309,7 +309,7 @@ class TestApproveEndpoint:
         assert data["faq_id"] == "faq_123"
         assert data["success"] is True
         mock_pipeline_service.approve_candidate.assert_called_once_with(
-            candidate_id=1, reviewer="admin"
+            candidate_id=1, reviewer="admin", force=False
         )
 
     def test_approve_candidate_error(self, client, mock_pipeline_service):

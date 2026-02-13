@@ -12,18 +12,21 @@ import pytest
 
 # Path constants
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-NGINX_CONF = PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.conf"
+NGINX_CONFIGS = [
+    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.conf",
+    PROJECT_ROOT / "docker" / "nginx" / "conf.d" / "default.prod.conf",
+]
 
 # Regex that extracts the admin whitelist group from nginx config
 # Matches: location ~ ^/api/admin/(faqs|feedback|...|training)(/.*)?$
 NGINX_ADMIN_RE = re.compile(r"location ~ \^/api/admin/\(([^)]+)\)\(/\.\*\)\?\$")
 
 
-def _get_nginx_allowed_prefixes() -> set[str]:
+def _get_nginx_allowed_prefixes(conf_path: Path) -> set[str]:
     """Parse nginx config and return set of allowed admin prefixes."""
-    content = NGINX_CONF.read_text()
+    content = conf_path.read_text()
     match = NGINX_ADMIN_RE.search(content)
-    assert match, "Could not find admin whitelist regex in nginx config"
+    assert match, f"Could not find admin whitelist regex in {conf_path.name}"
     return set(match.group(1).split("|"))
 
 
@@ -55,39 +58,45 @@ def _get_registered_admin_prefixes() -> set[str]:
     return prefixes
 
 
+@pytest.fixture(params=NGINX_CONFIGS, ids=lambda p: p.name)
+def nginx_conf(request):
+    """Parametrize tests over all nginx config files."""
+    return request.param
+
+
 class TestNginxAdminWhitelist:
     """Ensure nginx admin whitelist covers all registered admin routes."""
 
-    def test_nginx_config_exists(self):
+    def test_nginx_config_exists(self, nginx_conf):
         """Nginx config file must exist at expected path."""
-        assert NGINX_CONF.exists(), f"Missing nginx config: {NGINX_CONF}"
+        assert nginx_conf.exists(), f"Missing nginx config: {nginx_conf}"
 
-    def test_nginx_has_admin_whitelist_regex(self):
+    def test_nginx_has_admin_whitelist_regex(self, nginx_conf):
         """Nginx config must contain the admin whitelist regex."""
-        content = NGINX_CONF.read_text()
+        content = nginx_conf.read_text()
         assert NGINX_ADMIN_RE.search(
             content
-        ), "Could not find admin whitelist regex pattern in nginx config"
+        ), f"Could not find admin whitelist regex in {nginx_conf.name}"
 
-    def test_escalations_in_nginx_whitelist(self):
+    def test_escalations_in_nginx_whitelist(self, nginx_conf):
         """escalations must be in the nginx admin whitelist.
 
         This was the specific bug: escalations routes returned 403 because
         they weren't in the nginx regex, falling through to internal-only block.
         """
-        allowed = _get_nginx_allowed_prefixes()
+        allowed = _get_nginx_allowed_prefixes(nginx_conf)
         assert "escalations" in allowed, (
-            f"'escalations' missing from nginx admin whitelist. "
+            f"'escalations' missing from {nginx_conf.name} admin whitelist. "
             f"Found: {sorted(allowed)}"
         )
 
-    def test_all_admin_prefixes_in_nginx(self):
+    def test_all_admin_prefixes_in_nginx(self, nginx_conf):
         """Every registered admin route prefix must appear in nginx whitelist.
 
         Excludes 'metrics' (internal-only by design, called from Docker
         network by scheduler container, not from frontend).
         """
-        allowed = _get_nginx_allowed_prefixes()
+        allowed = _get_nginx_allowed_prefixes(nginx_conf)
         registered = _get_registered_admin_prefixes()
 
         # metrics is intentionally internal-only (scheduler → api, no frontend)
@@ -96,23 +105,22 @@ class TestNginxAdminWhitelist:
 
         missing = public_registered - allowed
         assert not missing, (
-            f"Admin route prefixes missing from nginx whitelist: {sorted(missing)}. "
+            f"Admin route prefixes missing from {nginx_conf.name}: {sorted(missing)}. "
             f"Nginx allows: {sorted(allowed)}. "
             f"Registered: {sorted(registered)}."
         )
 
-    def test_no_stale_nginx_entries(self):
+    def test_no_stale_nginx_entries(self, nginx_conf):
         """Nginx whitelist should not contain prefixes with no matching routes.
 
         Catches entries that linger after routes are removed.
         """
-        allowed = _get_nginx_allowed_prefixes()
+        allowed = _get_nginx_allowed_prefixes(nginx_conf)
         registered = _get_registered_admin_prefixes()
 
-        # 'dashboard' is a route under analytics prefix="/admin"
-        # so it IS registered (via route decorator)
         stale = allowed - registered
         if stale:
-            pytest.skip(
-                f"Potential stale nginx entries (may be route aliases): {sorted(stale)}"
+            pytest.fail(
+                f"Stale entries in {nginx_conf.name} "
+                f"(no matching admin routes): {sorted(stale)}"
             )

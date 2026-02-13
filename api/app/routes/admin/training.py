@@ -69,6 +69,10 @@ class UnifiedApproveRequest(BaseModel):
     """Request model for approving a unified candidate."""
 
     reviewer: str = Field(description="Reviewer username")
+    force: bool = Field(
+        default=False,
+        description="Force approve even if similar FAQs exist",
+    )
 
 
 # P4: Allowed rejection reasons for validation
@@ -489,6 +493,7 @@ async def approve_candidate(
         faq_id = await pipeline_service.approve_candidate(
             candidate_id=candidate_id,
             reviewer=request_body.reviewer,
+            force=request_body.force,
         )
 
         # Record feedback to LearningEngine using generation_confidence (not final_score)

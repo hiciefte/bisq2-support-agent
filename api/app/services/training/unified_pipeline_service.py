@@ -949,6 +949,7 @@ class UnifiedPipelineService:
         self,
         candidate_id: int,
         reviewer: str,
+        force: bool = False,
     ) -> str:
         """
         Approve a candidate and create a verified FAQ.
@@ -958,27 +959,28 @@ class UnifiedPipelineService:
 
         Before creating the FAQ, checks for semantically similar FAQs that already
         exist in the system. If duplicates are found (similarity > 0.85), the
-        approval is blocked.
+        approval is blocked unless force=True.
 
         Args:
             candidate_id: ID of the candidate to approve
             reviewer: Username of the reviewer
+            force: Skip duplicate check and approve regardless
 
         Returns:
             The created FAQ ID
 
         Raises:
             ValueError: If candidate not found
-            DuplicateFAQError: If similar FAQ(s) already exist (similarity > 0.85)
+            DuplicateFAQError: If similar FAQ(s) already exist and force=False
         """
         candidate = self.repository.get_by_id(candidate_id)
         if candidate is None:
             raise ValueError(f"Candidate {candidate_id} not found")
 
-        # Check for duplicate FAQs before creating
+        # Check for duplicate FAQs before creating (skip if force=True)
         # Use edited question if available (admin may have improved phrasing)
         question_to_check = candidate.edited_question_text or candidate.question_text
-        if self.rag_service is not None:
+        if self.rag_service is not None and not force:
             similar_faqs = await self.rag_service.search_faq_similarity(
                 question=question_to_check,
                 threshold=DUPLICATE_FAQ_THRESHOLD,

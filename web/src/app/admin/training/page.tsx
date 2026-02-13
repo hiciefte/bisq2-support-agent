@@ -357,18 +357,20 @@ export default function TrainingPage() {
           await fetchCalibrationStatus();
         }
       } else if (response.status === 409) {
-        // Handle duplicate FAQ conflict
+        // Handle duplicate FAQ conflict - detail is an object with similar_faqs
         const errorData = await response.json();
-        if (errorData.similar_faqs && errorData.similar_faqs.length > 0) {
-          setDuplicateFaqs(errorData.similar_faqs);
+        const detail = errorData.detail;
+        if (detail?.similar_faqs && detail.similar_faqs.length > 0) {
+          setDuplicateFaqs(detail.similar_faqs);
           setDuplicateCandidateQuestion(currentItem.question_text);
           setShowDuplicateDialog(true);
         } else {
-          setError(errorData.detail || 'Similar FAQ already exists');
+          setError(typeof detail === 'string' ? detail : detail?.message || 'Similar FAQ already exists');
         }
       } else {
         const errorData = await response.json();
-        setError(errorData.detail || 'Failed to approve');
+        const detail = errorData.detail;
+        setError(typeof detail === 'string' ? detail : 'Failed to approve');
       }
     } catch (err) {
       setError('Failed to approve candidate');
@@ -608,6 +610,67 @@ export default function TrainingPage() {
     await handleReject('Duplicate of existing FAQ');
   };
 
+  // Handle force approve despite similar FAQs
+  const handleForceApprove = async () => {
+    if (!currentItem) return;
+
+    setShowDuplicateDialog(false);
+    setDuplicateFaqs([]);
+    setDuplicateCandidateQuestion('');
+
+    const candidateId = currentItem.id;
+    setIsActionLoading(true);
+    try {
+      const response = await makeAuthenticatedRequest(
+        `/admin/training/candidates/${currentItem.id}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewer: 'admin', force: true })
+        }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        setSessionReviewCount(prev => prev + 1);
+        setLastAction({
+          type: 'approve',
+          candidateId,
+          faqId: result.faq_id,
+          timestamp: Date.now()
+        });
+        if (undoTimeoutRef.current) {
+          clearTimeout(undoTimeoutRef.current);
+        }
+        undoTimeoutRef.current = setTimeout(() => {
+          setLastAction(null);
+        }, 5000);
+        toast.success('FAQ created (similar FAQ exists)', {
+          description: `Candidate #${candidateId} force-approved`,
+          duration: 5000,
+          action: {
+            label: 'Undo',
+            onClick: () => handleUndoAction(candidateId, 'approve', result.faq_id)
+          }
+        });
+        setAnimationDirection('none');
+        await Promise.all([fetchQueueCounts(), fetchCurrentItem()]);
+        if (calibrationStatus && !calibrationStatus.is_complete) {
+          await fetchCalibrationStatus();
+        }
+      } else {
+        const errorData = await response.json();
+        const detail = errorData.detail;
+        setError(typeof detail === 'string' ? detail : 'Failed to force approve');
+      }
+    } catch (err) {
+      setError('Failed to force approve candidate');
+      console.error(err);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   // Close duplicate dialog
   const closeDuplicateDialog = () => {
     setShowDuplicateDialog(false);
@@ -780,6 +843,7 @@ export default function TrainingPage() {
         isOpen={showDuplicateDialog}
         onClose={closeDuplicateDialog}
         onRejectAsDuplicate={handleRejectAsDuplicate}
+        onForceApprove={handleForceApprove}
         similarFaqs={duplicateFaqs}
         candidateQuestion={duplicateCandidateQuestion}
       />

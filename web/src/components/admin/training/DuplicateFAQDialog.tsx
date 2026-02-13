@@ -27,6 +27,7 @@ interface DuplicateFAQDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onRejectAsDuplicate: () => void;
+  onForceApprove: () => void;
   similarFaqs: SimilarFAQ[];
   candidateQuestion?: string;
 }
@@ -35,6 +36,7 @@ export function DuplicateFAQDialog({
   isOpen,
   onClose,
   onRejectAsDuplicate,
+  onForceApprove,
   similarFaqs,
   candidateQuestion,
 }: DuplicateFAQDialogProps) {
@@ -54,7 +56,7 @@ export function DuplicateFAQDialog({
             <div className="space-y-3">
               <p>
                 This candidate&apos;s question is very similar to an existing FAQ in the knowledge base.
-                Approving it would create duplicate content.
+                You can reject it as a duplicate or approve it anyway if you believe it adds value.
               </p>
 
               {candidateQuestion && (
@@ -111,7 +113,7 @@ export function DuplicateFAQDialog({
           </ScrollArea>
         </div>
 
-        <AlertDialogFooter>
+        <AlertDialogFooter className="flex-col sm:flex-row gap-2">
           <AlertDialogCancel onClick={onClose}>
             Cancel
           </AlertDialogCancel>
@@ -120,6 +122,12 @@ export function DuplicateFAQDialog({
             className="bg-red-600 hover:bg-red-700 text-white"
           >
             Reject as Duplicate
+          </AlertDialogAction>
+          <AlertDialogAction
+            onClick={onForceApprove}
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            Approve Anyway
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -83,7 +83,7 @@ class TestDuplicateFAQErrorHandling:
         """
         faq = self._build_similar_faqs_dicts()[0]
         with pytest.raises(AttributeError):
-            _ = faq.id  # noqa: B018 — intentionally accessing attribute on dict
+            _ = faq.id  # intentionally accessing attribute on dict
 
     def test_approve_endpoint_returns_409_on_duplicate(self):
         """Full integration: approve endpoint returns 409 when duplicate detected."""
@@ -131,3 +131,38 @@ class TestDuplicateFAQErrorHandling:
         assert data["detail"]["error"] == "duplicate_faq"
         assert len(data["detail"]["similar_faqs"]) == 1
         assert data["detail"]["similar_faqs"][0]["id"] == 42
+
+    def test_force_approve_skips_duplicate_check(self):
+        """force=True should bypass duplicate check and succeed."""
+        mock_candidate = MagicMock()
+        mock_candidate.generation_confidence = 0.85
+        mock_candidate.source = "bisq2"
+        mock_candidate.final_score = 0.88
+        mock_candidate.routing = "auto_approved"
+
+        mock_service = MagicMock()
+        mock_service.repository.get_by_id = MagicMock(return_value=mock_candidate)
+        mock_service.approve_candidate = AsyncMock(return_value="faq-123")
+
+        app = FastAPI()
+        app.dependency_overrides[verify_admin_access] = lambda: None
+        app.include_router(router)
+        app.state.unified_pipeline_service = mock_service
+
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/admin/training/candidates/5/approve",
+            json={"reviewer": "test_admin", "force": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["faq_id"] == "faq-123"
+
+        # Verify force=True was passed to the service
+        mock_service.approve_candidate.assert_called_once_with(
+            candidate_id=5,
+            reviewer="test_admin",
+            force=True,
+        )
