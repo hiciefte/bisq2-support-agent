@@ -67,7 +67,7 @@ class TestReactionLearningTrigger:
 
         result = await processor.process(event)
 
-        assert result is True
+        assert result
         # _trigger_learning should have called apply_feedback_weights_async
         mock_service.apply_feedback_weights_async.assert_called_once()
 
@@ -117,5 +117,5 @@ class TestReactionLearningTrigger:
         result = await processor.process(event)
 
         # Storage should still succeed
-        assert result is True
+        assert result
         mock_service.store_reaction_feedback.assert_called_once()

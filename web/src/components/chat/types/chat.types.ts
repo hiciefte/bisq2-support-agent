@@ -79,6 +79,8 @@ export interface FeedbackResponse {
     success: boolean
     message: string
     needs_feedback_followup?: boolean
+    escalation_created?: boolean
+    escalation_message_id?: string
 }
 
 export interface ExplanationResponse {

@@ -126,6 +126,22 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
                 try {
                     const responseData: FeedbackResponse = await response.json()
 
+                    // If the backend auto-escalated (user thumbs-down on high-confidence answer),
+                    // update message state so the UI can show a HumanReviewBadge.
+                    if (responseData.escalation_created) {
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === messageId
+                                    ? {
+                                        ...msg,
+                                        requires_human: true,
+                                        escalation_message_id: responseData.escalation_message_id,
+                                    }
+                                    : msg
+                            )
+                        )
+                    }
+
                     if (responseData.needs_feedback_followup) {
                         setFeedbackDialog({
                             isOpen: true,
@@ -192,6 +208,7 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
                 console.error("Error parsing explanation response:", parseError)
             }
 
+            const closedMessageId = feedbackDialog.messageId
             setFeedbackDialog({
                 isOpen: false,
                 messageId: null,
@@ -201,9 +218,19 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             setFeedbackText("")
             setSelectedIssues([])
 
+            // If this feedback was for an auto-escalated message, show a professional
+            // acknowledgment instead of a funny thank-you.
+            const escalatedMessage = closedMessageId
+                ? messages.find((m) => m.id === closedMessageId && m.requires_human)
+                : null
+
+            const thankYouContent = escalatedMessage
+                ? "Thank you for the feedback. Your question has been escalated for human review — a support team member will follow up shortly."
+                : getRandomThankYouMessage()
+
             const thankYouMessage: Message = {
                 id: generateUUID(),
-                content: getRandomThankYouMessage(),
+                content: thankYouContent,
                 role: "assistant",
                 timestamp: new Date(),
                 isThankYouMessage: true

@@ -46,6 +46,7 @@ def build_metadata(
         tokens_used=rag_response.get("tokens_used"),
         confidence_score=rag_response.get("confidence"),
         routing_action=rag_response.get("routing_action"),
+        routing_reason=rag_response.get("routing_reason"),
         detected_version=rag_response.get("detected_version"),
         version_confidence=rag_response.get("version_confidence"),
         hooks_executed=hooks_executed if hooks_executed is not None else [],

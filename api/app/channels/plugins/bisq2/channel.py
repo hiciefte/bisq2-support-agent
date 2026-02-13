@@ -156,6 +156,7 @@ class Bisq2Channel(ChannelBase):
             tracker = self.runtime.resolve_optional("sent_message_tracker")
             if tracker:
                 try:
+                    _meta = getattr(message, "metadata", None)
                     tracker.track(
                         channel_id="bisq2",
                         external_message_id=external_message_id,
@@ -164,6 +165,9 @@ class Bisq2Channel(ChannelBase):
                         answer=message.answer,
                         user_id=getattr(getattr(message, "user", None), "user_id", ""),
                         sources=[],
+                        confidence_score=getattr(_meta, "confidence_score", None),
+                        routing_action=getattr(_meta, "routing_action", None),
+                        requires_human=getattr(message, "requires_human", None),
                     )
                 except Exception:
                     self._logger.warning(

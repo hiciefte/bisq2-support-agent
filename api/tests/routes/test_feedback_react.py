@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from app.channels.reactions import (
+    ProcessResult,
     ReactionProcessor,
     ReactionRating,
     SentMessageRecord,
@@ -39,7 +40,7 @@ def _mock_tracker_with_record() -> MagicMock:
 def _mock_processor(success: bool = True) -> MagicMock:
     """Return a ReactionProcessor mock."""
     processor = MagicMock(spec=ReactionProcessor)
-    processor.process = AsyncMock(return_value=success)
+    processor.process = AsyncMock(return_value=ProcessResult(success=success))
     return processor
 
 

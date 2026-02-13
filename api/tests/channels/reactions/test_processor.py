@@ -1,8 +1,8 @@
-"""Tests for ReactionProcessor: identity hashing, process flow, untracked telemetry, revocation."""
+"""Tests for ReactionProcessor: identity hashing, process flow, untracked telemetry, revocation, auto-escalation."""
 
 import hashlib
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.channels.reactions import (
@@ -127,7 +127,7 @@ class TestProcessFlow:
             timestamp=datetime.now(timezone.utc),
         )
         result = await processor.process(event)
-        assert result is True
+        assert result
 
     @pytest.mark.asyncio()
     async def test_process_calls_store_with_correct_data(
@@ -206,7 +206,7 @@ class TestUntrackedTelemetry:
             timestamp=datetime.now(timezone.utc),
         )
         result = await processor.process(event)
-        assert result is False
+        assert not result
 
     @pytest.mark.asyncio()
     async def test_untracked_count_increments(self, processor):
@@ -309,7 +309,7 @@ class TestProcessErrorHandling:
             timestamp=datetime.now(timezone.utc),
         )
         result = await processor.process(event)
-        assert result is False
+        assert not result
 
     @pytest.mark.asyncio()
     async def test_process_returns_false_when_service_unavailable(self, tracker):
@@ -325,7 +325,7 @@ class TestProcessErrorHandling:
             timestamp=datetime.now(timezone.utc),
         )
         result = await p.process(event)
-        assert result is False
+        assert not result
 
     @pytest.mark.asyncio()
     async def test_revoke_returns_false_on_error(self, processor, feedback_service):
@@ -334,3 +334,260 @@ class TestProcessErrorHandling:
             "matrix", "$evt:server", "@voter:server"
         )
         assert result is False
+
+
+# =============================================================================
+# Auto-escalation on negative reaction
+# =============================================================================
+
+
+@pytest.fixture()
+def escalation_service():
+    """Mock escalation service."""
+    svc = AsyncMock()
+    svc.create_escalation = AsyncMock(return_value=type("Esc", (), {"id": 42})())
+    return svc
+
+
+@pytest.fixture()
+def high_conf_tracker():
+    """Tracker with a high-confidence auto-sent message."""
+    t = SentMessageTracker(ttl_hours=24)
+    t.track(
+        channel_id="matrix",
+        external_message_id="$evt:server",
+        internal_message_id="int-1",
+        question="How does Bisq work?",
+        answer="Bisq is a decentralized exchange.",
+        user_id="user1",
+        sources=[{"title": "FAQ", "score": 0.9}],
+        confidence_score=0.97,
+        routing_action="auto_send",
+        requires_human=False,
+    )
+    return t
+
+
+@pytest.fixture()
+def processor_with_esc(high_conf_tracker, feedback_service, escalation_service):
+    """Processor with escalation service wired."""
+    return ReactionProcessor(
+        tracker=high_conf_tracker,
+        feedback_service=feedback_service,
+        reactor_identity_salt="test-salt",
+        escalation_service=escalation_service,
+    )
+
+
+class TestAutoEscalation:
+    """Test auto-escalation on negative reaction for high-confidence auto-sent messages."""
+
+    @pytest.mark.asyncio()
+    async def test_negative_high_conf_creates_escalation(
+        self, processor_with_esc, escalation_service
+    ):
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor_with_esc.process(event)
+        assert result  # ProcessResult truthy
+        assert escalation_service.create_escalation.call_count == 1
+
+    @pytest.mark.asyncio()
+    async def test_positive_does_not_escalate(
+        self, processor_with_esc, escalation_service
+    ):
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.POSITIVE,
+            raw_reaction="\U0001f44d",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor_with_esc.process(event)
+        assert result
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_already_escalated_skips(self, feedback_service, escalation_service):
+        """requires_human=True means it was already escalated -- don't double-escalate."""
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="u1",
+            confidence_score=0.97,
+            routing_action="needs_human",
+            requires_human=True,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+        )
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        await p.process(event)
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_low_confidence_skips(self, feedback_service, escalation_service):
+        """Low confidence (< 0.70) does not auto-escalate."""
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="u1",
+            confidence_score=0.35,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+        )
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        await p.process(event)
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_no_confidence_skips(self, feedback_service, escalation_service):
+        """confidence=None -> no auto-escalation."""
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="u1",
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+        )
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        await p.process(event)
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_no_escalation_service_skips(self, feedback_service):
+        """escalation_service=None -> skip auto-escalation entirely."""
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="u1",
+            confidence_score=0.97,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+        )
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await p.process(event)
+        assert result  # feedback stored fine, just no escalation
+
+    @pytest.mark.asyncio()
+    async def test_escalation_failure_nonfatal(
+        self, processor_with_esc, escalation_service, feedback_service
+    ):
+        """Escalation creation failure doesn't prevent feedback storage."""
+        escalation_service.create_escalation.side_effect = RuntimeError("db error")
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor_with_esc.process(event)
+        assert result  # feedback was stored successfully despite escalation failure
+        feedback_service.store_reaction_feedback.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_duplicate_escalation_handled(
+        self, processor_with_esc, escalation_service, feedback_service
+    ):
+        """DuplicateEscalationError is caught gracefully."""
+        from app.models.escalation import DuplicateEscalationError
+
+        escalation_service.create_escalation.side_effect = DuplicateEscalationError(
+            "duplicate"
+        )
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor_with_esc.process(event)
+        assert result  # still succeeds
+
+    @pytest.mark.asyncio()
+    async def test_result_includes_escalation_metadata(
+        self, processor_with_esc, escalation_service
+    ):
+        """ProcessResult should include escalation_created and escalation_message_id."""
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@voter:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor_with_esc.process(event)
+        assert hasattr(result, "escalation_created")
+        assert result.escalation_created is True
+        assert hasattr(result, "escalation_message_id")
+        assert result.escalation_message_id == "$evt:server"

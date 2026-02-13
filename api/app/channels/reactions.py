@@ -67,6 +67,9 @@ class SentMessageRecord:
     user_id: str
     timestamp: datetime
     sources: Optional[List[Dict[str, Any]]] = None
+    confidence_score: Optional[float] = None
+    requires_human: Optional[bool] = None
+    routing_action: Optional[str] = None
 
 
 # =============================================================================
@@ -122,6 +125,9 @@ class SentMessageTracker:
         answer: str,
         user_id: str,
         sources: Optional[List[Dict[str, Any]]] = None,
+        confidence_score: Optional[float] = None,
+        requires_human: Optional[bool] = None,
+        routing_action: Optional[str] = None,
     ) -> None:
         """Track a sent message for future reaction correlation."""
         if len(self._records) >= self._max_size:
@@ -138,6 +144,9 @@ class SentMessageTracker:
             user_id=user_id,
             timestamp=datetime.now(timezone.utc),
             sources=sources,
+            confidence_score=confidence_score,
+            requires_human=requires_human,
+            routing_action=routing_action,
         )
         self._track_count += 1
         if self._track_count % self._purge_interval == 0:
@@ -174,6 +183,19 @@ class SentMessageTracker:
 # =============================================================================
 
 
+@dataclass
+class ProcessResult:
+    """Result of processing a reaction event."""
+
+    success: bool
+    escalation_created: bool = False
+    escalation_message_id: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        """Backward-compat: old callers checked ``if result:``."""
+        return self.success
+
+
 class ReactionProcessor:
     """Processes reaction events into feedback entries.
 
@@ -181,15 +203,20 @@ class ReactionProcessor:
     to FeedbackService for storage.
     """
 
+    # Minimum confidence for auto-escalation on negative reaction
+    _AUTO_ESCALATION_CONFIDENCE_THRESHOLD: float = 0.70
+
     def __init__(
         self,
         tracker: SentMessageTracker,
         feedback_service: Any,
         reactor_identity_salt: str = "",
+        escalation_service: Any = None,
     ):
         self.tracker = tracker
         self.feedback_service = feedback_service
         self.reactor_identity_salt = reactor_identity_salt
+        self.escalation_service = escalation_service
         self._untracked_count: int = 0
         # Debounced learning trigger
         self._learning_cooldown_seconds: float = 5.0
@@ -202,11 +229,10 @@ class ReactionProcessor:
         salted = f"{self.reactor_identity_salt}{normalized}"
         return hashlib.sha256(salted.encode()).hexdigest()
 
-    async def process(self, event: ReactionEvent) -> bool:
+    async def process(self, event: ReactionEvent) -> ProcessResult:
         """Process a reaction event into feedback.
 
-        Returns True if feedback was stored, False if reaction was
-        untracked (message not found in tracker).
+        Returns ProcessResult (truthy if feedback stored, falsy otherwise).
         """
         record = self.tracker.lookup(event.channel_id, event.external_message_id)
         if record is None:
@@ -217,7 +243,7 @@ class ReactionProcessor:
                 event.external_message_id,
                 self._untracked_count,
             )
-            return False
+            return ProcessResult(success=False)
 
         reactor_hash = self.hash_reactor_identity(event.channel_id, event.reactor_id)
 
@@ -244,11 +270,72 @@ class ReactionProcessor:
                 event.channel_id,
                 event.external_message_id,
             )
-            return False
+            return ProcessResult(success=False)
+
+        # Auto-escalation: negative reaction on high-confidence auto-sent message
+        escalation_created = False
+        escalation_message_id = None
+        if (
+            event.rating == ReactionRating.NEGATIVE
+            and self.escalation_service is not None
+            and self._should_auto_escalate(record)
+        ):
+            escalation_created, escalation_message_id = await self._try_auto_escalate(
+                record, event
+            )
 
         # Trigger learning after successful storage (best-effort, debounced)
         await self._trigger_learning()
-        return True
+        return ProcessResult(
+            success=True,
+            escalation_created=escalation_created,
+            escalation_message_id=escalation_message_id,
+        )
+
+    def _should_auto_escalate(self, record: SentMessageRecord) -> bool:
+        """Check whether a negative reaction warrants auto-escalation."""
+        if record.requires_human:
+            return False  # Already escalated via normal pipeline
+        if record.confidence_score is None:
+            return False
+        return record.confidence_score >= self._AUTO_ESCALATION_CONFIDENCE_THRESHOLD
+
+    async def _try_auto_escalate(
+        self, record: SentMessageRecord, event: ReactionEvent
+    ) -> tuple:
+        """Attempt to create an escalation. Returns (created, message_id)."""
+        try:
+            from app.models.escalation import EscalationCreate
+
+            conf = record.confidence_score or 0.0
+            data = EscalationCreate(
+                message_id=record.internal_message_id,
+                channel=record.channel_id,
+                user_id=record.user_id,
+                username=record.user_id,
+                question=record.question,
+                ai_draft_answer=record.answer,
+                confidence_score=conf,
+                routing_action=record.routing_action or "auto_send",
+                routing_reason=(
+                    f"User reported incorrect answer " f"(confidence={conf:.0%})"
+                ),
+                sources=record.sources,
+            )
+            await self.escalation_service.create_escalation(data)
+            logger.info(
+                "Auto-escalation created for negative reaction: ext_id=%s conf=%.2f",
+                event.external_message_id,
+                conf,
+            )
+            return True, event.external_message_id
+        except Exception:
+            logger.warning(
+                "Auto-escalation failed (non-fatal): ext_id=%s",
+                event.external_message_id,
+                exc_info=True,
+            )
+            return False, None
 
     async def _trigger_learning(self) -> None:
         """Trigger feedback weight recalculation with debounce.

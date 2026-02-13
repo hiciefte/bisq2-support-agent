@@ -267,6 +267,33 @@ class FeedbackForFAQItem(BaseModel):
     potential_category: str
 
 
+class EscalationMetrics(BaseModel):
+    """Escalation rate metrics derived from routing decisions."""
+
+    total_routing_decisions: int = 0
+    auto_send_count: int = 0
+    queue_medium_count: int = 0
+    needs_human_count: int = 0
+    escalation_rate: float = 0.0  # percentage
+
+    @field_validator("escalation_rate", mode="before")
+    @classmethod
+    def _ignore_input(cls, v: float) -> float:
+        """Always recomputed in model_post_init; ignore caller value."""
+        return v
+
+    def model_post_init(self, __context: Any) -> None:
+        total = self.auto_send_count + self.queue_medium_count + self.needs_human_count
+        object.__setattr__(self, "total_routing_decisions", total)
+        if total > 0:
+            rate = round(
+                (self.queue_medium_count + self.needs_human_count) / total * 100, 1
+            )
+            object.__setattr__(self, "escalation_rate", rate)
+        else:
+            object.__setattr__(self, "escalation_rate", 0.0)
+
+
 class DashboardOverviewResponse(BaseModel):
     """Response model for dashboard overview data."""
 
@@ -294,6 +321,11 @@ class DashboardOverviewResponse(BaseModel):
     total_faqs: int = Field(description="Total FAQs in system")
     last_updated: str = Field(description="When the data was last updated")
     fallback: Optional[bool] = Field(None, description="Whether this is fallback data")
+
+    # Escalation metrics
+    escalation_metrics: Optional[Dict[str, Any]] = Field(
+        None, description="Escalation rate metrics"
+    )
 
     # Period metadata
     period: str = Field(description="Selected time period for trends")

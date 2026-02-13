@@ -165,6 +165,7 @@ class MatrixChannel(ChannelBase):
                 tracker = self.runtime.resolve_optional("sent_message_tracker")
                 if tracker:
                     try:
+                        _meta = getattr(message, "metadata", None)
                         tracker.track(
                             channel_id="matrix",
                             external_message_id=response.event_id,
@@ -175,6 +176,9 @@ class MatrixChannel(ChannelBase):
                                 getattr(message, "user", None), "user_id", ""
                             ),
                             sources=[],
+                            confidence_score=getattr(_meta, "confidence_score", None),
+                            routing_action=getattr(_meta, "routing_action", None),
+                            requires_human=getattr(message, "requires_human", None),
                         )
                     except Exception as e:
                         self._logger.warning(f"Failed to track sent message: {e}")

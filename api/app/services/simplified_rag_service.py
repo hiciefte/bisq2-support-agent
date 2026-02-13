@@ -33,6 +33,7 @@ from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.rag.qdrant_index_manager import QdrantIndexManager
+from app.services.rag.routing_reason_generator import RoutingReasonGenerator
 from app.services.translation import TranslationService
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
@@ -133,6 +134,7 @@ class SimplifiedRAGService:
         self.nli_validator = NLIValidator()
         self.confidence_scorer = ConfidenceScorer(self.nli_validator)
         self.auto_send_router = AutoSendRouter()
+        self.routing_reason_generator = RoutingReasonGenerator()
 
         # Initialize Phase 1 components
         self.version_detector = ProtocolDetector()
@@ -885,6 +887,15 @@ class SimplifiedRAGService:
                 sources=docs,
             )
 
+            # Generate human-readable routing reason
+            routing_reason = self.routing_reason_generator.generate(
+                confidence=confidence,
+                action=routing_action.action,
+                num_sources=len(docs),
+                detected_version=detected_version,
+                version_confidence=version_confidence,
+            )
+
             # Translate response back to user's language if needed
             final_response = response_text
             if (
@@ -955,6 +966,7 @@ class SimplifiedRAGService:
                 "feedback_created": False,
                 "confidence": confidence,
                 "routing_action": routing_action.action,
+                "routing_reason": routing_reason,
                 "requires_human": routing_action.action == "needs_human",
                 "detected_version": detected_version,
                 "version_confidence": version_confidence,

@@ -10,6 +10,7 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from app.channels.reactions import ProcessResult
 from app.models.feedback import FeedbackRequest
 from pydantic import ValidationError
 
@@ -20,7 +21,7 @@ class TestChannelSpoofingPrevention:
     def test_react_route_forces_web_channel(self, test_client):
         """ReactionEvent passed to processor always has channel_id='web'."""
         mock_processor = MagicMock()
-        mock_processor.process = AsyncMock(return_value=True)
+        mock_processor.process = AsyncMock(return_value=ProcessResult(success=True))
         test_client.app.state.reaction_processor = mock_processor
 
         response = test_client.post(
@@ -35,7 +36,7 @@ class TestChannelSpoofingPrevention:
     def test_react_route_uses_reaction_method(self, test_client):
         """Feedback stored via /feedback/react uses 'reaction' method (via ReactionProcessor)."""
         mock_processor = MagicMock()
-        mock_processor.process = AsyncMock(return_value=True)
+        mock_processor.process = AsyncMock(return_value=ProcessResult(success=True))
         test_client.app.state.reaction_processor = mock_processor
 
         response = test_client.post(

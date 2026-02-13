@@ -40,8 +40,8 @@ async def submit_reaction(request: Request, reaction: ReactionSubmitRequest):
         timestamp=datetime.now(timezone.utc),
     )
 
-    success = await processor.process(event)
-    if not success:
+    result = await processor.process(event)
+    if not result:
         raise BaseAppException(
             detail="Message not tracked or expired",
             status_code=status.HTTP_404_NOT_FOUND,
@@ -51,6 +51,8 @@ async def submit_reaction(request: Request, reaction: ReactionSubmitRequest):
     return {
         "success": True,
         "needs_feedback_followup": reaction.rating == 0,
+        "escalation_created": result.escalation_created,
+        "escalation_message_id": result.escalation_message_id,
     }
 
 

@@ -222,6 +222,7 @@ async def lifespan(app: FastAPI):
         tracker=sent_message_tracker,
         feedback_service=feedback_service,
         reactor_identity_salt=reactor_salt,
+        escalation_service=getattr(app.state, "escalation_service", None),
     )
     app.state.reaction_processor = reaction_processor
     logger.info("Registered SentMessageTracker and ReactionProcessor on app.state")

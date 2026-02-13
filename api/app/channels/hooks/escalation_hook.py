@@ -96,6 +96,8 @@ class EscalationPostHook(BasePostProcessingHook):
             [s.model_dump() for s in outgoing.sources] if outgoing.sources else None
         )
 
+        routing_reason = getattr(outgoing.metadata, "routing_reason", None)
+
         data = EscalationCreate(
             message_id=incoming.message_id,
             channel=incoming.channel.value,
@@ -106,6 +108,7 @@ class EscalationPostHook(BasePostProcessingHook):
             ai_draft_answer=outgoing.answer,
             confidence_score=confidence,
             routing_action=routing_action,
+            routing_reason=routing_reason,
             sources=sources,
         )
         return await self.escalation_service.create_escalation(data)
