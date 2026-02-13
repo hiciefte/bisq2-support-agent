@@ -72,12 +72,14 @@ const getConfidenceConfig = (confidence: number): ConfidenceConfig => {
 interface ConfidenceBadgeProps {
     confidence: number
     version?: string
+    routingReason?: string
     className?: string
 }
 
 export function ConfidenceBadge({
     confidence,
     version,
+    routingReason,
     className,
 }: ConfidenceBadgeProps) {
     const [isOpen, setIsOpen] = React.useState(false)
@@ -126,17 +128,17 @@ export function ConfidenceBadge({
                     "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
                 )}
             >
-                <p
-                    className="text-xs text-muted-foreground p-2 max-w-[280px]"
+                <div
+                    className="text-xs text-muted-foreground p-2 max-w-[280px] space-y-1"
                     id={`confidence-desc-${confidence}`}
                 >
-                    {config.description}
-                    {confidence < 0.70 && (
-                        <span className="block mt-1 text-amber-500 dark:text-amber-400">
-                            Consider asking in Bisq community for confirmation.
-                        </span>
+                    <p>{config.description}</p>
+                    {routingReason && (
+                        <p className="text-muted-foreground/80">
+                            {routingReason}
+                        </p>
                     )}
-                </p>
+                </div>
             </CollapsibleContent>
         </Collapsible>
     )

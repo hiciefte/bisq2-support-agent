@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.config import Settings
+from app.models.feedback import EscalationMetrics
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.prometheus_client import PrometheusClient
@@ -117,6 +118,9 @@ class DashboardService:
                 self.feedback_service.get_total_feedback_count
             )
 
+            # Get escalation metrics from Prometheus
+            escalation_metrics = await self.get_escalation_metrics()
+
             dashboard_data = {
                 # Core metrics (all period-filtered now)
                 "helpful_rate": period_feedback_stats["helpful_rate"]
@@ -135,6 +139,8 @@ class DashboardService:
                 "total_feedback": total_feedback_count,
                 "total_faqs": faq_stats["total_faqs"],
                 "last_updated": datetime.now(timezone.utc).isoformat(),
+                # Escalation metrics
+                "escalation_metrics": escalation_metrics.model_dump(),
                 # Period metadata
                 "period": period,
                 "period_label": period_label,
@@ -177,8 +183,18 @@ class DashboardService:
                             "message_id": feedback.message_id,
                             "question": feedback.question,
                             "answer": feedback.answer,
-                            "explanation": feedback.explanation,
-                            "issues": feedback.issues,
+                            # Dashboard response model expects a string explanation.
+                            # Some negative feedback may have no explicit explanation but still be a
+                            # "no source" candidate; provide a stable reason string in that case.
+                            "explanation": (
+                                feedback.explanation
+                                or (
+                                    "Model indicated it had insufficient sources to answer reliably."
+                                    if feedback.has_no_source_response
+                                    else "Negative feedback"
+                                )
+                            ),
+                            "issues": feedback.issues or [],
                             "timestamp": feedback.timestamp,
                             "potential_category": self._suggest_faq_category(
                                 feedback.issues
@@ -269,6 +285,35 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Failed to get total query count: {e}", exc_info=True)
             return 0
+
+    async def get_escalation_metrics(self) -> EscalationMetrics:
+        """Get escalation rate metrics from Prometheus routing counters.
+
+        Queries ``sum(rag_routing_decisions_total) by (action)`` and maps
+        action labels to EscalationMetrics fields.
+        """
+        try:
+            result = await self.prometheus_client.query(
+                "sum(rag_routing_decisions_total) by (action)"
+            )
+            if result is None:
+                return EscalationMetrics()
+
+            data = result.get("data", {}).get("result", [])
+            counts: Dict[str, int] = {}
+            for entry in data:
+                action = entry.get("metric", {}).get("action", "")
+                value = int(float(entry.get("value", [0, "0"])[1]))
+                counts[action] = value
+
+            return EscalationMetrics(
+                auto_send_count=counts.get("auto_send", 0),
+                queue_medium_count=counts.get("queue_medium", 0),
+                needs_human_count=counts.get("needs_human", 0),
+            )
+        except Exception as e:
+            logger.warning("Failed to get escalation metrics: %s", e)
+            return EscalationMetrics()
 
     async def _calculate_helpful_rate_trend(
         self,

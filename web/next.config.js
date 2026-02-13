@@ -30,6 +30,27 @@ const nextConfig = {
     compress: true,
     reactStrictMode: true,
 
+    // In local docker dev we expose Next.js directly on :3000 (no nginx in front),
+    // but the client code uses same-origin `/api/...` paths. Proxy those to the API.
+    async rewrites() {
+        const apiInternal = process.env.API_URL_INTERNAL;
+        if (!apiInternal || typeof apiInternal !== "string" || !apiInternal.startsWith("http")) {
+            return [];
+        }
+
+        const trimmed = apiInternal.replace(/\/+$/, "");
+        const base = trimmed.replace(/\/api$/, "");
+
+        return [
+            {
+                source: "/api/:path*",
+                // Our FastAPI app is mounted at the root (e.g. /chat/query, /admin/...).
+                // In production nginx exposes it under /api/*, so mirror that rewrite here.
+                destination: `${base}/:path*`,
+            },
+        ];
+    },
+
     // Image optimization
     images: {
         formats: ['image/avif', 'image/webp'],

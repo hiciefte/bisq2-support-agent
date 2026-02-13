@@ -12,7 +12,7 @@ The FAQ extraction functionality is implemented through the following components
 
 1. **FAQService Class**: The core service responsible for loading, processing, and extracting FAQ data.
 2. **extract_faqs.py Script**: A thin wrapper script that utilizes the FAQService to run the extraction process.
-3. **Docker Integration**: A dedicated container for running the extraction process on a schedule.
+3. **Unified Training Scheduler**: The `scheduler` service triggers Bisq/Matrix sync endpoints that feed FAQ extraction.
 
 ### FAQService
 
@@ -32,20 +32,21 @@ Located in `api/app/scripts/extract_faqs.py`, this script:
 - Runs the FAQ extraction process
 - Logs the results and any errors
 
-### Docker Integration
+### Scheduler Integration
 
-The `faq-extractor` service in the Docker Compose configuration:
+The `scheduler` service in Docker Compose periodically calls:
 
-- Runs in its own container
-- Has access to the necessary data directories
-- Can be scheduled to run periodically
+- `POST /admin/training/sync/bisq`
+- `POST /admin/training/sync/matrix`
+
+These endpoints run the unified training pipeline and persist extracted FAQ entries to `faqs.db`.
 
 ## Data Flow
 
 The FAQ extraction process follows these steps:
 
 1. **Data Collection**:
-   - Fetch new messages from the Bisq API
+   - Fetch new support messages from Bisq and/or Matrix sources (depending on configured sync endpoint)
    - Combine with existing messages from previous runs
 
 2. **Message Processing**:
@@ -79,7 +80,7 @@ The FAQ extraction process relies on several environment variables:
 |----------|-------------|---------|
 | `BISQ_API_URL` | URL to the Bisq API | `http://bisq2-api:8090` (Docker network) |
 | `OPENAI_API_KEY` | API key for OpenAI | - |
-| `OPENAI_MODEL` | OpenAI model to use | `gpt-4o-mini` |
+| `OPENAI_MODEL` | OpenAI model to use | `openai:gpt-4o-mini` |
 | `DATA_DIR` | Directory for storing data files | - |
 
 ### File Paths
@@ -106,17 +107,9 @@ Once the services are running, execute the following command from the project ro
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -- api python -m app.scripts.extract_faqs
 ```
 
-### Via Docker Compose
-
-To start the dedicated FAQ extractor service:
-
-```bash
-docker compose -f docker/docker-compose.local.yml up -d faq-extractor
-```
-
 ### Scheduled Execution
 
-In the production environment, the FAQ extraction is scheduled to run **daily at midnight** via the `scheduler` service in the Docker Compose configuration. This ensures the FAQ database stays current with recent support conversations.
+In the production environment, the unified training sync runs via the `scheduler` service **every 12 hours** (`poll-matrix.sh`). This keeps FAQ data current from both Bisq and Matrix sources.
 
 ## Integration with RAG System
 
@@ -128,12 +121,12 @@ The extracted FAQs are integrated into the hybrid retrieval pipeline:
    - `type`: "faq"
    - `protocol`: "bisq_easy", "multisig_v1", or "all" (for version filtering)
    - `source_weight`: 1.0 (base weight)
-3. Documents are embedded and stored in ChromaDB vector store
+3. Documents are embedded and indexed in the Qdrant hybrid collection
 
 ### Retrieval Integration
 FAQs participate in the hybrid retrieval pipeline:
-- **Semantic Search**: FAQ embeddings matched via cosine similarity (weight: 0.7)
-- **Keyword Search**: FAQ text indexed for BM25 sparse vector matching (weight: 0.3)
+- **Semantic Search**: FAQ embeddings matched via dense vectors (weight: 0.6)
+- **Keyword Search**: FAQ text indexed for BM25 sparse vectors (weight: 0.4)
 - **Protocol Filtering**: FAQs filtered by protocol metadata based on query version detection
 
 ### Multi-Stage Retrieval
@@ -158,7 +151,7 @@ The FAQ extraction process logs detailed information about each step:
 These logs can be accessed via Docker:
 
 ```bash
-docker logs docker-faq-extractor-1
+docker compose -f docker/docker-compose.yml logs scheduler
 ```
 
 ### Common Issues and Solutions
@@ -186,7 +179,7 @@ docker logs docker-faq-extractor-1
 To improve the quality of the extracted FAQs:
 
 1. **Prompt Engineering** *(Implemented)*: Adjust the prompt used for OpenAI to improve extraction quality
-2. **Filtering** *(Planned Q2 2025)*: Add more sophisticated filtering of low-quality or duplicative FAQs
+2. **Filtering** *(In Progress)*: Add more sophisticated filtering of low-quality or duplicative FAQs
 3. **Human Review** *(Under Consideration)*: Implement a review process for FAQs before adding them to the knowledge base
 
 ### Performance Improvements
@@ -194,7 +187,7 @@ To improve the quality of the extracted FAQs:
 For better performance:
 
 1. **Batch Processing** *(Implemented)*: Adjust batch sizes for OpenAI requests
-2. **Parallel Processing** *(Planned Q3 2025)*: Implement parallel processing of conversation batches
+2. **Parallel Processing** *(In Progress)*: Implement parallel processing of conversation batches
 3. **Caching** *(Under Investigation)*: Cache OpenAI responses to avoid redundant processing
 
 ## Conclusion

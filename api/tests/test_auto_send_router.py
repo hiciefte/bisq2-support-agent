@@ -204,3 +204,79 @@ class TestAutoSendRouter:
         """Verify threshold constants are set correctly."""
         assert router.HIGH_CONFIDENCE_THRESHOLD == 0.95
         assert router.MEDIUM_CONFIDENCE_THRESHOLD == 0.70
+
+
+class TestAutoSendRouterDynamicThresholds:
+    """TDD tests for LearningEngine-driven dynamic thresholds."""
+
+    @pytest.mark.asyncio
+    async def test_uses_static_defaults_without_learning_engine(self):
+        """When no learning_engine, uses 0.95/0.70 defaults."""
+        from app.services.rag.auto_send_router import AutoSendRouter
+
+        router = AutoSendRouter()
+        thresholds = router._get_thresholds()
+        assert thresholds == (0.95, 0.70)
+
+    @pytest.mark.asyncio
+    async def test_uses_learning_engine_thresholds_when_available(self):
+        """When learning_engine provides thresholds and has enough samples, those are used."""
+        from unittest.mock import MagicMock
+
+        from app.services.rag.auto_send_router import AutoSendRouter
+
+        mock_engine = MagicMock()
+        mock_engine.get_current_thresholds.return_value = {
+            "auto_send_threshold": 0.88,
+            "queue_high_threshold": 0.65,
+        }
+        mock_engine._review_history = [{}] * 60  # 60 reviews > min_samples_for_update
+        mock_engine.min_samples_for_update = 50
+
+        router = AutoSendRouter(learning_engine=mock_engine)
+        thresholds = router._get_thresholds()
+        assert thresholds == (0.88, 0.65)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_defaults_if_learning_engine_not_ready(self):
+        """If learning_engine has <50 reviews, returns defaults."""
+        from unittest.mock import MagicMock
+
+        from app.services.rag.auto_send_router import AutoSendRouter
+
+        mock_engine = MagicMock()
+        mock_engine._review_history = [{}] * 10  # Only 10 reviews
+        mock_engine.min_samples_for_update = 50
+
+        router = AutoSendRouter(learning_engine=mock_engine)
+        thresholds = router._get_thresholds()
+        assert thresholds == (0.95, 0.70)
+
+    @pytest.mark.asyncio
+    async def test_routing_changes_with_calibrated_thresholds(self):
+        """A confidence of 0.90 routes differently with calibrated vs default thresholds."""
+        from unittest.mock import MagicMock
+
+        from app.services.rag.auto_send_router import AutoSendRouter
+
+        # Default: 0.90 < 0.95 → queue_medium
+        default_router = AutoSendRouter()
+        default_action = await default_router.route_response(
+            confidence=0.90, question="Q", answer="A", sources=[]
+        )
+        assert default_action.action == "queue_medium"
+
+        # Calibrated: auto_send at 0.88 → 0.90 >= 0.88 → auto_send
+        mock_engine = MagicMock()
+        mock_engine.get_current_thresholds.return_value = {
+            "auto_send_threshold": 0.88,
+            "queue_high_threshold": 0.65,
+        }
+        mock_engine._review_history = [{}] * 60
+        mock_engine.min_samples_for_update = 50
+
+        calibrated_router = AutoSendRouter(learning_engine=mock_engine)
+        calibrated_action = await calibrated_router.route_response(
+            confidence=0.90, question="Q", answer="A", sources=[]
+        )
+        assert calibrated_action.action == "auto_send"

@@ -38,6 +38,7 @@ class ChannelCapability(str, Enum):
     PERSISTENT_CONNECTION = "persistent"
     TEXT_MESSAGES = "text_messages"
     CHAT_HISTORY = "chat_history"
+    REACTIONS = "reactions"
 
 
 class UserContext(BaseModel):
@@ -195,6 +196,11 @@ class DocumentReference(BaseModel):
     url: Optional[str] = None
     relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
     category: Optional[str] = None  # bisq1/bisq2/general
+    # Optional snippet + metadata. Used by web responses and evaluation (RAGAS),
+    # and safe to omit for channels that don't need full context.
+    content: Optional[str] = None
+    protocol: Optional[str] = None  # bisq_easy/multisig_v1/all
+    section: Optional[str] = None
 
 
 class ResponseMetadata(BaseModel):
@@ -206,6 +212,7 @@ class ResponseMetadata(BaseModel):
     tokens_used: Optional[int] = None
     confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     routing_action: Optional[str] = None
+    routing_reason: Optional[str] = None
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     hooks_executed: List[str] = Field(default_factory=list)
@@ -231,6 +238,9 @@ class OutgoingMessage(BaseModel):
 
     # Metadata
     metadata: ResponseMetadata
+
+    # Original question for reaction tracking
+    original_question: Optional[str] = None
 
     # Optional features
     suggested_questions: Optional[List[str]] = None

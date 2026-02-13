@@ -46,6 +46,20 @@ class FeedbackFilters:
         """
         filtered_items = feedback_items
 
+        # Filter by channel
+        if filters.channel:
+            filtered_items = [
+                item for item in filtered_items if item.channel == filters.channel
+            ]
+
+        # Filter by feedback method
+        if filters.feedback_method:
+            filtered_items = [
+                item
+                for item in filtered_items
+                if item.feedback_method == filters.feedback_method
+            ]
+
         # Filter by rating
         if filters.rating == "positive":
             filtered_items = [item for item in filtered_items if item.is_positive]

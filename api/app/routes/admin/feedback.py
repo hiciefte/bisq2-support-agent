@@ -205,6 +205,8 @@ async def get_feedback_list(
     rating: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    channel: Optional[str] = None,
+    feedback_method: Optional[str] = None,
     issues: Optional[str] = None,  # Comma-separated list
     source_types: Optional[str] = None,  # Comma-separated list
     search_text: Optional[str] = None,
@@ -243,6 +245,8 @@ async def get_feedback_list(
         rating=rating,
         date_from=date_from,
         date_to=date_to,
+        channel=channel,
+        feedback_method=feedback_method,
         issues=issues_list,
         source_types=source_types_list,
         search_text=search_text,
@@ -353,6 +357,7 @@ async def create_faq_from_feedback(request: CreateFAQFromFeedbackRequest):
             question=request.suggested_question or "Generated from feedback",
             answer=request.suggested_answer,
             category=request.category,
+            protocol=request.protocol,
             source="Feedback",  # Mark as created from feedback
         )
 

@@ -14,6 +14,9 @@ import { SourceBadges } from "./source-badges"
 import { ConfidenceBadge } from "./confidence-badge"
 import { LiveDataContent } from "./live-data-content"
 import { MarkdownContent } from "./markdown-content"
+import { HumanReviewBadge } from "./human-review-badge"
+import { HumanResponseSection } from "./human-response-section"
+import { HumanClosedSection } from "./human-closed-section"
 import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
@@ -29,7 +32,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
     const isClarificationQuestion = message.routing_action === "needs_clarification"
     const hasConfidence = typeof message.confidence === "number" && !isClarificationQuestion
     const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
-    const canRate = message.id && !message.isThankYouMessage && onRating
+    const canRate = message.id && !message.isThankYouMessage && !message.staff_response && !message.escalation_resolution && onRating
 
     // Format timestamp for LiveDataBadge
     const formattedTimestamp = message.timestamp instanceof Date
@@ -118,6 +121,17 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                             />
                         )}
                     </div>
+                )}
+
+                {/* Escalation indicators */}
+                {isAssistant && message.requires_human && !message.staff_response && message.escalation_resolution !== "closed" && (
+                    <HumanReviewBadge />
+                )}
+                {isAssistant && message.escalation_resolution === "closed" && (
+                    <HumanClosedSection resolvedAt={message.escalation_resolved_at} />
+                )}
+                {isAssistant && message.staff_response && (
+                    <HumanResponseSection response={message.staff_response} />
                 )}
             </div>
         </div>

@@ -1,6 +1,8 @@
-import { MessageCircle } from 'lucide-react';
+import { User, Bot } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { ConversationMessage } from '@/types/feedback';
+import { MarkdownContent } from "@/components/chat/components/markdown-content";
+import { cn } from "@/lib/utils";
 
 interface ConversationHistoryProps {
   messages: ConversationMessage[];
@@ -13,18 +15,37 @@ export function ConversationHistory({ messages, excludeLastMessage = true }: Con
   if (displayMessages.length === 0) return null;
 
   return (
-    <div>
-      <Label>Conversation History ({displayMessages.length} messages)</Label>
-      <div className="mt-2 space-y-3 max-h-64 overflow-y-auto p-3 bg-accent rounded">
+    <div className="space-y-2">
+      <Label className="text-xs text-muted-foreground uppercase tracking-wider">
+        Conversation History ({displayMessages.length} messages)
+      </Label>
+      <div className="space-y-3 max-h-72 overflow-y-auto p-3 bg-accent/40 rounded-lg border border-border/60">
         {displayMessages.map((message, idx) => (
-          <div key={idx} className={`p-3 rounded ${message.role === 'user' ? 'bg-blue-50 border-l-4 border-blue-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
+          <div
+            key={idx}
+            className={cn(
+              "p-3 rounded-lg border",
+              message.role === "user"
+                ? "bg-blue-500/8 border-blue-500/25"
+                : "bg-emerald-500/8 border-emerald-500/25",
+            )}
+          >
             <div className="flex items-center gap-2 mb-1">
-              <MessageCircle className="h-4 w-4 text-gray-700" />
-              <span className="font-semibold text-sm text-gray-900">
-                {message.role === 'user' ? 'User' : 'Assistant'}
+              {message.role === "user" ? (
+                <User className="h-3.5 w-3.5 text-blue-300" />
+              ) : (
+                <Bot className="h-3.5 w-3.5 text-emerald-300" />
+              )}
+              <span
+                className={cn(
+                  "font-semibold text-xs",
+                  message.role === "user" ? "text-blue-200" : "text-emerald-200",
+                )}
+              >
+                {message.role === "user" ? "User" : "Assistant"}
               </span>
             </div>
-            <p className="text-sm text-gray-800 whitespace-pre-wrap">{message.content}</p>
+            <MarkdownContent content={message.content} className="text-sm text-foreground" />
           </div>
         ))}
       </div>

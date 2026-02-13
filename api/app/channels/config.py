@@ -3,7 +3,7 @@
 Pydantic models for channel-specific configuration with validation.
 """
 
-from typing import List
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
@@ -21,58 +21,45 @@ class ChannelConfigBase(BaseModel):
 
 
 # =============================================================================
-# Channel-Specific Configurations
+# Reaction Configuration
 # =============================================================================
 
 
-class Bisq2ChannelConfig(ChannelConfigBase):
-    """Bisq2 native support chat configuration."""
+class ReactionConfig(BaseModel):
+    """Configuration for reaction-based feedback collection."""
 
-    api_url: str = "http://bisq2-api:8090"
-    poll_interval_seconds: int = Field(default=60, ge=10, le=3600)
-    export_batch_size: int = Field(default=100, ge=10, le=1000)
+    enabled: bool = Field(
+        default=False, description="Enable reaction feedback for this channel"
+    )
+    emoji_rating_map: Optional[Dict[str, int]] = Field(
+        default=None, description="Custom emoji-to-rating map (0=negative, 1=positive)"
+    )
+    message_tracking_ttl_hours: int = Field(
+        default=24, ge=1, le=168, description="TTL for sent message tracking (hours)"
+    )
+    reactor_identity_salt: SecretStr = Field(
+        default=SecretStr(""),
+        description="Salt for reactor identity hashing (must be stable across deployments)",
+    )
 
     @model_validator(mode="after")
-    def validate_api_url(self) -> "Bisq2ChannelConfig":
-        """Validate API URL is set when enabled."""
-        if self.enabled and not self.api_url:
-            raise ValueError("Bisq2 enabled but api_url not set")
+    def validate_salt_when_enabled(self) -> "ReactionConfig":
+        """Ensure a non-empty salt is provided when reactions are enabled."""
+        if self.enabled and not self.reactor_identity_salt.get_secret_value():
+            raise ValueError(
+                "reactor_identity_salt must be set when reactions are enabled"
+            )
         return self
 
 
-class WebChannelConfig(ChannelConfigBase):
-    """Web chat configuration."""
+# =============================================================================
+# Channel-Specific Configurations
+# =============================================================================
 
-    cors_origins: List[str] = Field(default_factory=list)
-    max_chat_history: int = Field(default=10, ge=0, le=50)
-
-
-class MatrixChannelConfig(ChannelConfigBase):
-    """Matrix channel configuration."""
-
-    enabled: bool = False  # Disabled by default
-    homeserver_url: str = ""
-    user_id: str = ""
-    password: SecretStr = SecretStr("")
-    rooms: List[str] = Field(default_factory=list)
-    session_file: str = "matrix_session.json"
-    poll_interval_seconds: int = Field(default=5, ge=1, le=60)
-
-    @model_validator(mode="after")
-    def validate_auth_config(self) -> "MatrixChannelConfig":
-        """Validate required fields when Matrix is enabled."""
-        if self.enabled:
-            if not self.homeserver_url:
-                raise ValueError("Matrix enabled but homeserver_url not set")
-            if not self.user_id:
-                raise ValueError("Matrix enabled but user_id not set")
-            if not self.rooms:
-                raise ValueError("Matrix enabled but no rooms configured")
-            for room in self.rooms:
-                if not room.startswith("!"):
-                    raise ValueError(f"Invalid room ID format: {room}")
-        return self
-
+# Channel-specific configs live in their domain modules
+from app.channels.plugins.bisq2.config import Bisq2ChannelConfig  # noqa: E402
+from app.channels.plugins.matrix.config import MatrixChannelConfig  # noqa: E402
+from app.channels.plugins.web.config import WebChannelConfig  # noqa: E402
 
 # =============================================================================
 # Aggregate Configuration

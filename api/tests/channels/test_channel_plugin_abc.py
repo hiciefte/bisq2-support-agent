@@ -114,6 +114,14 @@ class TestChannelBaseContract:
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return True
 
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
+
         runtime = MagicMock()
         channel = CompleteChannel(runtime)
         assert channel.channel_id == "complete"
@@ -156,6 +164,14 @@ class TestChannelBaseRequiredMethods:
 
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return True
+
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
 
         return CompleteTestChannel(MagicMock())
 
@@ -234,6 +250,14 @@ class TestChannelBaseProperties:
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return True
 
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
+
         return TestChannel(MagicMock())
 
     @pytest.mark.unit
@@ -293,6 +317,14 @@ class TestChannelBaseLifecycleHooks:
 
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return True
+
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
 
             async def on_startup(self) -> None:
                 self.hook_calls.append("on_startup")
@@ -359,6 +391,14 @@ class TestChannelBaseLogging:
 
             async def send_message(self, target: str, message: OutgoingMessage) -> bool:
                 return True
+
+            def get_delivery_target(self, metadata):
+                return ""
+
+            def format_escalation_message(
+                self, username, escalation_id, support_handle
+            ):
+                return f"Escalated #{escalation_id}"
 
         channel = LoggingChannel(MagicMock())
         assert hasattr(channel, "_logger")

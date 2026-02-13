@@ -35,7 +35,7 @@ These variables configure the application services running inside Docker contain
     *   Description: (Required) Your API key from OpenAI, used for LLM operations via AISuite and embeddings.
 *   **`OPENAI_MODEL`**
     *   Description: The OpenAI model ID to use for generating chat responses via AISuite.
-  *   Default: `gpt-4o-mini`
+  *   Default: `openai:gpt-4o-mini`
 *   **`OPENAI_EMBEDDING_MODEL`**
     *   Description: The OpenAI model ID to use for creating text embeddings.
     *   Default: `text-embedding-3-small`
@@ -52,8 +52,18 @@ These variables configure the application services running inside Docker contain
     *   Description: A comma-separated list of origins (URLs) allowed to make requests to the API. Use `*` for wide-open access (not recommended for production).
     *   Default: `http://localhost:3000,http://127.0.0.1:3000`
 *   **`DATA_DIR`**
-    *   Description: The path *inside the API container* where persistent data (wiki, FAQs, vectorstore, feedback) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
+    *   Description: The path *inside the API container* where persistent API data (wiki, FAQs, feedback, BM25 vocabulary, index metadata) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
     *   Default: `/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts in `docker-compose.yml`)
+*   **`RETRIEVER_BACKEND`**
+    *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
+    *   Default in app settings: `qdrant`
+    *   Default in Docker Compose runtime: `qdrant`
+*   **`HYBRID_SEMANTIC_WEIGHT`**
+    *   Description: Dense vector weight in hybrid retrieval.
+    *   Default: `0.6`
+*   **`HYBRID_KEYWORD_WEIGHT`**
+    *   Description: Sparse/BM25 weight in hybrid retrieval.
+    *   Default: `0.4`
 *   **`EXPOSE_API_PORT`**
     *   Description: Internal port used by the API container.
     *   Default: `8000`
@@ -79,6 +89,6 @@ These variables configure the application services running inside Docker contain
     *   Description: A name for the project, potentially used in the UI.
     *   Default: `Bisq 2 Support Agent`
 *   **`HEALTHCHECK_URL`**
-    *   Description: (Optional) Healthchecks.io ping URL for external health monitoring. The scheduler container pings this URL every 5 minutes to confirm the system is operational. If not configured, external alerting will not be available (local monitoring via Prometheus/Grafana will still function).
+    *   Description: (Optional) Healthchecks.io ping URL for external health monitoring. The scheduler container pings this URL every 15 minutes to confirm the system is operational. If not configured, external alerting will not be available (local monitoring via Prometheus/Grafana will still function).
     *   Example: `https://hc-ping.com/YOUR-UUID-HERE`
     *   Default: None (feature disabled if not set)

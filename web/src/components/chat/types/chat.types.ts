@@ -37,6 +37,18 @@ export interface Message {
     mcp_tools_used?: McpToolUsage[]
     /** Routing action from the RAG system (e.g., "needs_clarification", "auto_send", "queue_medium") */
     routing_action?: string
+    /** Whether this message has been escalated for human review */
+    requires_human?: boolean
+    /** Message ID used for polling escalation status */
+    escalation_message_id?: string
+    /** Staff response received for an escalated question */
+    staff_response?: {
+        answer: string
+        responded_at: string
+    }
+    /** Escalation resolution set client-side after polling completes */
+    escalation_resolution?: "responded" | "closed"
+    escalation_resolved_at?: string
 }
 
 /**
@@ -67,6 +79,8 @@ export interface FeedbackResponse {
     success: boolean
     message: string
     needs_feedback_followup?: boolean
+    escalation_created?: boolean
+    escalation_message_id?: string
 }
 
 export interface ExplanationResponse {

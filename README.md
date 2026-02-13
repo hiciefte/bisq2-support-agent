@@ -169,11 +169,12 @@ The deployment script may make scripts executable, which Git sees as a file modi
 The project uses the following data directories within `api/data/`:
 
 -   `wiki/`: Contains wiki documents for the RAG knowledge base.
--   `vectorstore/`: Stores vector embeddings for semantic search.
 -   `feedback.db`: SQLite database storing user feedback (automatically created on first run).
 -   `faqs.db`: SQLite database storing FAQs (authoritative source, automatically created on first run).
+-   `bm25_vocabulary.json`: BM25 vocabulary used by the hybrid retriever (runtime-generated).
+-   `qdrant_index_metadata.json`: Qdrant index build metadata (runtime-generated).
 
-These are automatically created during deployment. For local development, create them manually if needed: `mkdir -p api/data/{wiki,vectorstore}`.
+These are automatically created during deployment. For local development, create the wiki directory if needed: `mkdir -p api/data/wiki`.
 
 ### Feedback Storage Migration
 
@@ -238,9 +239,10 @@ User Query → Version Detection → Multi-Stage Protocol Filtering
 ```
 
 **Key Parameters**:
-- ChromaDB k=8 candidates, score_threshold=0.3
+- Qdrant hybrid retrieval (dense + sparse vectors) with protocol-aware staged filtering
 - BM25 with K1=1.5, B=0.75
 - Embedding model: `text-embedding-3-small` (1536 dimensions)
+- Hybrid weighting defaults: semantic 0.6 + keyword 0.4
 
 For detailed architecture, see [RAG Architecture](docs/rag-architecture.md).
 
@@ -285,7 +287,7 @@ For **Bisq 1 queries**:
 
 ### Content Processing
 
-When the API service starts, it processes wiki and FAQ sources into vector embeddings stored in ChromaDB (`api/data/vectorstore/`).
+When the API service starts, it processes wiki and FAQ sources, then ensures the Qdrant hybrid index is up to date (Qdrant data persists in the Docker volume `bisq2-qdrant-data`).
 
 ```bash
 # Add new wiki content

@@ -350,8 +350,8 @@ async def check_similar_faqs_route(
     """Check for semantically similar FAQs using vector similarity.
 
     This endpoint helps admins identify potential duplicate or related FAQs
-    before creating or editing an FAQ. It uses ChromaDB vector similarity
-    search to find FAQs with semantically similar questions.
+    before creating or editing an FAQ. It uses the active retrieval index to
+    find FAQs with semantically similar questions.
 
     Args:
         request_body: SimilarFAQRequest containing:

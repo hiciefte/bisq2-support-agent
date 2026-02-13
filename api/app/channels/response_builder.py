@@ -13,8 +13,21 @@ def build_sources(rag_response: Mapping[str, Any]) -> List[DocumentReference]:
             document_id=source.get("document_id") or str(uuid.uuid4()),
             title=source.get("title", "Unknown"),
             url=source.get("url"),
-            relevance_score=source.get("relevance_score", 0.5),
+            # RAG service uses `similarity_score`; some older code uses `relevance_score`.
+            relevance_score=(
+                float(raw_score)
+                if (
+                    raw_score := source.get(
+                        "relevance_score", source.get("similarity_score")
+                    )
+                )
+                is not None
+                else 0.5
+            ),
             category=source.get("category") or source.get("type"),
+            content=source.get("content"),
+            protocol=source.get("protocol"),
+            section=source.get("section"),
         )
         for source in rag_response.get("sources", [])
     ]
@@ -33,6 +46,7 @@ def build_metadata(
         tokens_used=rag_response.get("tokens_used"),
         confidence_score=rag_response.get("confidence"),
         routing_action=rag_response.get("routing_action"),
+        routing_reason=rag_response.get("routing_reason"),
         detected_version=rag_response.get("detected_version"),
         version_confidence=rag_response.get("version_confidence"),
         hooks_executed=hooks_executed if hooks_executed is not None else [],

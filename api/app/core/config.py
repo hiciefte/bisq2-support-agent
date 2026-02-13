@@ -116,8 +116,8 @@ class Settings(BaseSettings):
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
     # Retrieval Backend Configuration
-    # Options: "chromadb" (default), "qdrant", "hybrid" (Qdrant with ChromaDB fallback)
-    RETRIEVER_BACKEND: str = "chromadb"
+    # Qdrant is the only supported backend.
+    RETRIEVER_BACKEND: str = "qdrant"
 
     # Qdrant Vector Database Settings
     QDRANT_HOST: str = "qdrant"  # Docker service name
@@ -161,7 +161,7 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If backend is not supported
         """
-        allowed = {"chromadb", "qdrant", "hybrid"}
+        allowed = {"qdrant"}
         if v not in allowed:
             raise ValueError(
                 f"RETRIEVER_BACKEND must be one of {', '.join(sorted(allowed))}, got '{v}'"
@@ -335,6 +335,15 @@ class Settings(BaseSettings):
         description="Comma-separated list of trusted staff full Matrix IDs for auto-training",
     )
 
+    # Escalation Learning Pipeline Settings
+    ESCALATION_CLAIM_TTL_MINUTES: int = 30
+    ESCALATION_AUTO_CLOSE_HOURS: int = 24
+    ESCALATION_DELIVERY_MAX_RETRIES: int = 3
+    ESCALATION_RETENTION_DAYS: int = 90
+    ESCALATION_ENABLED: bool = True
+    ESCALATION_BISQ2_WS_ENABLED: bool = False
+    ESCALATION_POLL_TIMEOUT_MINUTES: int = 30
+
     # Environment settings
     ENVIRONMENT: str = "development"
 
@@ -345,6 +354,11 @@ class Settings(BaseSettings):
     )
 
     # Path properties that return complete paths
+    @property
+    def ESCALATION_DB_PATH(self) -> str:
+        """Complete path to the escalation SQLite database."""
+        return os.path.join(self.DATA_DIR, "escalations.db")
+
     @property
     def FAQ_DB_PATH(self) -> str:
         """Complete path to the FAQ SQLite database (authoritative source)"""
@@ -359,11 +373,6 @@ class Settings(BaseSettings):
     def PROCESSED_CONVS_FILE_PATH(self) -> str:
         """Complete path to the processed conversations file"""
         return os.path.join(self.DATA_DIR, "processed_conversations.json")
-
-    @property
-    def VECTOR_STORE_DIR_PATH(self) -> str:
-        """Complete path to the vector store directory"""
-        return os.path.join(self.DATA_DIR, "vectorstore")
 
     @property
     def WIKI_DIR_PATH(self) -> str:
@@ -916,7 +925,6 @@ class Settings(BaseSettings):
         """
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
-        Path(self.VECTOR_STORE_DIR_PATH).mkdir(parents=True, exist_ok=True)
         Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 

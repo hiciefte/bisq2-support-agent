@@ -18,7 +18,7 @@ test.describe('Conversation History Display', () => {
     await page.waitForTimeout(2000);
 
     // Check if feedback cards exist (without waiting, just count)
-    const feedbackCards = page.locator('.border-l-4.border-l-gray-200');
+    const feedbackCards = page.locator('[class*="border-l-2"]');
     const count = await feedbackCards.count();
 
     if (count === 0) {
@@ -28,10 +28,8 @@ test.describe('Conversation History Display', () => {
       return;
     }
 
-    // Click on the first view details button (Eye icon)
-    const viewButton = page.locator('button').filter({ has: page.locator('svg.lucide-eye') }).first();
-    await expect(viewButton).toBeVisible();
-    await viewButton.click();
+    // Click on the first feedback card to view details (cards are clickable)
+    await feedbackCards.first().click();
 
     // Wait for dialog to open
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
@@ -67,7 +65,7 @@ test.describe('Conversation History Display', () => {
 
   test('should show conversation history in create FAQ dialog from feedback page', async ({ page }) => {
     // Wait for feedback cards to load
-    await page.waitForSelector('.border-l-4.border-l-gray-200', { timeout: 10000 });
+    await page.waitForSelector('[class*="border-l-2"]', { timeout: 10000 });
 
     // Click on the first "Create FAQ" button (only visible for negative unprocessed feedback)
     const createFaqButton = page.locator('button:has-text("Create FAQ")').first();

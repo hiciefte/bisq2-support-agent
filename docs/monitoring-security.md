@@ -92,14 +92,14 @@ prometheus:
 
 ### Option 4: Environment Variable Configuration
 
-You can set the Admin API key in the `docker/.env` file, which is used by Prometheus to secure admin endpoints:
+Set `ADMIN_API_KEY` in `docker/.env` to secure application admin endpoints (including scheduler-triggered admin jobs):
 
 ```
 # Admin API key for protected endpoints
 ADMIN_API_KEY=your_secure_admin_key
 ```
 
-This key will be passed to Prometheus as an environment variable in the docker-compose.yml configuration.
+This key is consumed by the API and scheduler flows, not by Prometheus itself.
 
 ## Additional Security Recommendations
 
@@ -160,9 +160,9 @@ Users are prominently warned NOT to share:
 ### Privacy Policy Implementation
 
 For detailed privacy implementation requirements, see:
-- `docs/requirements/privacy-implementation-spec.md` - Technical specification
 - `/privacy` page - User-facing privacy policy
 - Privacy warning modal on first visit to chat interface
+- `docs/environment-configuration.md` - Privacy-related environment controls
 
 ## References
 

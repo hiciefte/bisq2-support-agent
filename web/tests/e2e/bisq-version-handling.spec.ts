@@ -3,6 +3,7 @@ import {
     dismissPrivacyNotice,
     getLastBotResponse,
     submitChatMessage,
+    waitForApiReady,
 } from "./utils/helpers";
 
 /**
@@ -35,6 +36,7 @@ test.describe("Bisq Version Handling", () => {
         await page.goto(TEST_BASE_URL);
         await dismissPrivacyNotice(page);
         await page.getByRole("textbox").waitFor({ state: "visible" });
+        await waitForApiReady(page);
     });
 
     test("should answer Bisq 1 questions with disclaimer when information is available", async ({

@@ -358,6 +358,45 @@ class TestPromptManagerVersionHandling:
 class TestDocumentRetrieverVersionPriority:
     """Test cases for DocumentRetriever's version-aware retrieval logic."""
 
+    def test_dedupe_uses_retrieved_id_not_title_section(self, test_settings):
+        """
+        Given: Two retrieved chunks from the same page (same title/section) but different backend IDs
+        When: DocumentRetriever dedupes results
+        Then: Both chunks should be preserved (dedupe should be per-chunk via _retrieved_id)
+        """
+        from app.services.rag.interfaces import RetrievedDocument
+
+        # Arrange: same title/section, different ids
+        bisq_easy_docs = [
+            RetrievedDocument(
+                content="chunk A",
+                metadata={"protocol": "bisq_easy", "title": "Page", "section": "Intro"},
+                id="111",
+            ),
+            RetrievedDocument(
+                content="chunk B",
+                metadata={"protocol": "bisq_easy", "title": "Page", "section": "Intro"},
+                id="222",
+            ),
+        ]
+
+        def mock_retrieve(_query, k, filter_dict=None):
+            protocol = (filter_dict or {}).get("protocol")
+            if protocol == "bisq_easy":
+                return bisq_easy_docs[:k]
+            return []
+
+        mock_retriever = Mock()
+        mock_retriever.retrieve = Mock(side_effect=mock_retrieve)
+        retriever = DocumentRetriever(retriever=mock_retriever)
+
+        # Act
+        docs = retriever.retrieve_with_version_priority("How do I start a trade?")
+
+        # Assert: should not collapse to a single doc
+        assert len(docs) == 2
+        assert {d.metadata.get("_retrieved_id") for d in docs} == {"111", "222"}
+
     def test_bisq1_explicit_retrieval_gets_more_docs(self, test_settings):
         """Test that explicit Bisq 1 queries retrieve more Bisq 1 docs.
 
@@ -366,13 +405,10 @@ class TestDocumentRetrieverVersionPriority:
         Then: Should retrieve k=4 Bisq 1 docs instead of k=2 (default fallback)
         """
         # Arrange
-        mock_vectorstore = Mock()
-        mock_vectorstore.similarity_search = Mock(return_value=[])
-
-        # Create mock retriever that implements minimal interface
         mock_retriever = Mock()
+        mock_retriever.retrieve.return_value = []
 
-        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
+        retriever = DocumentRetriever(retriever=mock_retriever)
 
         # Act
         query = "How do I use mediation in Bisq 1?"
@@ -380,15 +416,15 @@ class TestDocumentRetrieverVersionPriority:
 
         # Assert
         # Check that multisig_v1 was searched with k=4 (explicit request) not k=2 (fallback)
-        calls = mock_vectorstore.similarity_search.call_args_list
+        calls = mock_retriever.retrieve.call_args_list
         multisig_calls = [
-            call
-            for call in calls
-            if call[1].get("filter", {}).get("protocol") == "multisig_v1"
+            c
+            for c in calls
+            if (c.kwargs.get("filter_dict") or {}).get("protocol") == "multisig_v1"
         ]
 
         assert multisig_calls, "Expected a multisig_v1 retrieval call"
-        assert multisig_calls[0][1]["k"] == 4  # Explicit Bisq 1 request should use k=4
+        assert multisig_calls[0].kwargs["k"] == 4
 
     def test_bisq2_priority_maintained(self, test_settings):
         """Test that Bisq 2 priority is maintained for ambiguous queries.
@@ -398,13 +434,10 @@ class TestDocumentRetrieverVersionPriority:
         Then: Should prioritize Bisq 2 documents (search Bisq 2 first)
         """
         # Arrange
-        mock_vectorstore = Mock()
-        mock_vectorstore.similarity_search = Mock(return_value=[])
-
-        # Create mock retriever that implements minimal interface
         mock_retriever = Mock()
+        mock_retriever.retrieve.return_value = []
 
-        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
+        retriever = DocumentRetriever(retriever=mock_retriever)
 
         # Act
         query = "How do I start a trade?"
@@ -412,8 +445,10 @@ class TestDocumentRetrieverVersionPriority:
 
         # Assert
         # First call should be for bisq_easy (Stage 1)
-        first_call = mock_vectorstore.similarity_search.call_args_list[0]
-        assert first_call[1].get("filter", {}).get("protocol") == "bisq_easy"
+        first_call = mock_retriever.retrieve.call_args_list[0]
+        assert (first_call.kwargs.get("filter_dict") or {}).get(
+            "protocol"
+        ) == "bisq_easy"
 
     def test_bisq1_only_query_skips_bisq2_stage(self, test_settings):
         """Test that pure Bisq 1 queries can skip Bisq 2 retrieval.
@@ -423,37 +458,37 @@ class TestDocumentRetrieverVersionPriority:
         Then: May skip Bisq 2 stage to optimize for Bisq 1 content
         """
         # Arrange
-        mock_vectorstore = Mock()
+        from app.services.rag.interfaces import RetrievedDocument
 
         # Create different documents for each protocol
         bisq_easy_docs = [
-            Document(page_content="Bisq 2 content", metadata={"protocol": "bisq_easy"})
+            RetrievedDocument(
+                content="Bisq 2 content", metadata={"protocol": "bisq_easy"}
+            )
         ]
         all_docs = [
-            Document(page_content="General content", metadata={"protocol": "all"})
+            RetrievedDocument(content="General content", metadata={"protocol": "all"})
         ]
         multisig_docs = [
-            Document(
-                page_content="Bisq 1 content", metadata={"protocol": "multisig_v1"}
+            RetrievedDocument(
+                content="Bisq 1 content", metadata={"protocol": "multisig_v1"}
             )
         ]
 
-        def mock_similarity_search(_query, k, filter):
-            protocol = filter.get("protocol")
+        def mock_retrieve(_query, k, filter_dict=None):
+            protocol = (filter_dict or {}).get("protocol")
             if protocol == "bisq_easy":
                 return bisq_easy_docs[:k]
-            elif protocol == "all":
+            if protocol == "all":
                 return all_docs[:k]
-            elif protocol == "multisig_v1":
+            if protocol == "multisig_v1":
                 return multisig_docs[:k]
             return []
 
-        mock_vectorstore.similarity_search = Mock(side_effect=mock_similarity_search)
-
-        # Create mock retriever that implements minimal interface
         mock_retriever = Mock()
+        mock_retriever.retrieve = Mock(side_effect=mock_retrieve)
 
-        retriever = DocumentRetriever(mock_vectorstore, mock_retriever)
+        retriever = DocumentRetriever(retriever=mock_retriever)
 
         # Act
         query = "How do I use Bisq 1 mediation?"  # Bisq 1 only, no Bisq 2 mention
@@ -466,8 +501,8 @@ class TestDocumentRetrieverVersionPriority:
         # Ensure no bisq_easy retrieval occurred for pure Bisq 1 query
         bisq_easy_calls = [
             c
-            for c in mock_vectorstore.similarity_search.call_args_list
-            if c.kwargs.get("filter", {}).get("protocol") == "bisq_easy"
+            for c in mock_retriever.retrieve.call_args_list
+            if (c.kwargs.get("filter_dict") or {}).get("protocol") == "bisq_easy"
         ]
         assert (
             len(bisq_easy_calls) == 0

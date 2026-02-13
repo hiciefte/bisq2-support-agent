@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from app.services.training.matrix_export_parser import QAPair
+from app.models.training import QAPair
 from app.services.training.substantive_filter import (
     FilterResult,
     SubstantiveAnswerFilter,

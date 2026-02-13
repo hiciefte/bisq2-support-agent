@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.services.training.bisq2_sync_service import Bisq2SyncService
-from app.services.training.bisq_sync_state import BisqSyncStateManager
+from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
+from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
 
 
 class TestBisq2SyncDeduplication:

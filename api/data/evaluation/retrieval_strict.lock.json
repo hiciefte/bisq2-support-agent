@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-02-11T18:07:50.172735+00:00",
+  "api_url": "http://localhost:8000",
+  "backend": "qdrant",
+  "samples": {
+    "path": "/data/evaluation/matrix_realistic_qa_samples_30_20260211.json",
+    "sha256": "5f39912437bd0f3d6fc772452d1a408fbdce89122f7dfec5f8ce0fd6577b92ae"
+  },
+  "knowledge_base_manifest": {
+    "path": "/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/manifest.json",
+    "sha256": "1204e2a24c58407d6a804a63ca4a680846b41059b23835c246110464f8a7b5ef"
+  },
+  "run_config": {
+    "run_name": "qdrant_strict",
+    "output_dir": "/data/evaluation/benchmarks",
+    "repeats": 1,
+    "sleep_between": 1.0,
+    "max_samples": null,
+    "simple": false,
+    "metrics": null,
+    "bypass_hooks": [
+      "escalation"
+    ],
+    "ragas_timeout": 60,
+    "ragas_max_retries": 2,
+    "ragas_max_wait": 10,
+    "ragas_max_workers": 32,
+    "ragas_batch_size": 8
+  },
+  "readiness": {
+    "timeout_seconds": 300,
+    "poll_seconds": 5,
+    "probe_question": "Health probe question",
+    "fail_phrases": [
+      "not fully initialized",
+      "not initialized"
+    ]
+  },
+  "expected_environment": {
+    "OPENAI_MODEL": "openai:gpt-4o-mini",
+    "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
+    "OPENAI_API_KEY_SET": true
+  }
+}

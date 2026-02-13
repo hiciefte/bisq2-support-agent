@@ -76,6 +76,7 @@ CLAUDE.md
 docker-compose.override.yml
 
 # Data
+# Legacy pre-Qdrant local data directory
 api/data/vectorstore/
 *.db
 *.db-shm
@@ -99,6 +100,8 @@ api/data/*chat*
 
 # Runtime state files (local only, not tracked)
 api/data/matrix_polling_state.json
+api/data/bm25_vocabulary.json
+api/data/qdrant_index_metadata.json
 
 # Ignore user feedback data (contains conversation_id and message_id for user tracking)
 api/data/feedback/*

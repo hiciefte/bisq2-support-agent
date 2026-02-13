@@ -74,33 +74,26 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
 
         if (!ratedMessage || !questionMessage) return
 
-        const previousRatings = messages
-            .slice(0, messageIndex)
-            .filter((msg) => msg.role === "assistant" && msg.rating !== undefined)
-            .map((msg) => msg.rating!)
-
-        const conversationHistory = messages
-            .slice(Math.max(0, messageIndex - 10), messageIndex)
-            .filter(msg => !msg.isThankYouMessage)
-            .map(msg => ({
-                role: msg.role,
-                content: msg.content
-            }))
-
-        const feedbackData = {
+        // Simplified payload: tracker already has question, answer, sources, user_id
+        const reactionPayload = {
             message_id: messageId,
-            question: questionMessage.content,
-            answer: ratedMessage.content,
             rating,
-            sources: ratedMessage.sources,
-            metadata: {
-                response_time: ratedMessage.metadata?.response_time || 0,
-                token_count: ratedMessage.metadata?.token_count,
-                conversation_id: messages[0].id,
-                timestamp: new Date().toISOString(),
-                previous_ratings: previousRatings
-            },
-            conversation_history: conversationHistory
+        }
+
+        // Always update UI optimistically
+        const updateMessageRating = () => {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === messageId ? {...msg, rating} : msg
+                )
+            )
+        }
+
+        // Save to localStorage for offline fallback
+        const saveLocally = () => {
+            const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
+            storedRatings[messageId] = reactionPayload
+            localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
         }
 
         try {
@@ -111,45 +104,43 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             const timeoutId = setTimeout(() => controller.abort(), 10000)
 
             try {
-                const response = await fetch(`${apiUrl}/feedback/submit`, {
+                const response = await fetch(`${apiUrl}/feedback/react`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
                     },
-                    body: JSON.stringify(feedbackData),
+                    body: JSON.stringify(reactionPayload),
                     signal: controller.signal
                 })
 
                 clearTimeout(timeoutId)
 
+                updateMessageRating()
+                saveLocally()
+
                 if (!response.ok) {
                     console.error(`Failed to submit feedback: Server returned ${response.status}`)
-
-                    const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-                    storedRatings[messageId] = feedbackData
-                    localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
-
-                    setMessages((prev) =>
-                        prev.map((msg) =>
-                            msg.id === messageId ? {...msg, rating} : msg
-                        )
-                    )
-
                     return
                 }
 
-                setMessages((prev) =>
-                    prev.map((msg) =>
-                        msg.id === messageId ? {...msg, rating} : msg
-                    )
-                )
-
-                const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-                storedRatings[messageId] = feedbackData
-                localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
-
                 try {
                     const responseData: FeedbackResponse = await response.json()
+
+                    // If the backend auto-escalated (user thumbs-down on high-confidence answer),
+                    // update message state so the UI can show a HumanReviewBadge.
+                    if (responseData.escalation_created) {
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === messageId
+                                    ? {
+                                        ...msg,
+                                        requires_human: true,
+                                        escalation_message_id: responseData.escalation_message_id,
+                                    }
+                                    : msg
+                            )
+                        )
+                    }
 
                     if (responseData.needs_feedback_followup) {
                         setFeedbackDialog({
@@ -170,29 +161,13 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
                 }
 
                 console.error(`Error submitting feedback: ${errorMessage}`, error)
-
-                setMessages((prev) =>
-                    prev.map((msg) =>
-                        msg.id === messageId ? {...msg, rating} : msg
-                    )
-                )
-
-                const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-                storedRatings[messageId] = feedbackData
-                localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
+                updateMessageRating()
+                saveLocally()
             }
         } catch (error: unknown) {
             console.error("Error submitting feedback:", error)
-
-            setMessages((prev) =>
-                prev.map((msg) =>
-                    msg.id === messageId ? {...msg, rating} : msg
-                )
-            )
-
-            const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-            storedRatings[messageId] = feedbackData
-            localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
+            updateMessageRating()
+            saveLocally()
         }
     }
 
@@ -233,6 +208,7 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
                 console.error("Error parsing explanation response:", parseError)
             }
 
+            const closedMessageId = feedbackDialog.messageId
             setFeedbackDialog({
                 isOpen: false,
                 messageId: null,
@@ -242,9 +218,19 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             setFeedbackText("")
             setSelectedIssues([])
 
+            // If this feedback was for an auto-escalated message, show a professional
+            // acknowledgment instead of a funny thank-you.
+            const escalatedMessage = closedMessageId
+                ? messages.find((m) => m.id === closedMessageId && m.requires_human)
+                : null
+
+            const thankYouContent = escalatedMessage
+                ? "Thank you for the feedback. Your question has been escalated for human review — a support team member will follow up shortly."
+                : getRandomThankYouMessage()
+
             const thankYouMessage: Message = {
                 id: generateUUID(),
-                content: getRandomThankYouMessage(),
+                content: thankYouContent,
                 role: "assistant",
                 timestamp: new Date(),
                 isThankYouMessage: true

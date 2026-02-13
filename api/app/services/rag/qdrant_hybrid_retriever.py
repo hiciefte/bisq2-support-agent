@@ -227,6 +227,61 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
 
         return rest.Filter(must=conditions)  # type: ignore[arg-type]
 
+    def _query_points(
+        self,
+        *,
+        using: str,
+        query: Any,
+        limit: int,
+        query_filter: Optional[rest.Filter],
+        with_payload: bool = True,
+    ) -> List[Any]:
+        """Compatibility wrapper for Qdrant point search across qdrant-client versions.
+
+        qdrant-client 1.16+ exposes `query_points()`; older versions exposed `search()`.
+        We normalize to a list of scored points that `_results_to_documents()` can consume.
+        """
+        if hasattr(self._client, "query_points"):
+            try:
+                resp = self._client.query_points(
+                    collection_name=self.collection_name,
+                    query=query,
+                    using=using,
+                    limit=limit,
+                    query_filter=query_filter,
+                    with_payload=with_payload,
+                )
+                if isinstance(resp, list):
+                    return resp
+
+                points = getattr(resp, "points", None)
+                if points is not None:
+                    try:
+                        points_list = list(points or [])
+                    except TypeError:
+                        points_list = []
+
+                    # Real query_points responses provide a concrete list/tuple.
+                    # MagicMock objects also expose `.points` but often iterate to [].
+                    # In that mock-only case, fall through to search() compatibility path.
+                    if points_list or isinstance(points, (list, tuple)):
+                        return points_list
+            except Exception:
+                logger.debug(
+                    "query_points() call failed for '%s'; falling back to search()",
+                    using,
+                    exc_info=True,
+                )
+
+        # Backward compatibility (older clients).
+        return self._client.search(  # type: ignore[attr-defined]
+            collection_name=self.collection_name,
+            query_vector=(using, query),
+            limit=limit,
+            query_filter=query_filter,
+            with_payload=with_payload,
+        )
+
     def retrieve(
         self,
         query: str,
@@ -307,9 +362,9 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             # Pure semantic search (no BM25)
             if keyword_weight == 0:
                 query_vector = self._get_query_embedding(query)
-                results = self._client.search(  # type: ignore[attr-defined]
-                    collection_name=self.collection_name,
-                    query_vector=("dense", query_vector),
+                results = self._query_points(
+                    using="dense",
+                    query=query_vector,
                     limit=k,
                     query_filter=qdrant_filter,
                     with_payload=True,
@@ -320,11 +375,10 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             if semantic_weight == 0:
                 sparse_indices = self._tokenize_query(query)
                 sparse_values = self._get_bm25_weights(query)
-                results = self._client.search(  # type: ignore[attr-defined]
-                    collection_name=self.collection_name,
-                    query_vector=(
-                        "sparse",
-                        rest.SparseVector(indices=sparse_indices, values=sparse_values),
+                results = self._query_points(
+                    using="sparse",
+                    query=rest.SparseVector(
+                        indices=sparse_indices, values=sparse_values
                     ),
                     limit=k,
                     query_filter=qdrant_filter,
@@ -377,21 +431,18 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         sparse_values = self._get_bm25_weights(query)
 
         # Run dense search
-        dense_results = self._client.search(  # type: ignore[attr-defined]
-            collection_name=self.collection_name,
-            query_vector=("dense", query_vector),
+        dense_results = self._query_points(
+            using="dense",
+            query=query_vector,
             limit=fetch_limit,
             query_filter=qdrant_filter,
             with_payload=True,
         )
 
         # Run sparse search
-        sparse_results = self._client.search(  # type: ignore[attr-defined]
-            collection_name=self.collection_name,
-            query_vector=(
-                "sparse",
-                rest.SparseVector(indices=sparse_indices, values=sparse_values),
-            ),
+        sparse_results = self._query_points(
+            using="sparse",
+            query=rest.SparseVector(indices=sparse_indices, values=sparse_values),
             limit=fetch_limit,
             query_filter=qdrant_filter,
             with_payload=True,

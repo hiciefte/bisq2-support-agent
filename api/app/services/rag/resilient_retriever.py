@@ -34,7 +34,7 @@ class ResilientRetriever(ResilientRetrieverProtocol):
 
     Attributes:
         primary: Primary retriever (e.g., Qdrant)
-        fallback: Fallback retriever (e.g., ChromaDB)
+        fallback: Fallback retriever
         auto_reset: Whether to automatically try resetting to primary
         reset_interval: Seconds between reset attempts
     """

@@ -269,7 +269,9 @@ class TestWebUserContextDerivation:
     @pytest.mark.unit
     def test_empty_request_metadata_uses_unique_fallback(self):
         """Missing headers/client metadata should not collapse to a shared bucket."""
-        from app.routes.chat import _derive_web_user_context
+        from app.channels.plugins.web.identity import (
+            derive_web_user_context as _derive_web_user_context,
+        )
 
         request = MagicMock()
         request.cookies = {}

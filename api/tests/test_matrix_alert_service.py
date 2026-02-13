@@ -14,7 +14,9 @@ class TestMatrixAlertSettingsProtocol:
 
     def test_protocol_can_be_imported(self):
         """Test that MatrixAlertSettings Protocol can be imported."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertSettings,
+        )
 
         assert MatrixAlertSettings is not None
 
@@ -22,7 +24,9 @@ class TestMatrixAlertSettingsProtocol:
         """Test that Protocol defines all required Matrix settings attributes."""
         from typing import get_type_hints
 
-        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertSettings,
+        )
 
         # Protocol should define these attributes
         hints = get_type_hints(MatrixAlertSettings)
@@ -32,8 +36,10 @@ class TestMatrixAlertSettingsProtocol:
 
     def test_settings_class_satisfies_protocol(self):
         """Test that Settings class satisfies MatrixAlertSettings Protocol."""
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertSettings,
+        )
         from app.core.config import Settings
-        from app.services.alerting.matrix_alert_service import MatrixAlertSettings
 
         # Settings should have all required attributes
         settings = Settings()
@@ -55,7 +61,9 @@ class TestMatrixAlertServiceSessionPath:
 
     def test_uses_explicit_alert_session_path_when_set(self):
         """Test that explicit MATRIX_ALERT_SESSION_PATH is used when set."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -72,7 +80,9 @@ class TestMatrixAlertServiceSessionPath:
 
     def test_derives_path_from_session_file_directory(self):
         """Test that path is derived from MATRIX_SESSION_FILE directory."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -91,7 +101,9 @@ class TestMatrixAlertServiceSessionPath:
 
     def test_uses_default_when_no_paths_configured(self):
         """Test fallback to default path when nothing is configured."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -128,7 +140,9 @@ class TestMatrixAlertServiceConcurrency:
         """Test that concurrent _get_client calls only initialize once."""
         import asyncio
 
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         service = MatrixAlertService(mock_settings)
         init_count = 0
@@ -138,11 +152,13 @@ class TestMatrixAlertServiceConcurrency:
             init_count += 1
             await asyncio.sleep(0.1)  # Simulate slow connection
 
-        with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
+        with patch("app.channels.plugins.matrix.services.alert_service.AsyncClient"):
             with patch(
-                "app.integrations.matrix.connection_manager.ConnectionManager"
+                "app.channels.plugins.matrix.client.connection_manager.ConnectionManager"
             ) as mock_cm:
-                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                with patch(
+                    "app.channels.plugins.matrix.client.session_manager.SessionManager"
+                ):
                     mock_cm.return_value.connect = mock_connect
 
                     # Launch multiple concurrent calls
@@ -155,15 +171,19 @@ class TestMatrixAlertServiceConcurrency:
     @pytest.mark.asyncio
     async def test_failed_connect_cleans_up_state(self, mock_settings):
         """Test that failed connection attempt cleans up partial state."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         service = MatrixAlertService(mock_settings)
 
-        with patch("app.services.alerting.matrix_alert_service.AsyncClient"):
+        with patch("app.channels.plugins.matrix.services.alert_service.AsyncClient"):
             with patch(
-                "app.integrations.matrix.connection_manager.ConnectionManager"
+                "app.channels.plugins.matrix.client.connection_manager.ConnectionManager"
             ) as mock_cm:
-                with patch("app.integrations.matrix.session_manager.SessionManager"):
+                with patch(
+                    "app.channels.plugins.matrix.client.session_manager.SessionManager"
+                ):
                     mock_cm.return_value.connect = AsyncMock(
                         side_effect=Exception("Connection failed")
                     )
@@ -209,13 +229,17 @@ class TestMatrixAlertServiceInitialization:
 
     def test_service_can_be_imported(self):
         """Test that MatrixAlertService can be imported."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         assert MatrixAlertService is not None
 
     def test_service_init_with_settings(self):
         """Test service initialization with settings."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -229,7 +253,9 @@ class TestMatrixAlertServiceInitialization:
 
     def test_service_is_configured_returns_false_when_missing_homeserver(self):
         """Test is_configured returns False when homeserver is missing."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = ""
@@ -240,7 +266,9 @@ class TestMatrixAlertServiceInitialization:
 
     def test_service_is_configured_returns_false_when_missing_room(self):
         """Test is_configured returns False when alert room is missing."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -251,7 +279,9 @@ class TestMatrixAlertServiceInitialization:
 
     def test_service_is_configured_returns_true_when_properly_configured(self):
         """Test is_configured returns True when all required settings present."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
@@ -280,7 +310,9 @@ class TestMatrixAlertServiceSendMessage:
     @pytest.mark.asyncio
     async def test_send_alert_message_when_not_configured(self, mock_settings):
         """Test that send_alert_message does nothing when not configured."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         mock_settings.MATRIX_ALERT_ROOM = ""  # Not configured
         service = MatrixAlertService(mock_settings)
@@ -291,11 +323,13 @@ class TestMatrixAlertServiceSendMessage:
     @pytest.mark.asyncio
     async def test_send_alert_message_connects_and_sends(self, mock_settings):
         """Test that send_alert_message connects and sends message."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         # Need to mock RoomSendResponse for the isinstance check
         with patch(
-            "app.services.alerting.matrix_alert_service.RoomSendResponse"
+            "app.channels.plugins.matrix.services.alert_service.RoomSendResponse"
         ) as mock_response_class:
             service = MatrixAlertService(mock_settings)
 
@@ -308,7 +342,7 @@ class TestMatrixAlertServiceSendMessage:
 
             with patch.object(service, "_get_client", return_value=mock_client):
                 with patch(
-                    "app.services.alerting.matrix_alert_service.isinstance",
+                    "app.channels.plugins.matrix.services.alert_service.isinstance",
                     return_value=True,
                 ):
                     await service.send_alert_message("🔥 Test alert")
@@ -322,7 +356,9 @@ class TestMatrixAlertServiceSendMessage:
     @pytest.mark.asyncio
     async def test_send_alert_message_handles_connection_error(self, mock_settings):
         """Test that send_alert_message handles connection errors gracefully."""
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
 
         service = MatrixAlertService(mock_settings)
 
@@ -357,8 +393,10 @@ class TestAlertmanagerIntegration:
     @pytest.mark.asyncio
     async def test_alertmanager_processes_alerts_with_service(self, mock_settings):
         """Test alertmanager endpoint processes alerts using the service."""
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
         from app.routes.alertmanager import router
-        from app.services.alerting.matrix_alert_service import MatrixAlertService
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 

@@ -8,7 +8,7 @@ operations, abstracting away SQL queries from the service layer.
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.db.database import get_database
@@ -35,6 +35,11 @@ class FeedbackRepository:
         timestamp: Optional[str] = None,
         sources: Optional[List[Dict[str, Any]]] = None,
         sources_used: Optional[List[Dict[str, Any]]] = None,
+        channel: str = "web",
+        feedback_method: str = "web_dialog",
+        external_message_id: Optional[str] = None,
+        reactor_identity_hash: Optional[str] = None,
+        reaction_emoji: Optional[str] = None,
     ) -> int:
         """
         Store feedback entry in the database.
@@ -50,6 +55,11 @@ class FeedbackRepository:
             timestamp: Optional ISO timestamp (defaults to now)
             sources: Optional list of source documents used in RAG response
             sources_used: Optional list of sources actually used (typically same as sources)
+            channel: Source channel (e.g., "web", "matrix", "bisq2")
+            feedback_method: Submission method (e.g., "web_dialog", "reaction")
+            external_message_id: Channel-native message identifier for reactions
+            reactor_identity_hash: Privacy-safe hashed reactor identity
+            reaction_emoji: Raw reaction emoji/reaction key
 
         Returns:
             int: Feedback ID of the inserted entry
@@ -67,11 +77,13 @@ class FeedbackRepository:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Insert main feedback entry with sources
+            # Insert main feedback entry with sources and channel metadata
             cursor.execute(
                 """
-                INSERT INTO feedback (message_id, question, answer, rating, explanation, sources, sources_used, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO feedback (message_id, question, answer, rating, explanation,
+                    sources, sources_used, timestamp, channel, feedback_method,
+                    external_message_id, reactor_identity_hash, reaction_emoji)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
@@ -82,6 +94,11 @@ class FeedbackRepository:
                     sources_json,
                     sources_used_json,
                     timestamp,
+                    channel,
+                    feedback_method,
+                    external_message_id,
+                    reactor_identity_hash,
+                    reaction_emoji,
                 ),
             )
             feedback_id = cursor.lastrowid
@@ -235,7 +252,13 @@ class FeedbackRepository:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            query = "SELECT id, message_id, question, answer, rating, explanation, sources, sources_used, timestamp, processed, processed_at, faq_id FROM feedback"
+            query = (
+                "SELECT id, message_id, question, answer, rating, explanation, "
+                "sources, sources_used, timestamp, processed, processed_at, faq_id, "
+                "channel, feedback_method, external_message_id, "
+                "reactor_identity_hash, reaction_emoji "
+                "FROM feedback"
+            )
             params = []
 
             if rating is not None:
@@ -384,6 +407,25 @@ class FeedbackRepository:
             )
 
             return [dict(row) for row in cursor.fetchall()]
+
+    def update_feedback_rating(self, feedback_id: int, rating: int) -> bool:
+        """Update the rating for a feedback entry by ID.
+
+        Args:
+            feedback_id: Internal feedback row ID.
+            rating: New rating value (0=negative, 1=positive).
+
+        Returns:
+            True if updated, False if not found.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE feedback SET rating = ? WHERE id = ?",
+                (rating, feedback_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def update_feedback_explanation(self, message_id: str, explanation: str) -> bool:
         """
@@ -647,3 +689,147 @@ class FeedbackRepository:
                 "negative": negative,
                 "helpful_rate": positive / total if total > 0 else 0,
             }
+
+    # =========================================================================
+    # Reaction tracking
+    # =========================================================================
+
+    def get_reaction_by_key(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Look up a reaction by its uniqueness key.
+
+        Returns dict with reaction fields or None if not found.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, channel, external_message_id, reactor_identity_hash,
+                       reaction_emoji, feedback_id, created_at, last_updated_at, revoked_at
+                FROM feedback_reactions
+                WHERE channel = ? AND external_message_id = ? AND reactor_identity_hash = ?
+                """,
+                (channel, external_message_id, reactor_identity_hash),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def upsert_reaction_tracking(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+        reaction_emoji: str,
+        feedback_id: int,
+    ) -> None:
+        """Insert or update a reaction tracking record.
+
+        On conflict (same channel/ext_id/reactor), updates emoji and timestamp.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO feedback_reactions
+                    (channel, external_message_id, reactor_identity_hash,
+                     reaction_emoji, feedback_id, created_at, last_updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(channel, external_message_id, reactor_identity_hash)
+                DO UPDATE SET
+                    reaction_emoji = excluded.reaction_emoji,
+                    last_updated_at = excluded.last_updated_at,
+                    revoked_at = NULL
+                """,
+                (
+                    channel,
+                    external_message_id,
+                    reactor_identity_hash,
+                    reaction_emoji,
+                    feedback_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def revoke_reaction_tracking(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+    ) -> bool:
+        """Mark a reaction as revoked (soft delete).
+
+        Returns True if a record was updated.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE feedback_reactions
+                SET revoked_at = ?, last_updated_at = ?
+                WHERE channel = ? AND external_message_id = ? AND reactor_identity_hash = ?
+                  AND revoked_at IS NULL
+                """,
+                (now, now, channel, external_message_id, reactor_identity_hash),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # =========================================================================
+    # Channel statistics
+    # =========================================================================
+
+    def get_feedback_stats_by_channel(self) -> Dict[str, Dict[str, int]]:
+        """Get feedback counts broken down by channel.
+
+        Returns dict mapping channel -> {total, positive, negative}.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT channel,
+                       COUNT(*) as total,
+                       SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as positive,
+                       SUM(CASE WHEN rating = 0 THEN 1 ELSE 0 END) as negative
+                FROM feedback
+                GROUP BY channel
+            """)
+            result = {}
+            for row in cursor.fetchall():
+                result[row["channel"]] = {
+                    "total": row["total"],
+                    "positive": row["positive"],
+                    "negative": row["negative"],
+                }
+            return result
+
+    def get_feedback_count_by_method(self) -> Dict[str, Dict[str, int]]:
+        """Get feedback counts broken down by feedback method.
+
+        Returns dict mapping method -> {total, positive, negative}.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT feedback_method,
+                       COUNT(*) as total,
+                       SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as positive,
+                       SUM(CASE WHEN rating = 0 THEN 1 ELSE 0 END) as negative
+                FROM feedback
+                GROUP BY feedback_method
+            """)
+            result = {}
+            for row in cursor.fetchall():
+                result[row["feedback_method"]] = {
+                    "total": row["total"],
+                    "positive": row["positive"],
+                    "negative": row["negative"],
+                }
+            return result

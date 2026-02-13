@@ -104,7 +104,7 @@ class MockRoomMessagesResponse:
 def patch_room_messages_response():
     """Auto-patch RoomMessagesResponse for isinstance checks in all tests."""
     with patch(
-        "app.services.training.matrix_sync_service.RoomMessagesResponse",
+        "app.channels.plugins.matrix.services.sync_service.RoomMessagesResponse",
         MockRoomMessagesResponse,
     ):
         yield
@@ -196,7 +196,7 @@ class TestMatrixSyncServiceInit:
 
     def test_service_requires_matrix_configuration(self):
         """Service should skip gracefully when Matrix is not configured."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = ""  # Not configured
@@ -211,7 +211,7 @@ class TestMatrixSyncServiceInit:
 
     def test_service_initializes_with_all_components(self, mock_settings):
         """Service should initialize with settings, pipeline, and polling state."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         pipeline = MagicMock()
         polling_state = MagicMock()
@@ -229,7 +229,7 @@ class TestMatrixSyncServiceInit:
 
     def test_uses_trusted_staff_ids_from_settings(self, mock_settings):
         """Service should use TRUSTED_STAFF_IDS from settings."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -259,7 +259,7 @@ class TestRoomPolling:
         mock_error_handler,
     ):
         """Sync should use per-room token for incremental polling."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         # Configure per-room token (the new approach)
         mock_polling_state.get_room_token = MagicMock(return_value="s12345_previous")
@@ -279,7 +279,7 @@ class TestRoomPolling:
         with (
             patch.object(service, "_get_client", return_value=mock_client),
             patch(
-                "app.services.training.matrix_sync_service.RoomMessagesResponse",
+                "app.channels.plugins.matrix.services.sync_service.RoomMessagesResponse",
                 MockRoomMessagesResponse,
             ),
         ):
@@ -299,7 +299,7 @@ class TestRoomPolling:
         mock_error_handler,
     ):
         """Sync should update per-room token after successful poll."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -316,7 +316,7 @@ class TestRoomPolling:
         with (
             patch.object(service, "_get_client", return_value=mock_client),
             patch(
-                "app.services.training.matrix_sync_service.RoomMessagesResponse",
+                "app.channels.plugins.matrix.services.sync_service.RoomMessagesResponse",
                 MockRoomMessagesResponse,
             ),
         ):
@@ -334,7 +334,7 @@ class TestRoomPolling:
         mock_error_handler,
     ):
         """Sync should handle empty room responses gracefully."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -351,7 +351,7 @@ class TestRoomPolling:
         with (
             patch.object(service, "_get_client", return_value=mock_client),
             patch(
-                "app.services.training.matrix_sync_service.RoomMessagesResponse",
+                "app.channels.plugins.matrix.services.sync_service.RoomMessagesResponse",
                 MockRoomMessagesResponse,
             ),
         ):
@@ -383,7 +383,7 @@ class TestLLMBasedExtraction:
         sample_room_messages,
     ):
         """Should call extract_faqs_batch with all new messages."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -419,7 +419,7 @@ class TestLLMBasedExtraction:
         sample_room_messages,
     ):
         """Should pass trusted staff identifiers to the LLM extractor."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -454,7 +454,7 @@ class TestLLMBasedExtraction:
         sample_room_messages,
     ):
         """Should return count based on successful candidate extractions."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -485,7 +485,7 @@ class TestLLMBasedExtraction:
         sample_staff_to_staff_messages,
     ):
         """Should handle when LLM returns no FAQ pairs."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         # Pipeline returns empty results when no Q&A found
         mock_pipeline = AsyncMock()
@@ -521,7 +521,7 @@ class TestMessageFormatConversion:
 
     def test_event_to_dict_extracts_required_fields(self, mock_settings):
         """Should convert matrix-nio events to dict format."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -548,7 +548,7 @@ class TestMessageFormatConversion:
 
     def test_event_to_dict_handles_missing_source(self, mock_settings):
         """Should build dict from event attributes if source not available."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -591,7 +591,7 @@ class TestPipelineIntegration:
         sample_room_messages,
     ):
         """Should mark processed event IDs based on extraction results."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -622,7 +622,7 @@ class TestPipelineIntegration:
         sample_room_messages,
     ):
         """Should skip events that have already been processed."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         # Mark ALL events as already processed
         mock_polling_state.is_processed = MagicMock(return_value=True)
@@ -662,7 +662,7 @@ class TestPipelineIntegration:
         sample_room_messages,
     ):
         """Should return count of successfully processed Q&A pairs."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -702,7 +702,7 @@ class TestErrorHandling:
         mock_error_handler,
     ):
         """Should handle room-level connection failures and continue."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         service = MatrixSyncService(
             settings=mock_settings,
@@ -738,7 +738,7 @@ class TestErrorHandling:
         Room-level exceptions are caught and logged, allowing sync to continue
         with other rooms. The service returns 0 for failed rooms.
         """
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         # Make extraction fail
         mock_pipeline = AsyncMock()
@@ -779,7 +779,7 @@ class TestNotConfigured:
         self, mock_pipeline_service, mock_polling_state
     ):
         """sync_rooms should return 0 when Matrix is not configured."""
-        from app.services.training.matrix_sync_service import MatrixSyncService
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = ""

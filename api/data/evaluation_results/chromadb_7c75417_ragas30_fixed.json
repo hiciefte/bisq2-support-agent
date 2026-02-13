@@ -1,0 +1,390 @@
+{
+  "timestamp": "2026-02-11T17:24:43.753483",
+  "system": "chromadb",
+  "samples_count": 30,
+  "metrics": {
+    "context_precision": 0.5594444444140186,
+    "context_recall": 0.2222222222222222,
+    "faithfulness": 0.38838259441707723,
+    "answer_relevancy": 0.0
+  },
+  "avg_response_time": 4.767436861991882,
+  "individual_results": [
+    {
+      "question": "In Bisq 1, what happens if a mediation proposal is not accepted and the case moves to arbitration?",
+      "ground_truth": "In Bisq 1, mediation proposals require acceptance by both traders. If either party does not accept or respond, the case can move to arbitration, where a final payout decision is made under the dispute-resolution rules.",
+      "answer": "In Bisq 1 (Multisig protocol), if a mediation proposal is not accepted, the case can escalate to arbitration. Here's how it works:\n\n- **Arbitration Activation**: This occurs when one or both traders reject the mediator's suggestion and the time-locked delayed payout transaction is published.\n- **Funds Handling**: The time-locked transaction sends all funds in the multisig escrow to the Bisq \"donation addresses,\" effectively making them unavailable to the traders.\n- **Arbitrator Role**: The arbitrator investigates the dispute and can reimburse the aggrieved trader from their own funds, later getting reimbursed by the Bisq DAO.\n\nArbitration is designed as a last resort for resolving disputes when other options have failed.",
+      "contexts": [
+        "## Process\n\nBisq's arbitration process is a thoroughly decentralized approach to handling disputes between 2 strangers on the internet: one in which no user needs to trust a third party with authority over their funds, but one in which a user can still expect a satisfactory outcome if they have followed the Bisq trading rules.\n\nArbitration is only available when:\n\n* one or both traders reject a mediator\u2019s suggested payout\n* the time-locked delayed payout transaction is published\n\nA ''time-locked...",
+        "## How to find your mediators?\n\nYour mediator's name should be visible when you open a mediation ticket. Look for it under the 'support agent' column.\n\nIf, however, you have a trade not in mediation but would like to know your assigned mediator's name, please refer to Finding your mediator.\n\n= Level 3: Arbitration =\n\n400px|thumb|left|Reject mediator's suggestion in order to start arbitration.\nArbitration is the final tier of dispute resolution on Bisq. It's designed to be rare, and its measures ...",
+        "An **arbitrator** resolves disputes that could not be resolved by traders on their own or with a mediator's help.\n\nArbitrators investigate disputes, just like mediators. But unlike mediators, whose suggestions encourage traders to make payouts from their own escrowed funds, an arbitrator's findings lead to a payout from the arbitrator themselves.\n\n__TOC__\n\n## Role Notes\n\n## = Arbitrator's Role in Dispute Resolution\n=\n\nCurrently, the arbitrator makes BTC payouts to aggrieved traders out of their ..."
+      ],
+      "response_time": 10.240150451660156,
+      "error": null
+    },
+    {
+      "question": "What does the BuyerVerifiesPreparedDelayedPayoutTx error usually indicate, and how should I troubleshoot it?",
+      "ground_truth": "This error usually indicates an inconsistent trade/DAO state rather than a normal wallet sync issue. Rebuild DAO state from resources first, then re-check the trade. If it persists, collect logs and escalate to support.",
+      "answer": "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?",
+      "contexts": [],
+      "response_time": 0.009997129440307617,
+      "error": null
+    },
+    {
+      "question": "How does buying Bitcoin with ACH work in Bisq Easy?",
+      "ground_truth": "In Bisq Easy, the seller shares ACH payment details in trade chat. The buyer sends fiat directly to the seller account and the seller releases BTC after confirming payment.",
+      "answer": "In Bisq Easy (Bisq 2), buying Bitcoin with ACH involves the following steps:\n\n1. **Trade Agreement**: You and the seller agree on the trade terms, including the price and payment method (ACH).\n2. **Payment Details**: The seller provides their bank account details for the ACH transfer.\n3. **Payment Transfer**: You initiate the ACH payment to the seller's account and notify them that the payment is in transit.\n4. **Bitcoin Transfer**: Once the seller confirms receipt of the payment, they transfer the agreed amount of Bitcoin to your specified address.\n\nPlease note that sellers may charge a premium of about 10-15% for their services, reflecting the costs of building their reputation on the platform.",
+      "contexts": [
+        "Question: What exactly happens when an order gets accepted in Bisq 2?\nAnswer: When an order is accepted in Bisq Easy, the buyer and seller agree on trade terms, the buyer sends the agreed-upon payment to the seller, and upon confirming receipt, the seller transfers the specified amount of bitcoin to the buyer's btc address This process relies on the seller's reputation for security, and is tailored for small trades to obtain the first UTXO that can be used as a deposit in multisignature trades o...",
+        "## How to sell bitcoin on Bisq Easy\n\nUsers of Bisq Easy can both make an offer to sell bitcoin, or take an offer from a user looking to buy bitcoin.\n\nSeller's on Bisq Easy will usually be experienced Bisq users. It is expected they will be helpful and supportive to buyers who are new to Bitcoin and/or Bisq.\u00a0Bisq Easy seller's should be passionate about helping new Bisq users smoothly acquire no KYC bitcoin in a peer to peer manner.\n\nAs building reputation incurs costs for the bitcoin sellers. It...",
+        "Question: Can I buy BTC through ACH if my bank requires verification of account ownership with micro-deposits?\nAnswer: Micro-deposits verification is a procedure not intended for p2p payments, and is a security issue for the seller, so if your bank only allows to send the payment after that verification is complete, It's better to find an alternative seller or payment method.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet."
+      ],
+      "response_time": 4.858567953109741,
+      "error": null
+    },
+    {
+      "question": "How can I recover a Bisq 2 profile when the app no longer starts after reinstall/restore attempts?",
+      "ground_truth": "Create a fresh data directory/profile first, then migrate only required private profile data from backup instead of overwriting the whole directory. Keep the original directory as backup in case rollback is needed.",
+      "answer": "To recover your Bisq 2 profile after reinstalling or restoring the application, follow these steps:\n\n1. **Restore from Backup**: Use a copy of the `Bisq2/db` folder from your data directory to restore your profile.\n2. **Check Backups Folder**: Look in the `backups` folder within your data directory for uncorrupted copies of your previous profile data. You can try restoring from there as well.\n\nIf you didn't back up your profile before formatting, it may be lost.",
+      "contexts": [
+        "Question: How can I recover my Bisq2 profile after formatting my computer and reinstalling the application?\nAnswer: Restore your profile by using a copy of the Bisq2/db folder from your data directory.",
+        "Question: How can I restore my old Bisq profile after creating a new one?\nAnswer: The backups folder inside the data directory may contain un-corrupted, viable copies of your previous profile data, which you can try restoring to see if the application state can be accessed again.",
+        "Question: How can I recover my profile in Bisq if it disappeared?\nAnswer: If you did not back up your profile, it is likely lost. Turning off the PC may have caused this issue.",
+        "Question: How can I recover my old Bisq profile after updating to a new version?\nAnswer: Updating Bisq will preserve all the contents of the data directory, so you don't need to do anything else, but just in case Bisq already manages automatic backups https://bisq.wiki/Backup",
+        "Question: What should I do if I can't log in to Bisq 1?\nAnswer: Please provide more details about what you're doing when trying to log in.",
+        "Question: What should I do if the Bisq app on macOS reports it is damaged and won't open?\nAnswer: This is a known issue. Please refer to the Bisq Wiki page on macOS installation: https://bisq.wiki/Doknownloading_and_installing#macOS."
+      ],
+      "response_time": 3.785719871520996,
+      "error": null
+    },
+    {
+      "question": "Do I need a Lightning wallet to use Bisq Easy?",
+      "ground_truth": "Use a Lightning wallet only for Lightning trades. For on-chain trades, use a regular Bitcoin wallet. Many users also use the Bisq 1 wallet for later multisig trading.",
+      "answer": "No, you do not need a Lightning wallet to use Bisq Easy (Bisq 2). Bisq does not offer a built-in Lightning wallet and is primarily designed to help new users acquire Bitcoin for trading on Bisq 1.",
+      "contexts": [
+        "Question: Does Bisq support a built-in Lightning wallet for BTC transactions?\nAnswer: No, Bisq does not offer a Lightning wallet and there are no plans to add one in the future.",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1."
+      ],
+      "response_time": 2.9934425354003906,
+      "error": null
+    },
+    {
+      "question": "In Bisq 1 arbitration, how are disputed payouts and reimbursement handled?",
+      "ground_truth": "In arbitration, the final payout is decided through the Bisq 1 dispute process. Operational reimbursement mechanics are handled through the DAO reimbursement framework, not by ad-hoc trader negotiation.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nIn Bisq 1 arbitration, arbitrators manage disputed payouts by having sufficient BTC to cover potential payouts (up to 0.5 BTC per trade). Once a payout is made, the case can be closed, and the arbitrator will be reimbursed with BSQ at the end of the DAO cycle. For trades requiring reimbursements over 0.5 BTC, traders must request reimbursement directly from the DAO. The reimbursement request process for arbitrators is ongoing, involving conversion of pre-financed BTC to BSQ to mitigate volatility risks.",
+      "contexts": [
+        "**How, upon deciding a payout, does an arbitrator pay the BTC to Bob and Alice?**\n\nArbitrators need to have enough BTC to cover potential payouts (up to 0.5 BTC per trade) \u2014 it's a requirement for anyone seeking to hold the role. An arbitration case can only be closed once an arbitrator makes a payout. Then, at the end of the DAO cycle, they'll get reimbursed with BSQ (which they can then sell for BTC).\n\n**Are there any trades the arbitrator will not pay out? **\n\nArbitrators will only reimburse ..."
+      ],
+      "response_time": 5.303969621658325,
+      "error": null
+    },
+    {
+      "question": "Do I need reputation to use Bisq Easy, and what if I cannot run Bisq 1 yet?",
+      "ground_truth": "Reputation is mainly needed for selling BTC at higher limits/premiums in Bisq Easy. New users can still buy BTC without reputation, then use that BTC for Bisq 1 deposits. If Bisq 1 install fails, follow the official installation troubleshooting guide.",
+      "answer": "In **Bisq Easy (Bisq 2)**, you do not need to build reputation to start trading. This protocol allows users to buy Bitcoin without any prior reputation, which is designed to facilitate new users in obtaining their first UTXO. However, if you plan to sell Bitcoin at a premium on Bisq 2, building reputation will be necessary by burning or bonding BSQ in **Bisq 1**. \n\nIf you cannot run Bisq 1 yet, you can still use Bisq 2 without any issues regarding reputation.",
+      "contexts": [
+        "Question: Can I use Bisq 2 without building reputation?\nAnswer: Yes, you can buy btc on Bisq Easy without building reputation, that is the intended use to get your first utxo and then be able to trade on Bisq1.",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "Question: Do I need to use both Bisq 1 and Bisq 2?\nAnswer: If you have BTC, it's cheaper to buy on Bisq 1; to sell BTC on Bisq 2 at a higher price, you need to burn BSQ for reputation.",
+        "Question: Can I earn reputation in Bisq Easy Mobile?\nAnswer: The only way to increase one's reputation score is by importing account information from Bisq1, and burning or bonding BSQ, one doesn't earn reputation by doing trades no matter if on desktop or mobile.",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "## Reputation in Bisq Easy\n\nReputation is a cornerstone of the security model in **Bisq Easy**, a Bisq 2 trade protocol. As buyers send their fiat payment ''before'' receiving Bitcoin, the seller's reputation provides the trust needed for the buyer to proceed confidently.\n\n600px|thumb|left|The 'Build reputation' screen in Bisq 2 (accessed via 'Reputation' on the left menu), showing the four methods available.\n\n## = Why Reputation Matters\n=\n\n* **For Buyers:** Carefully review a seller's reputatio..."
+      ],
+      "response_time": 7.2112860679626465,
+      "error": null
+    },
+    {
+      "question": "If I paid fiat in Bisq 1 but BTC was not released, how is the issue resolved?",
+      "ground_truth": "Open mediation in Bisq 1. Trades are protected by multisig/security-deposit mechanics and a formal dispute flow: mediation first, then arbitration if unresolved.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nIn Bisq 1, if you paid fiat but BTC was not released, the issue is resolved through arbitration. You can request arbitration, where a mediator will review your case. If the mediator agrees that you are owed BTC, they will release it to you, using their own funds. The arbitrator will then seek reimbursement from the Bisq DAO.",
+      "contexts": [
+        "Question: Can I send fiat currency to Bisq to buy stablecoins?\nAnswer: No, but you can buy btc with fiat, and then trade btc for altcoins on Bisq1.",
+        "Bisq offers several **payment methods** to buy and sell bitcoin for fiat currencies or other cryptocurrencies.\n\nEvery offer on Bisq designates a payment method for traders to settle payments. The Bisq software does not actually integrate with any payment methods\u2014**all non-bitcoin fund transfers are made outside of Bisq software**.\n\nUnlike cryptocurrency transfers, many fiat payment transfers have limitations that require Bisq v1 to employ special measures like lower per-trade limits and account ...",
+        "# If you\u2019re dissatisfied with the mediator\u2019s suggestion and think you are entitled to a better outcome, request arbitration when it's available (doing so publishes the time-locked transaction and sends funds to the donation addresses owned by the Burning Men).\n# Collaborate with an arbitrator to clarify the details of your case.\n# If the arbitrator agrees you are owed BTC, they will pay it to you.\n# The arbitrator will then request reimbursement from the Bisq DAO so they are not out of pocket.\n\n...",
+        "## How do I sell BTC with my XXXXXXX account?\n\nYou can sell BTC with XXXXXXX on Bisq in 2 ways\u02d0\n\n# Make an offer to sell BTC on the XXXXXXX market.\n# Take an offer to sell BTC on the XXXXXXX market.\n\nWhen the offer is confirmed Bisq will provide with the BTC Buyer with your XXXXXXX details for you to complete the payment. They should send payment at their first opportunity and confirm they have done so in Bisq by clicking 'payment started'.\n\nOnce you receive payment from the BTC Buyer you should..."
+      ],
+      "response_time": 4.598987102508545,
+      "error": null
+    },
+    {
+      "question": "In a Bisq 1 SEPA trade, what should a seller do if the incoming payment name does not match expected details?",
+      "ground_truth": "Do not finalize blindly. Open mediation so payment details and trade terms can be verified and the correct remediation (for example refund/retry path) can be applied.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nIn a Bisq 1 SEPA trade, if the incoming payment name does not match the expected details, the seller should **not** accept the payment. All payment details, including payer name, account numbers, and payment method, must match those specified in the trade contract. If there are discrepancies, the seller should refrain from confirming the payment and may need to discuss the issue with the buyer or seek mediation if necessary.",
+      "contexts": [
+        "## How do I sell BTC with my SEPA account?\n\nYou can sell BTC using SEPA on Bisq in two ways:\n\n# Make an offer to sell BTC on the EUR market.\n# Take an offer to sell BTC on the EUR market.\n\nOnce your offer is confirmed, Bisq will provide the BTC buyer with your SEPA details for completing the payment. The buyer should send the payment promptly and confirm in Bisq by clicking 'payment started'.\n\nUpon receiving the payment, confirm it in Bisq. After you've done this, the BTC buyer will receive thei...",
+        "## = Be responsive during a dispute\n=\n\nTraders are expected to reply within 48hrs to either mediators or arbitrators, and could lose the dispute based on unresponsiveness.\n\nMediators may take up to 48 hours to respond to messages, and arbitrators may take up to 5 days to respond to messages.\n\n## = Do not change payment details once trade is in progress\n=\n\nOnce the deposit transaction is published, the trade is in progress, and its terms cannot be changed. Traders agreed to use the payment detail..."
+      ],
+      "response_time": 4.796645641326904,
+      "error": null
+    },
+    {
+      "question": "Can I send fiat to Bisq directly to buy stablecoins?",
+      "ground_truth": "No. Bisq does not custody fiat. In Bisq Easy you pay fiat directly to the BTC seller, and current Bisq Easy trading is fiat-for-BTC.",
+      "answer": "In Bisq Easy (Bisq 2), you cannot send fiat directly to buy stablecoins. Instead, you need to first purchase Bitcoin using the available fiat offers, and then you can trade that Bitcoin for stablecoins or other cryptocurrencies on the platform.",
+      "contexts": [
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc",
+        "Question: Can I buy cryptocurrencies other than Bitcoin on Bisq?\nAnswer: Yes, after buying the minimum amount to cover a security deposit on Bisq1, you can trade altcoins.",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1.",
+        "Question: How can I transfer BTC into Bisq using my external wallet?\nAnswer: Obtain a receive address from Funds > Receive funds, and use your external wallet to send btc to it.",
+        "## Sending Bitcoin to your Bisq wallet\n\nOnce you\u2019ve gotten enough bitcoin for your security deposit and fees, you can move it into Bisq\u2019s built-in wallet. This isn\u2019t strictly required, but it\u2019ll make trading more convenient since the funds you need to accept an offer will be readily available when you need them.\n\nTo send bitcoin to your Bisq wallet, you'll need an address. You'll find one on Funds > Receive Funds.\n\nYou might see many addresses listed. Pick the address on the bottom next to the Q..."
+      ],
+      "response_time": 3.407738208770752,
+      "error": null
+    },
+    {
+      "question": "What should I do when a trade fails with a market-price tolerance/protocol error and no valid deposit transaction?",
+      "ground_truth": "If no valid deposit transaction exists, the trade cannot complete. Move it to failed trades, recover/reconcile funds using failed-trade guidance, and retry with a fresh offer once state is healthy.",
+      "answer": "If you encounter a trade failure in Bisq Easy due to a market-price tolerance/protocol error and there is no valid deposit transaction, you should:\n\n1. **Check Your Trade Status**: Ensure that the trade is still active and has not been canceled by the counterparty.\n2. **Open Mediation**: If the trade is stuck, consider opening mediation to resolve the issue.\n3. **Contact Support**: If you are unable to resolve the issue through mediation, reach out to Bisq support for assistance. \n\nThese steps should help you navigate through the problem effectively.",
+      "contexts": [
+        "Question: What should I do if a seller cancels my trade after a bank transfer?\nAnswer: If this happens in Bisq Easy, you can still open mediation and/or contact support.",
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: What should I do if a trade has been completed out of band and it cannot be closed in Bisq2?\nAnswer: You can both safely cancel or reject the trade if it has been completed.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention.",
+        "Question: What should I do if Bisq's market price is not updating and is using outdated persisted data?\nAnswer: This could be a general issue; if restarting doesn't help, report the problem to the team for further assistance."
+      ],
+      "response_time": 4.292484521865845,
+      "error": null
+    },
+    {
+      "question": "My bank transfer failed and both peers want to cancel an open Bisq 1 trade. What is the proper process?",
+      "ground_truth": "Use the Bisq 1 support workflow and notify the mediator that both peers agree to cancel. The mediator can issue the appropriate proposal to safely unwind the trade state.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nTo cancel an open trade in Bisq 1 when both peers agree, follow these steps:\n\n1. **Initiate Cancellation**: One peer should initiate the cancellation process from their Bisq application.\n2. **Confirm Cancellation**: Both peers need to confirm the cancellation request.\n3. **SPV Resync**: After cancellation, it's recommended to perform an SPV resync to ensure that the trade no longer appears in the offer book and to update the transaction status.\n\nIf the trade has not progressed beyond the initial stages, neither party should have incurred any trade or miner fees.",
+      "contexts": [
+        "# 1. The trade remains in the offer book, the taker transaction and the deposit transaction fails, the trade can be seen on both the buyer's and seller's Bisq instance. The deposit transaction confirmation will show as N/A. This is because the deposit transaction could not be created because the taker transaction failed. In this instance neither the maker or taker will have lost any trade or miner fees. The offer will still be able to be taken in the offer book, and the taker transaction did not...",
+        "## Possible solutions\n\nWhile this issue can be annoying, and especially worrying for new users who have just started experiencing a new trading platform, the usual resolution path is a spontaneous and uneventful one, and requires no intervention whatsoever on the buyer's part.\n\n## = Normal payout (best case scenario)\n=\n\nEven if the BTC buyer sees a completed trade on his side, the BTC seller will be presented with the correct state, where he has received the ''Payment has been started'' notifica..."
+      ],
+      "response_time": 6.584750652313232,
+      "error": null
+    },
+    {
+      "question": "Maker fee is confirmed but deposit transaction fails or is missing. How should this be handled?",
+      "ground_truth": "This is typically treated as a failed-trade state. Verify spendable UTXOs/wallet sync, then move the trade to failed and follow reimbursement/recovery guidance for affected fees.",
+      "answer": "I can help with both Bisq 1 and Bisq 2. Which version are you using?\n\n- **Bisq 1**: Desktop app with DAO and altcoin trading\n- **Bisq 2**: Newer version with Bisq Easy for simple BTC purchases",
+      "contexts": [],
+      "response_time": 0.013785600662231445,
+      "error": null
+    },
+    {
+      "question": "Can I export a CSV of Bisq Easy trades for taxes?",
+      "ground_truth": "Bisq Easy does not provide full historical CSV export. Keep your own trade records for tax reporting.",
+      "answer": "In Bisq Easy (Bisq 2), there is no reporting feature to export a CSV of your past trades, as it is designed to prioritize user privacy. Therefore, you'll need to manually keep track of each trade for tax purposes.",
+      "contexts": [
+        "Question: Can I get a CSV of my past trades for tax purposes?\nAnswer: In Bisq Easy there is no reporting feature, by design, to improve privacy on the platform, so you will need to manually note down each trade for tax purposes.",
+        "Question: Can I get a CSV of my past crypto swap for tax purposes?\nAnswer: Bisq2 does not include a trade history export feature by design, for privacy, so you will need to manually keep track of your activity if you need a report.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet.",
+        "Bisq Easy is a trade protocol for Bisq 2, designed to facilitate the acquisition of bitcoin with zero trade fees and without the requirement of a security deposit. Bisq Easy is a social trade protocol intended for novice bitcoin buyers seeking a non-KYC option and aiming to be efficiently onboarded by experienced and knowledgeable sellers that are familiar with the Bisq platform.\n\nBisq Easy is currently the only trade protocol for Bisq 2. More trade protocols are planned for the future.\n\n## Bisq...",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits."
+      ],
+      "response_time": 3.176316976547241,
+      "error": null
+    },
+    {
+      "question": "How do I start burning or bonding BSQ for reputation?",
+      "ground_truth": "Use the Reputation workflow and acquire BSQ via Bisq 1 first. Then perform burn/bond actions according to the reputation instructions.",
+      "answer": "To start burning or bonding BSQ for reputation in **Bisq Easy (Bisq 2)**, follow these steps:\n\n### **Burning BSQ:**\n1. Select your user profile in Bisq 2.\n2. Copy the **Profile ID** displayed.\n3. Open **Bisq 1** and go to `DAO` > `PROOF OF BURN`. Paste the Profile ID into the **`pre-image`** field.\n4. Enter the amount of BSQ you want to burn (minimum 5.46 BSQ).\n5. Publish the Burn BSQ transaction.\n6. After blockchain confirmation, your reputation will be visible in your Bisq 2 profile.\n\n### **Bonding BSQ:**\n1. Select your user profile.\n2. Copy the **Profile ID**.\n3. Open **Bisq 1** and go to `DAO/BONDING/BONDED REPUTATION`, paste the Profile ID into the **salt** field.\n4. Enter the amount of BSQ to lock up and set the lock time (minimum 50,000 blocks).\n5. Publish the lockup transaction.\n6. After blockchain confirmation, your reputation will appear in your profile.\n\nBurning BSQ provides a permanent reputation score, while bonding BSQ yields a temporary score that can be unlocked after a year.",
+      "contexts": [
+        "Question: How can I burn or bond BSQ in Bisq?\nAnswer: Information about burning or bonding can be found under the reputation tab of Bisq2; you can acquire and process BSQ on Bisq1.",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1.",
+        "## = Method 1: Burning BSQ\n=\n\nYou permanently **burn** BSQ tokens to gain reputation. This represents a strong, long-term commitment to the network, akin to a proof of work. Follow the process displayed in the Bisq 2 Reputation section:\n\n# **Step 1:** Select the user profile in Bisq 2 for which you want to attach the reputation.\n# **Step 2:** Copy the **Profile ID** displayed. You will paste this into Bisq 1.\n# **Step 3:** Open **Bisq 1** and go to `DAO` > `PROOF OF BURN`. Paste the copied Profi...",
+        "## = Setting up a BSQ bond\n=\n\nSimilar to Burn BSQ but using refundable BSQ bonds.\n\nBSQ needs to be bonded for a minimum of 50,000 blocks (about 1 year). During this time the BSQ is unavailable to the user. After 50,000 blocks the bond can be unlocked and the BSQ is available again to the user.\n\nThe value gained by bonding BSQ persists until the time the bond is unlocked. Reputation scores achieved from bonding BSQ is cumulative. It can be assumed that regular bonding (e.g. each week or month) is..."
+      ],
+      "response_time": 11.1965012550354,
+      "error": null
+    },
+    {
+      "question": "Is Bisq Easy only for buying Bitcoin?",
+      "ground_truth": "Bisq Easy is BTC-focused. For broader pairs such as altcoins, use Bisq 1 multisig markets.",
+      "answer": "Bisq Easy (Bisq 2) is designed primarily for acquiring Bitcoin, allowing users to exchange fiat currencies for Bitcoin without any trading fees or security deposits. While it is primarily focused on helping new users acquire Bitcoin, it is not limited to just buying; users can also sell Bitcoin in trades. The protocol facilitates peer-to-peer trades for both buying and selling, making it versatile for users engaging in Bitcoin transactions.",
+      "contexts": [
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Bisq Easy is a trade protocol for Bisq 2, designed to facilitate the acquisition of bitcoin with zero trade fees and without the requirement of a security deposit. Bisq Easy is a social trade protocol intended for novice bitcoin buyers seeking a non-KYC option and aiming to be efficiently onboarded by experienced and knowledgeable sellers that are familiar with the Bisq platform.\n\nBisq Easy is currently the only trade protocol for Bisq 2. More trade protocols are planned for the future.\n\n## Bisq...",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc"
+      ],
+      "response_time": 4.894426584243774,
+      "error": null
+    },
+    {
+      "question": "How long should I wait for BTC release after sending fiat in Bisq Easy?",
+      "ground_truth": "Expected release follows payment-method timing and seller confirmation. If the seller remains unresponsive beyond the expected window, open mediation.",
+      "answer": "In Bisq Easy (Bisq 2), after you send fiat, the seller typically has the same time frame as the trade period for the payment method used to send the fiat. For instant payments, you can expect the BTC to be sent within **24 hours**. If the seller does not release the BTC, note that the buyer's payment would be lost, as there are no reimbursements in Bisq Easy.",
+      "contexts": [
+        "Question: How long does a seller have to send BTC after the fiat is sent?\nAnswer: The time frame is similar to the trade period for the same payment method on Bisq 1.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: At what point should I request mediation if my seller has not sent Bitcoin after confirming receipt of payment?\nAnswer: If this is Bisq Easy, you can wait for the amount of time remaining from the trade period for the same payment method in Bisq1: https://bisq.wiki/Payment_methods",
+        "Question: How long can I expect to wait for funds to be sent to my address after confirming a fiat payment on Bisq?\nAnswer: You can expect the funds to be sent within 24 hours for instant payments.",
+        "Question: What happens if the seller doesn't release the BTC in a Bisq Easy trade?\nAnswer: If the seller never releases btc, the buyer's payment would be lost since the DAO does not offer reimbursements for Bisq Easy, but the enforced minimum reputation score costs money to the sellers, and heavily discourages them from scamming.",
+        "Question: What should I do if my trade appears stuck due to a deadlock while waiting for mediator confirmation?\nAnswer: If this is related to Bisq Easy, and the seller has received fiat, you can instruct them to send BTC to your bitcoin address without needing a mediator's intervention."
+      ],
+      "response_time": 3.8956704139709473,
+      "error": null
+    },
+    {
+      "question": "What should I do if trade protocol execution fails with VerifyPeersAccountAgeWitness-related errors?",
+      "ground_truth": "Treat it as a protocol failure: open mediation and include error details. Connectivity/Tor state can prevent required witness/account data propagation, so sync/connectivity checks are part of troubleshooting.",
+      "answer": "If you encounter `VerifyPeersAccountAgeWitness` related errors while executing a trade in **Bisq Easy (Bisq 2)**, it typically indicates an issue with verifying the age of the peer's account. Here are some steps you can take:\n\n1. **Check Peer\u2019s Reputation**: Ensure that the other party has a good reputation. Offers with a reputation score of 4.0 or higher are generally safer for first-time trades.\n\n2. **Retry the Trade**: Sometimes, simply retrying the trade can resolve transient issues.\n\n3. **Contact Support**: If the problem persists, consider reaching out to support for assistance or check the Bisq community forums for any similar issues.\n\nFor detailed troubleshooting, refer to the Bisq documentation or forums as they often have more specific guidance on error messages.",
+      "contexts": [
+        "Sometimes, Bisq trades don't go smoothly, and **dispute resolution** is required to determine an outcome. Dispute resolution in Bisq 2 varies depending on the trade protocol that was used.\n\nMost issues on Bisq are minor and easily resolved when traders communicate with each other. Mediation is intended to resolve the vast majority of remaining issues.\n\n__TOC__\n\n= Trade Protocols =\nBisq 2 will offer users the choice of multiple trade protocols. A trade protocol serves as the fundamental framework...",
+        "Question: How do I cancel a trade in Bisq Easy if the other party is unresponsive?\nAnswer: If your peer doesn't respond within 24 hrs, you can cancel or reject the trade without negative impact.",
+        "Question: How can I access from Bisq2 the wallet that I used in Bisq1?\nAnswer: Bisq2 right now uses a different trade protocol, and has no builtin wallet, you should continue using Bisq1 to trade btc if you want to use the multisig protocol.",
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: What should I do if a Bisq Easy trade is stuck in 'waiting payment' even though my counterparty marked it as paid?\nAnswer: When you receive the fiat payment you can send the btc to the buyer's address, and as soon as both parties are whole, the trade can be rejected by both to remove it from the open trades.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol."
+      ],
+      "response_time": 5.800951957702637,
+      "error": null
+    },
+    {
+      "question": "Why can failed trades show inconsistent transaction counts or amounts in the UI?",
+      "ground_truth": "Failed attempts can leave partial fee/deposit artifacts, so UI transaction lists may look inconsistent until recovery/sync is complete. Use failed-trade recovery flow and verify on-chain state before retrying.",
+      "answer": "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?",
+      "contexts": [],
+      "response_time": 0.0089874267578125,
+      "error": null
+    },
+    {
+      "question": "Do I need both Bisq 1 and Bisq 2?",
+      "ground_truth": "Today they serve different roles: Bisq Easy (Bisq 2) for simpler BTC-fiat flow, and Bisq 1 for multisig/altcoin trading and BSQ-based reputation actions.",
+      "answer": "You don't need to use both Bisq 1 and Bisq 2 at the same time, but each serves different purposes. Bisq 1 generally offers larger liquidity and better prices for trading, especially for experienced users. On the other hand, Bisq 2 (Bisq Easy) is designed to help new users acquire Bitcoin more easily, but it requires building reputation for selling. If you're primarily trading or if you have BTC, you might find Bisq 1 more beneficial.",
+      "contexts": [
+        "Question: Do I need to use both Bisq 1 and Bisq 2?\nAnswer: If you have BTC, it's cheaper to buy on Bisq 1; to sell BTC on Bisq 2 at a higher price, you need to burn BSQ for reputation.",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Question: Can I migrate my wallet from Bisq to Bisq2?\nAnswer: No, Bisq2 is a different application with a separate trade protocol. You should continue using Bisq1 for trading unless you have a specific use case for the Bisq Easy protocol.",
+        "Bisq 2 is the successor to the original Bisq (Bisq v1). It has been developed from the ground up to allow for multiple trade protocols to be accessed via a single decentralized exchange platform.\n\nAt the initial launch of Bisq 2 will support only one trading protocol 'Bisq Easy'. Over time more trading protocols will be added.\n\nOnce the Bisq Multisig protocol is implemented in Bisq 2, the old version of Bisq can fade out. Bisq 1 will still find its usage as Bisq DAO management tool and for BSQ-B...",
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Question: Is Bisq 1 the only version that works for selling BTC?\nAnswer: You can sell both on Bisq1 and on Bisq2, the former has larger trading volume, while the latter requires to buy reputation but sales are made at a higher markup."
+      ],
+      "response_time": 4.879477500915527,
+      "error": null
+    },
+    {
+      "question": "If the deposit transaction is confirmed on-chain but the Bisq trade still appears stuck, what should I do?",
+      "ground_truth": "Run SPV resync first for wallet-chain inconsistency, then re-check trade state. Use DAO resync only for DAO-specific issues. If still blocked, proceed through mediation/arbitration workflow.",
+      "answer": "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?",
+      "contexts": [],
+      "response_time": 0.013422966003417969,
+      "error": null
+    },
+    {
+      "question": "What does \"offer deactivated because BTC fee transaction not found\" mean, and how do I recover?",
+      "ground_truth": "It means the maker-fee/deposit flow did not complete correctly and the offer/trade is effectively failed. Move it to failed trades, recover funds per failed-trade guidance, then recreate the offer.",
+      "answer": "Which Bisq version's wallet are you asking about?",
+      "contexts": [],
+      "response_time": 0.010261297225952148,
+      "error": null
+    },
+    {
+      "question": "In Bisq 1, if deposit is mined but payment details do not appear from peer, what should the buyer do?",
+      "ground_truth": "Perform SPV resync and inspect trade details/contract state. If required peer data is still missing or unresponsive, open mediation and continue through official dispute flow.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nIn Bisq 1, if the deposit is mined but the payment details do not appear from the peer, the buyer should follow these steps:\n\n1. **Check Trade Status**: The trade may still be visible on both the buyer's and seller's Bisq instances. \n2. **Perform SPV Resync**: The buyer should try performing an SPV resync to update the trade state.\n3. **Mediation**: If issues persist, consider opening a support ticket to request mediation, as communication with the seller may be limited in this situation.\n\nEnsure that you adhere to the Bisq protocol during this process.",
+      "contexts": [
+        "# 1. The trade remains in the offer book, the taker transaction and the deposit transaction fails, the trade can be seen on both the buyer's and seller's Bisq instance. The deposit transaction confirmation will show as N/A. This is because the deposit transaction could not be created because the taker transaction failed. In this instance neither the maker or taker will have lost any trade or miner fees. The offer will still be able to be taken in the offer book, and the taker transaction did not...",
+        "## = Ensure you follow Bisq protocol\n=\n\nUltimately, the deal will be completed in Bisq. Buyers must mark payment as sent before sellers can release assets.\n\n**Buyers** should bring a laptop with them so they can mark the payment as sent. Otherwise, the buyer will end up paying the seller and have to walk away without the bitcoin they paid for (since the seller won\u2019t be able to acknowledge receipt of payment before the buyer acknowledges they sent payment).\n\n**Sellers** should bring a laptop with...",
+        "## Possible solutions\n\nWhile this issue can be annoying, and especially worrying for new users who have just started experiencing a new trading platform, the usual resolution path is a spontaneous and uneventful one, and requires no intervention whatsoever on the buyer's part.\n\n## = Normal payout (best case scenario)\n=\n\nEven if the BTC buyer sees a completed trade on his side, the BTC seller will be presented with the correct state, where he has received the ''Payment has been started'' notifica...",
+        "**Security deposits** in Bisq are BTC funds that buyer and seller lock in a 2of2 multisig address together with trade funds when an offer is taken in order to help ensure that both peers follow the trading protocol. Security deposits are fully reimbursed automatically to both trading peers when the trade ends without disputes.\n\nSecurity deposits are the most important tool Bisq offers to protect honest traders. Furthermore, requiring ''both'' parties to post a deposit increases chances that they..."
+      ],
+      "response_time": 6.766725301742554,
+      "error": null
+    },
+    {
+      "question": "An Altcoin Instant/Bisq 1 trade started but protocol state is not progressing. What is the recommended path?",
+      "ground_truth": "First complete wallet/sync troubleshooting so trade actions are available. If protocol state remains stuck, open mediation and follow support/dispute workflow rather than waiting indefinitely.",
+      "answer": "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.\n\nIf your Altcoin Instant trade is not progressing, follow these steps:\n\n1. **Direct Communication**: Try to communicate with the other trader through the chat feature to resolve the issue directly.\n   \n2. **Mediation**: If communication fails, either trader can open a mediation ticket to request help from a mediator. They can provide suggestions for resolving the dispute.\n\n3. **Wait Period**: If mediation is necessary, remember that there are waiting periods (10 days for altcoins) before escalating to a mediator.\n\nMake sure to follow the guidelines for resolving disputes effectively.",
+      "contexts": [
+        "## = Post 1.2 Trade Protocol\n=\n\nThe new trade protocol, launched in [https://github.com/bisq-network/bisq/releases/tag/v1.2.0 Bisq v1.2], eliminates the risks described above to a large extent by separating functions and involving the DAO. It significantly improves censorship-resistance, security, and scalability of dispute resolution on Bisq.\n\nthumb|right|Dispute resolution for trade protocol (v1.2+).\n\nThe basic change is that it uses a 2-of-2 multisig in the deposit transaction with only the t...",
+        "## Possible solutions\n\nWhile this issue can be annoying, and especially worrying for new users who have just started experiencing a new trading platform, the usual resolution path is a spontaneous and uneventful one, and requires no intervention whatsoever on the buyer's part.\n\n## = Normal payout (best case scenario)\n=\n\nEven if the BTC buyer sees a completed trade on his side, the BTC seller will be presented with the correct state, where he has received the ''Payment has been started'' notifica...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can trade. To buy your first BSQ follow these simple steps:\n\n1. On **Market** tab select BSQ/BTC\n\n2. Click on **BUY BSQ**\n\n3. Select an offer and click on **TAKE OFFER**\n\n4. Review offer details including amount, price. Then click on NEXT STEP.\n\n5. Fund your trade (from Bisq wallet or external wallet).\n\n6. Click on **CONFIRM TAKE OFFER**.\n\n7. BSQ/BTC swap is now complete. Wait ...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can trade. To sell BSQ follow these simple steps:\n\n1. On **Market** tab select BSQ/BTC\n\n2. Click on **SELL BSQ**\n\n3. Select an offer and click on **TAKE OFFER**\n\n4. Review offer details including amount, price. Then click on **TAKE OFFER TO BUY BTC**.\n\n5. Click on **CONFIRM TAKE OFFER**.\n\n6. BSQ/BTC swap is now complete. Wait for blockchain confirmation.\n\n7. Check that you have..."
+      ],
+      "response_time": 6.8858678340911865,
+      "error": null
+    },
+    {
+      "question": "After confirming payment received, a trade shows cancelled/output errors. What should be checked?",
+      "ground_truth": "Check whether payout already happened from multisig on-chain. If status is inconsistent, open mediation and provide deposit/payout transaction IDs for investigation.",
+      "answer": "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?",
+      "contexts": [],
+      "response_time": 0.008670568466186523,
+      "error": null
+    },
+    {
+      "question": "Is Bisq Easy BTC-only?",
+      "ground_truth": "Yes, Bisq Easy is BTC-only at this stage. Bisq 1 supports multisig trading including altcoins.",
+      "answer": "Yes, Bisq Easy (Bisq 2) is primarily focused on Bitcoin trades, allowing users to exchange Bitcoin for various fiat currencies. It does not support altcoin trading as it is designed for easier onboarding of new users looking to acquire Bitcoin without the complexities of security deposits or trading fees.",
+      "contexts": [
+        "Question: Has Bisq2 dropped the built-in Bitcoin wallet that was present in Bisq1?\nAnswer: Bisq Easy is a different application with its own trading protocol, and does not include a built-in Bitcoin wallet by design; it is primarily used to help new users acquire Bitcoin for Bisq1 deposits.",
+        "Bisq Easy is a trade protocol for Bisq 2, designed to facilitate the acquisition of bitcoin with zero trade fees and without the requirement of a security deposit. Bisq Easy is a social trade protocol intended for novice bitcoin buyers seeking a non-KYC option and aiming to be efficiently onboarded by experienced and knowledgeable sellers that are familiar with the Bisq platform.\n\nBisq Easy is currently the only trade protocol for Bisq 2. More trade protocols are planned for the future.\n\n## Bisq...",
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Question: What is the easiest way to buy BTC on Bisq without undergoing KYC?\nAnswer: Bisq is already noKYC in itself, but most payment methods require users to ID themselves, since they use banks and other official money transmitters.You could use face to face cash exchange, cash by mail, US postal money orders, or Amazon gift cards, although these options are less common and often carry a premium."
+      ],
+      "response_time": 3.9029741287231445,
+      "error": null
+    },
+    {
+      "question": "Should I use On-Chain or Lightning as the default receive method?",
+      "ground_truth": "Choose On-Chain if you are unsure. Use Lightning only when you intentionally receive via Lightning and have a correctly configured LN wallet.",
+      "answer": "For Bisq Easy (Bisq 2), if you are not planning to utilize the Lightning Network, it is recommended to use **On-Chain** as the default receive method for Bitcoin transactions. This ensures that you are receiving BTC directly without the need for a Lightning wallet, which Bisq does not currently support.",
+      "contexts": [
+        "Question: Should I choose OnChain as the default option?\nAnswer: If you are trading on Bisq Easy and you are not looking to get balance on the lightning network, you should always buy btc onchain.",
+        "Question: Is it better to use Bisq1 or Bisq2 for trading?\nAnswer: Bisq1 generally offers larger liquidity and better prices for trading, Bisq Easy is useful for nocoiners to get their first UTXO so they can cover the deposit in Bisq1.",
+        "Question: Does Bisq support a built-in Lightning wallet for BTC transactions?\nAnswer: No, Bisq does not offer a Lightning wallet and there are no plans to add one in the future.",
+        "Question: Do I need to use both Bisq 1 and Bisq 2?\nAnswer: If you have BTC, it's cheaper to buy on Bisq 1; to sell BTC on Bisq 2 at a higher price, you need to burn BSQ for reputation.",
+        "Question: How do I sell BTC and receive in SEPA with IBAN?\nAnswer: You can use both Bisq1 and Bisq Easy for selling BTC and receiving payments via SEPA. Bisq1 is easier to use for sellers, while Bisq Easy requires to build reputation.",
+        "Question: How do I send funds from Bisq2?\nAnswer: In Bisq Easy, sellers send funds directly to your external wallet."
+      ],
+      "response_time": 3.295989751815796,
+      "error": null
+    },
+    {
+      "question": "When can arbitration be opened in Bisq 1, and what if a trader will be temporarily unavailable?",
+      "ground_truth": "Arbitration can only be opened after defined timeout windows (commonly 10 days altcoin / 20 days fiat after deposit context). If unavailable, inform mediator in advance so case handling is documented.",
+      "answer": "In Bisq 1 (Multisig protocol), arbitration can be opened when:\n\n- One or both traders reject a mediator\u2019s suggested payout.\n- The time-locked delayed payout transaction has been published. \n\nArbitration can only be initiated 10 days after the deposit transaction is confirmed for altcoin trades and 20 days for fiat trades.\n\nIf a trader is temporarily unavailable, it is essential to communicate this with the other party via Bisq's chat to keep them informed. If arbitration needs to be opened, contacting support is crucial, as the buyer will need guidance to manually publish the delayed payout transaction on the blockchain. \n\nNote: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2.",
+      "contexts": [
+        "## = Arbitration (worst case scenario)\n=\n\nArbitration should be generally avoided at all costs, but if mediation is not successful, either because the seller opened mediation and the buyer didn't follow instructions in the Prevention section above, or, with a very unlucky turn of events, because the seller went missing for whatever reason, leaving the deposit tx locked, recurring to the Refund Agent is the only way left to access the trade funds.\n\nIf the latter is true, and the buyer needs to op...",
+        "## Process\n\nBisq's arbitration process is a thoroughly decentralized approach to handling disputes between 2 strangers on the internet: one in which no user needs to trust a third party with authority over their funds, but one in which a user can still expect a satisfactory outcome if they have followed the Bisq trading rules.\n\nArbitration is only available when:\n\n* one or both traders reject a mediator\u2019s suggested payout\n* the time-locked delayed payout transaction is published\n\nA ''time-locked...",
+        "Here is a list of current Bisq arbitrators and their onion addresses, as well as how you can find the arbitrator for a specific Bisq trade.\n\nIf you need to find your mediator see here.\n\n__TOC__\n\n= Get in touch with your arbitrator =\n\nFor open trades, you should be able to get in touch with your arbitrator through Bisq arbitration chat itself.\n\nIf you cannot get in touch with your arbitrator on Bisq for 72 hours (sometimes Bisq message system fails), or the issue needs urgent attention, you can g...",
+        "Sometimes Bisq trades don't go smoothly, and **dispute resolution** is required to determine an outcome.\n\nDispute resolution on Bisq has three formal levels: trader chat, medition, and arbitration.\n\nMost issues on Bisq are minor and easily resolved when traders communicate with each other. Mediation is intended to resolve the vast majority of remaining issues. Arbitration is a rare last resort measure for extreme scenarios.\n\n__TOC__\n\n= Level 1: Trader chat =\n\nIf you're having any issues completi..."
+      ],
+      "response_time": 9.576210975646973,
+      "error": null
+    },
+    {
+      "question": "Why can Bisq 2 overview show zero total buying/selling even when trades were completed?",
+      "ground_truth": "Bisq 2 currently minimizes persistent historical stats for privacy by design; overview values may reflect limited current-profile/session context rather than full long-term trade history.",
+      "answer": "In Bisq 2, if the overview shows zero total buying/selling even when trades were completed, it could be due to several reasons:\n\n1. **Reputation Requirements**: You cannot initiate trades with users who have a reputation of zero. If your trades were with such users, they would not be counted in the total overview.\n   \n2. **Pending Transactions**: If trades are still pending or not yet confirmed, they may not reflect in the total overview until they are finalized.\n\n3. **Interface Refresh**: Occasionally, the interface may not update in real-time. Refreshing the application can help show the latest trade data.\n\nIf you continue to experience issues, consider checking your network connection or restarting the application.",
+      "contexts": [
+        "Question: Is there a minimum amount for trades to be effective on Bisq?\nAnswer: With as little as 50 or 100 dollars bought from Bisq Easy, you can cover a small deposit on Bisq1 to access larger liquidity and better prices.",
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc",
+        "Question: Why is my reputation zero after not using Bisq for a while?\nAnswer: Reputation is only used on Bisq Easy, Bisq1 works with a different protocol where reputation is not accounted for. You will find your previous accounts with their age and signing status after you install the latest version of Bisq1, provided that you kept your original data directory.",
+        "Question: How do I cancel a transaction in Bisq?\nAnswer: In Bisq1 you can cancel a trade only via mediation, with a procedure that might imply a penalty. In Bisq Easy you can click the 'reject trade' button in the open trade page.",
+        "Question: Why can't I buy from a user with 0 reputation on Bisq 2?\nAnswer: You cannot buy from users with 0 reputation on Bisq 2.",
+        "Question: Is Bisq 1 the only version that works for selling BTC?\nAnswer: You can sell both on Bisq1 and on Bisq2, the former has larger trading volume, while the latter requires to buy reputation but sales are made at a higher markup."
+      ],
+      "response_time": 12.032988548278809,
+      "error": null
+    },
+    {
+      "question": "Why can BSQ balance appear sufficient but trade-fee payment still fail in Bisq 1?",
+      "ground_truth": "Fee payment requires spendable BSQ UTXOs and correct fee context (for example BSQ swap vs fiat-trade fee path). Stale wallet state or fragmented/unspendable outputs can trigger insufficient-balance errors.",
+      "answer": "In Bisq 1 (Multisig protocol), even if your BSQ balance appears sufficient, a trade-fee payment can fail due to several reasons:\n\n1. **Minimum Fee Requirements**: There are absolute minimum fee thresholds for BSQ payments. For instance, the minimum fee to avoid dust is 0.03 BSQ. If your balance is below this threshold after attempting to pay the fee, the transaction will fail.\n\n2. **Network Congestion**: If the Bitcoin network is congested, the fee required for confirmation can increase. If your chosen fee is too low, the transaction may not get confirmed in a timely manner, causing the payment to fail.\n\n3. **Insufficient Adjusted Balance**: If you are using BSQ from a transaction that is still unconfirmed, it can reduce the effective balance available for fees.\n\nFor specific guidance or troubleshooting, it's best to check your current fees and balances within the Bisq application.",
+      "contexts": [
+        "## = Create BSQ payment account\n=\n\nTo trade BSQ on Bisq, you need to set up an altcoin account using your BSQ address. If you're curious about Instant trades, check out Altcoins_Instant this article.\n\n700px|thumb|left|Use your BSQ address to create a BSQ payment account.\n\n## = Make or take a BSQ offer\n=\n\nOnce you have a BSQ payment account set up, you can buy and sell BSQ.\n\nPick an offer you like (or make an offer of your own) and complete the trade.\n\n700px|thumb|left|Browse offers to buy BSQ.\n\n...",
+        "**Trading fees** are paid to fund the Bisq DAO when making or taking an offer. Fees can be paid in BSQ or BTC.\n\n__TOC__\n\n## Getting a discount\n\nBisq encourages traders to use BSQ by offering a discount of approximately 50%. This discount fluctuates as the BSQ/BTC rate fluctuates. To maintain the 50% discount target, trading fees are updated every cycle as necessary.\n\n## Current rates\n\n{| class=\"wikitable\" style=\"width: 250px;\"\n|+ Trading Fees per 1 BTC\n|-\n!\n!BTC\n!BSQ\n|-\n!Maker\n|0.0015\n|43.32\n|-\n...",
+        "The following article is directed at users who have at least intermediate knowledge of Bitcoin, and the suggested technique is not officially supported, meaning that if you lose funds because of mistakes, you are the only accountable party.\n\n__TOC__\n\n= Basic fee considerations =\n\nA trade on Bisq can only start after the deposit transaction has been mined into a block (one confirmation is enough), so the application will choose the optimal miner fee based on how mempool is busy at the moment the ..."
+      ],
+      "response_time": 8.580137014389038,
+      "error": null
+    }
+  ]
+}

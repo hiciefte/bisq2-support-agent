@@ -1,35 +1,31 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Clock, Users, PlusCircle, RefreshCw, Eye, Trash2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { makeAuthenticatedRequest } from '@/lib/auth';
-import { ConversationHistory } from '@/components/admin/ConversationHistory';
-import { ConversationMessage } from '@/types/feedback';
-import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
-import { type Period } from '@/types/dashboard';
-import { usePeriodStorage } from '@/hooks/usePeriodStorage';
-
-interface FeedbackForFAQ {
-  message_id: string;
-  question: string;
-  answer: string;
-  explanation: string;
-  issues: string[];
-  timestamp: string;
-  potential_category: string;
-  conversation_history?: ConversationMessage[];
-  // Index signature for compatibility with useFeedbackDeletion hook
-  [key: string]: unknown;
-}
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { makeAuthenticatedRequest } from "@/lib/auth";
+import { cn } from "@/lib/utils";
+import { usePeriodStorage } from "@/hooks/usePeriodStorage";
+import { type Period } from "@/types/dashboard";
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  FileCheck,
+  Gauge,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 
 interface DashboardData {
   helpful_rate: number;
@@ -37,7 +33,6 @@ interface DashboardData {
   average_response_time: number;
   p95_response_time: number | null;
   response_time_trend: number;
-  feedback_items_for_faq: FeedbackForFAQ[];
   feedback_items_for_faq_count: number;
   system_uptime: number;
   total_queries: number;
@@ -52,207 +47,154 @@ interface DashboardData {
   period_end?: string;
 }
 
+interface EscalationCounts {
+  pending: number;
+  in_review: number;
+  responded: number;
+  closed: number;
+  total: number;
+}
+
+interface TrainingQueueCounts {
+  FULL_REVIEW: number;
+  SPOT_CHECK: number;
+  AUTO_APPROVE: number;
+}
+
+interface FAQListResponse {
+  total_count: number;
+}
+
+const PERIOD_OPTIONS: Array<{ value: Period; label: string }> = [
+  { value: "24h", label: "24H" },
+  { value: "7d", label: "7D" },
+  { value: "30d", label: "30D" },
+];
+
 export default function AdminOverview() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [escalationCounts, setEscalationCounts] = useState<EscalationCounts | null>(null);
+  const [trainingCounts, setTrainingCounts] = useState<TrainingQueueCounts | null>(null);
+  const [unverifiedFaqCount, setUnverifiedFaqCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Create FAQ dialog state
-  const [showCreateFAQ, setShowCreateFAQ] = useState(false);
-  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackForFAQ | null>(null);
-  const [faqForm, setFaqForm] = useState({
-    message_id: '',
-    suggested_question: '',
-    suggested_answer: '',
-    category: '',
-    additional_notes: ''
-  });
-  const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
-  const [isCustomCategory, setIsCustomCategory] = useState(false);
-  const [customCategory, setCustomCategory] = useState('');
-
-  // View feedback dialog state
-  const [showViewFeedback, setShowViewFeedback] = useState(false);
-  const [viewedFeedback, setViewedFeedback] = useState<FeedbackForFAQ | null>(null);
-
-  // Period selection with localStorage persistence
   const { period, dateRange, updatePeriod, isInitialized } = usePeriodStorage("7d");
 
-  const fetchDashboardData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
+  const fetchDashboardData = useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set("period", period);
+
+    if (period === "custom" && dateRange) {
+      params.set("start_date", dateRange.from.toISOString());
+      params.set("end_date", dateRange.to.toISOString());
+    }
+
+    const response = await makeAuthenticatedRequest(`/admin/dashboard/overview?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`Dashboard request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    setDashboardData(data);
+  }, [dateRange, period]);
+
+  const fetchActionQueueData = useCallback(async () => {
+    const [escalationsResponse, trainingResponse, faqsResponse] = await Promise.all([
+      makeAuthenticatedRequest("/admin/escalations/counts"),
+      makeAuthenticatedRequest("/admin/training/unified/queue/counts"),
+      makeAuthenticatedRequest("/admin/faqs?verified=false&page=1&page_size=1"),
+    ]);
+
+    if (escalationsResponse.ok) {
+      const escalationData: EscalationCounts = await escalationsResponse.json();
+      setEscalationCounts(escalationData);
+    }
+
+    if (trainingResponse.ok) {
+      const trainingData: TrainingQueueCounts = await trainingResponse.json();
+      setTrainingCounts(trainingData);
+    }
+
+    if (faqsResponse.ok) {
+      const faqData: FAQListResponse = await faqsResponse.json();
+      setUnverifiedFaqCount(faqData.total_count || 0);
+    }
+  }, []);
+
+  const fetchAllData = useCallback(async (isBackgroundRefresh = false) => {
+    if (isBackgroundRefresh) {
       setIsRefreshing(true);
     } else {
       setIsLoading(true);
     }
 
     try {
-      // Build query parameters
-      const params = new URLSearchParams();
-      params.set('period', period);
-
-      if (period === 'custom' && dateRange) {
-        params.set('start_date', dateRange.from.toISOString());
-        params.set('end_date', dateRange.to.toISOString());
-      }
-
-      const response = await makeAuthenticatedRequest(
-        `/admin/dashboard/overview?${params.toString()}`
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setDashboardData(data);
-        setError(null);
-      } else {
-        setError(`Failed to fetch dashboard data. Status: ${response.status}`);
-      }
+      await Promise.all([fetchDashboardData(), fetchActionQueueData()]);
+      setError(null);
     } catch (err) {
-      setError('An unexpected error occurred while fetching dashboard data.');
-      console.error('Dashboard fetch error:', err);
+      console.error("Overview fetch error:", err);
+      setError("Failed to fetch overview data.");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [period, dateRange]);
-
-  // Delete feedback hook
-  const {
-    showDeleteConfirm,
-    feedbackToDelete,
-    isDeleting,
-    error: deleteError,
-    openDeleteConfirmation,
-    closeDeleteConfirmation,
-    handleDelete,
-  } = useFeedbackDeletion(fetchDashboardData);
+  }, [fetchActionQueueData, fetchDashboardData]);
 
   useEffect(() => {
-    // Wait for period initialization before fetching
     if (!isInitialized) return;
 
-    // Authentication is handled by SecureAuth wrapper in layout
-    fetchDashboardData();
+    fetchAllData();
 
-    // Auto-refresh every 30 seconds
     const intervalId = setInterval(() => {
-      fetchDashboardData(true);
+      fetchAllData(true);
     }, 30000);
 
-    // Cleanup interval on unmount
     return () => clearInterval(intervalId);
-  }, [fetchDashboardData, isInitialized]);
+  }, [fetchAllData, isInitialized]);
 
   const handleRefresh = () => {
-    fetchDashboardData(true);
+    fetchAllData(true);
   };
 
-  const handleCreateFAQClick = async (item: FeedbackForFAQ) => {
-    let feedbackWithHistory = item;
-    let errorMessage: string | null = null;
+  const escalationActionCount = (escalationCounts?.pending ?? 0) + (escalationCounts?.in_review ?? 0);
+  const trainingActionCount = useMemo(() => {
+    if (!trainingCounts) return 0;
+    return (
+      (trainingCounts.FULL_REVIEW ?? 0) +
+      (trainingCounts.SPOT_CHECK ?? 0) +
+      (trainingCounts.AUTO_APPROVE ?? 0)
+    );
+  }, [trainingCounts]);
 
-    try {
-      // Fetch full feedback details including conversation history
-      const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
+  const hasFeedbackQueue = (dashboardData?.feedback_items_for_faq_count ?? 0) > 0;
 
-      if (response.ok) {
-        const fullFeedback = await response.json();
-        feedbackWithHistory = {
-          ...item,
-          conversation_history: Array.isArray(fullFeedback.conversation_history)
-            ? fullFeedback.conversation_history
-            : []
-        };
-      } else {
-        errorMessage = 'Unable to load conversation history. Proceeding with available data.';
-      }
-    } catch (error) {
-      console.error('Error fetching feedback details:', error);
-      errorMessage = 'Unable to load conversation history. Proceeding with available data.';
-    }
-
-    setSelectedFeedback(feedbackWithHistory);
-    if (errorMessage) {
-      setError(errorMessage);
-    }
-
-    setFaqForm({
-      message_id: item.message_id,
-      suggested_question: item.question,
-      suggested_answer: '',
-      category: item.potential_category || 'General',
-      additional_notes: item.explanation || ''
-    });
-    setIsCustomCategory(false);
-    setCustomCategory('');
-    setShowCreateFAQ(true);
-  };
-
-  const handleCreateFAQ = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    setIsSubmittingFAQ(true);
-    try {
-      const response = await makeAuthenticatedRequest('/admin/feedback/create-faq', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(faqForm),
-      });
-
-      if (response.ok) {
-        setShowCreateFAQ(false);
-        setFaqForm({
-          message_id: '',
-          suggested_question: '',
-          suggested_answer: '',
-          category: '',
-          additional_notes: ''
-        });
-        setIsCustomCategory(false);
-        setCustomCategory('');
-        // Refresh data to reflect changes
-        fetchDashboardData();
-        setError(null);
-      } else {
-        const errorText = `Failed to create FAQ. Status: ${response.status}`;
-        setError(errorText);
-      }
-    } catch (err) {
-      setError('An unexpected error occurred while creating FAQ.');
-      console.error('FAQ creation error:', err);
-    } finally {
-      setIsSubmittingFAQ(false);
-    }
-  };
-
-  const handleViewFeedback = async (item: FeedbackForFAQ) => {
-    let feedbackWithHistory = item;
-
-    try {
-      const response = await makeAuthenticatedRequest(`/admin/feedback/${item.message_id}`);
-
-      if (response.ok) {
-        const fullFeedback = await response.json();
-        feedbackWithHistory = {
-          ...item,
-          conversation_history: Array.isArray(fullFeedback.conversation_history)
-            ? fullFeedback.conversation_history
-            : []
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching feedback details:', error);
-    }
-
-    setViewedFeedback(feedbackWithHistory);
-    setShowViewFeedback(true);
-  };
+  const totalOpenActions =
+    (dashboardData?.feedback_items_for_faq_count ?? 0) +
+    escalationActionCount +
+    unverifiedFaqCount +
+    trainingActionCount;
 
   const formatResponseTime = (seconds: number | null | undefined) => {
-    if (seconds === null || seconds === undefined) return 'N/A';
+    if (seconds === null || seconds === undefined) return "N/A";
     return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
+  };
+
+  const formatRelativeTime = (isoTimestamp: string) => {
+    const timestamp = new Date(isoTimestamp).getTime();
+    const now = Date.now();
+    const diffMs = Math.max(0, now - timestamp);
+    const diffMinutes = Math.floor(diffMs / 60000);
+
+    if (diffMinutes < 1) return "just now";
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
   };
 
   const getTrendIcon = (trend: number) => {
@@ -260,448 +202,360 @@ export default function AdminOverview() {
     return trend > 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />;
   };
 
-  const getTrendColor = (trend: number, isGood: 'positive' | 'negative') => {
-    if (Math.abs(trend) < 0.1) return 'text-muted-foreground';
+  const getTrendColor = (trend: number, isGood: "positive" | "negative") => {
+    if (Math.abs(trend) < 0.1) return "text-muted-foreground";
     const isPositiveChange = trend > 0;
-    const shouldBeGreen = (isGood === 'positive' && isPositiveChange) || (isGood === 'negative' && !isPositiveChange);
-    return shouldBeGreen ? 'text-green-600' : 'text-red-600';
+    const shouldBeGreen =
+      (isGood === "positive" && isPositiveChange) ||
+      (isGood === "negative" && !isPositiveChange);
+    return shouldBeGreen ? "text-green-600" : "text-red-600";
   };
+
+  const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
 
   if (isLoading) {
     return (
-      <div className="p-8">
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="p-4 md:p-8 pt-16 lg:pt-8">
+        <div className="mx-auto max-w-7xl">
+          <Card className="border-border/60 bg-card/70">
+            <CardContent className="flex items-center justify-center py-20">
+              <div className="inline-flex items-center gap-3 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">Loading overview...</span>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !dashboardData) {
     return (
-      <div className="p-8">
-        <div className="text-center py-12">
-          <p className="text-red-600 mb-4">{error}</p>
-          <Button onClick={handleRefresh} variant="outline">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Retry
-          </Button>
+      <div className="p-4 md:p-8 pt-16 lg:pt-8">
+        <div className="mx-auto max-w-7xl">
+          <Card className="border-red-500/30 bg-red-500/5">
+            <CardContent className="py-12 text-center space-y-4">
+              <div className="inline-flex items-center gap-2 text-red-300">
+                <AlertTriangle className="h-5 w-5" />
+                <span className="font-medium">Dashboard overview failed to load</span>
+              </div>
+              <p className="text-sm text-red-200/90">{error ?? "No dashboard data available."}</p>
+              <Button onClick={handleRefresh} variant="outline">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
   }
 
-  if (!dashboardData) {
-    return <div className="p-8">No data available</div>;
-  }
+  const helpfulRateValue = Math.max(0, Math.min(100, dashboardData.helpful_rate));
 
   return (
-    <div className="p-4 md:p-8 space-y-8 pt-16 lg:pt-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Admin Overview</h1>
-          <p className="text-muted-foreground">
-            Monitor system performance and manage support analytics
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Select value={period} onValueChange={(value: Period) => updatePeriod(value, undefined)}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Select period" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="24h">Last 24 Hours</SelectItem>
-              <SelectItem value="7d">Last 7 Days</SelectItem>
-              <SelectItem value="30d">Last 30 Days</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            onClick={handleRefresh}
-            variant="outline"
-            size="sm"
-            disabled={isRefreshing}
-          >
-            {isRefreshing ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Refresh
-          </Button>
-        </div>
-      </div>
+    <div className="p-4 md:p-8 pt-16 lg:pt-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="relative overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-emerald-500/10 via-background to-blue-500/10 px-5 py-5 shadow-sm md:px-6">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-16 -left-16 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Helpful Rate Card */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Helpful Rate ({dashboardData.period})</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.helpful_rate.toFixed(1)}%</div>
-            {Math.abs(dashboardData.helpful_rate_trend) >= 0.1 && (
-              <div className={`flex items-center text-xs ${getTrendColor(dashboardData.helpful_rate_trend, 'positive')}`}>
-                {getTrendIcon(dashboardData.helpful_rate_trend)}
-                <span className="ml-1">
-                  {dashboardData.helpful_rate_trend > 0 ? '+' : ''}{dashboardData.helpful_rate_trend.toFixed(1)}% {dashboardData.period_label}
-                </span>
+          <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Admin Overview</h1>
+                {dashboardData.fallback && (
+                  <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300">
+                    Fallback data
+                  </Badge>
+                )}
               </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Average Response Time Card */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Response Time ({dashboardData.period})</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatResponseTime(dashboardData.average_response_time)}</div>
-            {Math.abs(dashboardData.response_time_trend) >= 0.1 && (
-              <div className={`flex items-center text-xs ${getTrendColor(dashboardData.response_time_trend, 'negative')}`}>
-                {getTrendIcon(dashboardData.response_time_trend)}
-                <span className="ml-1">
-                  {dashboardData.response_time_trend > 0 ? '+' : ''}{formatResponseTime(Math.abs(dashboardData.response_time_trend))} {dashboardData.period_label}
-                </span>
+              <p className="max-w-2xl text-sm text-muted-foreground md:text-base">
+                Action-first snapshot of what needs support admin attention right now.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Badge variant="secondary" className="gap-1.5 bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Auto-refresh every 30s
+                </Badge>
+                <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+                  <Clock className="h-3.5 w-3.5" />
+                  Updated {formatRelativeTime(dashboardData.last_updated)}
+                </Badge>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Feedback Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm font-medium text-muted-foreground mb-2">Total FAQs</div>
-            <div className="text-xl font-bold">{dashboardData.total_faqs}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm font-medium text-muted-foreground mb-2">Total Feedback</div>
-            <div className="text-xl font-bold">{dashboardData.total_feedback}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm font-medium text-muted-foreground mb-2">Needs FAQ</div>
-            <div className="text-xl font-bold">{dashboardData.feedback_items_for_faq_count}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Feedback Items for FAQ Creation */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            Feedback Items for FAQ Creation
-            <Badge variant="secondary">{dashboardData.feedback_items_for_faq_count}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {dashboardData.feedback_items_for_faq_count === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <PlusCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No feedback items currently need FAQ creation</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {dashboardData.feedback_items_for_faq.map((item) => (
-                <div
-                  key={item.message_id}
-                  className="border rounded-lg p-4 hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-2">
-                      <div>
-                        <h4 className="font-medium text-sm leading-relaxed">{item.question}</h4>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground leading-relaxed">
-                          {item.explanation.length > 200
-                            ? `${item.explanation.substring(0, 200)}...`
-                            : item.explanation}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline">{item.potential_category}</Badge>
-                        {item.issues.slice(0, 2).map((issue, index) => (
-                          <Badge key={index} variant="secondary" className="text-xs">
-                            {issue}
-                          </Badge>
-                        ))}
-                        {item.issues.length > 2 && (
-                          <Badge variant="secondary" className="text-xs">
-                            +{item.issues.length - 2} more
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="pt-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleCreateFAQClick(item)}
-                        >
-                          <PlusCircle className="h-3 w-3 mr-1" />
-                          Create FAQ
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 ml-4">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleViewFeedback(item)}
-                        title="View feedback details"
-                        aria-label="View feedback details"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openDeleteConfirmation(item)}
-                        title="Delete feedback"
-                        aria-label="Delete feedback"
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Footer */}
-      <div className="text-xs text-muted-foreground text-center">
-        Last updated: {new Date(dashboardData.last_updated).toLocaleString()}
-      </div>
-
-      {/* Create FAQ Dialog */}
-      <Dialog open={showCreateFAQ} onOpenChange={setShowCreateFAQ}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Create FAQ from Feedback</DialogTitle>
-            <DialogDescription>
-              Create a new FAQ entry based on user feedback
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateFAQ} className="space-y-4">
-            <div>
-              <Label htmlFor="suggested_question">Question</Label>
-              <Input
-                id="suggested_question"
-                value={faqForm.suggested_question}
-                onChange={(e) => setFaqForm({ ...faqForm, suggested_question: e.target.value })}
-                placeholder="Enter the FAQ question"
-                required
-              />
             </div>
 
-            <div>
-              <Label htmlFor="suggested_answer">Answer</Label>
-              <Textarea
-                id="suggested_answer"
-                value={faqForm.suggested_answer}
-                onChange={(e) => setFaqForm({ ...faqForm, suggested_answer: e.target.value })}
-                placeholder="Enter the FAQ answer"
-                rows={4}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="category">Category</Label>
-              <Select
-                value={isCustomCategory ? 'custom' : faqForm.category}
+            <div className="flex flex-col gap-2 sm:items-end">
+              <ToggleGroup
+                type="single"
+                value={period}
                 onValueChange={(value) => {
-                  if (value === 'custom') {
-                    setIsCustomCategory(true);
-                    setFaqForm({ ...faqForm, category: '' });
-                  } else {
-                    setIsCustomCategory(false);
-                    setCustomCategory('');
-                    setFaqForm({ ...faqForm, category: value });
+                  if (value) {
+                    updatePeriod(value as Period, undefined);
                   }
                 }}
+                className="justify-start sm:justify-end"
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="General">General</SelectItem>
-                  <SelectItem value="Trading">Trading</SelectItem>
-                  <SelectItem value="Technical">Technical</SelectItem>
-                  <SelectItem value="Account">Account</SelectItem>
-                  <SelectItem value="Payment">Payment</SelectItem>
-                  <SelectItem value="Security">Security</SelectItem>
-                  <SelectItem value="custom">Custom Category</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {isCustomCategory && (
-              <div>
-                <Label htmlFor="customCategory">Custom Category</Label>
-                <Input
-                  id="customCategory"
-                  value={customCategory}
-                  onChange={(e) => {
-                    setCustomCategory(e.target.value);
-                    setFaqForm({ ...faqForm, category: e.target.value });
-                  }}
-                  placeholder="Enter custom category"
-                  required
-                />
-              </div>
-            )}
-
-            {faqForm.additional_notes && (
-              <div>
-                <Label>User Feedback</Label>
-                <div className="mt-1 p-3 bg-red-50 rounded border border-red-200 text-red-900 text-sm">
-                  {faqForm.additional_notes}
-                </div>
-              </div>
-            )}
-
-            {selectedFeedback?.conversation_history && selectedFeedback.conversation_history.length > 1 && (
-              <ConversationHistory messages={selectedFeedback.conversation_history} />
-            )}
-
-            <DialogFooter>
+                {PERIOD_OPTIONS.map((option) => (
+                  <ToggleGroupItem
+                    key={option.value}
+                    value={option.value}
+                    variant="outline"
+                    size="sm"
+                    className="min-w-[52px] border-border/70 bg-background/70 text-xs font-medium"
+                    aria-label={`Set dashboard period to ${option.label}`}
+                  >
+                    {option.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
               <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowCreateFAQ(false)}
+                onClick={handleRefresh}
+                variant="ghost"
+                size="sm"
+                disabled={isRefreshing}
+                className="justify-start text-muted-foreground sm:justify-end"
               >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmittingFAQ}>
-                {isSubmittingFAQ ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Creating...
-                  </>
+                {isRefreshing ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 ) : (
-                  'Create FAQ'
+                  <RefreshCw className="h-4 w-4 mr-2" />
                 )}
+                Sync now
               </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Feedback Dialog */}
-      <Dialog open={showViewFeedback} onOpenChange={setShowViewFeedback}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Feedback Details</DialogTitle>
-            <DialogDescription>
-              Complete feedback information and response details
-            </DialogDescription>
-          </DialogHeader>
-          {viewedFeedback && (
-            <div className="space-y-4">
-              <div>
-                <span className="font-medium text-card-foreground">Question:</span>
-                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{viewedFeedback.question}</p>
-              </div>
-
-              <div>
-                <span className="font-medium text-card-foreground">Answer:</span>
-                <p className="mt-1 p-3 bg-accent rounded text-card-foreground">{viewedFeedback.answer}</p>
-              </div>
-
-              {viewedFeedback.explanation && (
-                <div>
-                  <span className="font-medium text-card-foreground">User Feedback:</span>
-                  <p className="mt-1 p-3 bg-red-50 rounded border-l-4 border-red-200 text-red-900">{viewedFeedback.explanation}</p>
-                </div>
-              )}
-
-              {viewedFeedback.conversation_history && viewedFeedback.conversation_history.length > 1 && (
-                <ConversationHistory messages={viewedFeedback.conversation_history} />
-              )}
-
-              {viewedFeedback.issues && viewedFeedback.issues.length > 0 && (
-                <div>
-                  <span className="font-medium text-card-foreground">Issues Identified:</span>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {viewedFeedback.issues.map((issue, idx) => (
-                      <Badge key={idx} variant="secondary" className="text-xs">
-                        {issue.replace('_', ' ')}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <span className="font-medium text-card-foreground">Category:</span>
-                <Badge variant="outline" className="ml-2">{viewedFeedback.potential_category}</Badge>
-              </div>
-
-              <div>
-                <span className="font-medium text-card-foreground">Timestamp:</span>
-                <p className="mt-1">{new Date(viewedFeedback.timestamp).toLocaleString()}</p>
-              </div>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
+          </div>
+        </section>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={showDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Feedback</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this feedback entry? This action cannot be undone and is permanent.
-              {feedbackToDelete && (
-                <div className="mt-4 p-3 bg-accent rounded border border-border">
-                  <p className="text-sm font-medium text-card-foreground mb-1">Message ID: {feedbackToDelete.message_id}</p>
-                  <p className="text-sm font-medium text-card-foreground mb-1">Question:</p>
-                  <p className="text-sm text-muted-foreground">{feedbackToDelete.question.substring(0, 100)}{feedbackToDelete.question.length > 100 ? '...' : ''}</p>
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-border/70 bg-card/70">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Helpful Rate</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-semibold tracking-tight tabular-nums">
+                  {dashboardData.helpful_rate.toFixed(1)}%
                 </div>
-              )}
-              {deleteError && (
-                <div className="mt-4 p-3 bg-red-500/10 rounded border border-red-500/50">
-                  <p className="text-sm text-red-600">{deleteError}</p>
+                <Users className="h-5 w-5 text-emerald-400" />
+              </div>
+              <Progress value={helpfulRateValue} className="h-1.5 bg-emerald-500/20" />
+              <div className={cn("flex items-center gap-1 text-xs", getTrendColor(dashboardData.helpful_rate_trend, "positive"))}>
+                {getTrendIcon(dashboardData.helpful_rate_trend)}
+                <span className="tabular-nums">
+                  {dashboardData.helpful_rate_trend > 0 ? "+" : ""}
+                  {dashboardData.helpful_rate_trend.toFixed(1)}% {dashboardData.period_label}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/70 bg-card/70">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Average Response Time</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-semibold tracking-tight tabular-nums">
+                  {formatResponseTime(dashboardData.average_response_time)}
                 </div>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={closeDeleteConfirmation}
-              disabled={isDeleting}
-            >
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-red-600 hover:bg-red-700 focus:ring-red-600 text-white"
-              aria-label="Confirm delete feedback"
-            >
-              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                <Gauge className="h-5 w-5 text-blue-400" />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                P95: <span className="tabular-nums">{formatResponseTime(dashboardData.p95_response_time)}</span>
+              </div>
+              <div className={cn("flex items-center gap-1 text-xs", getTrendColor(dashboardData.response_time_trend, "negative"))}>
+                {getTrendIcon(dashboardData.response_time_trend)}
+                <span className="tabular-nums">
+                  {dashboardData.response_time_trend > 0 ? "+" : ""}
+                  {formatResponseTime(Math.abs(dashboardData.response_time_trend))} {dashboardData.period_label}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/70 bg-card/70">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Feedback Volume</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-semibold tracking-tight tabular-nums">
+                  {formatNumber(dashboardData.total_feedback)}
+                </div>
+                <MessageSquare className="h-5 w-5 text-violet-400" />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Total queries: <span className="tabular-nums">{formatNumber(dashboardData.total_queries)}</span>
+              </div>
+              <Badge variant="outline" className="text-xs text-muted-foreground">
+                {dashboardData.period_label}
+              </Badge>
+            </CardContent>
+          </Card>
+
+          <Card className={cn("border-border/70 bg-card/70", totalOpenActions > 0 && "border-amber-500/40 bg-amber-500/5")}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Open Admin Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-semibold tracking-tight tabular-nums">{totalOpenActions}</div>
+                {totalOpenActions > 0 ? (
+                  <AlertTriangle className="h-5 w-5 text-amber-300" />
+                ) : (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                FAQs created: <span className="tabular-nums">{formatNumber(dashboardData.total_faqs_created)}</span>
+              </div>
+              <Badge
+                variant="secondary"
+                className={cn(
+                  "text-xs",
+                  totalOpenActions > 0
+                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
+                )}
+              >
+                {totalOpenActions > 0 ? "Action required" : "Inbox clear"}
+              </Badge>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card className="border-border/70 bg-card/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Admin Action Queue</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Prioritized work waiting across Feedback, Escalations, FAQs, and Training.
+              </p>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <ActionTaskCard
+                icon={<MessageSquare className="h-4 w-4 text-violet-300" />}
+                label="Feedback"
+                count={dashboardData.feedback_items_for_faq_count}
+                description={
+                  hasFeedbackQueue
+                    ? "Negative feedback items flagged for FAQ creation."
+                    : "No feedback items currently waiting for FAQ creation."
+                }
+                href="/admin/manage-feedback"
+                cta="Review feedback"
+                detail={dashboardData.feedback_items_for_faq_count > 0 ? "Needs FAQ tab" : undefined}
+              />
+
+              <ActionTaskCard
+                icon={<AlertTriangle className="h-4 w-4 text-amber-300" />}
+                label="Escalations"
+                count={escalationActionCount}
+                description={
+                  escalationActionCount > 0
+                    ? "Escalations waiting for triage or response."
+                    : "No escalations currently waiting."
+                }
+                href="/admin/escalations"
+                cta="Open escalations"
+                detail={`Pending ${(escalationCounts?.pending ?? 0)} · In review ${(escalationCounts?.in_review ?? 0)}`}
+              />
+
+              <ActionTaskCard
+                icon={<FileCheck className="h-4 w-4 text-blue-300" />}
+                label="FAQs"
+                count={unverifiedFaqCount}
+                description={
+                  unverifiedFaqCount > 0
+                    ? "Draft or updated FAQs waiting for verification."
+                    : "No FAQ verification backlog right now."
+                }
+                href="/admin/manage-faqs"
+                cta="Verify FAQs"
+                detail={`Total FAQs ${formatNumber(dashboardData.total_faqs)}`}
+              />
+
+              <ActionTaskCard
+                icon={<Gauge className="h-4 w-4 text-emerald-300" />}
+                label="Training"
+                count={trainingActionCount}
+                description={
+                  trainingActionCount > 0
+                    ? "Candidate answers waiting in training queues."
+                    : "Training queues are currently clear."
+                }
+                href="/admin/training"
+                cta="Open training"
+                detail={`Full review ${(trainingCounts?.FULL_REVIEW ?? 0)} · Spot check ${(trainingCounts?.SPOT_CHECK ?? 0)} · Auto approve ${(trainingCounts?.AUTO_APPROVE ?? 0)}`}
+              />
+            </CardContent>
+          </Card>
+        </section>
+
+        <footer className="text-xs text-muted-foreground text-center">
+          Last updated: {new Date(dashboardData.last_updated).toLocaleString()}
+        </footer>
+      </div>
     </div>
+  );
+}
+
+interface ActionTaskCardProps {
+  icon: ReactNode;
+  label: string;
+  count: number;
+  description: string;
+  href: string;
+  cta: string;
+  detail?: string;
+}
+
+function ActionTaskCard({ icon, label, count, description, href, cta, detail }: ActionTaskCardProps) {
+  const hasWork = count > 0;
+
+  return (
+    <article
+      className={cn(
+        "rounded-xl border p-4 transition-colors",
+        hasWork
+          ? "border-amber-500/30 bg-amber-500/5"
+          : "border-border/70 bg-background/40",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1.5">
+          <div className="inline-flex items-center gap-2 text-sm font-medium">
+            {icon}
+            {label}
+          </div>
+          <div className="text-3xl font-semibold tracking-tight tabular-nums">{count}</div>
+        </div>
+        <Badge
+          variant="secondary"
+          className={cn(
+            "text-xs",
+            hasWork
+              ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+              : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
+          )}
+        >
+          {hasWork ? "Needs action" : "Clear"}
+        </Badge>
+      </div>
+
+      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+      {detail ? <p className="mt-1 text-xs text-muted-foreground">{detail}</p> : null}
+
+      <div className="mt-4">
+        <Button asChild size="sm" variant={hasWork ? "default" : "outline"}>
+          <Link href={href}>
+            {cta}
+            <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+          </Link>
+        </Button>
+      </div>
+    </article>
   );
 }

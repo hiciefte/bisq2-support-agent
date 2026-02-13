@@ -1,0 +1,75 @@
+{
+  "snapshot_name": "kb_2026_02_11_current_retrieval",
+  "created_at": "2026-02-11T09:58:48.179875+00:00",
+  "note": "Post retriever changes before cross-state benchmark",
+  "data_dir": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data",
+  "git": {
+    "commit": "c3a7fc6e45b61857b7562f63482ce9b4f2b1512f",
+    "branch": "feature/reaction-feedback"
+  },
+  "retrieval_inputs": [
+    "wiki/processed_wiki.jsonl",
+    "wiki/payment_methods_reference.jsonl",
+    "faqs.db",
+    "bm25_vocabulary.json",
+    "qdrant_index_metadata.json"
+  ],
+  "files": [
+    {
+      "relative_path": "wiki/processed_wiki.jsonl",
+      "required": true,
+      "capture_mode": "copy",
+      "source_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/wiki/processed_wiki.jsonl",
+      "snapshot_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/files/wiki/processed_wiki.jsonl",
+      "size": 857619,
+      "mtime": 1759829711.3746364,
+      "sha256": "f3ec39eac2103d635ddb6b8ce5385c170cc5df091207746f9b7703763c349343"
+    },
+    {
+      "relative_path": "wiki/payment_methods_reference.jsonl",
+      "required": false,
+      "capture_mode": "copy",
+      "source_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/wiki/payment_methods_reference.jsonl",
+      "snapshot_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/files/wiki/payment_methods_reference.jsonl",
+      "size": 4357,
+      "mtime": 1768824181.2136137,
+      "sha256": "01ef745d35ebe92243c57fd01866b58f6be5ac97c4a1d802e688882764846fe1"
+    },
+    {
+      "relative_path": "faqs.db",
+      "required": true,
+      "capture_mode": "sqlite_backup",
+      "source_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/faqs.db",
+      "snapshot_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/files/faqs.db",
+      "size": 266240,
+      "mtime": 1770803928.1755915,
+      "sha256": "78afc73f3b286e28cee671978128ef06c2ed6493b77e598b3455ec6f8d0ff6e3",
+      "source_logical_sha256": "0c9222ac4d6707dc0db0fb59c1651931b3b732d6e270bb0fa361e75623d54508",
+      "snapshot_logical_sha256": "0c9222ac4d6707dc0db0fb59c1651931b3b732d6e270bb0fa361e75623d54508"
+    },
+    {
+      "relative_path": "bm25_vocabulary.json",
+      "required": true,
+      "capture_mode": "copy",
+      "source_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/bm25_vocabulary.json",
+      "snapshot_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/files/bm25_vocabulary.json",
+      "size": 498678,
+      "mtime": 1770757546.6643713,
+      "sha256": "a401dabea37dbd8193803fc120d77834b3f375b4374d0a826539128e470746ed"
+    },
+    {
+      "relative_path": "qdrant_index_metadata.json",
+      "required": false,
+      "capture_mode": "copy",
+      "source_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/qdrant_index_metadata.json",
+      "snapshot_path": "/Users/takahiro/Documents/Workspaces/Python/bisq2-support-agent/api/data/evaluation/kb_snapshots/kb_2026_02_11_current_retrieval/files/qdrant_index_metadata.json",
+      "size": 620,
+      "mtime": 1770757576.4933858,
+      "sha256": "6ae4ea9d3126cafd4bfb209be03925ca30aba47730c8494ee5998f58965b3320"
+    }
+  ],
+  "restore_notes": [
+    "Restore this snapshot before benchmark runs for comparable metrics.",
+    "After restore, rebuild Qdrant index if collection contents may differ."
+  ]
+}

@@ -13,6 +13,7 @@ Tests cover:
 from unittest.mock import MagicMock, patch
 
 import pytest
+from app.prompts import error_messages
 from app.services.simplified_rag_service import SimplifiedRAGService
 
 
@@ -399,3 +400,77 @@ class TestDocumentProcessing:
 
         # Should return a string (mock returns "" by default from fixture)
         assert isinstance(context, str)
+
+
+class TestRAGServiceErrorMessages:
+    """Test that SimplifiedRAGService uses centralized error messages."""
+
+    @pytest.mark.asyncio
+    async def test_not_initialized_uses_centralized_message(self, test_settings):
+        """When rag_chain is None, should return NOT_INITIALIZED message."""
+        service = SimplifiedRAGService(settings=test_settings)
+        # Don't call setup() — rag_chain stays None
+        response = await service.query("What is Bisq?")
+        assert response["answer"] == error_messages.NOT_INITIALIZED
+
+    @pytest.mark.asyncio
+    async def test_no_docs_no_history_uses_centralized_message(self, rag_service):
+        """When no docs and no history, should return INSUFFICIENT_INFO."""
+        # Must mock retrieve_with_scores (the actual method used in query flow)
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_scores",
+            return_value=([], []),
+        ):
+            # Use override_version to bypass version clarification
+            response = await rag_service.query(
+                "What is the meaning of life?",
+                chat_history=[],
+                override_version="bisq_easy",
+            )
+
+        assert response["answer"] == error_messages.INSUFFICIENT_INFO
+
+    @pytest.mark.asyncio
+    async def test_context_fallback_error_uses_centralized_message(self, rag_service):
+        """When context fallback raises, should return INSUFFICIENT_INFO."""
+        with (
+            patch.object(
+                rag_service.document_retriever,
+                "retrieve_with_version_priority",
+                return_value=[],
+            ),
+            patch.object(
+                rag_service,
+                "_answer_from_context",
+                side_effect=Exception("context boom"),
+            ),
+        ):
+            response = await rag_service.query(
+                "How does trading work?",
+                chat_history=[
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ],
+            )
+
+        # Should fall through to the insufficient info path
+        assert "answer" in response
+        assert len(response["answer"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_query_exception_uses_centralized_message(self, rag_service):
+        """When query() itself raises, should return QUERY_ERROR."""
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_version_priority",
+            side_effect=Exception("total failure"),
+        ):
+            # Use override_version to bypass version clarification
+            response = await rag_service.query(
+                "How do I trade on Bisq 2?",
+                chat_history=[],
+                override_version="bisq_easy",
+            )
+
+        assert response["answer"] == error_messages.QUERY_ERROR

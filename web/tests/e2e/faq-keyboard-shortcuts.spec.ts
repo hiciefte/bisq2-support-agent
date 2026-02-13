@@ -49,7 +49,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
                 await page.click('button:has-text("Login")');
 
                 // Wait for authenticated UI to appear (sidebar with navigation)
-                await page.waitForSelector("text=Admin Dashboard", { timeout: 15000 });
+                await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 15000 });
 
                 // Navigate to FAQ management
                 await page.click('a[href="/admin/manage-faqs"]');

@@ -1,8 +1,8 @@
 """
 Protocol interfaces for RAG retrieval system.
 
-This module defines abstract interfaces (Protocols) for retrieval components,
-enabling pluggable backends (ChromaDB, Qdrant, etc.) with consistent APIs.
+This module defines abstract interfaces (Protocols) for retrieval components
+with consistent APIs.
 
 Usage:
     class MyRetriever(RetrieverProtocol):
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 class RetrievedDocument:
     """Standardized document representation for retrieval results.
 
-    This dataclass provides a consistent interface across different retrieval
-    backends (ChromaDB, Qdrant, etc.) with optional scoring and metadata.
+    This dataclass provides a consistent interface across retrieval
+    implementations with optional scoring and metadata.
 
     Attributes:
         content: The document text content
@@ -80,9 +80,8 @@ class RetrieverProtocol(Protocol):
     - Retrieval with similarity scores
     - Health checking
 
-    Examples of implementations:
-    - ChromaDBRetriever (current)
-    - QdrantHybridRetriever (new)
+    Example implementation:
+    - QdrantHybridRetriever
     """
 
     def retrieve(
@@ -191,8 +190,8 @@ class HybridRetrieverProtocol(RetrieverProtocol, Protocol):
         self,
         query: str,
         k: int = 10,
-        semantic_weight: float = 0.7,
-        keyword_weight: float = 0.3,
+        semantic_weight: float = 0.6,
+        keyword_weight: float = 0.4,
         filter_dict: Optional[Dict[str, Any]] = None,
     ) -> List[RetrievedDocument]:
         """Retrieve using hybrid search (semantic + keyword).

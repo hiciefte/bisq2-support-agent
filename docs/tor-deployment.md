@@ -496,7 +496,7 @@ The production nginx config already includes Tor-compatible security headers:
 - [Tor Project - Hidden Services](https://community.torproject.org/onion-services/)
 - [OWASP Tor Security Guidelines](https://owasp.org/www-community/controls/Tor)
 - [Bisq Network Documentation](https://bisq.network/docs)
-- Full implementation details: [docs/requirements/tor-deployment.md](requirements/tor-deployment.md)
+- Deployment overview: [README.md](../README.md)
 
 ## Support
 

@@ -4,7 +4,7 @@ Wraps existing Matrix integration into channel plugin architecture.
 """
 
 import asyncio
-from typing import Set
+from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
@@ -49,6 +49,7 @@ class MatrixChannel(ChannelBase):
             ChannelCapability.PERSISTENT_CONNECTION,
             ChannelCapability.RECEIVE_MESSAGES,
             ChannelCapability.SEND_RESPONSES,
+            ChannelCapability.REACTIONS,
         }
 
     @property
@@ -84,6 +85,15 @@ class MatrixChannel(ChannelBase):
             self._logger.exception(f"Failed to connect to Matrix homeserver: {e}")
             self._is_connected = False
 
+        # Wire reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.start_listening()
+                self._logger.info("Matrix reaction handler started")
+            except Exception as e:
+                self._logger.warning(f"Failed to start reaction handler: {e}")
+
     async def stop(self) -> None:
         """Stop the Matrix channel.
 
@@ -98,6 +108,14 @@ class MatrixChannel(ChannelBase):
                 await conn_manager.disconnect()
             except Exception as e:
                 self._logger.exception(f"Error disconnecting from Matrix: {e}")
+
+        # Stop reaction handler if registered
+        reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
+        if reaction_handler:
+            try:
+                await reaction_handler.stop_listening()
+            except Exception as e:
+                self._logger.warning(f"Failed to stop reaction handler: {e}")
 
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
@@ -143,6 +161,27 @@ class MatrixChannel(ChannelBase):
                 self._logger.debug(
                     f"Message sent to {target}, event_id: {response.event_id}"
                 )
+                # Track for reaction correlation
+                tracker = self.runtime.resolve_optional("sent_message_tracker")
+                if tracker:
+                    try:
+                        _meta = getattr(message, "metadata", None)
+                        tracker.track(
+                            channel_id="matrix",
+                            external_message_id=response.event_id,
+                            internal_message_id=getattr(message, "message_id", ""),
+                            question=getattr(message, "original_question", "") or "",
+                            answer=message.answer,
+                            user_id=getattr(
+                                getattr(message, "user", None), "user_id", ""
+                            ),
+                            sources=[],
+                            confidence_score=getattr(_meta, "confidence_score", None),
+                            routing_action=getattr(_meta, "routing_action", None),
+                            requires_human=getattr(message, "requires_human", None),
+                        )
+                    except Exception as e:
+                        self._logger.warning(f"Failed to track sent message: {e}")
                 return True
             else:
                 # Error response
@@ -161,6 +200,20 @@ class MatrixChannel(ChannelBase):
                 f"Error sending message to Matrix room {target}: {e}"
             )
             return False
+
+    def get_delivery_target(self, metadata: dict[str, Any]) -> str:
+        """Extract Matrix room ID from channel metadata."""
+        return metadata.get("room_id", "")
+
+    def format_escalation_message(
+        self, username: str, escalation_id: int, support_handle: str
+    ) -> str:
+        """Format escalation message for Matrix room."""
+        return (
+            f"Your question has been escalated to {support_handle} for review. "
+            f"A support team member will respond in this room. "
+            f"(Reference: #{escalation_id})"
+        )
 
     # handle_incoming() inherited from ChannelBase
 

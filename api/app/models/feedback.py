@@ -17,26 +17,55 @@ class ConversationMessage(BaseModel):
         return v.strip()
 
 
+class ReactionSubmitRequest(BaseModel):
+    """Request model for reaction feedback (thumbs up/down)."""
+
+    message_id: str = Field(
+        pattern=r"^[a-zA-Z0-9_$:.\-]{1,256}$",
+        description="Message ID from chat response",
+    )
+    rating: int = Field(ge=0, le=1, description="0=negative, 1=positive")
+
+
 class FeedbackRequest(BaseModel):
     """Request model for submitting feedback."""
 
     message_id: str = Field(
-        pattern=r"^[a-f0-9-]{36}$", description="UUID of the message"
+        pattern=r"^[a-zA-Z0-9_$:.\-]{1,256}$",
+        description="Message ID (UUID, Matrix event_id, or Bisq2 hex)",
     )
     question: str = Field(max_length=5000, description="User question")
     answer: str = Field(max_length=20000, description="Assistant answer")
     rating: int = Field(ge=0, le=1, description="0 for negative, 1 for positive")
     explanation: Optional[str] = Field(
-        None, max_length=5000, description="Feedback explanation"
+        None, max_length=2000, description="Feedback explanation"
+    )
+    channel: str = Field(
+        default="web", description="Source channel (web, matrix, bisq2)"
+    )
+    feedback_method: str = Field(
+        default="web_dialog",
+        description="How feedback was submitted (web_dialog, reaction)",
+    )
+    external_message_id: Optional[str] = Field(
+        None, description="Channel-native message ID for reaction tracking"
+    )
+    reactor_identity_hash: Optional[str] = Field(
+        None, description="SHA-256 hash of reactor identity for dedup"
+    )
+    reaction_emoji: Optional[str] = Field(
+        None, description="Original emoji used for reaction feedback"
     )
     conversation_history: Optional[List[ConversationMessage]] = Field(
         None, max_length=50, description="Conversation context (max 50 messages)"
     )
     sources: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Source documents used in RAG response"
+        None, max_length=100, description="Source documents used in RAG response"
     )
     sources_used: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Source documents actually used in response generation"
+        None,
+        max_length=100,
+        description="Source documents actually used in response generation",
     )
 
     @field_validator("conversation_history")
@@ -71,8 +100,14 @@ class FeedbackItem(BaseModel):
     answer: str
     rating: int = Field(description="0 for negative, 1 for positive")
     timestamp: str
-    sources: Optional[List[Dict[str, str]]] = None
-    sources_used: Optional[List[Dict[str, str]]] = None
+    channel: str = Field(default="web", description="Source channel")
+    feedback_method: str = Field(default="web_dialog", description="Feedback method")
+    external_message_id: Optional[str] = None
+    reactor_identity_hash: Optional[str] = None
+    reaction_emoji: Optional[str] = None
+    # Sources may include numeric similarity scores and optional fields.
+    sources: Optional[List[Dict[str, Any]]] = None
+    sources_used: Optional[List[Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
     processed: Optional[int] = Field(
         default=0, description="0=not processed, 1=processed into FAQ"
@@ -148,6 +183,12 @@ class FeedbackFilterRequest(BaseModel):
     rating: Optional[str] = Field(None, description="positive, negative, or all")
     date_from: Optional[str] = Field(None, description="ISO date string")
     date_to: Optional[str] = Field(None, description="ISO date string")
+    channel: Optional[str] = Field(
+        None, description="Filter by channel (web, matrix, bisq2)"
+    )
+    feedback_method: Optional[str] = Field(
+        None, description="Filter by method (web_dialog, reaction)"
+    )
     issues: Optional[List[str]] = Field(
         None, description="List of issue types to filter by"
     )
@@ -192,6 +233,8 @@ class FeedbackStatsResponse(BaseModel):
     needs_faq_count: int
     source_effectiveness: Dict[str, Dict[str, Any]]
     feedback_by_month: Dict[str, int]
+    feedback_by_channel: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    feedback_by_method: Dict[str, Dict[str, int]] = Field(default_factory=dict)
 
 
 class CreateFAQFromFeedbackRequest(BaseModel):
@@ -203,6 +246,10 @@ class CreateFAQFromFeedbackRequest(BaseModel):
     )
     suggested_answer: str = Field(description="The improved answer for the FAQ")
     category: str = Field(description="Category for the new FAQ")
+    protocol: Literal["multisig_v1", "bisq_easy", "musig", "all"] = Field(
+        default="all",
+        description="Protocol scope for the new FAQ",
+    )
     additional_notes: Optional[str] = Field(
         None, description="Additional context or notes"
     )
@@ -214,10 +261,37 @@ class FeedbackForFAQItem(BaseModel):
     message_id: str
     question: str
     answer: str
-    explanation: str
+    explanation: Optional[str] = None
     issues: List[str]
     timestamp: str
     potential_category: str
+
+
+class EscalationMetrics(BaseModel):
+    """Escalation rate metrics derived from routing decisions."""
+
+    total_routing_decisions: int = 0
+    auto_send_count: int = 0
+    queue_medium_count: int = 0
+    needs_human_count: int = 0
+    escalation_rate: float = 0.0  # percentage
+
+    @field_validator("escalation_rate", mode="before")
+    @classmethod
+    def _ignore_input(cls, v: float) -> float:
+        """Always recomputed in model_post_init; ignore caller value."""
+        return v
+
+    def model_post_init(self, __context: Any) -> None:
+        total = self.auto_send_count + self.queue_medium_count + self.needs_human_count
+        object.__setattr__(self, "total_routing_decisions", total)
+        if total > 0:
+            rate = round(
+                (self.queue_medium_count + self.needs_human_count) / total * 100, 1
+            )
+            object.__setattr__(self, "escalation_rate", rate)
+        else:
+            object.__setattr__(self, "escalation_rate", 0.0)
 
 
 class DashboardOverviewResponse(BaseModel):
@@ -247,6 +321,11 @@ class DashboardOverviewResponse(BaseModel):
     total_faqs: int = Field(description="Total FAQs in system")
     last_updated: str = Field(description="When the data was last updated")
     fallback: Optional[bool] = Field(None, description="Whether this is fallback data")
+
+    # Escalation metrics
+    escalation_metrics: Optional[Dict[str, Any]] = Field(
+        None, description="Escalation rate metrics"
+    )
 
     # Period metadata
     period: str = Field(description="Selected time period for trends")

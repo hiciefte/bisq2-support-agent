@@ -57,30 +57,15 @@ test.describe("Permission Regression Tests", () => {
 
         // Step 3: Refresh page and try to delete the FAQ
         await page.reload();
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 30000 });
+        await page.waitForSelector(".bg-card.border.rounded-lg", { timeout: 30000 });
 
         const faqCard = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
         );
         await expect(faqCard).toBeVisible();
 
-        // Click delete button (Trash2 icon) - iterate to find second icon button
-        const allButtons = faqCard.locator("button");
-        const buttonCount = await allButtons.count();
-        let iconButtonIndex = 0;
-
-        for (let i = 0; i < buttonCount; i++) {
-            const btn = allButtons.nth(i);
-            const text = await btn.textContent();
-            if (!text || text.trim().length === 0) {
-                if (iconButtonIndex === 1) {
-                    // Second icon button is delete
-                    await btn.click();
-                    break;
-                }
-                iconButtonIndex++;
-            }
-        }
+        await faqCard.hover();
+        await faqCard.locator('[data-testid="delete-faq-button"]').click();
 
         // Wait for AlertDialog and click Continue
         const dialog = page.getByRole("alertdialog");
@@ -91,13 +76,13 @@ test.describe("Permission Regression Tests", () => {
 
         // Step 4: Verify deletion succeeded
         const deletedFaq = page.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
         );
         await expect(deletedFaq).toHaveCount(0);
 
         // Step 5: Verify deletion persisted (reload page)
         await page.reload();
-        await page.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+        await page.waitForSelector(".bg-card.border.rounded-lg", { timeout: 10000 });
         await expect(deletedFaq).toHaveCount(0);
 
         // Step 6: Check API logs for permission errors
@@ -145,8 +130,7 @@ test.describe("Permission Regression Tests", () => {
         // Wait for page to load - check for either feedback items or "No feedback" message
         await page.waitForTimeout(2000);
 
-        // Check if feedback exists - feedback entries use .border-l-4.border-l-gray-200
-        const feedbackItems = page.locator(".border-l-4.border-l-gray-200");
+        const feedbackItems = page.locator('[data-testid="feedback-card"]');
         const count = await feedbackItems.count();
 
         // If no feedback, this test cannot verify anything - skip verification
@@ -234,28 +218,12 @@ test.describe("Permission Regression Tests", () => {
             });
             await page.waitForTimeout(500);
 
-            // Delete FAQ - use icon button iteration pattern
             const faqCard = page.locator(
-                `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+                `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
             );
             await faqCard.waitFor({ state: "visible", timeout: 10000 });
-
-            const allButtons = faqCard.locator("button");
-            const buttonCount = await allButtons.count();
-            let iconButtonIndex = 0;
-
-            for (let i = 0; i < buttonCount; i++) {
-                const btn = allButtons.nth(i);
-                const text = await btn.textContent();
-                if (!text || text.trim().length === 0) {
-                    if (iconButtonIndex === 1) {
-                        // Second icon button is delete
-                        await btn.click();
-                        break;
-                    }
-                    iconButtonIndex++;
-                }
-            }
+            await faqCard.hover();
+            await faqCard.locator('[data-testid="delete-faq-button"]').click();
 
             // Wait for AlertDialog and click Continue
             const dialog = page.getByRole("alertdialog");
@@ -388,34 +356,18 @@ test.describe("Cross-session Permission Tests", () => {
 
         // Admin 2: Refresh and verify FAQ appears
         await page2.reload();
-        await page2.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+        await page2.waitForSelector(".bg-card.border.rounded-lg", { timeout: 10000 });
         const faqOnPage2 = page2.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
         );
         await expect(faqOnPage2).toBeVisible();
 
-        // Admin 1: Delete FAQ - use icon button iteration pattern
         const faqOnPage1 = page1.locator(
-            `.bg-card.border.border-border.rounded-lg:has-text("${testQuestion}")`
+            `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
         );
         await faqOnPage1.waitFor({ state: "visible", timeout: 5000 });
-
-        const allButtons = faqOnPage1.locator("button");
-        const buttonCount = await allButtons.count();
-        let iconButtonIndex = 0;
-
-        for (let i = 0; i < buttonCount; i++) {
-            const btn = allButtons.nth(i);
-            const text = await btn.textContent();
-            if (!text || text.trim().length === 0) {
-                if (iconButtonIndex === 1) {
-                    // Second icon button is delete
-                    await btn.click();
-                    break;
-                }
-                iconButtonIndex++;
-            }
-        }
+        await faqOnPage1.hover();
+        await faqOnPage1.locator('[data-testid="delete-faq-button"]').click();
 
         // Wait for AlertDialog and click Continue
         const dialog = page1.getByRole("alertdialog");
@@ -426,7 +378,7 @@ test.describe("Cross-session Permission Tests", () => {
 
         // Admin 2: Refresh and verify FAQ is gone
         await page2.reload();
-        await page2.waitForSelector(".bg-card.border.border-border.rounded-lg", { timeout: 10000 });
+        await page2.waitForSelector(".bg-card.border.rounded-lg", { timeout: 10000 });
         await expect(faqOnPage2).toHaveCount(0);
 
         // Cleanup

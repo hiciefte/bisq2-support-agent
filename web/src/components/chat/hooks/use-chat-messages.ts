@@ -172,7 +172,26 @@ const parseStoredMessage = (value: unknown): Message | null => {
             typeof value.isThankYouMessage === "boolean" ? value.isThankYouMessage : undefined,
         mcp_tools_used: parseMcpTools(value.mcp_tools_used),
         routing_action: typeof value.routing_action === "string" ? value.routing_action : undefined,
+        requires_human:
+            typeof value.requires_human === "boolean" ? value.requires_human : undefined,
+        escalation_message_id:
+            typeof value.escalation_message_id === "string"
+                ? value.escalation_message_id
+                : undefined,
+        staff_response: parseStaffResponse(value.staff_response),
     };
+};
+
+const parseStaffResponse = (
+    value: unknown,
+): { answer: string; responded_at: string } | undefined => {
+    if (!isJsonRecord(value)) {
+        return undefined;
+    }
+    if (typeof value.answer === "string" && typeof value.responded_at === "string") {
+        return { answer: value.answer, responded_at: value.responded_at };
+    }
+    return undefined;
 };
 
 const parseStoredMessages = (rawValue: string | null): Message[] => {
@@ -413,7 +432,10 @@ export const useChatMessages = () => {
                 const answer = typeof payload.answer === "string" ? payload.answer : "";
 
                 const assistantMessage: Message = {
-                    id: generateUUID(),
+                    id:
+                        typeof payload.message_id === "string"
+                            ? payload.message_id
+                            : generateUUID(),
                     content: cleanupResponse(answer),
                     role: "assistant",
                     timestamp: new Date(),
@@ -438,6 +460,14 @@ export const useChatMessages = () => {
                     routing_action:
                         typeof payload.routing_action === "string"
                             ? payload.routing_action
+                            : undefined,
+                    requires_human:
+                        typeof payload.requires_human === "boolean"
+                            ? payload.requires_human
+                            : undefined,
+                    escalation_message_id:
+                        typeof payload.escalation_message_id === "string"
+                            ? payload.escalation_message_id
                             : undefined,
                 };
 

@@ -334,7 +334,6 @@ fi
 echo -e "${BLUE}Creating necessary directories...${NC}"
 mkdir -p "$INSTALL_DIR/api/data/wiki"
 mkdir -p "$INSTALL_DIR/api/data/logs"
-mkdir -p "$INSTALL_DIR/api/data/vectorstore"
 mkdir -p "$INSTALL_DIR/api/data/feedback"
 # Correct permissions for data dirs needed by Docker containers
 # Use numeric UID/GID to ensure container (UID 1001) can write files
@@ -468,7 +467,7 @@ cd "$INSTALL_DIR" || {
 }
 
 echo -e "${BLUE}Creating required data directories...${NC}"
-mkdir -p "$INSTALL_DIR/api/data/wiki" "$INSTALL_DIR/api/data/vectorstore" "$INSTALL_DIR/api/data/feedback" "$INSTALL_DIR/api/data/logs"
+mkdir -p "$INSTALL_DIR/api/data/wiki" "$INSTALL_DIR/api/data/feedback" "$INSTALL_DIR/api/data/logs"
 mkdir -p "$INSTALL_DIR/docker/logs/nginx"
 mkdir -p "$INSTALL_DIR/runtime_secrets"
 mkdir -p "$INSTALL_DIR/failed_updates"

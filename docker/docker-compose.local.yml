@@ -54,7 +54,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # Use same-origin '/api' in the browser to avoid CORS and mirror production routing.
+      - NEXT_PUBLIC_API_URL=/api
       - API_URL_INTERNAL=http://api:8000
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1

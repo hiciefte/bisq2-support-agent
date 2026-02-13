@@ -88,9 +88,9 @@ export async function getLastBotResponse(
             : await page.locator(PROSE_CHAT_SELECTOR).count();
 
     await page.waitForFunction(
-        (selector, baseline) => document.querySelectorAll(selector).length > baseline,
-        PROSE_CHAT_SELECTOR,
-        baselineCount,
+        ([selector, baseline]) =>
+            document.querySelectorAll(selector).length > baseline,
+        [PROSE_CHAT_SELECTOR, baselineCount] as [string, number],
         { timeout },
     );
 
@@ -244,9 +244,13 @@ export async function loginAsAdmin(
             }
 
             const loginInput = page.locator("input#apiKey");
+            // Use sidebar nav links as the dashboard indicator — these only
+            // render when SecureAuth considers the user authenticated.
+            // Avoid "text=Admin Dashboard" because it also matches the
+            // login page description ("...access the admin dashboard.").
             const dashboard = page
-                .locator("text=Admin Dashboard")
-                .or(page.locator("h1:has-text(\"Overview\")"));
+                .locator("nav a[href='/admin/overview']")
+                .or(page.locator("h1:has-text(\"Admin Overview\")"));
             await loginInput.or(dashboard).first().waitFor({ timeout: 20000 });
 
             if (await dashboard.first().isVisible()) {
@@ -341,7 +345,7 @@ export async function navigateToFeedbackManagement(
             await feedbackLink.click();
             await page.waitForURL("**/admin/manage-feedback", { timeout: 15000 });
             await Promise.race([
-                page.waitForSelector("[class*=\"border-l-4\"]", { timeout: 15000 }),
+                page.waitForSelector("[class*=\"border-l-2\"]", { timeout: 15000 }),
                 page.waitForSelector("text=No feedback found", { timeout: 15000 }),
                 page.locator("h1:has-text(\"Feedback Management\")").waitFor({ timeout: 15000 }),
             ]);

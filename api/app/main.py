@@ -25,6 +25,7 @@ from app.middleware.cache_control import CacheControlMiddleware
 from app.routes import (
     alertmanager,
     chat,
+    escalation_polling,
     feedback_routes,
     health,
     metrics_update,
@@ -132,10 +133,7 @@ async def lifespan(app: FastAPI):
     await rag_service.setup()
 
     # Eager load ColBERT reranker if enabled and using Qdrant backend
-    if (
-        settings.RETRIEVER_BACKEND in ("qdrant", "hybrid")
-        and settings.ENABLE_COLBERT_RERANK
-    ):
+    if settings.RETRIEVER_BACKEND == "qdrant" and settings.ENABLE_COLBERT_RERANK:
         logger.info("Eager loading ColBERT reranker model...")
         try:
             if rag_service.colbert_reranker:
@@ -153,16 +151,81 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
+    # Create LearningEngine early so it can be wired to EscalationService
+    # State will be loaded later when unified_db_path is available
+    learning_engine = LearningEngine()
+    app.state.learning_engine = learning_engine
+
+    # Initialize EscalationService singleton for admin routes, polling, and hooks.
+    app.state.escalation_service = None
+    app.state.escalation_init_failed = False
+    try:
+        from app.services.escalation.escalation_repository import EscalationRepository
+        from app.services.escalation.escalation_service import EscalationService
+
+        esc_db_path = os.path.join(settings.DATA_DIR, "escalations.db")
+        esc_repo = EscalationRepository(db_path=esc_db_path)
+        await esc_repo.initialize()
+
+        escalation_service = EscalationService(
+            repository=esc_repo,
+            response_delivery=None,  # Not wired yet (push delivery)
+            faq_service=faq_service,  # Required for /generate-faq
+            learning_engine=learning_engine,
+            settings=settings,
+        )
+        app.state.escalation_service = escalation_service
+        logger.info("EscalationService initialized (singleton)")
+    except Exception:
+        app.state.escalation_service = None
+        app.state.escalation_init_failed = True
+        logger.critical("EscalationService init failed", exc_info=True)
+
     # Initialize Channel Gateway with default middleware hooks
     logger.info("Initializing Channel Gateway...")
     channel_gateway = create_channel_gateway(
         rag_service=rag_service,
         register_default_hooks=True,
     )
+    # Register EscalationPostHook (only affects chat flow; admin/polling still work without it).
+    if getattr(settings, "ESCALATION_ENABLED", False):
+        service = getattr(app.state, "escalation_service", None)
+        if service is None:
+            logger.warning("ESCALATION_ENABLED but escalation_service is not available")
+        else:
+            from app.channels.hooks.escalation_hook import EscalationPostHook
+
+            channel_gateway.register_post_hook(
+                EscalationPostHook(
+                    escalation_service=service,
+                    channel_registry=None,
+                    settings=settings,
+                )
+            )
+            logger.info("Registered EscalationPostHook")
     app.state.channel_gateway = channel_gateway
     logger.info(
         f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"
     )
+
+    # Web-layer reaction services (separate from ChannelRuntime's pair in bootstrapper.py).
+    # This separation is intentional: HTTP layer (app.state) vs channel layer (ChannelRuntime)
+    # each manage their own tracker/processor lifecycle. New HTTP-based channels reuse
+    # this pair; new push-based channels get theirs via ChannelBootstrapper automatically.
+    from app.channels.reactions import ReactionProcessor, SentMessageTracker
+
+    sent_message_tracker = SentMessageTracker()
+    app.state.sent_message_tracker = sent_message_tracker
+
+    reactor_salt = getattr(settings, "REACTOR_IDENTITY_SALT", "")
+    reaction_processor = ReactionProcessor(
+        tracker=sent_message_tracker,
+        feedback_service=feedback_service,
+        reactor_identity_salt=reactor_salt,
+        escalation_service=getattr(app.state, "escalation_service", None),
+    )
+    app.state.reaction_processor = reaction_processor
+    logger.info("Registered SentMessageTracker and ReactionProcessor on app.state")
 
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
@@ -207,7 +270,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Matrix alert service for Alertmanager notifications
     logger.info("Initializing MatrixAlertService...")
-    from app.services.alerting.matrix_alert_service import MatrixAlertService
+    from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
 
     matrix_alert_service = MatrixAlertService(settings)
     app.state.matrix_alert_service = matrix_alert_service
@@ -218,16 +281,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("MatrixAlertService not configured (MATRIX_ALERT_ROOM not set)")
 
-    # Initialize LearningEngine for adaptive threshold tuning
-    logger.info("Initializing LearningEngine...")
-    learning_engine = LearningEngine()
-    # Load persisted state from unified training database
+    # Load LearningEngine persisted state from unified training database
+    logger.info("Loading LearningEngine state...")
     unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
     learning_engine.load_state(unified_repo)
-    app.state.learning_engine = learning_engine
     logger.info(
-        f"LearningEngine initialized with thresholds: {learning_engine.get_current_thresholds()}"
+        f"LearningEngine state loaded with thresholds: {learning_engine.get_current_thresholds()}"
     )
+
+    # Wire AutoSendRouter with LearningEngine for dynamic thresholds
+    from app.services.rag.auto_send_router import AutoSendRouter
+
+    auto_send_router = AutoSendRouter(learning_engine=learning_engine)
+    app.state.auto_send_router = auto_send_router
+
+    # Inject the wired router into RAG service so query routing uses learned thresholds
+    rag_service.auto_send_router = auto_send_router
 
     # Yield control to the application
     yield
@@ -469,6 +538,9 @@ app.include_router(metrics_update.router, tags=["Metrics"])
 app.include_router(
     public_faqs.router, tags=["Public FAQs"]
 )  # Public FAQ endpoints (no auth required)
+app.include_router(
+    escalation_polling.router, tags=["Escalations"]
+)  # User polling endpoint (no auth required)
 include_admin_routers(app)  # Include all admin routers from the admin package
 app.include_router(onion_verify.router, tags=["Onion Verification"])
 app.include_router(

@@ -38,14 +38,6 @@ _EXPORT_MAP = {
     ),
     "RetrievedDocument": ("app.services.rag.interfaces", "RetrievedDocument"),
     "RetrieverProtocol": ("app.services.rag.interfaces", "RetrieverProtocol"),
-    "VectorStoreManager": (
-        "app.services.rag.vectorstore_manager",
-        "VectorStoreManager",
-    ),
-    "VectorStoreStateManager": (
-        "app.services.rag.vectorstore_state_manager",
-        "VectorStoreStateManager",
-    ),
 }
 
 __all__ = [*_EXPORT_MAP.keys(), "VersionDetector"]

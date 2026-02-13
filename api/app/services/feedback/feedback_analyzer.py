@@ -120,7 +120,7 @@ class FeedbackAnalyzer:
         issues: Dict[str, int] = defaultdict(int)
 
         for item in feedback:
-            if not item.get("helpful", True):
+            if item.get("rating", 1) == 0:
                 # Check for specific issue fields
                 for issue_key in [
                     "too_verbose",

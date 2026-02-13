@@ -252,3 +252,86 @@ class TestChannelsConfig:
         assert config.bisq2.enabled is True
         assert config.web.enabled is True
         assert config.matrix.enabled is True
+
+
+class TestReactionConfig:
+    """Test ReactionConfig model."""
+
+    @pytest.mark.unit
+    def test_default_reaction_config(self):
+        """Default ReactionConfig is disabled."""
+        from app.channels.config import ReactionConfig
+
+        config = ReactionConfig()
+        assert config.enabled is False
+        assert config.message_tracking_ttl_hours == 24
+        assert config.emoji_rating_map is None
+
+    @pytest.mark.unit
+    def test_enabled_reaction_config(self):
+        """ReactionConfig can be enabled when salt is provided."""
+        from app.channels.config import ReactionConfig
+
+        config = ReactionConfig(enabled=True, reactor_identity_salt="test-salt")
+        assert config.enabled is True
+
+    def test_enabled_reaction_config_requires_salt(self):
+        """ReactionConfig rejects enabled=True without a salt."""
+        from app.channels.config import ReactionConfig
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="reactor_identity_salt"):
+            ReactionConfig(enabled=True)
+
+    @pytest.mark.unit
+    def test_custom_emoji_map(self):
+        """ReactionConfig accepts custom emoji map."""
+        from app.channels.config import ReactionConfig
+
+        config = ReactionConfig(emoji_rating_map={"\U0001f44d": 1, "\U0001f44e": 0})
+        assert config.emoji_rating_map["\U0001f44d"] == 1
+        assert config.emoji_rating_map["\U0001f44e"] == 0
+
+    @pytest.mark.unit
+    def test_ttl_bounds(self):
+        """TTL must be within 1-168 hours."""
+        from app.channels.config import ReactionConfig
+
+        config = ReactionConfig(message_tracking_ttl_hours=1)
+        assert config.message_tracking_ttl_hours == 1
+
+        config = ReactionConfig(message_tracking_ttl_hours=168)
+        assert config.message_tracking_ttl_hours == 168
+
+        with pytest.raises(ValidationError):
+            ReactionConfig(message_tracking_ttl_hours=0)
+
+        with pytest.raises(ValidationError):
+            ReactionConfig(message_tracking_ttl_hours=169)
+
+    @pytest.mark.unit
+    def test_reactor_identity_salt(self):
+        """reactor_identity_salt is a SecretStr."""
+        from app.channels.config import ReactionConfig
+        from pydantic import SecretStr
+
+        config = ReactionConfig(reactor_identity_salt=SecretStr("my-secret-salt"))
+        assert config.reactor_identity_salt.get_secret_value() == "my-secret-salt"
+
+    @pytest.mark.unit
+    def test_bisq2_config_has_reactions(self):
+        """Bisq2ChannelConfig includes reactions field."""
+        from app.channels.config import Bisq2ChannelConfig
+
+        config = Bisq2ChannelConfig()
+        assert hasattr(config, "reactions")
+        assert config.reactions.enabled is False
+
+    @pytest.mark.unit
+    def test_matrix_config_has_reactions(self):
+        """MatrixChannelConfig includes reactions field."""
+        from app.channels.config import MatrixChannelConfig
+
+        config = MatrixChannelConfig(enabled=False)
+        assert hasattr(config, "reactions")
+        assert config.reactions.enabled is False

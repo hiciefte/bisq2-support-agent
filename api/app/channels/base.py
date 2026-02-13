@@ -225,6 +225,32 @@ class ChannelBase(ABC):
             True if sent successfully, False otherwise.
         """
 
+    @abstractmethod
+    def get_delivery_target(self, metadata: dict[str, Any]) -> str:
+        """Extract delivery target from channel metadata.
+
+        Args:
+            metadata: Deserialized channel_metadata dict from escalation.
+
+        Returns:
+            Target identifier for outbound delivery (empty string if N/A).
+        """
+
+    @abstractmethod
+    def format_escalation_message(
+        self, username: str, escalation_id: int, support_handle: str
+    ) -> str:
+        """Format channel-specific escalation message shown to user.
+
+        Args:
+            username: User's display name or channel_user_id.
+            escalation_id: Database ID of the created escalation.
+            support_handle: Channel-appropriate support contact.
+
+        Returns:
+            Human-readable escalation message string.
+        """
+
     def health_check(self) -> HealthStatus:
         """Check channel health.
 
@@ -301,6 +327,7 @@ class ChannelBase(ABC):
                 sources=sources,
                 user=message.user,
                 metadata=metadata,
+                original_question=message.question,
                 suggested_questions=rag_response.get("suggested_questions"),
                 requires_human=rag_response.get("requires_human", False),
             )
@@ -316,6 +343,7 @@ class ChannelBase(ABC):
                 answer="I encountered an internal error while processing your request.",
                 sources=[],
                 user=message.user,
+                original_question=message.question,
                 metadata=ResponseMetadata(
                     processing_time_ms=processing_time,
                     rag_strategy="error",
