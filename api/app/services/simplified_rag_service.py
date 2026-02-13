@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
 from app.core.pii_utils import redact_for_logs
+from app.prompts import error_messages
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
@@ -488,7 +489,7 @@ class SimplifiedRAGService:
             logger.error(f"Error answering from context: {e!s}", exc_info=True)
             # Fall back to "no information" response
             return {
-                "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
+                "answer": error_messages.INSUFFICIENT_INFO,
                 "sources": [],
                 "response_time": time.time() - start_time,
                 "forwarded_to_human": True,
@@ -528,7 +529,7 @@ class SimplifiedRAGService:
             if not self.rag_chain:
                 logger.error("RAG chain not initialized. Call setup() first.")
                 return {
-                    "answer": "I apologize, but I'm not fully initialized yet. Please try again in a moment.",
+                    "answer": error_messages.NOT_INITIALIZED,
                     "sources": [],
                     "response_time": time.time() - start_time,
                     "error": "RAG chain not initialized",
@@ -706,7 +707,7 @@ class SimplifiedRAGService:
                         )
 
                 return {
-                    "answer": "I apologize, but I don't have sufficient information to answer your question. Your question has been queued for FAQ creation by our support team. In the meantime, please contact a Bisq human support agent who will be able to provide you with immediate assistance. Thank you for your patience.",
+                    "answer": error_messages.INSUFFICIENT_INFO,
                     "sources": [],
                     "response_time": time.time() - start_time,
                     "forwarded_to_human": True,
@@ -983,7 +984,7 @@ class SimplifiedRAGService:
             update_error_rate(is_error=True)
 
             return {
-                "answer": "I apologize, but I encountered an error processing your query. Please try again.",
+                "answer": error_messages.QUERY_ERROR,
                 "sources": [],
                 "response_time": error_time,
                 "error": str(e),

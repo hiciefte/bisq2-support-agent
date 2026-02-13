@@ -207,6 +207,26 @@ These are the currently available comparison runs across the three requested git
 | Chroma-only baseline | `7c75417` | chromadb | `api/data/evaluation_results/chromadb_7c75417_ragas30_fixed.json` | 0.3884 | 0.0000 | 0.5594 | 0.2222 |
 | Initial Qdrant setup | `824b7b8` | qdrant | `api/data/evaluation_results/qdrant_824b7b8_ragas30.json` | 0.4545 | 0.0000 | 0.5474 | 0.2500 |
 | Current setup | `efa7bae` | qdrant | `api/data/evaluation_results/qdrant_efa7bae_ragas30.json` | 0.4199 | 0.5785 | 0.6422 | 0.3889 |
+| Soul personality layer | `d5f7ad4` | qdrant | `api/data/evaluation/qdrant_soul_layer_evaluation.json` | 0.6374 | 0.8434 | 0.6425 | 0.4389 |
+
+### Soul Layer Impact Analysis (2026-02-13)
+
+The soul personality layer (`soul_default.md`) injects a cypherpunk-aligned identity and communication style into the system prompt. Error messages were centralized into `api/app/prompts/error_messages.py` with voice-consistent wording. Response length guidelines were relaxed from a rigid "2-3 sentences maximum" to context-dependent length.
+
+| Metric | Baseline (`efa7bae`) | Soul Layer | Delta | Change |
+|--------|----:|----:|----:|---:|
+| Faithfulness | 0.4199 | 0.6374 | +0.2175 | +52% |
+| Answer Relevancy | 0.5785 | 0.8434 | +0.2649 | +46% |
+| Context Precision | 0.6422 | 0.6425 | +0.0003 | ~0% |
+| Context Recall | 0.3889 | 0.4389 | +0.0500 | +13% |
+
+Key observations:
+- **Faithfulness (+52%)**: "Lead with the answer" and "no filler" directives ground responses better in retrieved context.
+- **Answer Relevancy (+46%)**: Direct answer-first style without preambles aligns response content more tightly with the question.
+- **Context Precision (flat)**: Retrieval pipeline unchanged — expected result.
+- **Context Recall (+13%)**: Flexible length guidelines allow more thorough answers that reference more ground truth.
+
+No regressions detected. All metrics improved or held steady.
 
 Notes:
 - The two Qdrant artifacts above still contain `"system": "chromadb"` due to a legacy label in the older evaluation script output; backend attribution here follows the run setup and artifact naming.

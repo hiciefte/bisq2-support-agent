@@ -14,6 +14,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from app.core.config import Settings
 from app.core.pii_utils import redact_for_logs
+from app.prompts import error_messages
+from app.prompts.soul import load_soul
 from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
 from langchain_core.documents import Document
 
@@ -168,8 +170,15 @@ class PromptManager:
                 )
                 logger.info(f"Added prompt guidance: {guidance_text}")
 
+        # Prepend soul personality layer
+        soul_text = load_soul()
+
         # Custom system template with protocol-aware conditional logic
-        system_template = f"""You are a support assistant for Bisq, covering both Bisq Easy (the current Bisq 2 protocol) and Multisig v1 (the legacy Bisq 1 protocol).
+        system_template = f"""{soul_text}
+
+---
+
+OPERATIONAL INSTRUCTIONS:
 
 PROTOCOL HANDLING INSTRUCTIONS:
 The question below has been analyzed and categorized. The Context section contains protocol-tagged documents.
@@ -301,7 +310,13 @@ PRIORITY RULES FOR LIVE DATA:
 
 RESPONSE GUIDELINES:
 - Always be clear about which version you're discussing
-- Keep answers concise (2-3 sentences maximum)
+- RESPONSE LENGTH:
+  * Simple facts: 2-3 sentences
+  * How-to questions: Numbered steps (3-6 items)
+  * Comparisons: Structured bullet points
+  * Troubleshooting: Diagnostic checklist
+  * Security/money questions: Thorough, careful, complete
+  Prioritize completeness and clarity over arbitrary brevity.
 - You may use basic markdown formatting for clarity:
   * Use **bold** for important terms or warnings
   * Use `backticks` for technical terms, commands, or file paths
@@ -343,8 +358,14 @@ Answer:"""
             or "multisig" in question_lower
         )
 
+        soul_text = load_soul()
+
         if is_multisig_query:
-            context_only_prompt = f"""You are a support assistant for Bisq. A user has asked a question about Bisq 1 (Multisig v1 protocol), but no relevant documents were found in the knowledge base.
+            context_only_prompt = f"""{soul_text}
+
+---
+
+A user has asked a question about Bisq 1 (Multisig v1 protocol), but no relevant documents were found in the knowledge base.
 
 IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST inform them appropriately.
 
@@ -357,12 +378,16 @@ Instructions:
 - If the answer is clearly in the conversation above, provide it with a note: "Note: This information is for Bisq 1 (Multisig protocol)."
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic about Bisq 1/Multisig not in the conversation, respond: "I don't have specific information about that for Bisq 1 (Multisig protocol) in my knowledge base. However, I can help you with Bisq 2/Bisq Easy questions. Would you like information about Bisq Easy instead, or do you need help finding Bisq 1 resources?"
-- Keep your answer to 2-3 sentences maximum
+- Keep your answer concise but complete — brief for simple facts, thorough for security or money topics
 - You may use basic markdown: **bold** for warnings, `backticks` for technical terms
 
 Answer:"""
         else:
-            context_only_prompt = f"""You are a Bisq Easy (Bisq 2) support assistant. A user has asked a follow-up question, but no relevant documents were found in the knowledge base.
+            context_only_prompt = f"""{soul_text}
+
+---
+
+A user has asked a follow-up question about Bisq Easy (Bisq 2), but no relevant documents were found in the knowledge base.
 
 IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
 
@@ -375,7 +400,7 @@ Instructions:
 - If the answer is clearly in the conversation above, provide it concisely
 - If this is a follow-up about something mentioned in the conversation, answer based on that context
 - If this is a NEW topic not in the conversation, respond: "I don't have information about that in our Bisq 2 (Bisq Easy) knowledge base."
-- Keep your answer to 2-3 sentences maximum
+- Keep your answer concise but complete — brief for simple facts, thorough for security or money topics
 - You may use basic markdown: **bold** for warnings, `backticks` for technical terms
 
 Answer:"""
@@ -418,7 +443,7 @@ Answer:"""
 
             try:
                 if not question:
-                    return "I'm sorry, I didn't receive a question. How can I help you with Bisq 2?"
+                    return error_messages.NO_QUESTION
 
                 # Preprocess the question
                 preprocessed_question = question.strip()
@@ -535,10 +560,10 @@ Answer:"""
                     return response_content
                 else:
                     logger.warning("Empty response received from LLM")
-                    return "I apologize, but I couldn't generate a proper response based on the available information."
+                    return error_messages.GENERATION_FAILED
             except Exception as e:
                 logger.error(f"Error generating response: {e!s}", exc_info=True)
-                return "I apologize, but I'm having technical difficulties processing your request. Please try again later."
+                return error_messages.TECHNICAL_ERROR
 
         logger.info("Custom RAG chain created successfully")
         return generate_response
