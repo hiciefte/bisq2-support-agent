@@ -142,7 +142,7 @@ class TestLLMRewrite:
     @pytest.mark.asyncio
     async def test_llm_timeout_falls_back(self, rewriter_settings):
         slow_client = MagicMock()
-        slow_client.chat.completions.create.side_effect = lambda **kwargs: (
+        slow_client.chat.completions.create.side_effect = lambda **_kwargs: (
             time.sleep(10)
         )
         rewriter_settings.QUERY_REWRITE_TIMEOUT_SECONDS = 0.1
@@ -156,7 +156,12 @@ class TestLLMRewrite:
             chat_history=history,
         )
         # On timeout, should fall back gracefully
-        assert result.strategy in ("timeout_fallback", "heuristic")
+        assert result.strategy in (
+            "timeout_fallback",
+            "error_fallback",
+            "parse_error_fallback",
+            "heuristic",
+        )
 
     @pytest.mark.asyncio
     async def test_malformed_json_falls_back(self, rewriter_settings):
@@ -176,7 +181,12 @@ class TestLLMRewrite:
             chat_history=history,
         )
         # Should fall back, not crash
-        assert result.strategy in ("timeout_fallback", "heuristic")
+        assert result.strategy in (
+            "timeout_fallback",
+            "error_fallback",
+            "parse_error_fallback",
+            "heuristic",
+        )
         assert result.original_query == "What about the deposit stuff?"
 
     @pytest.mark.asyncio

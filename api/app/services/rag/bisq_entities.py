@@ -108,8 +108,19 @@ def build_llm_entity_examples() -> str:
 
     Auto-generated from the entity maps so the prompt stays in sync.
     """
-    lines = []
-    for informal, canonical in {**BISQ1_ENTITY_MAP, **BISQ2_ENTITY_MAP}.items():
-        if informal != canonical.lower():
-            lines.append(f'   - "{informal}" \u2192 "{canonical}"')
+    b1 = [
+        f'   - "{k}" \u2192 "{v}"'
+        for k, v in BISQ1_ENTITY_MAP.items()
+        if k != v.lower()
+    ]
+    b2 = [
+        f'   - "{k}" \u2192 "{v}"'
+        for k, v in BISQ2_ENTITY_MAP.items()
+        if k != v.lower()
+    ]
+    # Interleave to ensure both Bisq 1 and Bisq 2 examples appear
+    lines: list[str] = []
+    for pair in zip(b1, b2):
+        lines.extend(pair)
+    lines.extend(b1[len(b2) :] or b2[len(b1) :])
     return "\n".join(lines[:10])  # Cap at 10 examples to keep prompt short

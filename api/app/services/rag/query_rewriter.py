@@ -144,7 +144,7 @@ class QueryRewriter:
             return RewriteResult(
                 rewritten_query=query,
                 rewritten=False,
-                strategy="timeout_fallback",
+                strategy="error_fallback",
                 original_query=query,
                 latency_ms=elapsed,
                 confidence=0.0,
@@ -289,7 +289,7 @@ Respond with ONLY JSON:
             return RewriteResult(
                 rewritten_query=original_query,
                 rewritten=False,
-                strategy="timeout_fallback",
+                strategy="parse_error_fallback",
                 original_query=original_query,
                 latency_ms=0.0,
                 confidence=0.0,
