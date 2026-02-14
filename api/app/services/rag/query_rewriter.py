@@ -22,7 +22,10 @@ from app.services.rag.bisq_entities import (
     BISQ2_ENTITY_MAP,
     build_llm_entity_examples,
 )
-from app.services.rag.query_context import extract_last_topic, is_anaphoric
+from app.services.rag.query_context import (
+    extract_last_topic,
+    is_anaphoric,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +181,11 @@ class QueryRewriter:
     def _heuristic_rewrite(
         self, query: str, chat_history: list
     ) -> Optional[RewriteResult]:
-        """Track 1: Heuristic pronoun resolution + entity substitution."""
+        """Track 1: Heuristic pronoun resolution + entity substitution.
+
+        Prepends the conversation topic for rich semantic context,
+        and applies entity substitution to the combined result.
+        """
         if not is_anaphoric(query) and len(query.split()) >= 5:
             return None  # Defer to LLM track
 
@@ -188,6 +195,7 @@ class QueryRewriter:
 
         rewritten = f"Regarding {topic}: {query}"
 
+        # Apply entity substitution to the full rewritten query
         for entity_map in (BISQ1_ENTITY_MAP, BISQ2_ENTITY_MAP):
             for informal, canonical in entity_map.items():
                 if informal in rewritten.lower():

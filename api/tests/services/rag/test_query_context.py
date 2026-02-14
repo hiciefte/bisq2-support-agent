@@ -1,7 +1,11 @@
 """Tests for query_context shared utilities."""
 
 import pytest
-from app.services.rag.query_context import extract_last_topic, is_anaphoric
+from app.services.rag.query_context import (
+    extract_last_topic,
+    extract_topic_keywords,
+    is_anaphoric,
+)
 
 
 class TestIsAnaphoric:
@@ -84,3 +88,65 @@ class TestExtractLastTopic:
         history = [{"role": "user", "content": no_periods}]
         result = extract_last_topic(history, max_chars=100)
         assert len(result) == 100
+
+    def test_skips_acknowledgments(self):
+        history = [
+            {"role": "user", "content": "How do I create a trade offer?"},
+            {"role": "assistant", "content": "Go to the Trade tab..."},
+            {"role": "user", "content": "ok thanks"},
+        ]
+        result = extract_last_topic(history)
+        assert result == "How do I create a trade offer?"
+
+    @pytest.mark.parametrize(
+        "ack",
+        ["ok", "OK", "yes", "sure", "thanks", "thank you", "got it", "yep", "k"],
+    )
+    def test_skips_various_acknowledgments(self, ack):
+        history = [
+            {"role": "user", "content": "Tell me about Bisq Easy trading"},
+            {"role": "assistant", "content": "Bisq Easy is..."},
+            {"role": "user", "content": ack},
+        ]
+        result = extract_last_topic(history)
+        assert result == "Tell me about Bisq Easy trading"
+
+    def test_prefers_substantive_over_ack_in_multi_turn(self):
+        history = [
+            {"role": "user", "content": "I want to set up multisig on Bisq 1"},
+            {"role": "assistant", "content": "First, you need to..."},
+            {"role": "user", "content": "ok"},
+            {"role": "assistant", "content": "Then configure..."},
+            {"role": "user", "content": "got it"},
+        ]
+        result = extract_last_topic(history)
+        assert result == "I want to set up multisig on Bisq 1"
+
+
+class TestExtractTopicKeywords:
+    def test_extracts_domain_terms(self):
+        result = extract_topic_keywords("I want to trade on Bisq Easy")
+        assert "trade" in result
+        assert "bisq" in result
+        assert "easy" in result
+
+    def test_removes_stop_words(self):
+        result = extract_topic_keywords("I want to create a new trade offer")
+        assert "want" not in result
+        assert "the" not in result
+
+    def test_max_keywords(self):
+        result = extract_topic_keywords(
+            "trading security deposit multisig escrow arbitration mediation",
+            max_keywords=3,
+        )
+        words = result.split()
+        assert len(words) <= 3
+
+    def test_empty_input(self):
+        result = extract_topic_keywords("")
+        assert result == ""
+
+    def test_deduplicates(self):
+        result = extract_topic_keywords("bisq bisq easy bisq trade")
+        assert result.count("bisq") == 1

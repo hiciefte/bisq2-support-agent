@@ -83,7 +83,11 @@ class TestHeuristicRewrite:
         result = await rewriter.rewrite("How do I do that?", chat_history=history)
         assert result.rewritten is True
         assert result.strategy == "heuristic"
-        assert "bisq easy" in result.rewritten_query.lower()
+        # Context-first format: "Regarding {topic}: {query}"
+        assert "Regarding" in result.rewritten_query
+        assert "How do I do that?" in result.rewritten_query
+        assert "bisq" in result.rewritten_query.lower()
+        assert "easy" in result.rewritten_query.lower()
 
     @pytest.mark.asyncio
     async def test_entity_substitution_old_bisq(
