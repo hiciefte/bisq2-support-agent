@@ -13,6 +13,8 @@ Legacy API uses version strings for backwards compatibility with RAG chatbot.
 import logging
 from typing import Dict, List, Literal, Optional, Tuple, Union, overload
 
+from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
+
 logger = logging.getLogger(__name__)
 
 # Protocol type alias
@@ -39,45 +41,10 @@ class ProtocolDetector:
     Legacy API uses version strings (Bisq 1, Bisq 2) for backwards compatibility.
     """
 
-    BISQ1_KEYWORDS = [
-        "dao",
-        "bsq",
-        "burningman",
-        "burning man",
-        "arbitration",
-        "arbitrator",
-        # Note: "mediator" removed - mediators exist in both Bisq 1 and Bisq Easy (Bisq 2)
-        "altcoin",
-        "security deposit",
-        "multisig",
-        "2-of-2",
-        "delayed payout",
-        "refund agent",
-        "dao voting",
-    ]
+    # Keywords imported from shared bisq_entities module (single source of truth)
+    BISQ1_KEYWORDS = BISQ1_STRONG_KEYWORDS
 
-    BISQ2_KEYWORDS = [
-        "bisq easy",
-        "reputation",
-        "bonded roles",
-        "trade protocol",
-        "multiple identities",
-        "600 usd",
-        "$600",
-        "novice bitcoin",
-        "bisq 2",
-        "bisq2",
-        # Live data keywords (MCP tools are Bisq 2 features)
-        "current price",
-        "market price",
-        "live price",
-        "btc price",
-        "bitcoin price",
-        "offerbook",
-        "current offers",
-        "available offers",
-        "active offers",
-    ]
+    BISQ2_KEYWORDS = BISQ2_STRONG_KEYWORDS
 
     # =========================================================================
     # PRIMARY API (protocol-first)

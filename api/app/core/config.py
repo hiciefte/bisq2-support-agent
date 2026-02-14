@@ -130,6 +130,12 @@ class Settings(BaseSettings):
     COLBERT_TOP_N: int = 5  # Number of documents to return after reranking
     ENABLE_COLBERT_RERANK: bool = False  # Disabled by default; opt-in for production
 
+    # Query Rewriting Settings
+    ENABLE_QUERY_REWRITE: bool = True
+    QUERY_REWRITE_MODEL: str = "openai:gpt-4o-mini"
+    QUERY_REWRITE_TIMEOUT_SECONDS: float = 2.0
+    QUERY_REWRITE_MAX_HISTORY_TURNS: int = 4
+
     # Hybrid Search Weights (must sum to 1.0)
     # Optimized via RAGAS evaluation: 0.6/0.4 shows +6% faithfulness improvement
     HYBRID_SEMANTIC_WEIGHT: float = Field(

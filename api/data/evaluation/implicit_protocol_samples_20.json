@@ -1,0 +1,302 @@
+[
+  {
+    "question": "How do I do a spv resync?",
+    "ground_truth": "In Bisq 1, an SPV resync deletes the local SPV chain file so the wallet re-downloads and re-verifies block headers. Go to Settings > Network Info > SPV Resync, then restart Bisq. This fixes wallet balance discrepancies caused by stale chain data.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_001",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "spv resync"
+    }
+  },
+  {
+    "question": "I'm using the old bisq and my trade is stuck. What should I do?",
+    "ground_truth": "In Bisq 1, if a trade is stuck, first try an SPV resync (Settings > Network Info) and restart. If the trade is still stuck after resync, open mediation via the trade view (Ctrl+O). The mediator will review the case and propose a resolution.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_002",
+      "review_status": "edited",
+      "test_category": "bisq1_informal_version",
+      "target_keyword": "old bisq"
+    }
+  },
+  {
+    "question": "How does the escrow work when I buy bitcoin?",
+    "ground_truth": "In Bisq 1, escrow uses a 2-of-2 multisig mechanism. Both buyer and seller lock a security deposit plus the trade amount into a multisig address. Funds are released when both parties confirm the trade completed successfully. If there is a dispute, mediation and then arbitration can resolve it.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_003",
+      "review_status": "edited",
+      "test_category": "bisq1_protocol_synonym",
+      "target_keyword": "escrow"
+    }
+  },
+  {
+    "question": "My signed account got reset after an update. How do I fix it?",
+    "ground_truth": "In Bisq 1, a signed account provides higher trade limits. If your signed account status was lost after an update, try rebuilding the DAO state from resources. The account age witness and signing data is stored on the P2P network, so it should recover. If not, contact support with your account details.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_004",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "signed account"
+    }
+  },
+  {
+    "question": "Where is my data directory? I need to back it up before reinstalling.",
+    "ground_truth": "In Bisq 1, the default data directory location depends on your OS: on macOS it is ~/Library/Application Support/Bisq, on Linux ~/.local/share/Bisq, and on Windows %APPDATA%/Bisq. Back up the entire directory before reinstalling to preserve your wallet, trade history, and account data.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.75,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_005",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "data directory"
+    }
+  },
+  {
+    "question": "I want to pay my trading fees in bsq. How do I buy bsq first?",
+    "ground_truth": "In Bisq 1, you can buy BSQ on Bisq itself using the BSQ/BTC market. Create a BSQ payment account (Altcoins section), then take or create an offer to buy BSQ. Once you hold BSQ, you can select it as your fee payment method when creating or taking offers to get a significant discount on trading fees.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_006",
+      "review_status": "edited",
+      "test_category": "bisq1_dao_term",
+      "target_keyword": "bsq"
+    }
+  },
+  {
+    "question": "How does the 2of2 multi-sig work for trade security?",
+    "ground_truth": "In Bisq 1, trades use a 2-of-2 multisig escrow. Both buyer and seller must sign to release funds from the multisig address. Each party also puts up a security deposit. If a dispute arises, mediation is the first step, followed by arbitration if needed. The delayed payout transaction provides a time-locked fallback.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.90,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_007",
+      "review_status": "edited",
+      "test_category": "bisq1_protocol_synonym",
+      "target_keyword": "2of2"
+    }
+  },
+  {
+    "question": "Can I do a bsq swap instead of a regular trade?",
+    "ground_truth": "In Bisq 1, BSQ swaps are atomic swaps between BTC and BSQ that settle on-chain without requiring multisig escrow or security deposits. They are faster and simpler than regular trades but only work for the BSQ/BTC pair. Look for BSQ swap offers in the BSQ/BTC market.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_008",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "bsq swap"
+    }
+  },
+  {
+    "question": "How does account signing work? My account age is high but I still have low limits.",
+    "ground_truth": "In Bisq 1, account signing is separate from account age. To get higher trade limits with fiat payment methods, your account needs to be signed by a peer who already has a signed account. This happens automatically when you buy BTC from a signed seller. Until signed, your trade limit remains at 0.01 BTC regardless of account age.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_009",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "account signing"
+    }
+  },
+  {
+    "question": "I want to participate in dao voting. How does that work?",
+    "ground_truth": "In Bisq 1, DAO voting happens in monthly cycles. During the proposal phase, anyone can submit proposals. During the voting phase, BSQ holders can vote on proposals by staking their BSQ. In the vote reveal phase, votes are automatically published. The result is calculated and applied to the DAO state. You need BSQ to participate.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.90,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_010",
+      "review_status": "edited",
+      "test_category": "bisq1_dao_term",
+      "target_keyword": "dao voting"
+    }
+  },
+  {
+    "question": "How do I build my reputation score to sell bitcoin?",
+    "ground_truth": "In Bisq Easy (Bisq 2), reputation is built through several methods: burning BSQ, bonding BSQ, providing signed account age witness from Bisq 1, or accumulating trade history. Higher reputation allows selling BTC at higher limits. New sellers start with low or no reputation and can only sell small amounts initially.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_011",
+      "review_status": "edited",
+      "test_category": "bisq2_feature_term",
+      "target_keyword": "reputation score"
+    }
+  },
+  {
+    "question": "I want to try the new bisq. How do I get started?",
+    "ground_truth": "Bisq 2 (Bisq Easy) is the latest version of Bisq focused on simplicity. Download it from bisq.network, create a profile, and you can start buying BTC immediately. Trades happen through a chat-based interface where you negotiate directly with the seller. No security deposit is required for buyers.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_012",
+      "review_status": "edited",
+      "test_category": "bisq2_informal_version",
+      "target_keyword": "new bisq"
+    }
+  },
+  {
+    "question": "How do I do a chat trade to buy my first bitcoin?",
+    "ground_truth": "In Bisq Easy (Bisq 2), trading is chat-based. Browse the offerbook for buy offers, select one, and start a trade chat. The seller will share their payment details, you send fiat directly to them, and the seller releases BTC to your wallet after confirming payment. The trade limit for new users is around 600 USD.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_013",
+      "review_status": "edited",
+      "test_category": "bisq2_feature_term",
+      "target_keyword": "chat trade"
+    }
+  },
+  {
+    "question": "How does the reputation system work for sellers?",
+    "ground_truth": "In Bisq Easy (Bisq 2), the reputation system determines how much a seller can trade and the trust buyers place in them. Reputation is earned by burning BSQ, bonding BSQ, importing Bisq 1 signed account age, or through accumulated trade history. Higher reputation unlocks higher trade limits.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_014",
+      "review_status": "edited",
+      "test_category": "bisq2_feature_term",
+      "target_keyword": "reputation system"
+    }
+  },
+  {
+    "question": "I upgraded from v1 to v2. Do I keep my old trade history?",
+    "ground_truth": "Bisq 1 and Bisq 2 are separate applications with independent data directories and trade histories. Your Bisq 1 trade history remains in the Bisq 1 application. Bisq 2 starts fresh with its own profile and data. You can run both side by side. Your Bisq 1 signed account age can be imported into Bisq 2 for reputation.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.75,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_015",
+      "review_status": "edited",
+      "test_category": "version_comparison",
+      "target_keyword": "v1"
+    }
+  },
+  {
+    "question": "The original bisq won't sync. It's been stuck for hours.",
+    "ground_truth": "In Bisq 1, sync issues are usually resolved with an SPV resync. Go to Settings > Network Info and click SPV Resync, then restart. If the P2P network is not connecting, check your Tor connection. Also verify you are running the latest version of Bisq 1 as older versions may have connectivity issues.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_016",
+      "review_status": "edited",
+      "test_category": "bisq1_informal_version",
+      "target_keyword": "original bisq"
+    }
+  },
+  {
+    "question": "What's the security deposit for a trade?",
+    "ground_truth": "In Bisq 1, security deposits are required from both buyer and seller and are locked in the 2-of-2 multisig escrow. The default deposit is 15% of the trade amount for the buyer and 15% for the seller, though these can be adjusted. Deposits are returned when the trade completes successfully.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_017",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "security deposit"
+    }
+  },
+  {
+    "question": "Is there a trade limit on easy trades? I want to buy more than $600.",
+    "ground_truth": "In Bisq Easy (Bisq 2), trade limits are based on the seller's reputation. New sellers or sellers with low reputation are limited to smaller trade amounts. The approximate starting limit is around 600 USD. As sellers build reputation through burning BSQ, bonding, or trade history, their limits increase.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_018",
+      "review_status": "edited",
+      "test_category": "bisq2_feature_term",
+      "target_keyword": "easy trade"
+    }
+  },
+  {
+    "question": "How do I contact the arbitrator if mediation didn't work?",
+    "ground_truth": "In Bisq 1, arbitration becomes available after mediation fails. If you reject the mediator's proposal, a delayed payout transaction is published. After the time lock expires (10 days for altcoin, 20 days for fiat), you can open arbitration from the trade view using Ctrl+O. The arbitrator will review the case and make a final payout decision.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_019",
+      "review_status": "edited",
+      "test_category": "bisq1_technical_term",
+      "target_keyword": "arbitrator"
+    }
+  },
+  {
+    "question": "What are the current offers available? I want to buy bitcoin with bank transfer.",
+    "ground_truth": "In Bisq Easy (Bisq 2), you can browse available offers in the offerbook. Filter by payment method (bank transfer, SEPA, etc.) and sort by price or amount. The offerbook shows current buy and sell offers from traders. Select an offer that matches your needs and start a trade chat with the seller.",
+    "contexts": [],
+    "metadata": {
+      "source": "Implicit protocol evaluation (expanded keywords)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "implicit_eval_020",
+      "review_status": "edited",
+      "test_category": "bisq2_feature_term",
+      "target_keyword": "current offers"
+    }
+  }
+]
