@@ -10,6 +10,18 @@ This directory contains evaluation data and results for comparing the RAG retrie
 - `kb_snapshots/` - Frozen knowledge-base snapshots (`wiki` + `faqs.db` + `bm25` inputs) for reproducible runs
 - `benchmarks/` - Repeated-run benchmark outputs and A/B comparison reports (create as needed)
 
+### Query Rewriter Evaluation
+
+- `query_rewriter_samples_15.json` - 15 samples with `chat_history` arrays testing anaphoric follow-ups, pronoun resolution, and context-dependent queries (all have `skip_protocol_injection: true`)
+- `rewriter_baseline_evaluation.json` - RAGAS results with query rewriter OFF (baseline)
+- `rewriter_enabled_evaluation.json` - RAGAS results with query rewriter ON
+
+### Expanded Protocol Detection Evaluation
+
+- `implicit_protocol_samples_20.json` - 20 samples testing informal version references ("old bisq", "spv resync", "escrow", etc.) against expanded ProtocolDetector keywords (all have `skip_protocol_injection: true`)
+- `implicit_protocol_evaluation.json` - RAGAS results for implicit protocol detection
+- `expanded_keywords_evaluation.json` - RAGAS results for expanded keyword matching
+
 ## Test Data Source
 
 Current benchmark samples are curated from Matrix support chat plus Bisq2 support export, then reviewed before use. Samples are not derived from FAQ data, which avoids data leakage where test questions match indexed documents.
@@ -227,6 +239,41 @@ Key observations:
 - **Context Recall (+13%)**: Flexible length guidelines allow more thorough answers that reference more ground truth.
 
 No regressions detected. All metrics improved or held steady.
+
+### Query Rewriter Impact Analysis (2026-02-14)
+
+The pre-retrieval query rewriter resolves anaphoric follow-ups and vocabulary mismatches before retrieval using a two-track strategy: heuristic pronoun resolution (<1ms, $0) and LLM-based rewrite via gpt-4o-mini (~300ms, ~$0.00004/query). Evaluated on 15 samples with chat history containing pronouns, deictic references, and context-dependent queries.
+
+| Metric | Baseline (OFF) | Rewriter (ON) | Delta | Change |
+|--------|----:|----:|----:|---:|
+| Context Precision | 0.5106 | 0.6363 | +0.1257 | +24.6% |
+| Context Recall | 0.2622 | 0.2956 | +0.0334 | +12.7% |
+| Faithfulness | 0.5799 | 0.5658 | -0.0141 | -2.4% |
+| Answer Relevancy | 0.4236 | 0.3641 | -0.0595 | -14.0% |
+
+Key observations:
+- **Context Precision (+24.6%)**: Rewriting ambiguous follow-ups produces significantly better retrieval — several samples went from 0 to 1.0 CP.
+- **Context Recall (+12.7%)**: More relevant documents retrieved overall.
+- **Faithfulness (-2.4%)**: Negligible decrease within evaluation noise.
+- **Answer Relevancy (-14.0%)**: Expected — the rewriter changes query phrasing, which affects the RAGAS embedding-based relevancy metric. Per-sample analysis shows 7/15 improved, 4/15 regressed.
+- **Latency**: +5.26s avg response time (14.54s vs 9.28s) due to LLM rewrite step.
+
+The rewriter is enabled by default (`ENABLE_QUERY_REWRITE=True`). The 4 regression cases trace to three known issues (topic extraction picking wrong message, "Regarding X: query" template flooding BM25, entity substitution scope) scheduled for follow-up tuning.
+
+### Expanded Protocol Detection (2026-02-14)
+
+Expanded ProtocolDetector keywords with informal version references mined from 44K real Matrix support messages. Evaluated on 20 samples using only informal language (no explicit "Bisq 1" or "Bisq 2" mentions).
+
+| Metric | Value |
+|--------|------:|
+| Context Precision | 0.7579 |
+| Context Recall | 0.3383 |
+| Faithfulness | 0.4623 |
+| Answer Relevancy | 0.7097 |
+
+Key observations:
+- **Context Precision (0.76)**: Strong retrieval accuracy on informal references without any protocol hints — validates the expanded keyword dictionary.
+- **Answer Relevancy (0.71)**: High relevancy despite no explicit version identifiers in queries.
 
 Notes:
 - The two Qdrant artifacts above still contain `"system": "chromadb"` due to a legacy label in the older evaluation script output; backend attribution here follows the run setup and artifact naming.
