@@ -127,7 +127,7 @@ const ChatInterface = () => {
                 body: JSON.stringify({ rating }),
             })
             if (resp.ok) {
-                // Optimistically update the message's staff_response rating
+                // Update local state after server confirms the rating
                 setMessages(prev =>
                     prev.map(msg =>
                         msg.escalation_message_id === messageId && msg.staff_response
@@ -136,8 +136,8 @@ const ChatInterface = () => {
                     )
                 )
             }
-        } catch {
-            // Silently fail — user already sees optimistic UI from Rating component
+        } catch (error) {
+            console.error("Failed to submit staff answer rating:", error)
         }
     }, [setMessages])
 
