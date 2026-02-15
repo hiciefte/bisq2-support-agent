@@ -82,6 +82,7 @@ class Escalation(BaseModel):
     sources: Optional[List[Dict[str, Any]]] = None
     staff_answer: Optional[str] = None
     staff_id: Optional[str] = None
+    staff_answer_rating: Optional[int] = None
     delivery_status: EscalationDeliveryStatus = EscalationDeliveryStatus.NOT_REQUIRED
     delivery_error: Optional[str] = None
     delivery_attempts: int = 0
@@ -145,6 +146,10 @@ class RespondRequest(BaseModel):
         return v
 
 
+class RateStaffAnswerRequest(BaseModel):
+    rating: int = Field(..., ge=0, le=1, description="0=unhelpful, 1=helpful")
+
+
 class GenerateFAQRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
     answer: str = Field(..., min_length=1, max_length=10000)
@@ -196,6 +201,7 @@ class UserPollResponse(BaseModel):
     # This field disambiguates "answered by staff" vs "closed/dismissed without reply".
     resolution: Optional[str] = None  # "responded" | "closed"
     closed_at: Optional[datetime] = None
+    staff_answer_rating: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

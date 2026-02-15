@@ -14,6 +14,7 @@ interface EscalationPollResult {
   staffAnswer: string | null
   respondedAt: string | null
   resolution: PollingResolution
+  staffAnswerRating: number | null
 }
 
 interface PollResponse {
@@ -22,6 +23,7 @@ interface PollResponse {
   responded_at?: string
   resolution?: 'responded' | 'closed'
   closed_at?: string
+  staff_answer_rating?: number
 }
 
 // Polling intervals in milliseconds
@@ -38,6 +40,7 @@ export function useEscalationPolling(
   const [staffAnswer, setStaffAnswer] = useState<string | null>(null)
   const [respondedAt, setRespondedAt] = useState<string | null>(null)
   const [resolution, setResolution] = useState<PollingResolution>(null)
+  const [staffAnswerRating, setStaffAnswerRating] = useState<number | null>(null)
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startTimeRef = useRef<number>(0)
@@ -72,6 +75,7 @@ export function useEscalationPolling(
         setResolution(data.resolution ?? (data.staff_answer ? 'responded' : null))
         setStaffAnswer(data.staff_answer ?? null)
         setRespondedAt(data.responded_at || data.closed_at || null)
+        setStaffAnswerRating(data.staff_answer_rating ?? null)
 
         // Terminal states:
         // - resolved+staff_answer: staff responded
@@ -136,5 +140,5 @@ export function useEscalationPolling(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messageId, enabled])
 
-  return { status, staffAnswer, respondedAt, resolution }
+  return { status, staffAnswer, respondedAt, resolution, staffAnswerRating }
 }

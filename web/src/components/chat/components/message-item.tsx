@@ -22,9 +22,10 @@ import type { Message } from "../types/chat.types"
 interface MessageItemProps {
     message: Message
     onRating?: (messageId: string, rating: number) => void
+    onStaffRate?: (messageId: string, rating: number) => void
 }
 
-export const MessageItem = memo(function MessageItem({ message, onRating }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({ message, onRating, onStaffRate }: MessageItemProps) {
     const isAssistant = message.role === "assistant"
     const hasSources = message.sources && message.sources.length > 0
     // Don't show confidence badge for clarification questions (routing_action === "needs_clarification")
@@ -51,7 +52,8 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
     // Only show LiveDataBadge in metadata row when live data is NOT displayed inline
     const showLiveBadgeInMetadata = hasLiveData && !hasInlineLiveData
 
-    const hasMetadata = isAssistant && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
+    const isEscalated = message.requires_human === true
+    const hasMetadata = isAssistant && !isEscalated && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
 
     return (
         <div
@@ -131,7 +133,13 @@ export const MessageItem = memo(function MessageItem({ message, onRating }: Mess
                     <HumanClosedSection resolvedAt={message.escalation_resolved_at} />
                 )}
                 {isAssistant && message.staff_response && (
-                    <HumanResponseSection response={message.staff_response} />
+                    <HumanResponseSection
+                        response={message.staff_response}
+                        onRate={onStaffRate && message.escalation_message_id
+                            ? (rating) => onStaffRate(message.escalation_message_id!, rating)
+                            : undefined}
+                        messageId={message.escalation_message_id}
+                    />
                 )}
             </div>
         </div>

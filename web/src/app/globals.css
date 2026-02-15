@@ -148,4 +148,29 @@
       @apply text-sm;
     }
   }
+
+  /**
+   * prose-staff: Staff response markdown styling
+   * Extends prose-chat with emerald-safe color overrides for
+   * rendering on bg-emerald-50 containers (WCAG AA contrast).
+   */
+  .prose-staff {
+    & a {
+      @apply text-emerald-700 dark:text-emerald-300 hover:underline inline-flex items-center gap-0.5;
+    }
+
+    & h1,
+    & h2,
+    & h3 {
+      @apply text-emerald-900 dark:text-emerald-100;
+    }
+
+    & code {
+      @apply bg-emerald-100/50 dark:bg-emerald-900/30;
+    }
+
+    & pre {
+      @apply bg-emerald-100/50 dark:bg-emerald-900/30;
+    }
+  }
 }

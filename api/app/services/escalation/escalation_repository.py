@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS escalations (
     delivery_attempts INTEGER NOT NULL DEFAULT 0,
     last_delivery_at TEXT,
     generated_faq_id TEXT,
+    staff_answer_rating INTEGER
+        CHECK(staff_answer_rating IS NULL OR staff_answer_rating IN (0, 1)),
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'in_review', 'responded', 'closed')),
     priority TEXT NOT NULL DEFAULT 'normal'
@@ -90,6 +92,7 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     d["responded_at"] = _parse_datetime(d.get("responded_at"))
     d["closed_at"] = _parse_datetime(d.get("closed_at"))
     d["last_delivery_at"] = _parse_datetime(d.get("last_delivery_at"))
+    d["staff_answer_rating"] = d.get("staff_answer_rating")
     return Escalation(**d)
 
 
@@ -106,6 +109,15 @@ class EscalationRepository:
             await db.execute(CREATE_TABLE_SQL)
             for idx_sql in CREATE_INDICES_SQL:
                 await db.execute(idx_sql)
+            # Self-migration: add staff_answer_rating for existing databases
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN staff_answer_rating INTEGER"
+                    " CHECK(staff_answer_rating IS NULL OR staff_answer_rating IN (0, 1))"
+                )
+                logger.info("Added staff_answer_rating column to escalations table")
+            except Exception:
+                pass  # Column already exists
             await db.commit()
         self._initialized = True
         logger.info("EscalationRepository initialized at %s", self.db_path)
@@ -235,6 +247,24 @@ class EscalationRepository:
             )
             row = await cursor.fetchone()
             return _row_to_escalation(row)
+
+    # ------------------------------------------------------------------
+    # Rating
+    # ------------------------------------------------------------------
+
+    async def update_rating(self, message_id: str, rating: int) -> bool:
+        """Atomic rating update. Returns False if escalation not found or has no staff_answer."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                UPDATE escalations
+                SET staff_answer_rating = ?
+                WHERE message_id = ? AND staff_answer IS NOT NULL
+                """,
+                (rating, message_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # List / filter
