@@ -1,0 +1,293 @@
+[
+  {
+    "question": "How do I do that?",
+    "ground_truth": "In Bisq Easy, to create a trade offer, go to the Trade tab, click 'Create Offer', select your payment method, set your price and amount, then publish. Other traders can then take your offer and start a trade chat.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I want to create a trade offer in Bisq Easy"},
+      {"role": "assistant", "content": "To create a trade offer in Bisq Easy, you need to go to the Trade section and set up your offer parameters."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (anaphoric resolution)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.90,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_001",
+      "review_status": "edited",
+      "test_category": "anaphoric_pronoun",
+      "rewrite_trigger": "pronoun_that"
+    }
+  },
+  {
+    "question": "What about the fees?",
+    "ground_truth": "In Bisq 1, trading fees can be paid in BTC or BSQ. BSQ fees are significantly cheaper (about half the BTC fee). Maker fees are lower than taker fees. The exact fee depends on the trade amount. Additionally, miners fees are required for the on-chain transactions.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I'm setting up a trade on the old bisq with SEPA payment"},
+      {"role": "assistant", "content": "Great, SEPA is a popular payment method on Bisq 1. Make sure your SEPA account is added in the payment accounts section first."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (context-dependent)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_002",
+      "review_status": "edited",
+      "test_category": "follow_up_question",
+      "rewrite_trigger": "what_about"
+    }
+  },
+  {
+    "question": "And the limits?",
+    "ground_truth": "In Bisq Easy (Bisq 2), trade limits depend on the seller's reputation. New sellers start with low limits around 600 USD equivalent. As sellers build reputation through burning BSQ, bonding, or trade history, their limits increase. Buyers do not have specific limits beyond what sellers offer.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "How does the reputation system work in Bisq Easy?"},
+      {"role": "assistant", "content": "The reputation system in Bisq Easy determines seller trust levels. Reputation is earned by burning BSQ, bonding BSQ, importing Bisq 1 signed account age, or accumulating trade history."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (follow-up)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_003",
+      "review_status": "edited",
+      "test_category": "short_follow_up",
+      "rewrite_trigger": "short_query"
+    }
+  },
+  {
+    "question": "Can I also use it for altcoins?",
+    "ground_truth": "Bisq Easy (Bisq 2) currently only supports BTC-fiat trading. For altcoin trading, you need to use Bisq 1 which supports many altcoin/BTC trading pairs through the multisig escrow system. You can run both Bisq 1 and Bisq 2 simultaneously.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I just installed the new bisq and it looks great"},
+      {"role": "assistant", "content": "Welcome to Bisq 2! You can start buying BTC right away through the Bisq Easy trade interface. Would you like help getting started?"}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (anaphoric + context)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_004",
+      "review_status": "edited",
+      "test_category": "anaphoric_it",
+      "rewrite_trigger": "pronoun_it"
+    }
+  },
+  {
+    "question": "How long does it usually take?",
+    "ground_truth": "In Bisq 1, the duration of a trade depends on the payment method. SEPA transfers take 1-6 business days. Faster payment methods like Zelle or Revolut can complete within hours. The trade protocol itself adds some time for confirmation steps. After payment is confirmed, BTC release happens after the required number of blockchain confirmations.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I'm about to make my first trade on Bisq 1 using SEPA"},
+      {"role": "assistant", "content": "SEPA trades on Bisq 1 are straightforward. Once you take an offer, you'll need to send the fiat payment to the seller's SEPA details and mark it as sent."},
+      {"role": "user", "content": "Ok I sent the payment and marked it"},
+      {"role": "assistant", "content": "The seller should confirm receipt of payment. Once confirmed, the BTC will be released from the multisig escrow."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (multi-turn context)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_005",
+      "review_status": "edited",
+      "test_category": "anaphoric_it_multi_turn",
+      "rewrite_trigger": "pronoun_it"
+    }
+  },
+  {
+    "question": "Is that safe?",
+    "ground_truth": "Bisq Easy trades without escrow rely on the seller's reputation. While there is no multisig escrow like in Bisq 1, the reputation system provides some security. Sellers with higher reputation have more to lose. For larger amounts, consider using Bisq 1 which has full multisig protection.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I see that Bisq Easy doesn't use escrow like the old version"},
+      {"role": "assistant", "content": "That's correct. Bisq Easy uses a reputation-based trust model instead of the multisig escrow used in Bisq 1. The seller's reputation score indicates their trustworthiness."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (anaphoric + safety)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_006",
+      "review_status": "edited",
+      "test_category": "anaphoric_that",
+      "rewrite_trigger": "pronoun_that"
+    }
+  },
+  {
+    "question": "What if they don't pay?",
+    "ground_truth": "In Bisq 1, if the buyer doesn't pay, the seller can open mediation after the trade period expires. The mediator will review the case. If mediation fails, arbitration can be opened after the delayed payout transaction time lock expires. The security deposits protect both parties.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I'm selling BTC on the classic bisq and someone took my offer"},
+      {"role": "assistant", "content": "Great, the buyer should now send fiat payment to your payment account details shown in the trade. You'll need to wait for the buyer to mark payment as sent."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (anaphoric + dispute)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_007",
+      "review_status": "edited",
+      "test_category": "anaphoric_they",
+      "rewrite_trigger": "pronoun_they"
+    }
+  },
+  {
+    "question": "How about Lightning?",
+    "ground_truth": "In Bisq Easy (Bisq 2), you can choose to receive BTC via Lightning Network instead of on-chain. When creating or taking a trade, select Lightning as the settlement method. You'll need a Lightning wallet with sufficient inbound capacity. Lightning trades settle faster than on-chain.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I want to receive my BTC on-chain after buying on Bisq Easy"},
+      {"role": "assistant", "content": "For on-chain settlement in Bisq Easy, you'll provide your BTC wallet address during the trade. The seller will send BTC directly to your address after you pay fiat."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (follow-up alternative)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_008",
+      "review_status": "edited",
+      "test_category": "follow_up_question",
+      "rewrite_trigger": "how_about"
+    }
+  },
+  {
+    "question": "Can you explain those more?",
+    "ground_truth": "In Bisq 1, bonded roles include mediators, arbitrators, seed node operators, and other contributors who lock BSQ bonds to serve the network. These roles are critical for dispute resolution and network infrastructure. Bond amounts vary by role. If a bonded role operator misbehaves, their bond can be confiscated through a DAO proposal.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "What are bonded roles in Bisq?"},
+      {"role": "assistant", "content": "Bonded roles are special positions in the Bisq DAO where contributors lock BSQ as a guarantee of good behavior. They include mediators, arbitrators, seed node operators, and other network service providers."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (deictic reference)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_009",
+      "review_status": "edited",
+      "test_category": "anaphoric_those",
+      "rewrite_trigger": "pronoun_those"
+    }
+  },
+  {
+    "question": "What you mentioned about the wallet, how do I set it up?",
+    "ground_truth": "In Bisq 1, the built-in wallet is automatically created when you first launch Bisq. It manages your BTC for trading (security deposits, trade amounts, and fees). You can fund it by sending BTC to the receive address shown in the Funds tab. Make sure to back up your wallet seed words from Settings > Wallet Seed.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I just installed Bisq 1 and I'm confused about the wallet"},
+      {"role": "assistant", "content": "Bisq 1 has a built-in Bitcoin wallet that manages all your trading funds, including security deposits and trade amounts. You need to fund it before you can start trading."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (deictic reference)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_010",
+      "review_status": "edited",
+      "test_category": "deictic_reference",
+      "rewrite_trigger": "you_mentioned"
+    }
+  },
+  {
+    "question": "But what if I want to use a different payment method?",
+    "ground_truth": "In Bisq Easy (Bisq 2), you can use various payment methods including bank transfer, SEPA, Revolut, Zelle, and others depending on your region. Add your preferred payment method in the account settings. When browsing offers, filter by payment method to find matching trades.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I set up a Revolut account for trading on Bisq Easy"},
+      {"role": "assistant", "content": "Revolut works well with Bisq Easy. You can filter the offerbook to show only Revolut offers, or create your own offer specifying Revolut as the payment method."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (follow-up with context shift)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_011",
+      "review_status": "edited",
+      "test_category": "follow_up_question",
+      "rewrite_trigger": "but_what"
+    }
+  },
+  {
+    "question": "Does the same thing apply to version 2?",
+    "ground_truth": "Bisq Easy (Bisq 2) does not use the same dispute resolution process as Bisq 1. In Bisq Easy, there is no multisig escrow or formal arbitration. Instead, disputes are handled through mediation and the reputation system. Sellers with bad behavior lose reputation, making the system self-regulating.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "In Bisq 1, if there's a dispute, mediation comes first and then arbitration"},
+      {"role": "assistant", "content": "Correct. In Bisq 1, the dispute resolution flow is: first try mediation, where a mediator proposes a resolution. If either party rejects, the delayed payout transaction is published and after the time lock, arbitration can be opened."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (version comparison + deictic)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.75,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_012",
+      "review_status": "edited",
+      "test_category": "deictic_same_thing",
+      "rewrite_trigger": "the_same"
+    }
+  },
+  {
+    "question": "Ok thanks, and how do I check my balance?",
+    "ground_truth": "In Bisq 1, check your wallet balance in the Funds tab which shows available, reserved, and locked BTC. For BSQ balance, check the DAO tab. Make sure your wallet is synced (check the bottom status bar). If balances seem incorrect, try an SPV resync.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I funded my Bisq 1 wallet with some BTC for trading"},
+      {"role": "assistant", "content": "Great! Once the BTC transaction confirms, the funds will appear in your available balance. You can then start creating or taking trade offers."},
+      {"role": "user", "content": "How many confirmations do I need?"},
+      {"role": "assistant", "content": "Bisq 1 requires 1 blockchain confirmation for the deposit to be available for trading. This usually takes about 10-20 minutes."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (multi-turn follow-up)",
+      "protocol": "multisig_v1",
+      "protocol_confidence": 0.80,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_013",
+      "review_status": "edited",
+      "test_category": "short_follow_up_multi_turn",
+      "rewrite_trigger": "short_query"
+    }
+  },
+  {
+    "question": "Why is it taking so long?",
+    "ground_truth": "In Bisq Easy, trade completion depends on several factors: the seller needs to confirm fiat payment receipt, then release BTC. Bank transfers can take 1-3 business days. If the seller is unresponsive, you can open mediation through the trade chat. Check the trade status in your open trades list.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "I sent the bank transfer for my Bisq Easy trade 2 days ago"},
+      {"role": "assistant", "content": "Bank transfers can take a few business days depending on your bank and the payment method. The seller should confirm receipt once they see the payment."},
+      {"role": "user", "content": "The seller hasn't responded to my messages"},
+      {"role": "assistant", "content": "If the seller is unresponsive after a reasonable time, you can open mediation to resolve the trade. Check if the payment has actually arrived at the seller's bank."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (frustration + context)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_014",
+      "review_status": "edited",
+      "test_category": "anaphoric_it_frustration",
+      "rewrite_trigger": "pronoun_it"
+    }
+  },
+  {
+    "question": "Like that but for buying instead of selling?",
+    "ground_truth": "In Bisq Easy (Bisq 2), buying BTC is even simpler than selling. You don't need reputation to buy. Browse the offerbook, select a seller's offer, start a trade chat, pay fiat to the seller's payment details, and receive BTC. The process is similar to selling but you don't need to build reputation first.",
+    "contexts": [],
+    "chat_history": [
+      {"role": "user", "content": "How do I create an offer to sell bitcoin on Bisq Easy?"},
+      {"role": "assistant", "content": "To sell BTC on Bisq Easy, go to the Trade tab, click 'Sell Bitcoin', choose your payment method, set your price and amount. You'll need sufficient reputation to sell at higher amounts. Your offer will appear in the offerbook for buyers to browse."}
+    ],
+    "metadata": {
+      "source": "Query rewriter evaluation (deictic + role reversal)",
+      "protocol": "bisq_easy",
+      "protocol_confidence": 0.85,
+      "skip_protocol_injection": true,
+      "review_id": "rewriter_eval_015",
+      "review_status": "edited",
+      "test_category": "deictic_like_that",
+      "rewrite_trigger": "like_that"
+    }
+  }
+]

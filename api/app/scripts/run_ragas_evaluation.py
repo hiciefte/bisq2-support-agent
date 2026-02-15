@@ -48,6 +48,7 @@ async def query_rag_system(
     client: httpx.AsyncClient,
     question: str,
     *,
+    chat_history: list[dict[str, str]] | None = None,
     bypass_hooks: list[str] | None = None,
     timeout: float = 60.0,
 ) -> dict[str, Any]:
@@ -56,13 +57,17 @@ async def query_rag_system(
     Args:
         client: HTTP client
         question: Question to ask
+        chat_history: Optional conversation history for context-dependent queries
         timeout: Request timeout in seconds
 
     Returns:
         Dict with answer, sources, and response_time
     """
     try:
-        payload: dict[str, Any] = {"question": question, "chat_history": []}
+        payload: dict[str, Any] = {
+            "question": question,
+            "chat_history": chat_history or [],
+        }
         if bypass_hooks:
             payload["bypass_hooks"] = bypass_hooks
 
@@ -539,14 +544,23 @@ async def run_evaluation(
             question = sample["question"]
             ground_truth = sample["ground_truth"]
 
-            # Add protocol context
-            protocol = sample.get("metadata", {}).get("protocol", "")
-            if protocol == "bisq_easy":
-                question_with_context = f"{question} (I'm using Bisq Easy / Bisq 2)"
-            elif protocol == "multisig_v1":
-                question_with_context = f"{question} (I'm using Bisq 1)"
-            else:
+            # Add protocol context (unless sample opts out)
+            skip_injection = sample.get("metadata", {}).get(
+                "skip_protocol_injection", False
+            )
+            if skip_injection:
                 question_with_context = question
+            else:
+                protocol = sample.get("metadata", {}).get("protocol", "")
+                if protocol == "bisq_easy":
+                    question_with_context = f"{question} (I'm using Bisq Easy / Bisq 2)"
+                elif protocol == "multisig_v1":
+                    question_with_context = f"{question} (I'm using Bisq 1)"
+                else:
+                    question_with_context = question
+
+            # Include chat history if present (for query rewriter evaluation)
+            sample_chat_history = sample.get("chat_history")
 
             logger.info(f"[{i+1}/{len(samples)}] Querying: {question[:60]}...")
 
@@ -554,6 +568,7 @@ async def run_evaluation(
             result = await query_rag_system(
                 client,
                 question_with_context,
+                chat_history=sample_chat_history,
                 bypass_hooks=bypass_hooks,
             )
             elapsed = time.time() - start_time

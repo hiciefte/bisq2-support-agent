@@ -1,0 +1,641 @@
+{
+  "timestamp": "2026-02-14T14:53:29.576374+00:00",
+  "system": "qdrant",
+  "samples_count": 20,
+  "metrics": {
+    "context_precision": 0.7578869047321689,
+    "context_recall": 0.3383333333333333,
+    "faithfulness": 0.4622948039614706,
+    "answer_relevancy": 0.7096958837557015
+  },
+  "per_sample_metrics_available": true,
+  "avg_response_time": 9.27873228788376,
+  "individual_results": [
+    {
+      "question": "How do I do a spv resync?",
+      "ground_truth": "In Bisq 1, an SPV resync deletes the local SPV chain file so the wallet re-downloads and re-verifies block headers. Go to Settings > Network Info > SPV Resync, then restart Bisq. This fixes wallet balance discrepancies caused by stale chain data.",
+      "answer": "To perform an SPV resync in Bisq, follow these steps:\n\n### From the Bisq Interface (Recommended)\n1. Go to `Settings` > `Network Info`.\n2. Click the `RESYNC SPV WALLET` button.\n3. Follow the prompts to restart the application **twice**.\n\n### From the File System (If Bisq won't start)\n1. Ensure Bisq is completely **closed**.\n2. Navigate to your Bisq data directory.\n3. Locate and **delete** the SPV chain file: `btc_mainnet/wallet/bisq.spvchain`.\n4. Start Bisq and wait for it to fully load (it will begin the resync process).\n5. **Crucially, close Bisq completely and restart it a second time** to initialize the wallet state correctly.\n\nThis process will help resolve issues like incorrect balances or missing transactions. If problems persist, consider restoring a wallet backup or switching to a new wallet.",
+      "contexts": [
+        "## =SPV resync\n=\nSPV resync tends to be recommened too often in support.\nSPV resync can be quite heavy and is not a great user experience to do, so only recommend if really needed.\nHow long a SPV takes depends on the age of the wallet and the number of transactions.\nOld wallets with many transactions can take a day or even more. Usually with a fresh empty wallet its about some minutes up to 1 hour.\nIt is faster if the user runs a local BTC node (not pruned). It also depends on internet connectio...",
+        "## = Wallet / Sync Issues\n=\n\n##\n\"Offer cannot be taken due to counterparty trade restrictions\". What does this mean?\n##\n\nThis usually means information about the offer maker's account limits (based on age/signing status) hasn't fully propagated across the P2P network to your Bisq instance yet. Try restarting Bisq. The offer maker might also need to restart their Bisq client.\n\n##\nMy SPV resync is taking forever or freezing!\n##\n\nThis can happen with older wallets or wallets with many transactions....",
+        "## = Import raw data from backup\n=\n\nOpen your renamed folder, get into the btc_mainnet/db folder, and sort files by \"last modified\" descending, you are looking for those files that were modified most recently, all of them in the same day (presumably the last day your Bisq was operational).\nThe list should include:\nBsqSwapTrades\nDisputeList\nRefundDisputeList\nSequenceNumberMap\nMyVoteList\nOpenOffers\nMyBlindVoteList\nClosedTrades\nMediationDisputeList\nMyProposalList\nMailboxMessageList\nAccountAgeWitnes...",
+        "# 1. The trade remains in the offer book, the taker transaction and the deposit transaction fails, the trade can be seen on both the buyer's and seller's Bisq instance. The deposit transaction confirmation will show as N/A. This is because the deposit transaction could not be created because the taker transaction failed. In this instance neither the maker or taker will have lost any trade or miner fees. The offer will still be able to be taken in the offer book, and the taker transaction did not...",
+        "**Resyncing the SPV file** (Simplified Payment Verification file, `bisq.spvchain`) can often solve wallet issues within Bisq, such as an incorrect balance showing, missing transactions, or other synchronization problems.\n\n__TOC__\n\n## How to Resync the SPV File\n\nIt is generally best to initiate an SPV file resync using the button within the Bisq application interface. However, if Bisq cannot start properly, you may need to initiate it manually via the file system.\n\n## = From the Bisq Interface\n=\n...",
+        "This article covers some tactics for **troubleshooting wallet issues** to address incorrect balance showing, missing transactions, and other strange inconsistencies.\n\n__TOC__\n\n= Re-sync SPV chain =\n\nThe SPV file is a collection of data from the Bitcoin blockchain that tells Bisq your wallet\u2019s balances. All data in the file is available on the Bitcoin network. Resyncing this file just forces Bisq to resync with the Bitcoin network and fetch the data it needs to determine your wallet state again.\n...",
+        "It is best practice that any Bitcoin user installs his own node, to send and verify his own transactions; moreover, if you use Bisq consistently, you are strongly encouraged to do so, as it will make the bitcoin network connection much more stable, and especially reduce the risk of needing SPV resync on a wallet that contains many transactions. Even when a SPV resync is needed, it will be much painless if done while connected to your own node.\n\n__TOC__\n\n= Hardware requirements =\n\nThe most demand...",
+        "When you just need a fresh new wallet, but wish to keep everything else (accounts, signing status, onion address, trade history, notifications app association, and other custom settings), it is easier and faster to only generate a new wallet for Bisq, rather than switching to a new data directory.\n\n__TOC__\n\n= Why creating a new wallet? =\n\nBeing a project built in Java, Bisq uses [https://bitcoinj.org/ bitcoinj], which is a Java library to manage a bitcoin wallet, among other things. This comes w...",
+        "## = Mining fees to withdraw\n=\nWhen sending BTC from Bisq wallet to other BTC addresses, you can use the mining fee recommended by Bisq or set your own at the Funds / Send funds tab. If you have used very small fees, it could not be included. If you still can find your tx on blockchain explorers but want to accelerate the process, you can try a manual [https://bitcoin.stackexchange.com/questions/49723/replace-by-fee-vs-child-pays-for-parent CPFP] (Child Pays For Parent) transaction. If the trans..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_001",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "spv resync"
+      },
+      "response_time": 21.682069063186646,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.6178571428416965,
+        "context_recall": 0.3333333333333333,
+        "faithfulness": 0.5333333333333333,
+        "answer_relevancy": 0.8020541877336076
+      }
+    },
+    {
+      "question": "I'm using the old bisq and my trade is stuck. What should I do?",
+      "ground_truth": "In Bisq 1, if a trade is stuck, first try an SPV resync (Settings > Network Info) and restart. If the trade is still stuck after resync, open mediation via the trade view (Ctrl+O). The mediator will review the case and propose a resolution.",
+      "answer": "If your trade is stuck on Bisq, here are some steps to troubleshoot the issue:\n\n1. **Restart Bisq**: Sometimes, simply restarting the application can resolve connectivity or syncing problems.\n\n2. **Check Your Wallet Sync**: Ensure your wallet is properly synced with the blockchain. If it's out of sync, you might need to perform an SPV resync:\n   - Close Bisq.\n   - Go to your data directory and delete the contents of the `btc_mainnet/tor` folder (except for the `hiddenservice` folder).\n   - Restart Bisq and allow it to resync.\n\n3. **Verify Internet Connection**: Make sure you have a strong and stable internet connection. Weak connections can cause issues with transactions.\n\n4. **Check for Tor Issues**: If you see problems related to Tor, it might be worth checking if the Tor network is functioning properly. Sometimes, the network may be slow or having issues.\n\n5. **Wait for Confirmation**: If your transaction is pending, it may take some time for it to confirm. Check a blockchain explorer to see the status of your transaction.\n\nIf these steps don't resolve the issue, you may need to seek further assistance in the Bisq community channels.",
+      "contexts": [
+        "## = Wallet / Sync Issues\n=\n\n##\n\"Offer cannot be taken due to counterparty trade restrictions\". What does this mean?\n##\n\nThis usually means information about the offer maker's account limits (based on age/signing status) hasn't fully propagated across the P2P network to your Bisq instance yet. Try restarting Bisq. The offer maker might also need to restart their Bisq client.\n\n##\nMy SPV resync is taking forever or freezing!\n##\n\nThis can happen with older wallets or wallets with many transactions....",
+        "# 1. The trade remains in the offer book, the taker transaction and the deposit transaction fails, the trade can be seen on both the buyer's and seller's Bisq instance. The deposit transaction confirmation will show as N/A. This is because the deposit transaction could not be created because the taker transaction failed. In this instance neither the maker or taker will have lost any trade or miner fees. The offer will still be able to be taken in the offer book, and the taker transaction did not...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can trade. To sell BSQ follow these simple steps:\n\n1. On **Market** tab select BSQ/BTC\n\n2. Click on **SELL BSQ**\n\n3. Select an offer and click on **TAKE OFFER**\n\n4. Review offer details including amount, price. Then click on **TAKE OFFER TO BUY BTC**.\n\n5. Click on **CONFIRM TAKE OFFER**.\n\n6. BSQ/BTC swap is now complete. Wait for blockchain confirmation.\n\n7. Check that you have...",
+        "# Close Bisq.\n# Rename the data directory from Bisq to Bisq.old. Copy this file to an external device, it will be used as a backup in case of data loss.\n# Start Bisq.\n# A new Bisq instance called Bisq will be created (including a new wallet, which is the one we will soon be using to replace the old one).\n# Go to ''Account'' > ''Wallet seed'' and write down the seed of the new wallet. Set the password for the wallet at ''Account'' > ''Wallet password''.\n# Go to ''Funds'' > ''Receive Funds'' and c...",
+        "You may be experiencing **network issues** if you're stuck on Bisq's initial loading screen for a while. Often this results in a screen mentioning outdated Tor files and other Tor settings. This could occur for a number of reasons.\n\n__TOC__\n\n## Weak internet connection\n\nBisq generally needs a strong, fast connection to work properly. Tethering on mobile connections can work but is known to cause issues.\n\n## 3/4 connection problem\n\nIf Bisq stalls at step 3/4 of the startup sequence for more than ...",
+        "## Wait for this new instance of Bisq to start and finish loading and syncing.\n## Once it has, send your funds from your old Bisq instance to your new one.\n\n= Create new data directory =\n\nIf you used methods 1 or 2 in the previous step:\n# Close Bisq.\n# Delete (or rename) the Bisq data directory (see default locations for your operating system here).\n# Start Bisq again. Bisq will create a new data directory with a new wallet, new Tor state, etc.\n# Send funds from external wallet into Bisq.\n\nIf yo...",
+        "# Close Bisq. Also make sure you've made a backup of your data directory (just in case).\n# Replace /path/to/data/directory/btc_mainnet/keys/sig.key with the sig.key from your backup.\n\nUpon opening Bisq, you should see account aging and signing status restored for your fiat payment accounts.\n\nIf you don't, double-check:\n* You copied account metadata and salt correctly in the previous step.\n* The sig.key you copied is the correct one (i.e., the one you were using when your accounts accrued aging a...",
+        "## Update and migration process\n\nWe don\u2019t want to disrupt the trade experience for existing traders by reducing the trade amount limit to the lowest level when we publish that update. Also existing offers would get rendered invalid.\n\nTo fade in that feature we use a date-based approach.\n\n* Before December, 15, 2017 (about 1.5 months after release) we don\u2019t apply the lower limit based on the account age.\n* After that date and before January, 15, 2018 we only apply a factor of 0.75 to those which ..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_002",
+        "review_status": "edited",
+        "test_category": "bisq1_informal_version",
+        "target_keyword": "old bisq"
+      },
+      "response_time": 13.08249020576477,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.8666666666377778,
+        "context_recall": 0.3333333333333333,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.8304580097334308
+      }
+    },
+    {
+      "question": "How does the escrow work when I buy bitcoin?",
+      "ground_truth": "In Bisq 1, escrow uses a 2-of-2 multisig mechanism. Both buyer and seller lock a security deposit plus the trade amount into a multisig address. Funds are released when both parties confirm the trade completed successfully. If there is a dispute, mediation and then arbitration can resolve it.",
+      "answer": "When you buy Bitcoin on Bisq, the escrow system works as follows:\n\n1. **Trade Initiation**: You select an offer to buy BTC and confirm the trade. This action locks the Bitcoin in a multisig escrow account, protecting both you and the seller.\n\n2. **Payment**: You send the specified fiat amount to the seller using your chosen payment method. This payment occurs outside of Bisq, but you must notify the Bisq application that the payment has been initiated.\n\n3. **Confirmation**: Once the seller receives your payment, they confirm this in the Bisq application. Only after this confirmation will the Bitcoin be released from escrow to your wallet.\n\n4. **Completion**: Upon confirmation of payment by the seller, the trade is complete, and you can withdraw your Bitcoin.\n\nThe escrow system ensures that neither party can cheat the other since the Bitcoin remains locked until the payment is confirmed. This adds a layer of security to peer-to-peer transactions, allowing for trustless trading.",
+      "contexts": [
+        "## = Be responsive during a dispute\n=\n\nTraders are expected to reply within 48hrs to either mediators or arbitrators, and could lose the dispute based on unresponsiveness.\n\nMediators may take up to 48 hours to respond to messages, and arbitrators may take up to 5 days to respond to messages.\n\n## = Do not change payment details once trade is in progress\n=\n\nOnce the deposit transaction is published, the trade is in progress, and its terms cannot be changed. Traders agreed to use the payment detail...",
+        "After setting up a payment account you're ready to take your first offer.\n\n## Select an offer\n\nFirst, click on **BUY BTC** and click on any of the available **TAKE OFFER TO BUY BTC** buttons. Each offer will list the min and max amounts you can buy, the exchange price and the payment method.\n\nthumb|left|500px\n\n** Note on limits for new payment accounts: **\n\nTo secure the network from scammers and other bad actors, unsigned Bisq payment accounts are limited to buying 0.01 BTC until they are signe...",
+        "## How Bisq works\n\n## = In a nutshell (v1 Trade Example)\n=\n\nImagine you want to buy bitcoin (BTC) in exchange for Euros (EUR). Using Bisq's classic v1 trading protocol (which involves security deposits), you are a ''buyer'' of BTC looking for a ''seller'' of BTC who accepts EUR.\n\nThe basic steps would be:\n\n# You download, install, and run the Bisq 2 desktop application.\n# You add your EUR payment method details (e.g., SEPA bank account) to your Bisq client.\n# You browse Bisq\u2019s offer book for exi...",
+        "## = Ensure you follow Bisq protocol\n=\n\nUltimately, the deal will be completed in Bisq. Buyers must mark payment as sent before sellers can release assets.\n\n**Buyers** should bring a laptop with them so they can mark the payment as sent. Otherwise, the buyer will end up paying the seller and have to walk away without the bitcoin they paid for (since the seller won\u2019t be able to acknowledge receipt of payment before the buyer acknowledges they sent payment).\n\n**Sellers** should bring a laptop with...",
+        "## So, how do I send fiat to Bisq, or how do I use my credit card to buy bitcoin?\n\n= You don't. =\n\nThis guide was made as an attempt to garner attention from such query terms that regularly appear on some of our support venues.\n\nBisq is a DEX (decentralized exchange), it doesn't directly deal with fiat, so it doesn't have builtin fiat accounts, nor credit card payment endpoints; it only manages a BTC wallet (and a special BSQ wallet).\n\nTo trade, you need to find another user who agrees with you ...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nMake sure you have a fiat payment account set up. For example see Set up a SEPA payment account or Set up a Revolut payment account.\n\n1. On **Market** tab select EUR - Euro\n\n2. Click on **BUY BTC**.\n\n3. Select an offer and click on **TAKE OFFER**.\n\n4. Review offer details including amount, price. Then click on **NEXT STEP**.\n\n5. Fund your trade (from Bisq wallet or external wallet).\n\n6...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nMake sure you have a fiat payment account set up. For example see Set up a SEPA payment account or Set up a Revolut payment account.\n\nCreating an offer to buy BTC is a slower way to buy than simply taking an existing offer, see How to buy BTC on Bisq with EUR, because you have to stay online on the Bisq network and wait for someone to take your offer. But it does allow you to set the p...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nMake sure you have a fiat payment account set up. For example see Set up a INTERAC e-tranfer payment account.\n\n1. On **Market** tab select CAD - Canadian Dollar\n\n2. Click on **BUY BTC**.\n\n3. Select an offer and click on **TAKE OFFER**.\n\n4. Review offer details including amount, price. Then click on **NEXT STEP**.\n\n5. Fund your trade (from Bisq wallet or external wallet).\n\n6. Click on *...",
+        "## Notes on buying BTC\n\nYou can buy BTC with SWIFT on Bisq in 2 ways\u02d0\n\n# Make an offer to buy BTC on a currency market of your choosing\n# Take an offer to buy BTC on the currency market specified in the offer\n\n## = Send payment in correct currency\n=\n\n**The bitcoin buyer must send payment in the currency of the market on which the offer was made.** For example, if you make an offer to buy BTC using SWIFT on the BTC/USD market you should send USD (or ensure your bank converts your local currency i...",
+        "## What are CapCodes?\n\nTransfers take place using CapCodes. CapCodes are like coupon codes you can generate at any time and use it to transfer funds\n\nCapCodes are an electronic cheque system that makes it possible to store amounts of money, precious metals or cryupto-currencies in a short code, easy to be written down, that can be written in a piece of paper to make transactions even when you are not connected to the internet.\n\nWhen you generate a CapCode, you get a voucher (coupon code) that yo..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_003",
+        "review_status": "edited",
+        "test_category": "bisq1_protocol_synonym",
+        "target_keyword": "escrow"
+      },
+      "response_time": 11.2933931350708,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.42063492062089947,
+        "context_recall": 0.25,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.858067435892724
+      }
+    },
+    {
+      "question": "My signed account got reset after an update. How do I fix it?",
+      "ground_truth": "In Bisq 1, a signed account provides higher trade limits. If your signed account status was lost after an update, try rebuilding the DAO state from resources. The account age witness and signing data is stored on the P2P network, so it should recover. If not, contact support with your account details.",
+      "answer": "To fix your reset signed account after the update, follow these steps:\n\n1. **Close Bisq**: Ensure that Bisq is completely closed before making any changes.\n2. **Backup Your Data**: Make a backup of your data directory to avoid any data loss.\n3. **Restore sig.key**:\n   - Navigate to your data directory at `/path/to/data/directory/btc_mainnet/keys/`.\n   - Replace the `sig.key` file with the version from your backup.\n4. **Open Bisq**: Restart Bisq. You should see your account aging and signing status restored for your fiat payment accounts.\n\nIf you don't see the expected changes, double-check that you copied the correct `sig.key` and that it matches the one used when your accounts accrued aging or got signed.",
+      "contexts": [
+        "## = How to get an account signed\n=\n\nPayment accounts that require signing cannot buy more than until 30 days ''after'' they are signed. There's two ways to get your account signed.\n\n##\nBuying BTC\n##\n\nTo sign your account you have to buy BTC following these requirements:\n* trade amount is greater than or equal to BTC and lesser than or equal to\n* offer must be in a market that requires signing (USD, EUR, CAD, GBP, AUD, BRL)\n* seller's account must have been signed for over 30 days at the time of...",
+        "## =SPV resync\n=\nSPV resync tends to be recommened too often in support.\nSPV resync can be quite heavy and is not a great user experience to do, so only recommend if really needed.\nHow long a SPV takes depends on the age of the wallet and the number of transactions.\nOld wallets with many transactions can take a day or even more. Usually with a fresh empty wallet its about some minutes up to 1 hour.\nIt is faster if the user runs a local BTC node (not pruned). It also depends on internet connectio...",
+        "## Sign Transaction\n\n# Press ctrl+g and click IMPORT. Copy the string you got on step 2, paste it in the first field and press IMPORT FROM STRING. It should populate the view with the information about the payout transaction.\n# Go to SIGN and paste your private key for this trade (priv HEX=) and click GENERATE SIGNATURE.\n# Copy the signature hex that you get and share it with the mediator\n\n## Broadcast The Transaction\n\n# Press ctrl+g and click IMPORT. Copy the string you got on step 2, paste it ...",
+        "# Close Bisq. Also make sure you've made a backup of your data directory (just in case).\n# Replace /path/to/data/directory/btc_mainnet/keys/sig.key with the sig.key from your backup.\n\nUpon opening Bisq, you should see account aging and signing status restored for your fiat payment accounts.\n\nIf you don't, double-check:\n* You copied account metadata and salt correctly in the previous step.\n* The sig.key you copied is the correct one (i.e., the one you were using when your accounts accrued aging a...",
+        "Before **encrypting your wallet**, your Bisq wallet files are stored on your machine's drive in ''plain text''.\n\nThis is not a good idea\u2014anyone who gains access to your computer (whether by physically stealing it or by hacking it remotely) can gain access to your private keys and take your bitcoin.\n\nSetting a password encrypts your Bisq wallet files so they\u2019re useless to anyone without the password.\n\nTo set a password, go to Account > Wallet Password and enter a strong password.\n\n**Do not forget...",
+        "## = Notification\n=\n\n''Note (@cbeams): We may want to have maintainers add a comment to newly-indentified critical bugs mentioning @bisq-network/bisq-devs and @bisq-network/support so that those groups are made aware of the issue and are automatically subscribed to any updates on it. @ripcurlx to decide and update this section accordingly.''\n\n## = Assignment\n=\n\nIf you are a developer interested in working on a given critical bug, you should add a comment to the issue asking to be assigned to it....",
+        "**Local reputation** is a count of how many trades you've done with a peer at a particular onion address.\n\nThe idea is that if a trade with a peer went well, it's reasonable to expect your next trade with that peer to go well too, creating a sort of rudimentary reputation indicator while maintaining anonymity.\n\nAs you trade on Bisq, you will see a count appear on the avatars of users you've traded with.\n\n100px|thumb|left|Local reputation on the offer book.\n\nYou can reset your local reputation by..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_004",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "signed account"
+      },
+      "response_time": 8.643020153045654,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.249999999975,
+        "context_recall": 0.0,
+        "faithfulness": 0.8,
+        "answer_relevancy": 0.8123979497870644
+      }
+    },
+    {
+      "question": "Where is my data directory? I need to back it up before reinstalling.",
+      "ground_truth": "In Bisq 1, the default data directory location depends on your OS: on macOS it is ~/Library/Application Support/Bisq, on Linux ~/.local/share/Bisq, and on Windows %APPDATA%/Bisq. Back up the entire directory before reinstalling to preserve your wallet, trade history, and account data.",
+      "answer": "To find your Bisq data directory for backup:\n\n1. **While Bisq is Running**:\n   - Go to **Account > Backup**.\n   - Choose a location to export your backup (this exports the entire data directory).\n\n2. **While Bisq is Closed**:\n   - Click on the **Open Directory** button in the Bisq application to locate your data directory.\n   - Alternatively, the location varies by OS:\n     - **Windows**: `C:\\Users\\<YourUsername>\\AppData\\Roaming\\Bisq`\n     - **macOS**: `/Users/<YourUsername>/Library/Application Support/Bisq`\n     - **Linux**: `/home/<YourUsername>/.local/share/Bisq`\n\nCopy the entire directory to a safe location to ensure you have a complete backup.",
+      "contexts": [
+        "Sometimes it will happen that your Bisq instance won't start, and you don't have backups, or your backups do not start as well, or are too old to be useful.\nThe following is to be intended as a hacky-workaround-last-resort-attempt to have Bisq start while retaining as much data as possible from the previous installation.\nIn practical terms, it means that if something goes wrong with this guide and your machine explodes, you were warned and are the sole responsible for the event.\n\n## = Test with ...",
+        "## =Backup\n=\n* If a user reports a bug tell user to make a backup of data dir. This can help that relevant log files and rolling backups are still available later.\nRolling backup means that old files get deleted (e.g. bisq10.log is oldest log file) once the max. number files is reached, so we can only go back a certain depth back in history.\n* Tell users to always make a full backup of the data dir. Seed node is only an emergency backup and if there are open trades funds are at risk (e.g. no com...",
+        "Specifying **command line options** can enable additional non-default settings when running Bisq from the command line.\n\nSee a full list of available options [https://github.com/bisq-network/bisq/blob/master/common/src/main/java/bisq/common/config/Config.java#L57 in the code]. This article covers more notable ones for typical use cases.\n\n__TOC__\n\n## Specify a different data directory\n\nThe default data directory Bisq uses is called \"Bisq\". All Bisq data is fully contained in it. The default path ...",
+        "**Backing up** your Bisq data is crucial to ensure you can retain control over trades, disputes, payment accounts, and funds in case of issues with your machine (e.g., drive failure) or Bisq itself (e.g., critical bugs).\n\nAll Bisq data is stored right on your computer\u2014it's never stored (or even sent) to a central server, so backing it up is your job.\n\nTo see how to ''restore'' data to Bisq, see Restoring application data.\n\n__TOC__\n\n= Back up the entire Bisq data directory =\n\nThe safest, quickest...",
+        "**Restoring application data** can be useful to bring back payment accounts, onion addresses, and other items from a backup\u2014or to move your Bisq instance to an entirely new machine.\n\nYou can restore an entire data directory at once, or just the parts you want.\n\n__TOC__\n\n= Restore an entire data directory =\n\nFirst make sure Bisq is closed. Then copy the entire Bisq directory from your backup and paste it in your machine's default data directory location. If there already is a directory called Bis...",
+        "**Switching to a new data directory** can help you start with Bisq anew: fresh wallet, new onion address, new keys, etc. It's a sort of \"factory reset\" that makes it like you're starting Bisq for the first time.\n\nUpon creating a new data directory, you can restore various parts of a previous data directory (e.g., aged and signed payment accounts).\n\nIf you instead wish to only obtain a new wallet, while preserving every other element of your data directory, you can create a fresh wallet in the sa...",
+        "# Copy the wallet folder from the same location in Bisq.new, into the btc_mainnet folder of the \"old\" data directory, so that now there will be wallet and wallet.old folders under btc_mainnet.\n# Start Bisq, wait until wallet is synchronized with the blockchain, and verify that all your funds were correctly moved, checking the contents of ''Funds'' > ''Send Funds'', and ''DAO'' > ''BSQ Wallet''.\n# You can now operate normally with Bisq. The brand new wallet will be used instead of the old one.\n\n=..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.75,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_005",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "data directory"
+      },
+      "response_time": 9.773788928985596,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.6791666666496875,
+        "context_recall": 0.5,
+        "faithfulness": 0.5,
+        "answer_relevancy": 0.5947790943868215
+      }
+    },
+    {
+      "question": "I want to pay my trading fees in bsq. How do I buy bsq first?",
+      "ground_truth": "In Bisq 1, you can buy BSQ on Bisq itself using the BSQ/BTC market. Create a BSQ payment account (Altcoins section), then take or create an offer to buy BSQ. Once you hold BSQ, you can select it as your fee payment method when creating or taking offers to get a significant discount on trading fees.",
+      "answer": "To buy BSQ (Bisq's native token) on Bisq, follow these steps:\n\n1. **Open Bisq**: Launch the Bisq application.\n   \n2. **Set Up Your Wallet**: Ensure you have a Bitcoin wallet set up in Bisq since you'll need BTC to buy BSQ.\n\n3. **Create a BSQ Payment Account**:\n   - Go to the **Accounts** tab.\n   - Click on **Add New Account**.\n   - Select **BSQ** as your payment method and input your BSQ address. Save the account.\n\n4. **Browse Offers**:\n   - Navigate to the **Market** tab.\n   - Look for BSQ buy offers. You can make or take an offer to buy BSQ.\n\n5. **Complete the Trade**: Follow the prompts to finalize your transaction.\n\n6. **Pay Trading Fees in BSQ**: When confirming your trade, you can select BSQ to pay your trading fees for a discount.\n\nNow you can use BSQ to pay trading fees with a 50% discount compared to BTC fees!",
+      "contexts": [
+        "## = Create BSQ payment account\n=\n\nTo trade BSQ on Bisq, you need to set up an altcoin account using your BSQ address. If you're curious about Instant trades, check out Altcoins_Instant this article.\n\n700px|thumb|left|Use your BSQ address to create a BSQ payment account.\n\n## = Make or take a BSQ offer\n=\n\nOnce you have a BSQ payment account set up, you can buy and sell BSQ.\n\nPick an offer you like (or make an offer of your own) and complete the trade.\n\n700px|thumb|left|Browse offers to buy BSQ.\n\n...",
+        "**BSQ** is the native token of the Bisq DAO, used optionally for paying trading fees at a discount and required for certain governance functions like voting and making proposals. This page explains why you might want BSQ and how to obtain it.\n\n__TOC__\n\n## Why Obtain or Use BSQ?\n\nThere are two main reasons users acquire and use BSQ:\n\n* **For Traders:** Using BSQ to pay trading fees provides a significant discount (target is ~50%, re-calibrated each DAO cycle (approximately monthly) - see Updating...",
+        "Bisq has pioneered Bitcoin based atomic swaps. It is currently possible to exchange Bitcoin to BSQ atomically. BSQ is Bisq's native token built as a Bitcoin coloured coin.\n\nThe atomic swap protocol used by the Bisq DEX goes one step further in reducing counterparty risk: not only are users not exposed to exchange counterparty risk (since DEX holds no user funds) but it also eliminates the possibility of a buyer or seller failing to pay. The transaction is instant, automatic and final (once confi...",
+        "Traders incur **trading costs** to do trades using the Bisq trading protocol.\n\n__TOC__\n\n## = Trading fees\n=\n\nTrading fees are paid to the Bisq DAO to fund development of the Bisq software.\n\nThese fees are payable in BTC or BSQ, with BSQ fees targeted at offering a discount of 50% over BTC fees.\n\n## = Mining fees\n=\n\nBitcoin mining fees must be paid to do on-chain bitcoin transactions, and each Bisq trade currently requires 4 on-chain transactions: maker fee tx, taker fee tx, deposit tx, and payou...",
+        "## So, how do I send fiat to Bisq, or how do I use my credit card to buy bitcoin?\n\n= You don't. =\n\nThis guide was made as an attempt to garner attention from such query terms that regularly appear on some of our support venues.\n\nBisq is a DEX (decentralized exchange), it doesn't directly deal with fiat, so it doesn't have builtin fiat accounts, nor credit card payment endpoints; it only manages a BTC wallet (and a special BSQ wallet).\n\nTo trade, you need to find another user who agrees with you ...",
+        "**Mining fees** are BTC paid to miners to include a BTC transaction into a block.\nThe amount of BTC to be paid depends on a mining fee market driven by the amount of blocks produced by miners and demand for block space, and also the size of the transaction. This price is expressed in sat/vB or satoshis per byte. BTC transactions waiting to be included into a BTC block wait at the mempools of BTC nodes, and only those offering a higher sats/vB to miners will be included for every block. Mempool s...",
+        "**Altcoins** are a type of payment account on Bisq that use cryptocurrencies to settle BTC trades instead of legacy fiat-based payment methods.\n\nAny altcoin can be traded on Bisq, theoretically, but the most active markets tend to be XMR, ETH, LTC (and of course BSQ, but \"altcoin\" may not be a great term for it).\n\nSome altcoins have special, specific requirements for trading. Make sure you read the in-application pop-ups and information, as well as the following articles:\n* Trading BSQ\n* Trading...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can set up a fiat payment account, that you will use to pay or receive payments when trading on Bisq.\n\n1. Go to **Account** tab on Bisq\n\n2. Click on **Add new Account**\n\n3. Select **Revolut** as your payment method\n\n4. Input your Revolut user name. Select your currencies.\n\n5. Click on **Save New Account**.\n\nYou can now go to **Market** tab and start buying and selling. See How ..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_006",
+        "review_status": "edited",
+        "test_category": "bisq1_dao_term",
+        "target_keyword": "bsq"
+      },
+      "response_time": 8.131941080093384,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.8928571428348213,
+        "context_recall": 0.6666666666666666,
+        "faithfulness": 0.07692307692307693,
+        "answer_relevancy": 0.8167521126841127
+      }
+    },
+    {
+      "question": "How does the 2of2 multi-sig work for trade security?",
+      "ground_truth": "In Bisq 1, trades use a 2-of-2 multisig escrow. Both buyer and seller must sign to release funds from the multisig address. Each party also puts up a security deposit. If a dispute arises, mediation is the first step, followed by arbitration if needed. The delayed payout transaction provides a time-locked fallback.",
+      "answer": "Funds in a Bisq trade are secured using a **2-of-2 multisig** mechanism. Here's how it works:\n\n1. **Control by Both Parties**: The funds are locked in a multisig wallet that requires signatures from both the buyer and the seller to release the funds. This means neither party can unilaterally access the funds.\n\n2. **Signing Process**: Once a trade is completed successfully (i.e., the buyer pays the seller), both parties sign the payout transaction. This ensures that both parties agree on the completion of the trade.\n\n3. **Manual Payout**: If there are issues during the trade (e.g., one party does not fulfill their obligations), a manual payout tool can be used. This process involves the traders working with a mediator to create and sign a transaction that releases their funds.\n\n4. **Security Deposits**: To further enhance security, both parties must post a security deposit in addition to the trade funds. If one party fails to follow the trading protocol, a portion or all of their deposit can be forfeited.\n\n5. **No Central Authority**: The entire process is decentralized, meaning there's no central authority managing the funds. This enhances privacy and reduces the risks associated with centralized exchanges.\n\nThis system adds a layer of security and trust, ensuring that both parties are incentivized to complete the trade as agreed.",
+      "contexts": [
+        "## Overview\n\nFunds for a Bisq trade are locked in a 2-of-2 multisig that is controlled only by the two parties involved.\nBisq normally does all the work to sign and publish the payout at trade completion.\nHowever sometimes a trade can fail due to unforseen circumstances, leaving the funds stranded in the 2-of-2 multisig.\nWhen this happens, a Manual Payout may be necessary.\n\n## Using Bisq's Manual Payout tool\n\nThe emergency payout tool is in Bisq, if you do a CTRL-G it will open.\n\nThe purpose of ...",
+        "**Security deposits** in Bisq are BTC funds that buyer and seller lock in a 2of2 multisig address together with trade funds when an offer is taken in order to help ensure that both peers follow the trading protocol. Security deposits are fully reimbursed automatically to both trading peers when the trade ends without disputes.\n\nSecurity deposits are the most important tool Bisq offers to protect honest traders. Furthermore, requiring ''both'' parties to post a deposit increases chances that they...",
+        "## Summary\n\nThis tool allows for a Mediator to create an unsigned transaction releasing the funds in the 2-of-2 multisig controlled by the traders and send it to each of them, have them sign it and return the signatures and have the the Mediator combine the three pieces (unsigned transaction and both signatures from the traders) to broadcast the transaction.\n\n## Warning\n\nIn this process traders copy and paste their private keys from the Bisq software into a notepad. As a precaution it is advised...",
+        "## = Post 1.2 Trade Protocol\n=\n\nThe new trade protocol, launched in [https://github.com/bisq-network/bisq/releases/tag/v1.2.0 Bisq v1.2], eliminates the risks described above to a large extent by separating functions and involving the DAO. It significantly improves censorship-resistance, security, and scalability of dispute resolution on Bisq.\n\nthumb|right|Dispute resolution for trade protocol (v1.2+).\n\nThe basic change is that it uses a 2-of-2 multisig in the deposit transaction with only the t...",
+        "## = Verification\n=\n\nWhen a trader takes an offer both users are exchanging in the trade process the signature of data defined by the other peer (for taker we use the offer ID, for maker we use the takers preparedDepositTx - we use that data like a nonce for the signature), the pubKey, the salt and the peer\u2019s local date. With that data the other peer can verify that the other trader is the owner of the AccountAgeWitness data (as the pubKey is part of the hash and the signature gets verified with...",
+        "## Restore payment account aging and signing status\n\nOnce you've restored your payment account metadata, you'll see the accounts in Bisq, but they'll have no aging or signing status.\n\nYou can get aging and signing status back by replacing btc_mainnet/keys/sig.key from your backup.\n# Make sure you have no active offers, trades or disputes; once you change sig.key, you will become unreachable.\n# Close Bisq. Also make sure you've made a backup of your data directory (just in case).",
+        "## Generate payment proof\n\nOnly the person sending the GRIN funds can create payment proof.\n\nFirst, list your transactions using txs, and look for the one you want to issue proof on.\n\nThe command export_proof will generate a file containing information to prove the details to the recipient or a mediator.\n\nFor the purpose of these examples, a public node provided by https://grinnode.live is used. If you have access to your own node running locally, you can remove the -r option completely or chang..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.9,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_007",
+        "review_status": "edited",
+        "test_category": "bisq1_protocol_synonym",
+        "target_keyword": "2of2"
+      },
+      "response_time": 10.703658819198608,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.99999999998,
+        "context_recall": 0.6,
+        "faithfulness": 0.5384615384615384,
+        "answer_relevancy": 0.5662986625052915
+      }
+    },
+    {
+      "question": "Can I do a bsq swap instead of a regular trade?",
+      "ground_truth": "In Bisq 1, BSQ swaps are atomic swaps between BTC and BSQ that settle on-chain without requiring multisig escrow or security deposits. They are faster and simpler than regular trades but only work for the BSQ/BTC pair. Look for BSQ swap offers in the BSQ/BTC market.",
+      "answer": "Yes, you can do a BSQ swap instead of a regular trade. Here's how it works:\n\n1. **Atomic Swaps**: BSQ swaps allow you to trade BSQ for BTC atomically in a single Bitcoin transaction. This means there's no counterparty risk during the exchange, and the transaction is instantaneous once confirmed on the blockchain.\n\n2. **How to Swap**:\n   - Go to the **Create Offer** or **Buy/Sell BTC** screens in Bisq.\n   - Select BSQ as the counter-currency against BTC.\n   - Make or take offers just like any other market.\n   - Ensure you have enough BTC or BSQ in your wallet to cover the trade amount and any fees.\n\nThis method is simpler and involves lower fees compared to traditional trading methods. If you have any more questions or need help with the process, feel free to ask!",
+      "contexts": [
+        "## How to Obtain BSQ (Recommended Method: Swaps)\n\nSince Bisq v1.8.0, the primary, recommended, and default method for trading between BTC and BSQ within the Bisq application is via **BSQ swaps**.\n\n* **What are Swaps?** BSQ swaps allow BSQ and BTC to be traded **atomically** in a single Bitcoin transaction. This makes the process:\n* **Trustless:** No counterparty risk during the exchange.\n* **Instantaneous:** The swap happens as soon as the transaction confirms on the blockchain.\n* **Cheaper:** I...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can trade. To sell BSQ follow these simple steps:\n\n1. On **Market** tab select BSQ/BTC\n\n2. Click on **SELL BSQ**\n\n3. Select an offer and click on **TAKE OFFER**\n\n4. Review offer details including amount, price. Then click on **TAKE OFFER TO BUY BTC**.\n\n5. Click on **CONFIRM TAKE OFFER**.\n\n6. BSQ/BTC swap is now complete. Wait for blockchain confirmation.\n\n7. Check that you have...",
+        "First download, install Bisq and create a backup (copy seed words - see How to back up your Bisq wallet seed).\n\nNow you can trade. To buy your first BSQ follow these simple steps:\n\n1. On **Market** tab select BSQ/BTC\n\n2. Click on **BUY BSQ**\n\n3. Select an offer and click on **TAKE OFFER**\n\n4. Review offer details including amount, price. Then click on NEXT STEP.\n\n5. Fund your trade (from Bisq wallet or external wallet).\n\n6. Click on **CONFIRM TAKE OFFER**.\n\n7. BSQ/BTC swap is now complete. Wait ...",
+        "**BSQ** is the utility token of the Bisq DAO, used for governance participation and optionally paying trading fees at a discount. Technically, it is implemented as **colored** bitcoin tokens. This means BSQ functions as a token layer on the Bitcoin blockchain, where specific satoshis represent BSQ units recognized as distinct from regular bitcoin **only within the Bisq software wallet**. The easiest way to obtain BSQ via trade is through BSQ swaps.\n\n__TOC__\n\n## BSQ Token\n\n## = BSQ vs BTC\n=\n\nYou ...",
+        "Bisq has pioneered Bitcoin based atomic swaps. It is currently possible to exchange Bitcoin to BSQ atomically. BSQ is Bisq's native token built as a Bitcoin coloured coin.\n\nThe atomic swap protocol used by the Bisq DEX goes one step further in reducing counterparty risk: not only are users not exposed to exchange counterparty risk (since DEX holds no user funds) but it also eliminates the possibility of a buyer or seller failing to pay. The transaction is instant, automatic and final (once confi...",
+        "**Altcoins** are a type of payment account on Bisq that use cryptocurrencies to settle BTC trades instead of legacy fiat-based payment methods.\n\nAny altcoin can be traded on Bisq, theoretically, but the most active markets tend to be XMR, ETH, LTC (and of course BSQ, but \"altcoin\" may not be a great term for it).\n\nSome altcoins have special, specific requirements for trading. Make sure you read the in-application pop-ups and information, as well as the following articles:\n* Trading BSQ\n* Trading...",
+        "## Consider if you would like to become a Burning Man\n\nFor contributors wanting to receive regular bitcoin payments they may consider becoming performing a role as one of the Bisq Burning Men. It would be worth Bisq contributors understanding the pros and cons to becoming a burning man to decide if it is something they would like to do.\n\nCategory:Contributors\nCategory:Guides\nCategory:DAO",
+        "= Caveats =\n\nThe provided instructions are safe as long as you don't make mistakes, which could amount to:\n\n* Deleting a folder instead of renaming it.\n* Using a wrong address to send funds to.\nThe above mistakes can easily lead to loss of funds, which we obviously are not liable for.\n\n= Instructions =\n\nIf the above requirements are met, and you understood the caveats, assuming you have BTC (and probably BSQ as well) in your old wallet, you can follow the procedure outlined below:",
+        "## =Attend weekly support calls\n=\nBisq support agents will attend weekly calls to discuss current issues.\n\n## =Submit regular cycle reports\n=\nBisq support agents will submit a report each DAO Cycle via the [https://github.com/bisq-network/roles/issues/64 GitHub roles page].\n\n## Rights\n\n* Writer access to the Support - Private Matrix room\n* [https://help.github.com/en/github/setting-up-and-managing-organizations-and-teams/repository-permission-levels-for-an-organization#repository-access-for-each...",
+        "**Backing up** your Bisq data is crucial to ensure you can retain control over trades, disputes, payment accounts, and funds in case of issues with your machine (e.g., drive failure) or Bisq itself (e.g., critical bugs).\n\nAll Bisq data is stored right on your computer\u2014it's never stored (or even sent) to a central server, so backing it up is your job.\n\nTo see how to ''restore'' data to Bisq, see Restoring application data.\n\n__TOC__\n\n= Back up the entire Bisq data directory =\n\nThe safest, quickest..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_008",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "bsq swap"
+      },
+      "response_time": 9.970905065536499,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.9999999999833333,
+        "context_recall": 0.3333333333333333,
+        "faithfulness": 0.4,
+        "answer_relevancy": 0.9681050602135095
+      }
+    },
+    {
+      "question": "How does account signing work? My account age is high but I still have low limits.",
+      "ground_truth": "In Bisq 1, account signing is separate from account age. To get higher trade limits with fiat payment methods, your account needs to be signed by a peer who already has a signed account. This happens automatically when you buy BTC from a signed seller. Until signed, your trade limit remains at 0.01 BTC regardless of account age.",
+      "answer": "Account signing in Bisq works to gradually increase your buying limits for risky fiat payment methods. Here's how it operates:\n\n1. **Initial Limits**: When you create a new payment account for a risky method (like SEPA), your buying limit is initially capped (e.g., 0.0624 BTC).\n\n2. **Signing Process**: \n   - If you sign your payment account, the limits will begin to increase after a set period:\n     - **30 Days After Signing**: Your buying limit rises to 50% of the maximum.\n     - **60 Days After Signing**: You gain full trade limits.\n\n3. **Impact of Account Age**: If your payment account is not signed, the buying limit remains the same regardless of account age. Selling limits are unaffected by signing.\n\n4. **Self-Signing**: If you have a previously signed account with the same name, new accounts can self-sign, but they start with 0 days for age and thus follow the same 30/60 day increase schedule for limits.\n\nIf you have a high account age but still face low limits, it's likely because your account hasn't been signed yet. Signing is crucial for unlocking higher buying limits.",
+      "contexts": [
+        "## Account aging\n\n400px|thumb|See account age in the offer book.\n\nAccount age is no longer used to determine trade size limits for most payment methods. It is still measured, however, and you can see a payment account's age in the offer book before taking an offer, but we caution against using it as a measure of integrity. Older accounts are not ''necessarily'' safer.\n\n**Practically, this means that all payment methods on Bisq have full selling capability from the moment they are created.** Sell...",
+        "## Overview\n\nThe initial idea for this scheme was already discussed on the Bisq forum ([https://forum.bisq.io/t/new-requirement-for-payment-accounts-with-chargeback-risk/2376/65 one], [https://forum.bisq.io/t/payment-account-age-based-trade-amount-limits/2948 two]).\n\nThis mechanism is only relevant for fiat payment accounts, because with altcoins, there is no chargeback risk.\n\nWe posit that a 60-day-old payment account should be safe (it seems highly unlikely that a stolen bank account will not ...",
+        "* These payment methods do not need to be signed to lift the 0.01 BTC buying limit (see [https://bisq.wiki/Account_signing account signing] for more details)."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_009",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "account signing"
+      },
+      "response_time": 9.899245977401733,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.8333333332916666,
+        "context_recall": 0.0,
+        "faithfulness": 0.0,
+        "answer_relevancy": 0.6327385130765957
+      }
+    },
+    {
+      "question": "I want to participate in dao voting. How does that work?",
+      "ground_truth": "In Bisq 1, DAO voting happens in monthly cycles. During the proposal phase, anyone can submit proposals. During the voting phase, BSQ holders can vote on proposals by staking their BSQ. In the vote reveal phase, votes are automatically published. The result is calculated and applied to the DAO state. You need BSQ to participate.",
+      "answer": "To participate in DAO voting, follow these steps:\n\n1. **Acquire BSQ**: You need BSQ tokens to make proposals and vote. Each action costs 2 BSQ, plus you'll need some BTC for transaction fees.\n\n2. **Make a Proposal (if needed)**: If you want to submit a proposal, go to **DAO > Governance > Make Proposal**. Fill out the form with your proposal details and ensure your GitHub handle matches the one on the proposal issue.\n\n3. **Voting Phases**: Understand the voting cycle, which consists of four phases:\n   - **Proposal Phase**: Submit proposals and compensation requests.\n   - **Blind Voting Phase**: Cast your votes secretly.\n   - **Vote Reveal Phase**: Decrypt and reveal your votes.\n   - **Vote Result Phase**: Results are calculated, and BSQ is issued based on the outcomes.\n\n4. **Voting Weight**: Your voting weight is determined by two factors: your **reputation** (how much BSQ you've earned) and your **stake** (the amount of BSQ you specify for your vote). \n\n5. **Vote**: After reviewing proposals, cast your vote by specifying your stake and publishing it. Remember, once published, votes cannot be changed.\n\nFor more detailed guidance on making proposals, see the relevant documentation in the Bisq DAO resources.",
+      "contexts": [
+        "## Acquire BSQ\n\nIn order to participate in DAO voting, you will need BSQ. See how to acquire BSQ in this article.\n\nAs of this writing, making a proposal costs 2 BSQ and casting a ballot (voting) costs 2 BSQ. You'll also need some plain BTC for transaction fees (each DAO action is a bitcoin transaction which requires mining fees to be paid), and if you will be asking for compensation or reimbursement, you'll need to include some plain BTC to be colored into BTC (precise amount is 100 satoshis \u00d7 [...",
+        "## Learn more\n\nFor more information on how you can use the DAO to trade/contributor, how it works, its technical foundations, etc. please see the this page.",
+        "##\nBlind Voting Phase\n##\n\n''450 blocks, about 3 days''\n\nYou may approve, reject, or abstain from casting a vote on proposals. It is highly recommended that you only approve or reject proposals for which you can make a well-informed decision.\n\nIt is not necessary to have made a proposal to be able to vote\u2014any stakeholder (anyone with BSQ) can participate in voting.\n\nOnce you have made your selections, you must specify a stake and publish your votes.\n\nVotes cannot be changed once they are publishe...",
+        "## = Submit to the DAO (if needed)\n=\n\nSometimes it is necessary to submit proposals to the DAO for voting:\n* DAO parameter changes\n* proposal for bonded roles\n* contentious proposals for which there is strong interest but no clear consensus\n\nFor most general proposals this should not be necessary\u2014general proposals that have clear consensus (or clear lack of consensus) don't need to be voted upon in the DAO. In any case, a DAO submission should only be considered after considerable discussion on ...",
+        "## = Good project management scales\n=\n\nA primary goal of the project management process is to help the DAO scale. We want many contributors collaborating on many efforts in parallel with minimal management. To achieve this, the process must have a bottom-up aspect in which any contributor can propose a project and any stakeholder can participate in approving it, and it must also have a top-down aspect for allocating budget to the most important projects. The approach laid out here is designed to...",
+        "# **Request that others review your work**. The best way to do this is by writing good commit comments and pull request/issue descriptions that clearly explain the problem your work is intended to solve, why it\u2019s important, and why you fixed it the way you did. Make it as easy as possible for others to review your work. Make it a pleasure for others to review your work.\n# **Incorporate review feedback** you get until your fix gets merged or is otherwise accepted.\n# **Repeat** steps 1\u20135.\n# Submit...",
+        "## Compensation\n\nAs with all Bisq contributions, contributors who want to be compensated for their work should make a [https://docs.bisq.network/compensation.html compensation request].\n\n**Only work designated as high-priority by the Transifex Admin will be compensated.** Before you begin, make sure your work has been designated as high-priority by the Transifex Admin. Upon making a compensation request, the Transifex Admin will acknowledge your work to reaffirm your work's priority before votin..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.9,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_010",
+        "review_status": "edited",
+        "test_category": "bisq1_dao_term",
+        "target_keyword": "dao voting"
+      },
+      "response_time": 9.38327407836914,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.8333333332916666,
+        "context_recall": 0.16666666666666666,
+        "faithfulness": null,
+        "answer_relevancy": 0.8531059957089719
+      }
+    },
+    {
+      "question": "How do I build my reputation score to sell bitcoin?",
+      "ground_truth": "In Bisq Easy (Bisq 2), reputation is built through several methods: burning BSQ, bonding BSQ, providing signed account age witness from Bisq 1, or accumulating trade history. Higher reputation allows selling BTC at higher limits. New sellers start with low or no reputation and can only sell small amounts initially.",
+      "answer": "To build your reputation score for selling Bitcoin on Bisq, you can use the following methods:\n\n1. **Burning BSQ**: You can burn BSQ tokens to gain reputation points.\n2. **Setting up a BSQ Bond**: Bonding BSQ will contribute to your reputation as long as the bond is active.\n3. **Importing Account Age from Bisq 1**: If you have an account on Bisq 1, you can import the account age to gain reputation.\n4. **Importing Signed Account Age from Bisq 1**: This allows you to bring in reputation from a verified account on Bisq 1.\n\nYour total reputation score is the sum of the points gained from these methods. To compete effectively in trades, aim for a reputation score of at least **10,000**. Higher scores will attract more buyers, as they trust sellers with better reputations. You can manage your reputation settings in Bisq 2 under **User Options > Reputation**.",
+      "contexts": [
+        "## Why is Reputation important for sellers\n\nBitcoin buyers send the fiat payment to the sellers prior to receiving the bitcoin. Therefore it is important for bitcoin sellers to have a good reputation to help establish trust with their potential trade partners.\n\nIt is expected that users that want to gain reputation to be bitcoin sellers on Bisq Easy will be experienced Bisq users that can provide buyers with a positive experience.\n\nSelling bitcoin on Bisq Easy is expected to be profitable for th...",
+        "Question: How can I build reputation on Bisq?\nAnswer: You need to burn or bond BSQ on Bisq 1 to build reputation, which is necessary if you want to sell BTC at a premium on Bisq 2.",
+        "## = Understanding Reputation Stars\n=\n\nTo make reputation easy to compare quickly, Bisq Easy displays scores using a simple **0 to 5 star system**.\n\n400px|thumb|left|The star system (0-5) provides an easy comparison of seller reputation based on their current rank among active users. 5 stars indicate the highest relative reputation.\n\n* **How it Works (Relative Ranking):** Your star rating shows how your reputation **compares to all other *active* users** on the Bisq network at that moment. It's ...",
+        "Question: How can I earn reputation on Bisq?\nAnswer: Reputation can only be gained by burning BSQ, bonding BSQ, importing a signed account witness, or importing account age from Bisq1."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_011",
+        "review_status": "edited",
+        "test_category": "bisq2_feature_term",
+        "target_keyword": "reputation score"
+      },
+      "response_time": 9.425169944763184,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.999999999975,
+        "context_recall": 0.6666666666666666,
+        "faithfulness": 0.6666666666666666,
+        "answer_relevancy": 0.8942798699894323
+      }
+    },
+    {
+      "question": "I want to try the new bisq. How do I get started?",
+      "ground_truth": "Bisq 2 (Bisq Easy) is the latest version of Bisq focused on simplicity. Download it from bisq.network, create a profile, and you can start buying BTC immediately. Trades happen through a chat-based interface where you negotiate directly with the seller. No security deposit is required for buyers.",
+      "answer": "To get started with Bisq 2, follow these steps:\n\n1. **Download and Install**: Go to the [Bisq website](https://bisq.network/downloads/) and download the latest version. Install it on your computer.\n\n2. **Open Bisq**: Launch the application. On the left panel, select **Bisq Easy**.\n\n3. **Start Trade Wizard**: Click on **Getting Started** at the top tab, then select **Start trade wizard**. This will guide you through the trading process.\n\n4. **Choose to Buy Bitcoin**: In the trade wizard, select **Buy Bitcoin** and click **Next**.\n\n5. **Select Currency**: Choose your preferred currency (e.g., Euros) and click **Next**.\n\n6. **Payment Methods**: Select your desired payment methods (like SEPA or Revolut) and click **Next**.\n\n7. **Set Amount**: Specify how much Bitcoin you want to buy or the fiat amount you want to sell, then proceed.\n\nThe trade wizard will walk you through the rest. Enjoy your trading experience!",
+      "contexts": [
+        "Bisq is a decentralized peer-to-peer bitcoin exchange network that you access via software running on your own computer. It enables secure, private, and censorship-resistant trading directly with other users, without relying on intermediaries.\n\nBisq offers two software versions providing different trading experiences:\n\n## Bisq 1\n\nBisq 1 is the original, well-established peer-to-peer exchange platform launched in 2016 (initially as BitSquare). It allows users to trade Bitcoin for fiat currencies ...",
+        "Question: Where can I find more information about using Bisq?\nAnswer: You can find plenty of information on bisq.wiki",
+        "## = Taking an offer\n=\n\nTaking an existing offer is the fastest and simplest way to find a partner and start trading. Follow along to learn how to navigate to your preferred market and pick an existing offer in it.\n\nBegin by opening up Bisq 2. Once the application has started, you should select ''Bisq Easy'' on the left panel, and ''Getting started'' on the top tab.\n\nframeless\n\nOn this page, click on the ''Start trade wizard''. This is the easiest way to get started. A small note: once you becom...",
+        "Question: How do I update Bisq?\nAnswer: Download the latest version and install it, which will automatically replace the older one.",
+        "To use Bisq, you must first **[https://bisq.network/downloads/ download and install]** it. Most exchanges are centralized exchanges running on servers controlled by the exchange. Bisq is decentralized, running only on the desktops of Bisq users.\n\nBisq manages offers to trade using a peer-to-peer network. This is a global network made of users who are also running Bisq on their own computers.\n\nCentralized services are easy to monitor, block, and shut down, while peer-to-peer networks like BitTorr...",
+        "Question: How do I add a wallet in Bisq2?\nAnswer: Bisq Easy doesn't include a builtin wallet and is directed at obtaining your first UTXO. If you already own some btc, consider using Bisq1."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_012",
+        "review_status": "edited",
+        "test_category": "bisq2_informal_version",
+        "target_keyword": "new bisq"
+      },
+      "response_time": 9.02456021308899,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.7555555555303703,
+        "context_recall": 0.0,
+        "faithfulness": 0.5384615384615384,
+        "answer_relevancy": 0.8370129442919152
+      }
+    },
+    {
+      "question": "How do I do a chat trade to buy my first bitcoin?",
+      "ground_truth": "In Bisq Easy (Bisq 2), trading is chat-based. Browse the offerbook for buy offers, select one, and start a trade chat. The seller will share their payment details, you send fiat directly to them, and the seller releases BTC to your wallet after confirming payment. The trade limit for new users is around 600 USD.",
+      "answer": "1. **Open Bisq 2**: Launch the Bisq application and select **Bisq Easy** from the left panel.\n\n2. **Start Trade Wizard**: Click on the **Getting started** tab and then select **Start trade wizard**.\n\n3. **Select Buy Bitcoin**: Choose **Buy Bitcoin** and click **Next**.\n\n4. **Choose Currency**: Select your national currency (e.g., EUR) and click **Next**.\n\n5. **Select Payment Methods**: Choose at least one payment method (e.g., SEPA, Revolut) to increase your chances of finding a seller, then click **Next**.\n\n6. **Set Amount**: Enter how much Bitcoin you want to buy or the equivalent fiat amount. Click **Next**.\n\n7. **Review Offers**: A list of offers will appear. It's best to select the first offer, as they are sorted by reputation. Click **Next**.\n\n8. **Confirm Trade**: Review the trade details. If everything looks good, click **Confirm trade**.\n\nAfter that, you can communicate with the seller through the chat feature to finalize the transaction.",
+      "contexts": [
+        "Here are some ideas for how to do that.\n\nthumb|right|A graphical overview of how to get your first bitcoin privately.\n\n* **Bisq Easy**. Bisq Easy is a trade protocol for Bisq 2 that allows users to buy bitcoin with no trade fees and no security deposit. Bisq Easy is a social trade protocol. It is meant for bitcoin buyers with limited experience using peer to peer software to purchase no KYC bitcoin and to be smoothly on-boarded by experienced and helpful bitcoin sellers.\n* **Matrix room**. Bisq'...",
+        "Question: Can I change my Bitcoin payment address during a trade?\nAnswer: Yes, you can write the new address in the chat and ensure the seller receives it.",
+        "Question: Can I use the Bisq wallet for my first trade?\nAnswer: Yes, using the Bisq wallet (Bisq1) to receive BTC for the first time is recommended for security deposits.",
+        "## = Taking an offer\n=\n\nTaking an existing offer is the fastest and simplest way to find a partner and start trading. Follow along to learn how to navigate to your preferred market and pick an existing offer in it.\n\nBegin by opening up Bisq 2. Once the application has started, you should select ''Bisq Easy'' on the left panel, and ''Getting started'' on the top tab.\n\nframeless\n\nOn this page, click on the ''Start trade wizard''. This is the easiest way to get started. A small note: once you becom..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_013",
+        "review_status": "edited",
+        "test_category": "bisq2_feature_term",
+        "target_keyword": "chat trade"
+      },
+      "response_time": 10.563531160354614,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.7499999999625,
+        "context_recall": 0.0,
+        "faithfulness": 0.2777777777777778,
+        "answer_relevancy": 0.5901469203210042
+      }
+    },
+    {
+      "question": "How does the reputation system work for sellers?",
+      "ground_truth": "In Bisq Easy (Bisq 2), the reputation system determines how much a seller can trade and the trust buyers place in them. Reputation is earned by burning BSQ, bonding BSQ, importing Bisq 1 signed account age, or through accumulated trade history. Higher reputation unlocks higher trade limits.",
+      "answer": "Reputation in Bisq Easy is essential for establishing trust between buyers and sellers in trades. Here's how it works:\n\n1. **Star System**: Sellers are rated on a **0 to 5 star system**, which reflects their reputation relative to other active users in the network. The highest-ranked seller gets 5 stars, while the lowest gets 0 stars.\n\n2. **Building Reputation**: Sellers can build their reputation using four methods:\n   - **Burning BSQ**: Losing BSQ to gain reputation.\n   - **Setting up a BSQ bond**: Locking BSQ to increase trust.\n   - **Importing Account Age**: Transferring reputation from Bisq 1.\n   - **Importing Signed Account Age**: Similar to the above but with signed verification.\n\n3. **Minimum Reputation Score**: A minimum reputation score of **10,000** is required for sellers to have their offers accepted by buyers.\n\n4. **Dynamic Changes**: Reputation scores can change due to user inactivity (profiles inactive for two weeks are excluded from rankings) or reactivation (when inactive users return).\n\n5. **Importance**: A higher reputation increases buyer trust, leading to more trades and potentially better prices. Sellers should strive to maintain and enhance their reputation to compete effectively.\n\nThis system allows buyers to make informed decisions and encourages sellers to provide a positive trading experience.",
+      "contexts": [
+        "## Reputation score star system\n\nTo make it easier for user's to compare the reputation scores of different traders, Bisq displays reputation scores as stars (0-5 stars).\n\nTo achieve this users' total reputation scores are compared to other scores in the network and ranked and normalized to a value between 0 and 1.\n\nThe user with the highest ranking will have a value of 5 stars. The user with the lowest ranking will have a value of 0 stars.\n\nThe user profiles only stay for 2 weeks in the network...",
+        "## Reputation in Bisq Easy\n\nReputation is a cornerstone of the security model in **Bisq Easy**, a Bisq 2 trade protocol. As buyers send their fiat payment ''before'' receiving Bitcoin, the seller's reputation provides the trust needed for the buyer to proceed confidently.\n\n600px|thumb|left|The 'Build reputation' screen in Bisq 2 (accessed via 'Reputation' on the left menu), showing the four methods available.\n\n## = Why Reputation Matters\n=\n\n* **For Buyers:** Carefully review a seller's reputatio..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_014",
+        "review_status": "edited",
+        "test_category": "bisq2_feature_term",
+        "target_keyword": "reputation system"
+      },
+      "response_time": 8.313504934310913,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.99999999995,
+        "context_recall": 0.0,
+        "faithfulness": null,
+        "answer_relevancy": 0.6553460549965
+      }
+    },
+    {
+      "question": "I upgraded from v1 to v2. Do I keep my old trade history?",
+      "ground_truth": "Bisq 1 and Bisq 2 are separate applications with independent data directories and trade histories. Your Bisq 1 trade history remains in the Bisq 1 application. Bisq 2 starts fresh with its own profile and data. You can run both side by side. Your Bisq 1 signed account age can be imported into Bisq 2 for reputation.",
+      "answer": "Are you using Bisq 1 trading or Bisq Easy (Bisq 2)?",
+      "contexts": [],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.75,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_015",
+        "review_status": "edited",
+        "test_category": "version_comparison",
+        "target_keyword": "v1"
+      },
+      "response_time": 0.005028963088989258,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.0,
+        "context_recall": 0.0,
+        "faithfulness": 0.0,
+        "answer_relevancy": 0.0
+      }
+    },
+    {
+      "question": "The original bisq won't sync. It's been stuck for hours.",
+      "ground_truth": "In Bisq 1, sync issues are usually resolved with an SPV resync. Go to Settings > Network Info and click SPV Resync, then restart. If the P2P network is not connecting, check your Tor connection. Also verify you are running the latest version of Bisq 1 as older versions may have connectivity issues.",
+      "answer": "If Bisq is stuck on the initial loading screen for hours, here are some steps to troubleshoot the issue:\n\n1. **Check Internet Connection**: Ensure you have a strong and stable internet connection. Weak connections can cause loading issues.\n\n2. **Clear Tor Cache**:\n   - Close Bisq completely.\n   - Navigate to your Bisq data directory.\n   - Delete all files in the `btc_mainnet/tor` directory except for the `hiddenservice` folder (which contains your onion address).\n   - Restart Bisq.\n\n3. **Antivirus Software**: Temporarily disable any antivirus software. Sometimes, these can interfere with Bisq's connection.\n\n4. **Wait for Tor Network**: If you've tried opening Bisq multiple times in a short period, you might be temporarily banned by the Tor network. Wait 30-60 minutes and then try again.\n\n5. **Connect to Full Node**: If you frequently experience sync issues, consider connecting Bisq to your own Bitcoin full node for better performance.\n\nIf these steps don't resolve the issue, consider seeking further assistance from the Bisq community or support channels.",
+      "contexts": [
+        "## = Wallet / Sync Issues\n=\n\n##\n\"Offer cannot be taken due to counterparty trade restrictions\". What does this mean?\n##\n\nThis usually means information about the offer maker's account limits (based on age/signing status) hasn't fully propagated across the P2P network to your Bisq instance yet. Try restarting Bisq. The offer maker might also need to restart their Bisq client.\n\n##\nMy SPV resync is taking forever or freezing!\n##\n\nThis can happen with older wallets or wallets with many transactions....",
+        "Calculating the fee you need to pay for the child, so the parent fee is bumped to the desired value, requires knowing the total size of all involved transactions, and absolute fees that are already on the table, but for practicality, let us say that if you want to double the effective fee rate of the parent, you need to use a fee that is 3 to 4 times more than the parent's original fee, and increasing this even more will further speed up the confirmation.\n\nCPFP can only be done by the owner of t...",
+        "If network speed is very low (< 2 Mbit/sec) there might be connection timouts. We improved some data requests already and will improve more in upcoming releases but specially at startup the BTC sync and getData requests can be a bit heavy, specially if Bisq was not used for a while. Doing repeated startups can help as some data gets persisted and at next request less data is required. Using a local Bitcoin node helps as well as the BTC sync is then not adding up to tor traffic.\nIf the user has n...",
+        "You may be experiencing **network issues** if you're stuck on Bisq's initial loading screen for a while. Often this results in a screen mentioning outdated Tor files and other Tor settings. This could occur for a number of reasons.\n\n__TOC__\n\n## Weak internet connection\n\nBisq generally needs a strong, fast connection to work properly. Tethering on mobile connections can work but is known to cause issues.\n\n## 3/4 connection problem\n\nIf Bisq stalls at step 3/4 of the startup sequence for more than ...",
+        "## Preventing Frequent or Slow Resyncs: Connect to Your Own Node\n\nIf you find that Bisq frequently requires SPV file resyncs, or if the process consistently takes an extremely long time (especially with an older or high-transaction wallet), the most robust solution is to connect Bisq to your own Bitcoin full node.\n\nWhen connected to your local node, Bisq gets blockchain information directly and reliably, bypassing the need for the SPV synchronization process over the Tor network. This typically ...",
+        "## Wait for this new instance of Bisq to start and finish loading and syncing.\n## Once it has, send your funds from your old Bisq instance to your new one.\n\n= Create new data directory =\n\nIf you used methods 1 or 2 in the previous step:\n# Close Bisq.\n# Delete (or rename) the Bisq data directory (see default locations for your operating system here).\n# Start Bisq again. Bisq will create a new data directory with a new wallet, new Tor state, etc.\n# Send funds from external wallet into Bisq.\n\nIf yo...",
+        "There is an icon in the bottom right footer bar to indicate the the status of the P2P network connection. It will be either red, yellow or green depending on the count and type of connections your node has. Hover over it with the mouse to see the connections detail, or click on it to get a popup description of the state.\n\n**Red** - An error situation- there are no P2P network connections. This would usually indicate that your internet connection has broken. Check other network applications such ...",
+        "This article is a stub. The specific sections below are just examples for demonstration purposes.\n\n__TOC__\n\n= Generic =\n\n## Bisq won't start\n\nSee Troubleshooting network issues.\n\n## My wallet has an incorrect balance\n\n* Resyncing your simplified payment verification (SPV) file may resolve this. See Delete and resync SPV file\n\n## Bisq is using too much RAM\n\n* Limiting the maximum amount of RAM the JVM is allowed to use may resolve this. See Reduce JVM MAXRam\n\n* On Linux, restricting memory arena ..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_016",
+        "review_status": "edited",
+        "test_category": "bisq1_informal_version",
+        "target_keyword": "original bisq"
+      },
+      "response_time": 9.192324876785278,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.7999999999866666,
+        "context_recall": 0.5,
+        "faithfulness": 0.6111111111111112,
+        "answer_relevancy": 0.7021706289278845
+      }
+    },
+    {
+      "question": "What's the security deposit for a trade?",
+      "ground_truth": "In Bisq 1, security deposits are required from both buyer and seller and are locked in the 2-of-2 multisig escrow. The default deposit is 15% of the trade amount for the buyer and 15% for the seller, though these can be adjusted. Deposits are returned when the trade completes successfully.",
+      "answer": "In Bisq's **multisig protocol**, the **security deposit** is a crucial component to ensure that both buyers and sellers adhere to trading rules. Here's how it works:\n\n- **Deposit Amount**: The security deposit is set by the offer maker and can be between **15% to 50%** of the trade amount, with a minimum of **0.001 BTC**.\n- **Purpose**: It helps ensure that both parties are committed to the trade. If either party violates the trading rules, a portion or all of their deposit may be forfeited.\n- **Reimbursement**: Both parties receive their security deposits back automatically after a successful trade, assuming there are no disputes.\n\nThis mechanism promotes trust and accountability between traders while safeguarding against potential violations.",
+      "contexts": [
+        "**Security deposits** in Bisq are BTC funds that buyer and seller lock in a 2of2 multisig address together with trade funds when an offer is taken in order to help ensure that both peers follow the trading protocol. Security deposits are fully reimbursed automatically to both trading peers when the trade ends without disputes.\n\nSecurity deposits are the most important tool Bisq offers to protect honest traders. Furthermore, requiring ''both'' parties to post a deposit increases chances that they...",
+        "**Penalties** help enforce the Bisq Trading Rules, ensuring the process is as safe and fair as possible. The penalties detailed on this page apply specifically to trading protocols that utilize **security deposits** as their primary security mechanism. Protocols that do not use security deposits, like Bisq Easy which relies on Reputation, will have different consequences or mechanisms for handling rule violations.\n\nPenalties are calculated as a percentage of the trade amount and are deducted **p...",
+        "## Trading (Classic v1 Protocol)\n\n##\nWhat are trading fees?\n##\n\nTrading fees are a percentage of the trade size. If paid in BTC, makers pay 0.1% and takers pay 0.7%. Fees are roughly halved if paid in BSQ tokens. Remember you also need BTC for on-chain mining fees (for deposit and payout transactions) and the security deposit itself (which is returned if the trade completes successfully).\n\n##\nMining fees are high. How can I trade cost-effectively?\n##\n\nThe classic protocol requires 4 on-chain tra...",
+        "''Note: The maximum trade sizes listed below are not available for most newly-created payment accounts. Please refer to [https://bisq.wiki/Account_signing Account signing] for details on how to enable larger trade sizes for your payment accounts. ''\n\n{| class=\"wikitable sortable\"\n|-\n! Payment Method !! Region !! Trading Period !! Per-Trade Limit !! Notes\n|-\n| Advanced Cash* || Global || 1 day || 2.00 BTC || Not available in the USA\n|-\n| Alipay* || China || 1 day || 1.00 BTC ||\n|-\n| Cash Deposit*...",
+        "## How do I sell BTC with my Capitual account?\n\nYou can sell BTC with Capitual on Bisq in 2 ways\u02d0\n\n# Make an offer to sell BTC on the BRL, EUR, GBP, or USD market.\n# Take an offer to sell BTC on the BRL, EUR, GBP, or USD market.\n\nWhen the offer is confirmed Bisq will provide with the BTC Buyer with your Capitual details for you to complete the payment. They should send payment at their first opportunity and confirm they have done so in Bisq by clicking 'payment started'.\n\nOnce you receive paymen...",
+        "Traders incur **trading costs** to do trades using the Bisq trading protocol.\n\n__TOC__\n\n## = Trading fees\n=\n\nTrading fees are paid to the Bisq DAO to fund development of the Bisq software.\n\nThese fees are payable in BTC or BSQ, with BSQ fees targeted at offering a discount of 50% over BTC fees.\n\n## = Mining fees\n=\n\nBitcoin mining fees must be paid to do on-chain bitcoin transactions, and each Bisq trade currently requires 4 on-chain transactions: maker fee tx, taker fee tx, deposit tx, and payou...",
+        "## = Verification\n=\n\nWhen a trader takes an offer both users are exchanging in the trade process the signature of data defined by the other peer (for taker we use the offer ID, for maker we use the takers preparedDepositTx - we use that data like a nonce for the signature), the pubKey, the salt and the peer\u2019s local date. With that data the other peer can verify that the other trader is the owner of the AccountAgeWitness data (as the pubKey is part of the hash and the signature gets verified with...",
+        "'''Cloning an offer'' is a feature added in Bisq v1.9.11.\n\nCloning an offer allows offer makers to use the same security deposit for multiple offers.\n\n## What is this difference between duplicating and offer and cloning an offer?\n\nDuplicating an offer creates a new transaction. Therefore, each duplicated offer has a cost in terns of a new mining and trade fee for the on-chain transaction.\n\nCloning an offer uses the original deposit transaction of the cloned offer to create a new offer that share...",
+        "The Security Team is responsible for keeping an eye on Bisq's needs for security - hunt bugs, design counter measures, be a point of contact for security related topics.\n\n__TOC__\n\n## Roles\n\n* Security Team Lead\n\n## Infrastructure\n\n## =GitHub\n=\n\n##\nTeam\n##\n\n[https://github.com/orgs/bisq-network/teams/security @bisq-network/security]\n\n##\nRepositories\n##\n\n* https://github.com/bisq-network/security\n\n## = Chat\n=\n\n* TBD\n\n## Goals\n\n## = What does \"security\" in \"Security Team\" mean\n=\n\n* Optimize informa..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_017",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "security deposit"
+      },
+      "response_time": 8.690239906311035,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.874999999978125,
+        "context_recall": 0.6666666666666666,
+        "faithfulness": 0.7,
+        "answer_relevancy": 0.5169117221984226
+      }
+    },
+    {
+      "question": "Is there a trade limit on easy trades? I want to buy more than $600.",
+      "ground_truth": "In Bisq Easy (Bisq 2), trade limits are based on the seller's reputation. New sellers or sellers with low reputation are limited to smaller trade amounts. The approximate starting limit is around 600 USD. As sellers build reputation through burning BSQ, bonding, or trade history, their limits increase.",
+      "answer": "The maximum amount you can buy on Bisq Easy is **$600** (or equivalent in other fiat currencies). This limit is set to avoid issues with Bitcoin price swings. While sellers can offer larger amounts based on their reputation, the overall trade limit for any Bisq Easy transaction remains fixed between **$6** and **$600**.",
+      "contexts": [
+        "Question: What is the maximum amount I can buy on Bisq?\nAnswer: On Bisq Easy you only really need to buy amounts of about 100 USD to be able to cover for deposits on Bisq1, where the maximum amount for fiat trades is 0.0624btc",
+        "Question: Is there a minimum amount for trades to be effective on Bisq?\nAnswer: With as little as 50 or 100 dollars bought from Bisq Easy, you can cover a small deposit on Bisq1 to access larger liquidity and better prices.",
+        "frameless\n\nOnce you are done selecting Payment Methods, you can move on by clicking ''Next''.\n\nOn the next screen, you will have to set how much Bitcoin you want to buy or, putting it the other way around, how much fiat currency you want to sell. The minimum trade amount on Bisq Easy is the equivalent of 6 USD and the maximum amount is . You can write the fiat amount, the BTC amount, or simply move the slider around.\n\nframeless\n\nFor this example, let's imagine we would like to buy 150\u20ac worth of ...",
+        "## = Reputation & Trade Rules (Version 2.1.1 and Later)\n=\n\nStarting with **Bisq 2 version 2.1.1**, several important rules link reputation directly to trading activity (within the currently required software version):\n\n* **Seller's Maximum Trade Amount:** The maximum amount a seller can offer in a single trade now directly depends on their reputation score. Higher reputation allows sellers to create offers for larger amounts.\n* **System Trade Limits:** While a seller's maximum depends on their r..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_018",
+        "review_status": "edited",
+        "test_category": "bisq2_feature_term",
+        "target_keyword": "easy trade"
+      },
+      "response_time": 3.610072135925293,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.7499999999625,
+        "context_recall": 0.5,
+        "faithfulness": 0.25,
+        "answer_relevancy": 0.6212532008844823
+      }
+    },
+    {
+      "question": "How do I contact the arbitrator if mediation didn't work?",
+      "ground_truth": "In Bisq 1, arbitration becomes available after mediation fails. If you reject the mediator's proposal, a delayed payout transaction is published. After the time lock expires (10 days for altcoin, 20 days for fiat), you can open arbitration from the trade view using Ctrl+O. The arbitrator will review the case and make a final payout decision.",
+      "answer": "To contact the arbitrator if mediation didn't work, follow these steps:\n\n1. **Check the Arbitration Chat**: For open trades, you can communicate with your arbitrator directly through the Bisq arbitration chat. \n\n2. **Matrix Contact**: If you cannot reach your arbitrator on Bisq within 72 hours, or if the issue needs urgent attention, go to the Bisq Matrix chat group. The Matrix handles and onion addresses of arbitrators are displayed in the headline of the #support channel.\n\n3. **Find Your Arbitrator's Details**:\n   - Go to the 'Support > Arbitration' tab in the Bisq application.\n   - Alternatively, check the trade details in the Portfolio section and look for the arbitrator's onion address in the contract JSON.\n\nIf you need further assistance, consult the Bisq community on Matrix or refer to the relevant documentation.",
+      "contexts": [
+        "## How to find your mediators?\n\nYour mediator's name should be visible when you open a mediation ticket. Look for it under the 'support agent' column.\n\nIf, however, you have a trade not in mediation but would like to know your assigned mediator's name, please refer to Finding your mediator.\n\n= Level 3: Arbitration =\n\n400px|thumb|left|Reject mediator's suggestion in order to start arbitration.\nArbitration is the final tier of dispute resolution on Bisq. It's designed to be rare, and its measures ...",
+        "The trader who needs to do this is the one who used a low fee in the external wallet while funding Bisq.\n\nWhen the CPFP transaction is published, you will notice that the effective fee rate of the deposit tx was increased, and if you chose a high enough fee for the child transaction, it should be confirmed in the next few blocks.\n\n= Inapplicable cases =\n\nThe above strategy is only possible when there is a change output owned by one of the traders, that can be used to bump the parent's fee.\n\nWhen...",
+        "Here is a list of current Bisq arbitrators and their onion addresses, as well as how you can find the arbitrator for a specific Bisq trade.\n\nIf you need to find your mediator see here.\n\n__TOC__\n\n= Get in touch with your arbitrator =\n\nFor open trades, you should be able to get in touch with your arbitrator through Bisq arbitration chat itself.\n\nIf you cannot get in touch with your arbitrator on Bisq for 72 hours (sometimes Bisq message system fails), or the issue needs urgent attention, you can g...",
+        "## How it works\n\n## = XMR Seller\n=\n\nThe XMR seller will get a pop-up upon clicking Payment Sent asking for the XMR tx ID and XMR tx key.\n\n600px|thumb|left|The XMR seller can choose to enter this information, or not.\n\nThe trader can choose to enter this information, or not. **It is not mandatory**. If the trader chooses not to, they'll be informed that their trading peer will not be able to use auto-confirm.\n\n## = XMR Buyer\n=\n\nThe XMR buyer must have auto-confirm turned on in Bisq settings.\n\n500p...",
+        "The **Fee Reimbursement Agent** refunds traders who have lost fees on trades through software bugs.\n\nFor more information see: Failed Trades - Reimbursement of Trade Fees and Miner Fees\n\nReimbursements are made with BTC. Traders seeking fee reimbursements must provide a screenshot and details of trades for which they wish fee reimbursements (more details are in the [https://github.com/bisq-network/support/issues/new?assignees=&labels=&template=reimbursement-template.md&title=Fee+reimbursement+fo...",
+        "## Guidance for dispute agents\n\nIn order to verify L-BTC trades, install the Elements Core software on your computer from https://github.com/ElementsProject/elements/releases, and then:\n* Set txindex=1 in elements.conf (neither L-BTC sender nor receiver need this setting)\n* Wait until Elements fully syncs to the Liquid blockchain\n\n## = Verifying a transaction\n=\n\nObtain information from trading peers:\n# Obtain the TXID for the L-BTC transaction (either trading peer can provide this information)\n#...",
+        "## =GitHub team\n=\n* [https://github.com/orgs/bisq-network/teams/support-agents @bisq-network/support-agents] (includes l1, l2 and intern subteams)\n\n## =Role issue\n=\n* [https://github.com/bisq-network/roles/issues/64 L1 Support Agent #64]\n\n## Duties\n\n## =Handle support cases\n=\nBisq support agents will dedicate at least 10 hours each week to monitor the various support channels and assist users with their issues.\n\n## =Report issues to developers\n=\nRequired data to request support from developers:\n...",
+        "The **Compensation Maintainer** handles announcements and issue triaging for compensation requests.\n\n__TOC__\n\n## Issue\n\nhttps://github.com/bisq-network/roles/issues/86\n\n## Team\n\n[https://github.com/orgs/bisq-network/teams/compensation-maintainers @bisq-network/compensation-maintainers]\n\n## Duties\n\n## = Announce BSQ-USD exchange rate\n=\n\nCompensation requests use a [https://github.com/bisq-network/proposals/issues/313 30-day volume-weighted average] to determine a BSQ/USD rate that discounts outli...",
+        "The Security Team is responsible for keeping an eye on Bisq's needs for security - hunt bugs, design counter measures, be a point of contact for security related topics.\n\n__TOC__\n\n## Roles\n\n* Security Team Lead\n\n## Infrastructure\n\n## =GitHub\n=\n\n##\nTeam\n##\n\n[https://github.com/orgs/bisq-network/teams/security @bisq-network/security]\n\n##\nRepositories\n##\n\n* https://github.com/bisq-network/security\n\n## = Chat\n=\n\n* TBD\n\n## Goals\n\n## = What does \"security\" in \"Security Team\" mean\n=\n\n* Optimize informa...",
+        "## Do valuable work and get compensated\n\nAfter Browse GitHub repositories and Matrix discussions, you will start to develop a sense for what's happening, what's needed, and where you can help:\n\n# **Find a problem somewhere in Bisq-land** that (a) needs fixing and (b) is a match for your skills and interests. Browse critical bugs, open bounties, follow chats on Matrix and the forums, and ask around about what other contributors think needs fixing.\n# **Get assigned to an issue** or have your initi..."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "multisig_v1",
+        "protocol_confidence": 0.85,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_019",
+        "review_status": "edited",
+        "test_category": "bisq1_technical_term",
+        "target_keyword": "arbitrator"
+      },
+      "response_time": 8.295496940612793,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.8333333332916666,
+        "context_recall": 0.5,
+        "faithfulness": 0.2857142857142857,
+        "answer_relevancy": 0.9318788624025066
+      }
+    },
+    {
+      "question": "What are the current offers available? I want to buy bitcoin with bank transfer.",
+      "ground_truth": "In Bisq Easy (Bisq 2), you can browse available offers in the offerbook. Filter by payment method (bank transfer, SEPA, etc.) and sort by price or amount. The offerbook shows current buy and sell offers from traders. Select an offer that matches your needs and start a trade chat with the seller.",
+      "answer": "There are **23 GBP offers** available on Bisq, with **14 offers to buy BTC** from. Here are some highlights:\n\n- **Payment Methods**: Common options include **MONEY_GRAM**, **Western Union**, **WISE**, and **Revolut**.\n- **Reputation Scores**: Most traders have a reputation of **4.0 stars or higher**, which indicates a good level of trustworthiness.\n\nYou can proceed to take an existing offer or create your own if you don't find a suitable match.",
+      "contexts": [
+        "## = Creating an offer\n=\nCreating an offer is a great way to establish your own terms and simply wait for someone to match what you are after. It is also the right option if you don't find any offers with the right premium or payment methods in the market you want to trade in. Follow along to learn how to navigate to your preferred market and create a new offer in it:\n\nBegin by opening up Bisq 2. Once the application has started, you should select ''Bisq Easy'' on the left panel, and ''Offerbook...",
+        "Question: Can I still buy Bitcoin using Faster Payments?\nAnswer: Faster Payments is a supported payment method, if you do not find any relevant offer you can try making your own.",
+        "Question: How can I purchase cryptocurrency at market price on Bisq?\nAnswer: You can make offers to buy at market price and see if any sellers are willing to accept them.",
+        "Question: Is it still possible to buy bitcoin with Faster Payments?\nAnswer: Currently, there are no sellers available for Faster Payments. However, users can create an offer with a competitive premium to attract sellers."
+      ],
+      "metadata": {
+        "source": "Implicit protocol evaluation (expanded keywords)",
+        "protocol": "bisq_easy",
+        "protocol_confidence": 0.8,
+        "skip_protocol_injection": true,
+        "review_id": "implicit_eval_020",
+        "review_status": "edited",
+        "test_category": "bisq2_feature_term",
+        "target_keyword": "current offers"
+      },
+      "response_time": 5.89093017578125,
+      "error": null,
+      "ragas": {
+        "context_precision": 0.9999999999,
+        "context_recall": 0.75,
+        "faithfulness": 0.14285714285714285,
+        "answer_relevancy": 0.7101604493797525
+      }
+    }
+  ]
+}

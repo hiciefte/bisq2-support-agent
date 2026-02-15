@@ -137,6 +137,16 @@ class SimplifiedRAGService:
         self.auto_send_router = AutoSendRouter()
         self.routing_reason_generator = RoutingReasonGenerator()
 
+        # Initialize query rewriter (feature-flagged)
+        self.query_rewriter = None
+        if self.settings.ENABLE_QUERY_REWRITE:
+            from app.services.rag.query_rewriter import QueryRewriter
+
+            self.query_rewriter = QueryRewriter(
+                settings=self.settings,
+                ai_client=self.llm_provider.ai_client,
+            )
+
         # Initialize Phase 1 components
         self.version_detector = ProtocolDetector()
 
@@ -560,6 +570,29 @@ class SimplifiedRAGService:
                     logger.warning(f"Translation failed, using original: {e}")
                     # Continue with original question on translation failure
 
+            # --- Query Rewrite (feature-flagged) ---
+            rewrite_metadata = {"rewritten": False}
+            if (
+                self.settings.ENABLE_QUERY_REWRITE
+                and chat_history
+                and self.query_rewriter
+            ):
+                try:
+                    rewrite_result = await self.query_rewriter.rewrite(
+                        query=preprocessed_question,
+                        chat_history=chat_history,
+                    )
+                    if rewrite_result.rewritten:
+                        preprocessed_question = rewrite_result.rewritten_query
+                        rewrite_metadata = {
+                            "rewritten": True,
+                            "strategy": rewrite_result.strategy,
+                            "original_query": rewrite_result.original_query,
+                            "latency_ms": rewrite_result.latency_ms,
+                        }
+                except Exception as e:
+                    logger.warning(f"Query rewrite failed, using original: {e}")
+
             # Detect version from question and chat history (unless overridden)
             if override_version:
                 detected_version = override_version
@@ -974,6 +1007,7 @@ class SimplifiedRAGService:
                 "mcp_tools_used": mcp_tools_used,
                 "original_language": original_language,
                 "translated": was_translated,
+                "query_rewrite": rewrite_metadata,
             }
 
         except Exception as e:

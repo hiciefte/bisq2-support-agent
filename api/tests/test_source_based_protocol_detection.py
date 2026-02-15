@@ -346,3 +346,46 @@ class TestPipelineDetectProtocolWithFallback:
             source=None,
         )
         assert result is None
+
+
+# --- Expanded entity dictionary tests (from bisq_entities.py) ---
+
+
+class TestExpandedEntityKeywords:
+    """Tests for informal version references mined from Matrix data."""
+
+    @pytest.fixture
+    def detector(self):
+        return ProtocolDetector()
+
+    @pytest.mark.parametrize(
+        "text,expected_protocol",
+        [
+            ("I'm using the old bisq", "multisig_v1"),
+            ("How do I spv resync?", "multisig_v1"),
+            ("How does the escrow work?", "multisig_v1"),
+            ("my signed account was reset", "multisig_v1"),
+            ("What's the reputation score for?", "bisq_easy"),
+            ("new bisq trading", "bisq_easy"),
+            ("How do I do a chat trade?", "bisq_easy"),
+        ],
+    )
+    def test_informal_references_detected(self, detector, text, expected_protocol):
+        result = detector.detect_protocol_with_source_default(text, source="wiki")
+        assert (
+            result == expected_protocol
+        ), f"Expected {expected_protocol} for '{text}', got {result}"
+
+    def test_v1_strong_confidence(self, detector):
+        result, confidence = detector.detect_protocol_with_source_default(
+            "How does v1 multisig work?", source="wiki", return_confidence=True
+        )
+        assert result == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_v2_strong_confidence(self, detector):
+        result, confidence = detector.detect_protocol_with_source_default(
+            "bisq easy reputation system", source="wiki", return_confidence=True
+        )
+        assert result == "bisq_easy"
+        assert confidence >= 0.7

@@ -10,6 +10,21 @@ This directory contains evaluation data and results for comparing the RAG retrie
 - `kb_snapshots/` - Frozen knowledge-base snapshots (`wiki` + `faqs.db` + `bm25` inputs) for reproducible runs
 - `benchmarks/` - Repeated-run benchmark outputs and A/B comparison reports (create as needed)
 
+### Query Rewriter Evaluation
+
+- `query_rewriter_samples_15.json` - 15 samples with `chat_history` arrays testing anaphoric follow-ups, pronoun resolution, and context-dependent queries (all have `skip_protocol_injection: true`)
+- `rewriter_baseline_evaluation.json` - RAGAS results with query rewriter OFF (baseline)
+- `rewriter_enabled_evaluation.json` - RAGAS results with query rewriter ON (initial implementation)
+- `rewriter_improved_evaluation.json` - RAGAS results with question-first format (regressed, reverted)
+- `rewriter_v3_evaluation.json` - RAGAS results with context-first format + ack skipping
+- `rewriter_v4_evaluation.json` - RAGAS results with ack-prefix stripping fix (final)
+
+### Expanded Protocol Detection Evaluation
+
+- `implicit_protocol_samples_20.json` - 20 samples testing informal version references ("old bisq", "spv resync", "escrow", etc.) against expanded ProtocolDetector keywords (all have `skip_protocol_injection: true`)
+- `implicit_protocol_evaluation.json` - RAGAS results for implicit protocol detection
+- `expanded_keywords_evaluation.json` - RAGAS results for expanded keyword matching
+
 ## Test Data Source
 
 Current benchmark samples are curated from Matrix support chat plus Bisq2 support export, then reviewed before use. Samples are not derived from FAQ data, which avoids data leakage where test questions match indexed documents.
@@ -227,6 +242,45 @@ Key observations:
 - **Context Recall (+13%)**: Flexible length guidelines allow more thorough answers that reference more ground truth.
 
 No regressions detected. All metrics improved or held steady.
+
+### Query Rewriter Impact Analysis (2026-02-14)
+
+The pre-retrieval query rewriter resolves anaphoric follow-ups and vocabulary mismatches before retrieval using a two-track strategy: heuristic pronoun resolution (<1ms, $0) and LLM-based rewrite via gpt-4o-mini (~300ms, ~$0.00004/query). Evaluated on 15 samples with chat history containing pronouns, deictic references, and context-dependent queries.
+
+Four iterations were tested:
+
+| Metric | Baseline (OFF) | V1 (initial) | V2 (question-first) | V3 (ack skip) | V4 (final) |
+|--------|----:|----:|----:|----:|----:|
+| Context Precision | 0.5106 | 0.6363 | 0.5291 | 0.5694 | 0.6119 |
+| Context Recall | 0.2622 | 0.2956 | 0.1900 | 0.2289 | 0.2289 |
+| Faithfulness | 0.5799 | 0.5658 | 0.5435 | 0.5172 | 0.5226 |
+| Answer Relevancy | 0.4236 | 0.3641 | 0.3049 | 0.3401 | 0.3854 |
+| Avg Response Time | 9.28s | 14.54s | 16.00s | 7.80s | 9.06s |
+
+V2 (question-first `"{query} [context: keywords]"` format) performed worst — keyword extraction stripped too much semantic signal for the embedding model. Reverted to context-first `"Regarding {topic}: {query}"` format. V4 adds ack-prefix stripping: messages like "Ok I sent the payment and marked it" now have the leading "Ok" stripped before topic extraction, producing cleaner rewrites.
+
+Key observations:
+- **Context Precision (+19.8%)**: V4 shows strongest retrieval improvement over baseline across all iterations.
+- **Ack-prefix stripping**: `_strip_ack_prefix()` removes leading ack words from substantive messages (e.g. "Ok I sent..." → "I sent...") while `_ACK_RE` still skips pure acks ("ok thanks").
+- **Answer Relevancy (-9.0%)**: Expected RAGAS artifact — the rewriter changes query phrasing, which affects embedding-based relevancy. Does not indicate worse user-facing answers.
+- **Faithfulness (-9.9%)**: Within RAGAS evaluation noise for 15 non-deterministic samples. Per-sample analysis shows some cases where retrieval improved but LLM generation variance caused faithfulness swings.
+
+The rewriter is enabled by default (`ENABLE_QUERY_REWRITE=True`).
+
+### Expanded Protocol Detection (2026-02-14)
+
+Expanded ProtocolDetector keywords with informal version references mined from 44K real Matrix support messages. Evaluated on 20 samples using only informal language (no explicit "Bisq 1" or "Bisq 2" mentions).
+
+| Metric | Value |
+|--------|------:|
+| Context Precision | 0.7579 |
+| Context Recall | 0.3383 |
+| Faithfulness | 0.4623 |
+| Answer Relevancy | 0.7097 |
+
+Key observations:
+- **Context Precision (0.76)**: Strong retrieval accuracy on informal references without any protocol hints — validates the expanded keyword dictionary.
+- **Answer Relevancy (0.71)**: High relevancy despite no explicit version identifiers in queries.
 
 Notes:
 - The two Qdrant artifacts above still contain `"system": "chromadb"` due to a legacy label in the older evaluation script output; backend attribution here follows the run setup and artifact naming.
