@@ -116,7 +116,15 @@ class QueryRewriter:
             if QUERY_REWRITE_CACHE_HITS:
                 QUERY_REWRITE_CACHE_HITS.inc()
             self._cache.move_to_end(cache_key)
-            return self._cache[cache_key]
+            cached = self._cache[cache_key]
+            return RewriteResult(
+                rewritten_query=cached.rewritten_query,
+                rewritten=cached.rewritten,
+                strategy=cached.strategy,
+                original_query=cached.original_query,
+                latency_ms=0.0,
+                confidence=cached.confidence,
+            )
 
         # Track 1: Heuristic
         heuristic_result = self._heuristic_rewrite(query, chat_history)

@@ -318,5 +318,5 @@ When enabled:
 ## 9. Related Documentation
 
 - **Knowledge Base System**: `.claude/docs/knowledge-base.md`
-- **RAG Architecture (Detailed)**: `claudedocs/rag-architecture.md`
+- **RAG Architecture (Detailed)**: `docs/rag-architecture.md`
 - **Environment Configuration**: `.claude/docs/environment-config.md`
