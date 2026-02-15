@@ -2,6 +2,7 @@
 
 import pytest
 from app.services.rag.query_context import (
+    _strip_ack_prefix,
     extract_last_topic,
     extract_topic_keywords,
     is_anaphoric,
@@ -121,6 +122,54 @@ class TestExtractLastTopic:
         ]
         result = extract_last_topic(history)
         assert result == "I want to set up multisig on Bisq 1"
+
+
+class TestStripAckPrefix:
+    """Test ack-prefix stripping from substantive messages."""
+
+    @pytest.mark.parametrize(
+        "msg,expected",
+        [
+            ("Ok I sent the payment and marked it", "I sent the payment and marked it"),
+            ("Thanks, tell me about fees", "tell me about fees"),
+            ("Sure, how does multisig work?", "how does multisig work?"),
+            ("Yes I tried SPV resync already", "I tried SPV resync already"),
+            ("Great, I'll set up the wallet now", "I'll set up the wallet now"),
+            ("Alright I funded my Bisq 1 wallet", "I funded my Bisq 1 wallet"),
+        ],
+    )
+    def test_strips_ack_prefix(self, msg, expected):
+        assert _strip_ack_prefix(msg) == expected
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "I want to trade on Bisq Easy",
+            "How do I set up the data directory?",
+            "The seller hasn't responded to my messages",
+        ],
+    )
+    def test_no_ack_prefix_unchanged(self, msg):
+        assert _strip_ack_prefix(msg) == msg
+
+    def test_short_remainder_not_stripped(self):
+        # "Ok, hi" — remainder "hi" is too short, keep original
+        assert _strip_ack_prefix("Ok, hi") == "Ok, hi"
+
+    def test_extract_last_topic_strips_ack_prefix(self):
+        """Integration: ack prefix stripped before topic extraction."""
+        history = [
+            {
+                "role": "user",
+                "content": "I'm about to make my first trade on Bisq 1 using SEPA",
+            },
+            {"role": "assistant", "content": "SEPA trades are straightforward..."},
+            {"role": "user", "content": "Ok I sent the payment and marked it"},
+            {"role": "assistant", "content": "The seller should confirm receipt..."},
+        ]
+        result = extract_last_topic(history)
+        assert result == "I sent the payment and marked it"
+        assert not result.startswith("Ok")
 
 
 class TestExtractTopicKeywords:
