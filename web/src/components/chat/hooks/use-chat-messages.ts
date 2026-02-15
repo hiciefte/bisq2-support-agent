@@ -184,12 +184,16 @@ const parseStoredMessage = (value: unknown): Message | null => {
 
 const parseStaffResponse = (
     value: unknown,
-): { answer: string; responded_at: string } | undefined => {
+): { answer: string; responded_at: string; rating?: number } | undefined => {
     if (!isJsonRecord(value)) {
         return undefined;
     }
     if (typeof value.answer === "string" && typeof value.responded_at === "string") {
-        return { answer: value.answer, responded_at: value.responded_at };
+        return {
+            answer: value.answer,
+            responded_at: value.responded_at,
+            rating: isFiniteNumber(value.rating) ? value.rating : undefined,
+        };
     }
     return undefined;
 };

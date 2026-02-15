@@ -15,6 +15,7 @@ interface MessageListProps {
     scrollAreaRef: React.RefObject<HTMLDivElement | null>
     loadingRef: React.RefObject<HTMLDivElement | null>
     onRating?: (messageId: string, rating: number) => void
+    onStaffRate?: (messageId: string, rating: number) => void
 }
 
 export const MessageList = ({
@@ -24,7 +25,8 @@ export const MessageList = ({
     formattedAvgTime,
     scrollAreaRef,
     loadingRef,
-    onRating
+    onRating,
+    onStaffRate
 }: MessageListProps) => {
     return (
         <div className="flex-1 overflow-hidden">
@@ -40,6 +42,7 @@ export const MessageList = ({
                                         key={message.id}
                                         message={message}
                                         onRating={onRating}
+                                        onStaffRate={onStaffRate}
                                     />
                                 ))}
                             </>

@@ -7,6 +7,8 @@ interface RatingProps {
   initialRating?: number
   className?: string
   disabled?: boolean
+  promptText?: string
+  thankYouText?: string
 }
 
 export function Rating({
@@ -14,6 +16,8 @@ export function Rating({
   initialRating,
   className,
   disabled = false,
+  promptText = "Was this response helpful?",
+  thankYouText = "Thank you for your feedback!",
 }: RatingProps) {
   const [rating, setRating] = React.useState<number | null>(initialRating ?? null)
   const [hasRated, setHasRated] = React.useState(initialRating !== undefined)
@@ -28,7 +32,7 @@ export function Rating({
   return (
     <div className={cn("flex items-center gap-3", className)}>
       <span className="text-sm text-muted-foreground">
-        {hasRated ? "Thank you for your feedback!" : "Was this response helpful?"}
+        {hasRated ? thankYouText : promptText}
       </span>
       <div className="flex gap-2">
         <button

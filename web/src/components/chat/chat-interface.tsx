@@ -6,6 +6,7 @@
  */
 
 import { FormEvent, useCallback, useEffect, useMemo } from "react"
+import { API_BASE_URL } from "@/lib/config"
 import { PrivacyWarningModal } from "@/components/privacy/privacy-warning-modal"
 import { MessageList } from "./components/message-list"
 import { ChatInput } from "./components/chat-input"
@@ -81,8 +82,10 @@ const ChatInterface = () => {
                               escalation_resolution: "responded",
                               escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
                               staff_response: {
+                                  ...msg.staff_response,
                                   answer: escalationPoll.staffAnswer!,
                                   responded_at: escalationPoll.respondedAt || new Date().toISOString(),
+                                  rating: escalationPoll.staffAnswerRating ?? msg.staff_response?.rating,
                               },
                           }
                         : msg
@@ -114,6 +117,29 @@ const ChatInterface = () => {
         pendingEscalation,
         setMessages,
     ])
+
+    // Handle staff answer rating
+    const handleStaffRating = useCallback(async (messageId: string, rating: number) => {
+        try {
+            const resp = await fetch(`${API_BASE_URL}/escalations/${messageId}/rate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rating }),
+            })
+            if (resp.ok) {
+                // Optimistically update the message's staff_response rating
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg.escalation_message_id === messageId && msg.staff_response
+                            ? { ...msg, staff_response: { ...msg.staff_response, rating } }
+                            : msg
+                    )
+                )
+            }
+        } catch {
+            // Silently fail — user already sees optimistic UI from Rating component
+        }
+    }, [setMessages])
 
     // Format average response time for display
     const formattedAvgTime = formatResponseTime(avgResponseTime)
@@ -167,6 +193,7 @@ const ChatInterface = () => {
                         scrollAreaRef={scrollAreaRef}
                         loadingRef={loadingRef}
                         onRating={handleRating}
+                        onStaffRate={handleStaffRating}
                     />
                 </div>
 
