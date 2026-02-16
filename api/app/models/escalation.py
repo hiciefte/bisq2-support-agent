@@ -82,6 +82,7 @@ class Escalation(BaseModel):
     sources: Optional[List[Dict[str, Any]]] = None
     staff_answer: Optional[str] = None
     staff_id: Optional[str] = None
+    edit_distance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     staff_answer_rating: Optional[int] = None
     delivery_status: EscalationDeliveryStatus = EscalationDeliveryStatus.NOT_REQUIRED
     delivery_error: Optional[str] = None
@@ -102,6 +103,7 @@ class EscalationUpdate(BaseModel):
     status: Optional[EscalationStatus] = None
     staff_answer: Optional[str] = Field(default=None, max_length=10000)
     staff_id: Optional[str] = None
+    edit_distance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     delivery_status: Optional[EscalationDeliveryStatus] = None
     delivery_error: Optional[str] = None
     delivery_attempts: Optional[int] = None
@@ -148,6 +150,12 @@ class RespondRequest(BaseModel):
 
 class RateStaffAnswerRequest(BaseModel):
     rating: int = Field(..., ge=0, le=1, description="0=unhelpful, 1=helpful")
+    rate_token: Optional[str] = Field(
+        default=None,
+        min_length=8,
+        max_length=1024,
+        description="Optional signed token enabling trusted learning lane",
+    )
 
 
 class GenerateFAQRequest(BaseModel):
@@ -202,6 +210,7 @@ class UserPollResponse(BaseModel):
     resolution: Optional[str] = None  # "responded" | "closed"
     closed_at: Optional[datetime] = None
     staff_answer_rating: Optional[int] = None
+    rate_token: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -294,6 +294,8 @@ class Settings(BaseSettings):
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
+    ESCALATION_RATING_TOKEN_SECRET: str = ""
+    ESCALATION_RATING_TOKEN_TTL_SECONDS: int = 3600
 
     # CRITICAL: Single-Admin System Design Constraint
     # This system is designed for SINGLE CONCURRENT ADMIN operation.

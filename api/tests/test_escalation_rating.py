@@ -12,9 +12,11 @@ Covers:
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.core.config import Settings, get_settings
 from app.models.escalation import (
     Escalation,
     EscalationDeliveryStatus,
@@ -31,8 +33,9 @@ def _make_escalation(
     staff_answer: str | None = "Here is the answer",
     responded_at: datetime | None = datetime(2025, 1, 15, 12, 0, 0),
     staff_answer_rating: int | None = None,
+    **overrides,
 ) -> Escalation:
-    return Escalation(
+    data = dict(
         id=1,
         message_id="12345678-1234-1234-1234-123456789abc",
         channel="matrix",
@@ -51,6 +54,8 @@ def _make_escalation(
         delivery_attempts=0,
         staff_answer_rating=staff_answer_rating,
     )
+    data.update(overrides)
+    return Escalation(**data)
 
 
 @pytest.fixture
@@ -59,6 +64,9 @@ def mock_service():
     service.repository = MagicMock()
     service.repository.get_by_message_id = AsyncMock()
     service.repository.update_rating = AsyncMock()
+    service.repository.consume_rating_token_jti = AsyncMock(return_value=True)
+    service.feedback_orchestrator = MagicMock()
+    service.feedback_orchestrator.record_user_rating = MagicMock()
     return service
 
 
@@ -70,6 +78,13 @@ def client(mock_service):
     from app.routes.admin.escalations import get_escalation_service
 
     app.dependency_overrides[get_escalation_service] = lambda: mock_service
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        DEBUG=True,
+        DATA_DIR="/tmp",
+        ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
+        ENVIRONMENT="testing",
+        COOKIE_SECURE=False,
+    )
 
     return TestClient(app)
 
@@ -165,3 +180,102 @@ class TestRateStaffAnswer:
 
         assert resp.status_code == 200
         assert resp.json()["staff_answer_rating"] == 1
+
+    def test_poll_resolved_includes_rate_token(self, client, mock_service, monkeypatch):
+        """Resolved poll responses should include a signed rating token."""
+        escalation = _make_escalation(staff_answer_rating=1)
+        mock_service.repository.get_by_message_id.return_value = escalation
+        monkeypatch.setattr(
+            "app.routes.escalation_polling.generate_rating_token",
+            lambda *args, **kwargs: "rate_token_123",
+        )
+
+        resp = client.get(f"/escalations/{MESSAGE_ID}/response")
+
+        assert resp.status_code == 200
+        assert resp.json()["rate_token"] == "rate_token_123"
+
+    def test_rate_without_token_is_accepted_but_not_trusted(self, client, mock_service):
+        """Untrusted submissions still update DB rating but do not trigger learning."""
+        escalation = _make_escalation(status=EscalationStatus.RESPONDED)
+        mock_service.repository.get_by_message_id.return_value = escalation
+        mock_service.repository.update_rating.return_value = True
+
+        resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 1})
+
+        assert resp.status_code == 200
+        mock_service.feedback_orchestrator.record_user_rating.assert_not_called()
+
+    def test_rate_with_invalid_token_returns_400(
+        self, client, mock_service, monkeypatch
+    ):
+        """Invalid tokens are rejected."""
+        escalation = _make_escalation(status=EscalationStatus.RESPONDED)
+        mock_service.repository.get_by_message_id.return_value = escalation
+        mock_service.repository.update_rating.return_value = True
+        monkeypatch.setattr(
+            "app.routes.escalation_polling.verify_rating_token",
+            lambda *args, **kwargs: None,
+        )
+
+        resp = client.post(
+            f"/escalations/{MESSAGE_ID}/rate",
+            json={"rating": 1, "rate_token": "invalid_token"},
+        )
+
+        assert resp.status_code == 400
+        mock_service.feedback_orchestrator.record_user_rating.assert_not_called()
+
+    def test_rate_with_valid_token_triggers_learning(
+        self, client, mock_service, monkeypatch
+    ):
+        """Trusted submissions should be forwarded to the orchestrator."""
+        escalation = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_answer="answer",
+            ai_draft_answer="draft",
+            confidence_score=0.84,
+            routing_action="queue_high",
+        )
+        mock_service.repository.get_by_message_id.return_value = escalation
+        mock_service.repository.update_rating.return_value = True
+        mock_service.repository.consume_rating_token_jti.return_value = True
+
+        monkeypatch.setattr(
+            "app.routes.escalation_polling.verify_rating_token",
+            lambda *args, **kwargs: SimpleNamespace(
+                message_id=MESSAGE_ID,
+                rater_id="user_abc",
+                jti="jti_1",
+            ),
+        )
+
+        resp = client.post(
+            f"/escalations/{MESSAGE_ID}/rate",
+            json={"rating": 0, "rate_token": "valid_token"},
+        )
+
+        assert resp.status_code == 200
+        mock_service.feedback_orchestrator.record_user_rating.assert_called_once()
+
+    def test_replayed_token_returns_409(self, client, mock_service, monkeypatch):
+        """Reusing a consumed token jti should be rejected."""
+        escalation = _make_escalation(status=EscalationStatus.RESPONDED)
+        mock_service.repository.get_by_message_id.return_value = escalation
+        mock_service.repository.update_rating.return_value = True
+        mock_service.repository.consume_rating_token_jti.return_value = False
+        monkeypatch.setattr(
+            "app.routes.escalation_polling.verify_rating_token",
+            lambda *args, **kwargs: SimpleNamespace(
+                message_id=MESSAGE_ID,
+                rater_id="user_abc",
+                jti="jti_1",
+            ),
+        )
+
+        resp = client.post(
+            f"/escalations/{MESSAGE_ID}/rate",
+            json={"rating": 1, "rate_token": "valid_token"},
+        )
+
+        assert resp.status_code == 409

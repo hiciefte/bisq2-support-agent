@@ -174,3 +174,28 @@ class FeedbackWeightManager:
     def get_source_weights(self) -> Dict[str, float]:
         """Get the current source weights."""
         return self.source_weights
+
+    def apply_quadrant_feedback(self, source_type: str, delta: float) -> None:
+        """Apply a small immediate delta for trusted quadrant feedback."""
+        if abs(delta) > 0.10:
+            logger.warning(
+                "Circuit breaker rejected quadrant delta %.3f for %s",
+                delta,
+                source_type,
+            )
+            return
+        if source_type not in self.source_weights:
+            self.source_weights[source_type] = 1.0
+        learning_rate = 0.02
+        old_weight = self.source_weights[source_type]
+        new_weight = old_weight + (learning_rate * delta)
+        self.source_weights[source_type] = max(
+            _WEIGHT_MIN, min(_WEIGHT_MAX, new_weight)
+        )
+        logger.info(
+            "Quadrant feedback adjusted %s: %.3f -> %.3f (delta=%.3f)",
+            source_type,
+            old_weight,
+            self.source_weights[source_type],
+            delta,
+        )

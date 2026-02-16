@@ -19,6 +19,7 @@ from app.models.escalation import (
     EscalationUpdate,
     UserPollResponse,
 )
+from app.services.escalation.feedback_metrics import compute_hybrid_distance
 from prometheus_client import Counter, Histogram
 
 logger = logging.getLogger(__name__)
@@ -58,12 +59,16 @@ class EscalationService:
         faq_service,
         learning_engine,
         settings,
+        feedback_orchestrator=None,
+        embeddings=None,
     ):
         self.repository = repository
         self.response_delivery = response_delivery
         self.faq_service = faq_service
         self.learning_engine = learning_engine
         self.settings = settings
+        self.feedback_orchestrator = feedback_orchestrator
+        self.embeddings = embeddings
 
     # ------------------------------------------------------------------
     # Create
@@ -173,6 +178,12 @@ class EscalationService:
                 )
 
         now = datetime.now(timezone.utc)
+        edit_distance = await compute_hybrid_distance(
+            escalation.ai_draft_answer,
+            staff_answer,
+            embeddings=self.embeddings,
+        )
+
         updated = await self.repository.update(
             escalation_id,
             EscalationUpdate(
@@ -180,6 +191,7 @@ class EscalationService:
                 staff_answer=staff_answer,
                 staff_id=staff_id,
                 responded_at=now,
+                edit_distance=edit_distance,
             ),
         )
         ESCALATION_LIFECYCLE.labels(action="responded").inc()
@@ -227,11 +239,7 @@ class EscalationService:
         # Record learning
         if self.learning_engine is not None:
             try:
-                admin_action = (
-                    "approved"
-                    if staff_answer.strip() == escalation.ai_draft_answer.strip()
-                    else "edited"
-                )
+                admin_action = "approved" if edit_distance == 0.0 else "edited"
                 self.learning_engine.record_review(
                     question_id=f"escalation_{escalation.id}",
                     confidence=escalation.confidence_score,
@@ -240,6 +248,7 @@ class EscalationService:
                     metadata={
                         "channel": escalation.channel,
                         "staff_id": staff_id,
+                        "edit_distance": edit_distance,
                     },
                 )
             except Exception:

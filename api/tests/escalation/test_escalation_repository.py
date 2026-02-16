@@ -199,6 +199,17 @@ class TestEscalationRepositoryUpdate:
                 EscalationUpdate(status=EscalationStatus.CLOSED),
             )
 
+    @pytest.mark.asyncio
+    async def test_update_edit_distance_persists(self, escalation_repository):
+        """edit_distance should persist when updated."""
+        await escalation_repository.initialize()
+        created = await escalation_repository.create(_make_create())
+        updated = await escalation_repository.update(
+            created.id,
+            EscalationUpdate(edit_distance=0.42),
+        )
+        assert updated.edit_distance == 0.42
+
 
 # ---------------------------------------------------------------------------
 # List / Filter
@@ -286,6 +297,24 @@ class TestEscalationRepositoryList:
         assert counts.responded == 0
         assert counts.closed == 0
         assert counts.total == 2
+
+
+class TestEscalationRepositoryRatingTokens:
+    """Tests for single-use trusted rating token consumption."""
+
+    @pytest.mark.asyncio
+    async def test_consume_rating_token_jti_is_single_use(self, escalation_repository):
+        await escalation_repository.initialize()
+        first = await escalation_repository.consume_rating_token_jti(
+            message_id="msg-1",
+            token_jti="jti-1",
+        )
+        second = await escalation_repository.consume_rating_token_jti(
+            message_id="msg-1",
+            token_jti="jti-1",
+        )
+        assert first is True
+        assert second is False
 
 
 # ---------------------------------------------------------------------------
