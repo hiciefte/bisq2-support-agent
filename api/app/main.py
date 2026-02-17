@@ -156,16 +156,26 @@ async def lifespan(app: FastAPI):
     learning_engine = LearningEngine()
     app.state.learning_engine = learning_engine
 
+    # Embeddings are a startup requirement because AnswerComparisonEngine depends on them.
+    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
+
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
     app.state.escalation_service = None
     app.state.escalation_init_failed = False
     try:
         from app.services.escalation.escalation_repository import EscalationRepository
         from app.services.escalation.escalation_service import EscalationService
+        from app.services.escalation.feedback_orchestrator import FeedbackOrchestrator
 
         esc_db_path = os.path.join(settings.DATA_DIR, "escalations.db")
         esc_repo = EscalationRepository(db_path=esc_db_path)
         await esc_repo.initialize()
+        feedback_orchestrator = FeedbackOrchestrator(
+            learning_engine=learning_engine,
+            weight_manager=feedback_service.weight_manager,
+            settings=settings,
+        )
+        app.state.feedback_orchestrator = feedback_orchestrator
 
         escalation_service = EscalationService(
             repository=esc_repo,
@@ -173,11 +183,14 @@ async def lifespan(app: FastAPI):
             faq_service=faq_service,  # Required for /generate-faq
             learning_engine=learning_engine,
             settings=settings,
+            feedback_orchestrator=feedback_orchestrator,
+            embeddings=embeddings_model,
         )
         app.state.escalation_service = escalation_service
         logger.info("EscalationService initialized (singleton)")
     except Exception:
         app.state.escalation_service = None
+        app.state.feedback_orchestrator = None
         app.state.escalation_init_failed = True
         logger.critical("EscalationService init failed", exc_info=True)
 
@@ -246,7 +259,6 @@ async def lifespan(app: FastAPI):
     # Initialize AnswerComparisonEngine for real LLM-based answer comparison
     logger.info("Initializing AnswerComparisonEngine...")
     ai_client = aisuite.Client()
-    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
     comparison_engine = AnswerComparisonEngine(
         ai_client=ai_client,
         embeddings_model=embeddings_model,

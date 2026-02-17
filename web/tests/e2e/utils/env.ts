@@ -6,9 +6,25 @@
  */
 
 /**
- * Default API URL for local development
+ * Build a default API URL that matches the configured test host.
  */
-const DEFAULT_API_URL = 'http://localhost:8000';
+const getDefaultApiUrl = (): string => {
+  const fallbackHost = "localhost";
+  const configuredWebBaseUrl = process.env.TEST_BASE_URL;
+
+  if (!configuredWebBaseUrl) {
+    return `http://${fallbackHost}:8000`;
+  }
+
+  try {
+    const { hostname } = new URL(configuredWebBaseUrl);
+    return `http://${hostname || fallbackHost}:8000`;
+  } catch {
+    return `http://${fallbackHost}:8000`;
+  }
+};
+
+const DEFAULT_API_URL = getDefaultApiUrl();
 
 /**
  * Normalize API URL to ensure it's absolute

@@ -125,27 +125,42 @@ class LearningEngine:
             routing_action: 'auto_send', 'queue_high', or 'queue_low'
             metadata: Optional additional metadata
         """
+        metadata_dict: Dict[str, Any] = metadata or {}
+
         review_record = {
             "question_id": question_id,
             "confidence": confidence,
             "admin_action": admin_action,
             "routing_action": routing_action,
-            "metadata": metadata or {},
+            "metadata": metadata_dict,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        self._review_history.append(review_record)
+        replaced = False
+        if metadata_dict.get("idempotent"):
+            for i, existing in enumerate(self._review_history):
+                if existing.get("question_id") == question_id:
+                    self._review_history[i] = review_record
+                    replaced = True
+                    break
+        if not replaced:
+            self._review_history.append(review_record)
 
         # Record metrics for admin review
         learning_reviews_total.labels(admin_action=admin_action).inc()
 
         logger.debug(
-            f"Recorded review: {question_id} - {admin_action} at {confidence:.2f}"
+            "Recorded review%s: %s - %s at %.2f",
+            " (replaced)" if replaced else "",
+            question_id,
+            admin_action,
+            confidence,
         )
 
         # Check if we should update thresholds
         if len(self._review_history) >= self.min_samples_for_update:
-            if len(self._review_history) % 10 == 0:  # Update every 10 reviews
+            # Update every 10 new samples, or immediately on idempotent replacement
+            if replaced or len(self._review_history) % 10 == 0:
                 self._update_thresholds()
 
     def _update_thresholds(self) -> None:

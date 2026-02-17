@@ -46,6 +46,7 @@ export interface Message {
         answer: string
         responded_at: string
         rating?: number
+        rate_token?: string
     }
     /** Escalation resolution set client-side after polling completes */
     escalation_resolution?: "responded" | "closed"

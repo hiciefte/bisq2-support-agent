@@ -12,7 +12,7 @@ const ENABLED_INPUT_SELECTOR = "input:not([disabled]), textarea:not([disabled])"
 const PROSE_CHAT_SELECTOR = "div.prose-chat";
 const ASSISTANT_AVATAR_SELECTOR = "img[alt=\"Bisq AI\"]";
 const FEEDBACK_BUTTON_SELECTOR =
-    "button[aria-label=\"Rate as helpful\"], button[aria-label=\"Rate as not helpful\"]";
+    "button[aria-label=\"Rate as helpful\"], button[aria-label=\"Rate as unhelpful\"]";
 
 interface LastBotResponseOptions {
     previousProseCount?: number;
@@ -226,23 +226,6 @@ export async function loginAsAdmin(
                 timeout: 20000,
             });
 
-            let spinnerSeen = false;
-            try {
-                await page.waitForSelector("svg.animate-spin", {
-                    state: "attached",
-                    timeout: 2000,
-                });
-                spinnerSeen = true;
-            } catch {
-                // Spinner may not appear if auth check is fast.
-            }
-            if (spinnerSeen) {
-                await page.waitForSelector("svg.animate-spin", {
-                    state: "detached",
-                    timeout: 30000,
-                });
-            }
-
             const loginInput = page.locator("input#apiKey");
             // Use sidebar nav links as the dashboard indicator — these only
             // render when SecureAuth considers the user authenticated.
@@ -251,7 +234,7 @@ export async function loginAsAdmin(
             const dashboard = page
                 .locator("nav a[href='/admin/overview']")
                 .or(page.locator("h1:has-text(\"Admin Overview\")"));
-            await loginInput.or(dashboard).first().waitFor({ timeout: 20000 });
+            await loginInput.or(dashboard).first().waitFor({ timeout: 30000 });
 
             if (await dashboard.first().isVisible()) {
                 console.log("loginAsAdmin: Already authenticated");

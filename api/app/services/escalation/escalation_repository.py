@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS escalations (
     sources TEXT,
     staff_answer TEXT,
     staff_id TEXT,
+    edit_distance REAL
+        CHECK(edit_distance IS NULL OR (edit_distance >= 0.0 AND edit_distance <= 1.0)),
     delivery_status TEXT NOT NULL DEFAULT 'not_required'
         CHECK(delivery_status IN ('not_required', 'pending', 'delivered', 'failed')),
     delivery_error TEXT,
@@ -67,6 +69,14 @@ CREATE_INDICES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_escalations_responded_at ON escalations(responded_at);",
 ]
 
+CREATE_RATING_TOKEN_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS escalation_rating_consumed_tokens (
+    token_jti TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    consumed_at TEXT NOT NULL
+);
+"""
+
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
     """Parse an ISO-formatted datetime string."""
@@ -92,6 +102,7 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     d["responded_at"] = _parse_datetime(d.get("responded_at"))
     d["closed_at"] = _parse_datetime(d.get("closed_at"))
     d["last_delivery_at"] = _parse_datetime(d.get("last_delivery_at"))
+    d["edit_distance"] = d.get("edit_distance")
     d["staff_answer_rating"] = d.get("staff_answer_rating")
     return Escalation(**d)
 
@@ -109,6 +120,7 @@ class EscalationRepository:
             await db.execute(CREATE_TABLE_SQL)
             for idx_sql in CREATE_INDICES_SQL:
                 await db.execute(idx_sql)
+            await db.execute(CREATE_RATING_TOKEN_TABLE_SQL)
             # Self-migration: add staff_answer_rating for existing databases
             try:
                 await db.execute(
@@ -116,6 +128,15 @@ class EscalationRepository:
                     " CHECK(staff_answer_rating IS NULL OR staff_answer_rating IN (0, 1))"
                 )
                 logger.info("Added staff_answer_rating column to escalations table")
+            except Exception:
+                pass  # Column already exists
+            # Self-migration: add edit_distance for existing databases
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN edit_distance REAL "
+                    "CHECK(edit_distance IS NULL OR (edit_distance >= 0.0 AND edit_distance <= 1.0))"
+                )
+                logger.info("Added edit_distance column to escalations table")
             except Exception:
                 pass  # Column already exists
             await db.commit()
@@ -265,6 +286,27 @@ class EscalationRepository:
             )
             await db.commit()
             return cursor.rowcount > 0
+
+    async def consume_rating_token_jti(self, message_id: str, token_jti: str) -> bool:
+        """Mark token jti as consumed. Returns False when replayed."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """
+                    INSERT INTO escalation_rating_consumed_tokens (
+                        token_jti, message_id, consumed_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (token_jti, message_id, now),
+                )
+                await db.commit()
+            return True
+        except Exception:
+            logger.warning(
+                "Rejected replayed rating token jti for message %s", message_id
+            )
+            return False
 
     # ------------------------------------------------------------------
     # List / filter

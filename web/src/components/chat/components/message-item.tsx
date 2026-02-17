@@ -22,7 +22,7 @@ import type { Message } from "../types/chat.types"
 interface MessageItemProps {
     message: Message
     onRating?: (messageId: string, rating: number) => void
-    onStaffRate?: (messageId: string, rating: number) => void
+    onStaffRate?: (messageId: string, rating: number, rateToken?: string) => void
 }
 
 export const MessageItem = memo(function MessageItem({ message, onRating, onStaffRate }: MessageItemProps) {
@@ -136,7 +136,11 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                     <HumanResponseSection
                         response={message.staff_response}
                         onRate={onStaffRate && message.escalation_message_id
-                            ? (rating) => onStaffRate(message.escalation_message_id!, rating)
+                            ? (rating) => onStaffRate(
+                                message.escalation_message_id!,
+                                rating,
+                                message.staff_response?.rate_token,
+                            )
                             : undefined}
                         messageId={message.escalation_message_id}
                     />

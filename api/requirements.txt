@@ -104,7 +104,7 @@ fastapi==0.129.0
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
-filelock==3.24.0
+filelock==3.24.2
     # via
     #   datasets
     #   huggingface-hub
@@ -358,7 +358,7 @@ pillow==12.1.1
     #   ragas
 pip-tools==7.5.3
     # via -r api/requirements.in
-platformdirs==4.9.1
+platformdirs==4.9.2
     # via
     #   black
     #   virtualenv
@@ -384,7 +384,7 @@ protobuf==6.33.5
     # via qdrant-client
 psutil==7.2.2
     # via -r api/requirements.in
-pyarrow==23.0.0
+pyarrow==23.0.1
     # via datasets
 pybreaker==1.4.1
     # via -r api/requirements.in
@@ -451,7 +451,7 @@ python-json-logger==4.0.0
     # via -r api/requirements.in
 python-multipart==0.0.22
     # via mcp
-python-socks[asyncio]==2.8.0
+python-socks[asyncio]==2.8.1
     # via aiohttp-socks
 pytokens==0.4.1
     # via black
@@ -555,7 +555,7 @@ tqdm==4.67.3
     #   openai
     #   ragas
     #   transformers
-transformers==5.1.0
+transformers==5.2.0
     # via -r api/requirements.in
 typer==0.9.4
     # via
@@ -605,11 +605,11 @@ uuid-utils==0.14.0
     # via
     #   langchain-core
     #   langsmith
-uvicorn==0.40.0
+uvicorn==0.41.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==20.36.1
+virtualenv==20.37.0
     # via pre-commit
 wheel==0.46.3
     # via pip-tools

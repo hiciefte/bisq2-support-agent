@@ -86,6 +86,7 @@ const ChatInterface = () => {
                                   answer: escalationPoll.staffAnswer!,
                                   responded_at: escalationPoll.respondedAt || new Date().toISOString(),
                                   rating: escalationPoll.staffAnswerRating ?? msg.staff_response?.rating,
+                                  rate_token: escalationPoll.rateToken ?? msg.staff_response?.rate_token,
                               },
                           }
                         : msg
@@ -114,17 +115,23 @@ const ChatInterface = () => {
         escalationPoll.staffAnswer,
         escalationPoll.respondedAt,
         escalationPoll.resolution,
+        escalationPoll.staffAnswerRating,
+        escalationPoll.rateToken,
         pendingEscalation,
         setMessages,
     ])
 
     // Handle staff answer rating
-    const handleStaffRating = useCallback(async (messageId: string, rating: number) => {
+    const handleStaffRating = useCallback(
+        async (messageId: string, rating: number, rateToken?: string) => {
         try {
             const resp = await fetch(`${API_BASE_URL}/escalations/${messageId}/rate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rating }),
+                body: JSON.stringify({
+                    rating,
+                    ...(rateToken ? { rate_token: rateToken } : {}),
+                }),
             })
             if (resp.ok) {
                 // Update local state after server confirms the rating
