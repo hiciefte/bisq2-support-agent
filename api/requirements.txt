@@ -242,7 +242,7 @@ langsmith==0.7.3
     #   langchain-classic
     #   langchain-community
     #   langchain-core
-librt==0.8.0
+librt==0.8.1
     # via mypy
 litellm==1.80.0
     # via -r api/requirements.in
