@@ -155,6 +155,8 @@ async def lifespan(app: FastAPI):
     # State will be loaded later when unified_db_path is available
     learning_engine = LearningEngine()
     app.state.learning_engine = learning_engine
+
+    # Embeddings are a startup requirement because AnswerComparisonEngine depends on them.
     embeddings_model = LiteLLMEmbeddings.from_settings(settings)
 
     # Initialize EscalationService singleton for admin routes, polling, and hooks.

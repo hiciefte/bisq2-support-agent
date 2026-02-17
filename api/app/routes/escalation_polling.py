@@ -232,14 +232,6 @@ async def rate_staff_answer(
             trusted = True
             rating_token_jti = payload.jti
 
-        updated = await service.repository.update_rating(message_id, body.rating)
-
-        if not updated:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot rate: no staff answer yet",
-            )
-
         if trusted and rating_token_jti:
             if not await service.repository.consume_rating_token_jti(
                 message_id=message_id,
@@ -249,6 +241,14 @@ async def rate_staff_answer(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Rating token already used",
                 )
+
+        updated = await service.repository.update_rating(message_id, body.rating)
+
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot rate: no staff answer yet",
+            )
 
         if (
             trusted

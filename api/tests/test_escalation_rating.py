@@ -13,7 +13,7 @@ Covers:
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from app.core.config import Settings, get_settings
@@ -258,6 +258,14 @@ class TestRateStaffAnswer:
         assert resp.status_code == 200
         mock_service.feedback_orchestrator.record_user_rating.assert_called_once()
 
+        consume_idx = mock_service.repository.mock_calls.index(
+            call.consume_rating_token_jti(message_id=MESSAGE_ID, token_jti="jti_1")
+        )
+        update_idx = mock_service.repository.mock_calls.index(
+            call.update_rating(MESSAGE_ID, 0)
+        )
+        assert consume_idx < update_idx
+
     def test_replayed_token_returns_409(self, client, mock_service, monkeypatch):
         """Reusing a consumed token jti should be rejected."""
         escalation = _make_escalation(status=EscalationStatus.RESPONDED)
@@ -279,3 +287,8 @@ class TestRateStaffAnswer:
         )
 
         assert resp.status_code == 409
+        mock_service.repository.consume_rating_token_jti.assert_awaited_once_with(
+            message_id=MESSAGE_ID,
+            token_jti="jti_1",
+        )
+        mock_service.repository.update_rating.assert_not_awaited()
