@@ -637,7 +637,7 @@ class Settings(BaseSettings):
 
     @field_validator("MATRIX_SYNC_ROOMS", mode="before")
     @classmethod
-    def parse_matrix_rooms(cls, v: str | list[str]) -> list[str]:
+    def parse_matrix_sync_rooms(cls, v: str | list[str]) -> list[str]:
         """Normalize MATRIX_SYNC_ROOMS to list of room IDs.
 
         Accepts either a comma-separated string or a list of strings.
@@ -923,6 +923,28 @@ class Settings(BaseSettings):
         if not password:
             raise ValueError(
                 "MATRIX_PASSWORD is required when MATRIX_HOMESERVER_URL is set."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_matrix_sync_enabled_config(self) -> "Settings":
+        """Require core sync fields when MATRIX_SYNC_ENABLED is explicitly enabled."""
+        if not self.MATRIX_SYNC_ENABLED:
+            return self
+
+        missing = []
+        if not (self.MATRIX_HOMESERVER_URL or "").strip():
+            missing.append("MATRIX_HOMESERVER_URL")
+        if not (self.MATRIX_USER or "").strip():
+            missing.append("MATRIX_USER")
+        if not self.MATRIX_SYNC_ROOMS:
+            missing.append("MATRIX_SYNC_ROOMS")
+
+        if missing:
+            raise ValueError(
+                "MATRIX_SYNC_ENABLED is True but missing required settings: "
+                + ", ".join(missing)
             )
 
         return self

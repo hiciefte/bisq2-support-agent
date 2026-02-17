@@ -1,5 +1,6 @@
 """Tests for Matrix settings with strict sync/alert variable names."""
 
+import pytest
 from app.core.config import Settings
 
 
@@ -41,3 +42,23 @@ class TestMatrixSettings:
         )
 
         assert settings.MATRIX_HOMESERVER_URL == "https://matrix.org"
+
+    def test_matrix_sync_enabled_requires_sync_config_fields(self):
+        with pytest.raises(ValueError, match="MATRIX_SYNC_ENABLED is True"):
+            Settings(
+                MATRIX_SYNC_ENABLED=True,
+                MATRIX_HOMESERVER_URL="",
+                MATRIX_USER="",
+                MATRIX_SYNC_ROOMS=[],
+            )
+
+    def test_matrix_sync_enabled_accepts_complete_sync_config(self):
+        settings = Settings(
+            MATRIX_SYNC_ENABLED=True,
+            MATRIX_HOMESERVER_URL="https://matrix.org",
+            MATRIX_USER="@bot:matrix.org",
+            MATRIX_PASSWORD="secret",
+            MATRIX_SYNC_ROOMS=["!room:matrix.org"],
+        )
+
+        assert settings.MATRIX_SYNC_ENABLED is True

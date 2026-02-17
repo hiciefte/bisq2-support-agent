@@ -230,6 +230,6 @@ else
     echo "Recommendations:"
     echo "  - Check API logs: docker compose logs api | grep -i matrix"
     echo "  - Verify MATRIX_PASSWORD is correct in .env"
-    echo "  - Ensure Docker volume 'bisq2-matrix-session' exists"
+    echo "  - Ensure /data bind mount persists api/data across restarts"
     exit 1
 fi

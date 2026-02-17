@@ -72,6 +72,7 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         settings.MATRIX_ALERT_SESSION_FILE = "/custom/path/alert_session.json"
         settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
+        del settings.MATRIX_ALERT_SESSION_FILE_PATH
 
         service = MatrixAlertService(settings)
         session_path = service._get_session_path()
@@ -91,6 +92,7 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         # No explicit alert session path
         del settings.MATRIX_ALERT_SESSION_FILE
+        del settings.MATRIX_ALERT_SESSION_FILE_PATH
         settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
 
         service = MatrixAlertService(settings)

@@ -75,9 +75,11 @@ class MatrixAlertService:
         """Get the session file path for alert service.
 
         Priority:
-        1. MATRIX_ALERT_SESSION_FILE_PATH
-        2. Derived from MATRIX_SYNC_SESSION_FILE directory
-        3. Default fallback path
+        1. MATRIX_ALERT_SESSION_FILE_PATH (optional resolved path)
+        2. MATRIX_ALERT_SESSION_FILE (optional explicit file)
+        3. Derived from MATRIX_SYNC_SESSION_FILE directory using
+           "matrix_alert_session.json" as the filename
+        4. Default fallback path
 
         Returns:
             Path to the alert session file

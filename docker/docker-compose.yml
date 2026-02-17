@@ -119,7 +119,6 @@ services:
       - ../api/data:/data # Mount the data directory
       # Named volume disabled: causes permission issues in local dev (root:root ownership)
       # - feedback-data:/data/feedback # Named volume for persistent feedback storage
-      - matrix-session:/data/matrix_session # Matrix session persistence across restarts
     environment:
       # Only Docker-specific overrides here
       - ENVIRONMENT=production # Environment-specific setting
@@ -515,9 +514,6 @@ volumes:
     name: bisq2-data
   feedback-data:
     name: bisq2-feedback-data
-    driver: local
-  matrix-session:
-    name: bisq2-matrix-session
     driver: local
 
 networks:
