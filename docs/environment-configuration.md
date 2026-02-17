@@ -54,6 +54,19 @@ These variables configure the application services running inside Docker contain
 *   **`DATA_DIR`**
     *   Description: The path *inside the API container* where persistent API data (wiki, FAQs, feedback, BM25 vocabulary, index metadata) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
     *   Default: `/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts in `docker-compose.yml`)
+### Matrix Variables (Sync vs Alerts)
+
+The Matrix integration now uses lane-specific names to avoid confusion between support-channel ingestion and Alertmanager notifications.
+
+*   **Shared auth (used by both lanes)**
+    *   `MATRIX_HOMESERVER_URL`, `MATRIX_USER`, `MATRIX_PASSWORD`
+*   **Sync lane (training ingestion)**
+    *   `MATRIX_SYNC_ENABLED`: Enables Matrix channel bootstrap.
+    *   `MATRIX_SYNC_ROOMS`: Room IDs polled for staff Q/A extraction.
+    *   `MATRIX_SYNC_SESSION_FILE`: Session file for sync lane.
+*   **Alert lane (Alertmanager forwarding)**
+    *   `MATRIX_ALERT_ROOM`: Destination room for operational alerts.
+    *   `MATRIX_ALERT_SESSION_FILE`: Session file for alert lane.
 *   **`RETRIEVER_BACKEND`**
     *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
     *   Default in app settings: `qdrant`

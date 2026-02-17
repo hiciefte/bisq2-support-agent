@@ -71,18 +71,22 @@ class Settings(BaseSettings):
         description="Enable live Bisq 2 data integration (market prices, offers, reputation)",
     )
 
-    # Matrix integration settings for shadow mode
+    # Matrix integration settings
+    # Shared auth (used by Matrix sync and alerts)
     MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
     MATRIX_USER: str = ""  # Bot user ID, e.g., "@bisq-bot:matrix.org"
     MATRIX_PASSWORD: str = (
         ""  # Bot password for automatic session management (recommended)
     )
-    MATRIX_TOKEN: str = ""  # DEPRECATED: Access token (use MATRIX_PASSWORD instead)
-    MATRIX_ROOMS: str | list[str] = ""  # Room IDs to monitor (comma-separated or list)
+
+    # Matrix sync lane (training ingestion)
+    MATRIX_SYNC_ENABLED: bool = False
+    MATRIX_SYNC_ROOMS: str | list[str] = ""  # Room IDs to monitor
+    MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
+
+    # Matrix alert lane (Alertmanager notifications)
     MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
-    MATRIX_SESSION_FILE: str = (
-        "matrix_session.json"  # Session filename (relative to DATA_DIR)
-    )
+    MATRIX_ALERT_SESSION_FILE: str = "matrix_alert_session.json"
 
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
@@ -403,12 +407,18 @@ class Settings(BaseSettings):
         return os.path.join(self.DATA_DIR, "processed_message_ids.jsonl")
 
     @property
-    def MATRIX_SESSION_PATH(self) -> str:
-        """Complete path to the Matrix session persistence file"""
-        # Support both absolute paths (backward compat) and relative paths
-        if os.path.isabs(self.MATRIX_SESSION_FILE):
-            return self.MATRIX_SESSION_FILE
-        return os.path.join(self.DATA_DIR, self.MATRIX_SESSION_FILE)
+    def MATRIX_SYNC_SESSION_PATH(self) -> str:
+        """Complete path to Matrix sync session persistence file."""
+        if os.path.isabs(self.MATRIX_SYNC_SESSION_FILE):
+            return self.MATRIX_SYNC_SESSION_FILE
+        return os.path.join(self.DATA_DIR, self.MATRIX_SYNC_SESSION_FILE)
+
+    @property
+    def MATRIX_ALERT_SESSION_FILE_PATH(self) -> str:
+        """Complete path to Matrix alert session persistence file."""
+        if os.path.isabs(self.MATRIX_ALERT_SESSION_FILE):
+            return self.MATRIX_ALERT_SESSION_FILE
+        return os.path.join(self.DATA_DIR, self.MATRIX_ALERT_SESSION_FILE)
 
     @property
     def ACTIVE_LLM_CREDENTIAL(self) -> str:
@@ -625,10 +635,10 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_SESSION_MAX_AGE must be ≤ 30 days")
         return v
 
-    @field_validator("MATRIX_ROOMS", mode="before")
+    @field_validator("MATRIX_SYNC_ROOMS", mode="before")
     @classmethod
     def parse_matrix_rooms(cls, v: str | list[str]) -> list[str]:
-        """Normalize MATRIX_ROOMS to list of room IDs.
+        """Normalize MATRIX_SYNC_ROOMS to list of room IDs.
 
         Accepts either a comma-separated string or a list of strings.
         Handles trimming whitespace and ignores empty entries.
@@ -892,30 +902,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_matrix_auth_in_production(self) -> "Settings":
-        """Ensure Matrix authentication is configured when Matrix is enabled.
+        """Ensure Matrix password auth is configured when Matrix is enabled.
 
         This is a model validator (mode='after') to ensure all fields are loaded
-        before validation. Field validators run in field definition order, which
-        caused issues when MATRIX_PASSWORD validator ran before MATRIX_TOKEN was loaded.
+        before validation.
 
         Returns:
             The validated Settings instance
 
         Raises:
-            ValueError: If Matrix is enabled but neither password nor token is set
+            ValueError: If Matrix homeserver is configured but MATRIX_PASSWORD is empty
         """
         # Only validate if Matrix integration is enabled
         homeserver = (self.MATRIX_HOMESERVER_URL or "").strip()
         if not homeserver:
             return self  # Matrix not enabled, skip validation
 
-        # Check if either password or token is provided
+        # Password-based auth is required for automatic session management
         password = (self.MATRIX_PASSWORD or "").strip()
-        token = (self.MATRIX_TOKEN or "").strip()
-        if not password and not token:
+        if not password:
             raise ValueError(
-                "MATRIX_PASSWORD or MATRIX_TOKEN required when MATRIX_HOMESERVER_URL is set. "
-                "MATRIX_PASSWORD is recommended for automatic session management."
+                "MATRIX_PASSWORD is required when MATRIX_HOMESERVER_URL is set."
             )
 
         return self

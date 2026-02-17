@@ -59,8 +59,8 @@ class TestMatrixAlertSettingsProtocol:
 class TestMatrixAlertServiceSessionPath:
     """Test suite for session path portability."""
 
-    def test_uses_explicit_alert_session_path_when_set(self):
-        """Test that explicit MATRIX_ALERT_SESSION_PATH is used when set."""
+    def test_uses_explicit_alert_session_file_when_set(self):
+        """Test that MATRIX_ALERT_SESSION_FILE takes precedence when set."""
         from app.channels.plugins.matrix.services.alert_service import (
             MatrixAlertService,
         )
@@ -70,16 +70,16 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_USER = "@bot:matrix.org"
         settings.MATRIX_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
-        settings.MATRIX_ALERT_SESSION_PATH = "/custom/path/alert_session.json"
-        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+        settings.MATRIX_ALERT_SESSION_FILE = "/custom/path/alert_session.json"
+        settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
 
         service = MatrixAlertService(settings)
         session_path = service._get_session_path()
 
         assert session_path == "/custom/path/alert_session.json"
 
-    def test_derives_path_from_session_file_directory(self):
-        """Test that path is derived from MATRIX_SESSION_FILE directory."""
+    def test_derives_path_from_sync_session_file_directory(self):
+        """Test that path is derived from MATRIX_SYNC_SESSION_FILE directory."""
         from app.channels.plugins.matrix.services.alert_service import (
             MatrixAlertService,
         )
@@ -90,13 +90,13 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         # No explicit alert session path
-        del settings.MATRIX_ALERT_SESSION_PATH
-        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+        del settings.MATRIX_ALERT_SESSION_FILE
+        settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
 
         service = MatrixAlertService(settings)
         session_path = service._get_session_path()
 
-        # Should derive from same directory as MATRIX_SESSION_FILE
+        # Should derive from same directory as MATRIX_SYNC_SESSION_FILE
         assert session_path == "/data/matrix_alert_session.json"
 
     def test_uses_default_when_no_paths_configured(self):
@@ -111,8 +111,8 @@ class TestMatrixAlertServiceSessionPath:
         settings.MATRIX_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         # No paths configured
-        del settings.MATRIX_ALERT_SESSION_PATH
-        del settings.MATRIX_SESSION_FILE
+        del settings.MATRIX_ALERT_SESSION_FILE
+        del settings.MATRIX_SYNC_SESSION_FILE
 
         service = MatrixAlertService(settings)
         session_path = service._get_session_path()
@@ -132,7 +132,7 @@ class TestMatrixAlertServiceConcurrency:
         settings.MATRIX_USER = "@bot:matrix.org"
         settings.MATRIX_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
-        settings.MATRIX_SESSION_FILE = "/data/matrix_session.json"
+        settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
         return settings
 
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestMatrixAlertServiceSendMessage:
         settings.MATRIX_USER = "@bot:matrix.org"
         settings.MATRIX_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
-        settings.MATRIX_SESSION_PATH = "/tmp/test_session.json"
+        settings.MATRIX_ALERT_SESSION_FILE = "/tmp/test_alert_session.json"
         return settings
 
     @pytest.mark.asyncio

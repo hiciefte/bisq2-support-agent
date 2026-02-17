@@ -31,10 +31,11 @@ Add the following to your `.env` file in `/docker/.env` (production) or `/docker
 ```bash
 # Matrix Configuration for Alert Notifications
 # These variables are used by both Shadow Mode polling AND alert notifications
-MATRIX_HOMESERVER=https://matrix.org
+MATRIX_HOMESERVER_URL=https://matrix.org
 MATRIX_USER=@bisq-alerts:matrix.org
 MATRIX_PASSWORD=your_secure_password
-MATRIX_ROOM=!RoomIdHere:matrix.org
+MATRIX_ALERT_ROOM=!RoomIdHere:matrix.org
+MATRIX_ALERT_SESSION_FILE=/data/matrix_alert_session.json
 ```
 
 **Note**: The same Matrix credentials are used for both:
@@ -225,7 +226,7 @@ To test the Matrix integration:
 If you see `"warning": "matrix_service_unavailable"` in alert responses:
 
 1. **Check Matrix Shadow Mode is enabled**:
-   - Verify `MATRIX_HOMESERVER`, `MATRIX_USER`, `MATRIX_PASSWORD`, `MATRIX_ROOM` are set
+   - Verify `MATRIX_HOMESERVER_URL`, `MATRIX_USER`, `MATRIX_PASSWORD`, `MATRIX_ALERT_ROOM` are set
    - Check API startup logs for Matrix initialization
 
 2. **Check Matrix connection**:

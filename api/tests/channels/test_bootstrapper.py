@@ -265,7 +265,7 @@ class TestChannelBootstrapper:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []  # No plugins to load
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
 
         rag_service = MagicMock()
@@ -280,6 +280,24 @@ class TestChannelBootstrapper:
         assert isinstance(result.errors, list)
 
     @pytest.mark.unit
+    def test_matrix_sync_enabled_flag_enables_matrix_channel(self):
+        """MATRIX_SYNC_ENABLED should enable matrix channel loading."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = True
+        settings.BISQ2_CHANNEL_ENABLED = False
+
+        rag_service = MagicMock()
+
+        bootstrapper = ChannelBootstrapper(settings, rag_service)
+        enabled = bootstrapper._get_enabled_channels()
+
+        assert "matrix" in enabled
+
+    @pytest.mark.unit
     def test_bootstrap_loads_enabled_channels(self):
         """bootstrap() loads channels that are enabled in config."""
         from app.channels.bootstrapper import ChannelBootstrapper
@@ -291,7 +309,7 @@ class TestChannelBootstrapper:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
         # Simulate test_enabled being enabled
         settings.TEST_ENABLED_CHANNEL_ENABLED = True
@@ -315,7 +333,7 @@ class TestChannelBootstrapper:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
 
         rag_service = MagicMock()
@@ -394,7 +412,7 @@ class TestChannelBootstrapper:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = ["os", "sys"]  # Use stdlib modules for test
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
 
         rag_service = MagicMock()

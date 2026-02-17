@@ -1038,14 +1038,14 @@ async def trigger_matrix_sync(
 
         # Check if Matrix is configured
         homeserver = getattr(settings, "MATRIX_HOMESERVER_URL", "") or ""
-        rooms = getattr(settings, "MATRIX_ROOMS", []) or []
+        rooms = getattr(settings, "MATRIX_SYNC_ROOMS", []) or []
 
         if not homeserver.strip() or not rooms:
             logger.info("Matrix not configured, skipping sync")
             return SyncResponse(
                 status="skipped",
                 processed=0,
-                message="Matrix not configured (MATRIX_HOMESERVER_URL or MATRIX_ROOMS not set)",
+                message="Matrix not configured (MATRIX_HOMESERVER_URL or MATRIX_SYNC_ROOMS not set)",
             )
 
         # Check if matrix-nio is available

@@ -23,8 +23,8 @@ def mock_settings():
     settings.MATRIX_USER = "@bisq-bot:matrix.bisq.network"
     settings.MATRIX_PASSWORD = "test-password"
     # Use single room for simpler test assertions
-    settings.MATRIX_ROOMS = ["!room1:matrix.bisq.network"]
-    settings.MATRIX_SESSION_PATH = "/tmp/test_matrix_session.json"
+    settings.MATRIX_SYNC_ROOMS = ["!room1:matrix.bisq.network"]
+    settings.MATRIX_SYNC_SESSION_PATH = "/tmp/test_matrix_session.json"
     settings.DATA_DIR = "/tmp/test_data"
     settings.TRUSTED_STAFF_IDS = [
         "@suddenwhipvapor:matrix.bisq.network",
@@ -200,7 +200,7 @@ class TestMatrixSyncServiceInit:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = ""  # Not configured
-        settings.MATRIX_ROOMS = []
+        settings.MATRIX_SYNC_ROOMS = []
 
         service = MatrixSyncService(
             settings=settings,
@@ -240,6 +240,24 @@ class TestMatrixSyncServiceInit:
         # Should use settings-based staff IDs
         assert "@suddenwhipvapor:matrix.bisq.network" in service.trusted_staff_ids
         assert "@pazza83:matrix.bisq.network" in service.trusted_staff_ids
+
+    def test_reads_matrix_sync_rooms(self):
+        """Service should read MATRIX_SYNC_ROOMS."""
+        from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
+
+        settings = MagicMock()
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.bisq.network"
+        settings.MATRIX_SYNC_ROOMS = ["!sync:matrix.bisq.network"]
+        settings.TRUSTED_STAFF_IDS = []
+
+        service = MatrixSyncService(
+            settings=settings,
+            pipeline_service=MagicMock(),
+            polling_state=MagicMock(),
+        )
+
+        assert service.is_configured() is True
+        assert service._get_sync_rooms(settings) == ["!sync:matrix.bisq.network"]
 
 
 # =============================================================================
@@ -783,7 +801,7 @@ class TestNotConfigured:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = ""
-        settings.MATRIX_ROOMS = []
+        settings.MATRIX_SYNC_ROOMS = []
 
         service = MatrixSyncService(
             settings=settings,

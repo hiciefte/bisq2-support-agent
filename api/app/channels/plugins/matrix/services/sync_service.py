@@ -82,15 +82,38 @@ class MatrixSyncService:
         self._session_manager: Optional[Any] = None
         self._error_handler: Optional[Any] = None
 
+    @staticmethod
+    def _get_sync_rooms(settings: Any) -> List[str]:
+        """Resolve Matrix sync rooms from MATRIX_SYNC_ROOMS."""
+        rooms = getattr(settings, "MATRIX_SYNC_ROOMS", None)
+        if isinstance(rooms, str):
+            return [room.strip() for room in rooms.split(",") if room.strip()]
+        if isinstance(rooms, list):
+            return [
+                room.strip() for room in rooms if isinstance(room, str) and room.strip()
+            ]
+        return []
+
+    @staticmethod
+    def _get_sync_session_path(settings: Any) -> str:
+        """Resolve Matrix sync session path from MATRIX_SYNC_SESSION_PATH."""
+        session_path = getattr(settings, "MATRIX_SYNC_SESSION_PATH", None)
+        if isinstance(session_path, str) and session_path.strip():
+            return session_path
+        return "/data/matrix_session.json"
+
     def is_configured(self) -> bool:
         """Check if Matrix integration is configured.
 
         Returns:
             True if Matrix homeserver and rooms are configured
         """
-        homeserver = getattr(self.settings, "MATRIX_HOMESERVER_URL", "") or ""
-        rooms = getattr(self.settings, "MATRIX_ROOMS", []) or []
-        return bool(homeserver.strip()) and bool(rooms)
+        homeserver_value = getattr(self.settings, "MATRIX_HOMESERVER_URL", "")
+        homeserver = (
+            homeserver_value.strip() if isinstance(homeserver_value, str) else ""
+        )
+        rooms = self._get_sync_rooms(self.settings)
+        return bool(homeserver) and bool(rooms)
 
     async def sync_rooms(self) -> int:
         """Poll all configured rooms and process Q&A pairs.
@@ -107,7 +130,7 @@ class MatrixSyncService:
             return 0
 
         total_processed = 0
-        rooms = getattr(self.settings, "MATRIX_ROOMS", [])
+        rooms = self._get_sync_rooms(self.settings)
         sync_start_time = time_module.time()
 
         logger.info(f"Starting Matrix sync for {len(rooms)} room(s)")
@@ -166,9 +189,7 @@ class MatrixSyncService:
         homeserver = self.settings.MATRIX_HOMESERVER_URL
         user_id = self.settings.MATRIX_USER
         password = getattr(self.settings, "MATRIX_PASSWORD", "")
-        session_path = getattr(
-            self.settings, "MATRIX_SESSION_PATH", "/data/matrix_session.json"
-        )
+        session_path = self._get_sync_session_path(self.settings)
 
         # Create client
         self._client = AsyncClient(homeserver, user_id)

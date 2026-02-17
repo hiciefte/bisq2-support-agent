@@ -75,21 +75,25 @@ class MatrixAlertService:
         """Get the session file path for alert service.
 
         Priority:
-        1. Explicit MATRIX_ALERT_SESSION_PATH if set
-        2. Derived from MATRIX_SESSION_FILE directory (same dir, different filename)
+        1. MATRIX_ALERT_SESSION_FILE_PATH
+        2. Derived from MATRIX_SYNC_SESSION_FILE directory
         3. Default fallback path
 
         Returns:
             Path to the alert session file
         """
-        # 1. Check for explicit alert session path
-        explicit_path = getattr(self.settings, "MATRIX_ALERT_SESSION_PATH", None)
-        if explicit_path:
+        # 1. Preferred resolved alert session path
+        explicit_path = getattr(self.settings, "MATRIX_ALERT_SESSION_FILE_PATH", None)
+        if isinstance(explicit_path, str) and explicit_path.strip():
             return explicit_path
 
-        # 2. Derive from MATRIX_SESSION_FILE directory
-        session_file = getattr(self.settings, "MATRIX_SESSION_FILE", None)
-        if session_file:
+        explicit_file = getattr(self.settings, "MATRIX_ALERT_SESSION_FILE", None)
+        if isinstance(explicit_file, str) and explicit_file.strip():
+            return explicit_file
+
+        # 2. Derive from Matrix sync session file directory
+        session_file = getattr(self.settings, "MATRIX_SYNC_SESSION_FILE", None)
+        if isinstance(session_file, str) and session_file.strip():
             directory = os.path.dirname(session_file)
             if directory:
                 return os.path.join(directory, "matrix_alert_session.json")
@@ -103,9 +107,15 @@ class MatrixAlertService:
         Returns:
             True if homeserver and alert room are configured
         """
-        homeserver = getattr(self.settings, "MATRIX_HOMESERVER_URL", "") or ""
-        alert_room = getattr(self.settings, "MATRIX_ALERT_ROOM", "") or ""
-        return bool(homeserver.strip()) and bool(alert_room.strip())
+        homeserver_value = getattr(self.settings, "MATRIX_HOMESERVER_URL", "")
+        alert_room_value = getattr(self.settings, "MATRIX_ALERT_ROOM", "")
+        homeserver = (
+            homeserver_value.strip() if isinstance(homeserver_value, str) else ""
+        )
+        alert_room = (
+            alert_room_value.strip() if isinstance(alert_room_value, str) else ""
+        )
+        return bool(homeserver) and bool(alert_room)
 
     async def _get_client(self) -> "AsyncClient":
         """Get or create authenticated Matrix client.
