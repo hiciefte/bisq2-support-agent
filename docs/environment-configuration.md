@@ -54,6 +54,36 @@ These variables configure the application services running inside Docker contain
 *   **`DATA_DIR`**
     *   Description: The path *inside the API container* where persistent API data (wiki, FAQs, feedback, BM25 vocabulary, index metadata) is stored/mounted. **IMPORTANT**: This must match the volume mount destination in `docker-compose.yml` to ensure data persistence across container restarts.
     *   Default: `/data` (maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data` on the host via Docker volume mounts in `docker-compose.yml`)
+### Matrix Variables (Sync vs Alerts)
+
+The Matrix integration uses lane-specific names to separate support-channel ingestion from Alertmanager notifications.
+
+*   **`MATRIX_HOMESERVER_URL`**
+    *   Description: Matrix homeserver URL used by both sync and alert lanes.
+    *   Required: Yes (when Matrix lanes are enabled)
+    *   Example: `https://matrix.org`
+*   **`MATRIX_USER`**
+    *   Description: Matrix bot user ID used by both lanes.
+    *   Required: Yes (when Matrix lanes are enabled)
+    *   Example: `@bisq-support:matrix.org`
+*   **`MATRIX_PASSWORD`**
+    *   Description: Matrix password used for password-based auth and session restoration.
+    *   Required: Yes (when `MATRIX_HOMESERVER_URL` is set)
+*   **`MATRIX_SYNC_ENABLED`**
+    *   Description: Enables Matrix sync lane bootstrap.
+    *   Default: `false`
+*   **`MATRIX_SYNC_ROOMS`**
+    *   Description: Comma-separated room IDs polled for support Q/A ingestion.
+    *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
+*   **`MATRIX_SYNC_SESSION_FILE`**
+    *   Description: Session file for Matrix sync lane.
+    *   Default: `matrix_session.json` (resolved under `DATA_DIR`)
+*   **`MATRIX_ALERT_ROOM`**
+    *   Description: Destination room for operational alerts.
+    *   Required: Optional
+*   **`MATRIX_ALERT_SESSION_FILE`**
+    *   Description: Session file for Matrix alert lane.
+    *   Default: `matrix_alert_session.json` (resolved under `DATA_DIR`)
 *   **`RETRIEVER_BACKEND`**
     *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
     *   Default in app settings: `qdrant`

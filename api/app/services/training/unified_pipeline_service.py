@@ -1869,7 +1869,7 @@ class UnifiedPipelineService:
         """
         # Check if Matrix is configured
         homeserver = getattr(self.settings, "MATRIX_HOMESERVER_URL", None)
-        rooms = getattr(self.settings, "MATRIX_ROOMS", None)
+        rooms = getattr(self.settings, "MATRIX_SYNC_ROOMS", None)
         if not homeserver or not rooms:
             logger.debug("Matrix not configured, skipping sync")
             return 0

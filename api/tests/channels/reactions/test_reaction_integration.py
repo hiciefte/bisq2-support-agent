@@ -664,7 +664,7 @@ class TestBootstrapperReactionWiring:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
         settings.REACTOR_IDENTITY_SALT = "test-salt"
 
@@ -682,7 +682,7 @@ class TestBootstrapperReactionWiring:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
         settings.REACTOR_IDENTITY_SALT = "test-salt"
 
@@ -701,7 +701,7 @@ class TestBootstrapperReactionWiring:
         settings = MagicMock()
         settings.CHANNEL_PLUGINS = []
         settings.WEB_CHANNEL_ENABLED = False
-        settings.MATRIX_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
         settings.BISQ2_CHANNEL_ENABLED = False
         settings.REACTOR_IDENTITY_SALT = "test-salt"
 

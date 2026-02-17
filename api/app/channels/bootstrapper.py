@@ -207,6 +207,22 @@ class ChannelBootstrapper:
             except ImportError as e:
                 logger.warning(f"Could not import channel module '{module_path}': {e}")
 
+    @staticmethod
+    def _as_bool(value: Any, default: bool) -> bool:
+        """Coerce common env-style bool values while tolerating MagicMock objects."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
     def _get_enabled_channels(self) -> List[str]:
         """Get list of enabled channel IDs from config.
 
@@ -215,19 +231,25 @@ class ChannelBootstrapper:
         """
         enabled = []
 
-        # Check standard channel enable flags
-        if getattr(self.settings, "WEB_CHANNEL_ENABLED", True):
+        web_enabled = self._as_bool(
+            getattr(self.settings, "WEB_CHANNEL_ENABLED", True),
+            default=True,
+        )
+        if web_enabled:
             enabled.append("web")
 
-        matrix_enabled = getattr(
-            self.settings,
-            "MATRIX_CHANNEL_ENABLED",
-            getattr(self.settings, "MATRIX_ENABLED", False),
+        matrix_sync_enabled = self._as_bool(
+            getattr(self.settings, "MATRIX_SYNC_ENABLED", False),
+            default=False,
         )
-        if matrix_enabled:
+        if matrix_sync_enabled:
             enabled.append("matrix")
 
-        if getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False):
+        bisq2_enabled = self._as_bool(
+            getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False),
+            default=False,
+        )
+        if bisq2_enabled:
             enabled.append("bisq2")
 
         return enabled

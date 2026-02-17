@@ -76,7 +76,7 @@ class ChannelBase(ABC):
             @classmethod
             def setup_dependencies(cls, runtime, settings):
                 from nio import AsyncClient
-                client = AsyncClient(settings.MATRIX_URL, settings.MATRIX_USER)
+                client = AsyncClient(settings.MATRIX_HOMESERVER_URL, settings.MATRIX_USER)
                 runtime.register("matrix_client", client)
 
             @property
