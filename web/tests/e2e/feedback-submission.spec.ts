@@ -99,10 +99,29 @@ async function openFeedbackManagement(page: Page): Promise<void> {
 }
 
 async function waitForFeedbackListLoad(page: Page): Promise<void> {
-  await Promise.race([
-    page.locator(FEEDBACK_CARD_SELECTOR).first().waitFor({ state: "visible", timeout: 20000 }),
-    page.getByText("No feedback found").waitFor({ state: "visible", timeout: 20000 }),
-  ]);
+  const waitForCard = page
+    .locator(FEEDBACK_CARD_SELECTOR)
+    .first()
+    .waitFor({ state: "visible", timeout: 20000 });
+  const waitForEmptyState = page.getByText("No feedback found").waitFor({ state: "visible", timeout: 20000 });
+
+  try {
+    await Promise.any([waitForCard, waitForEmptyState]);
+    return;
+  } catch {
+    // Handled below by collecting both rejection reasons.
+  }
+
+  const [cardResult, emptyStateResult] = await Promise.allSettled([waitForCard, waitForEmptyState]);
+  const cardError = cardResult.reason instanceof Error ? cardResult.reason.message : String(cardResult.reason);
+  const emptyStateError =
+    emptyStateResult.reason instanceof Error
+      ? emptyStateResult.reason.message
+      : String(emptyStateResult.reason);
+
+  throw new Error(
+    `Feedback list did not load: card wait failed (${cardError}); empty-state wait failed (${emptyStateError})`,
+  );
 }
 
 async function openAllFeedbackTab(page: Page): Promise<void> {
@@ -122,7 +141,9 @@ async function openFeedbackDetailFromList(
   const preferredCard = options?.preferredCard;
   const fallbackCard = page.locator(FEEDBACK_CARD_SELECTOR).first();
 
-  if (preferredCard && (await preferredCard.count()) > 0) {
+  const preferredIsVisible =
+    preferredCard ? await preferredCard.first().isVisible().catch(() => false) : false;
+  if (preferredCard && preferredIsVisible) {
     await preferredCard.first().click();
   } else {
     await fallbackCard.click();
@@ -157,7 +178,7 @@ test.describe("Feedback Submission", () => {
     await expect(dialog).toContainText(/Question|Answer/i);
 
     if (followupDialogShown) {
-      await expect(dialog).toContainText(/technical|benefits|improve/i);
+      await expect(dialog).toContainText(explanation.slice(0, 30));
     }
   });
 
@@ -256,6 +277,7 @@ test.describe("Feedback Submission", () => {
     await expect(positiveCard.first()).toBeVisible({ timeout: 10000 });
   });
 
+  // Depends on feedback created by prior tests - runs after feedback creation.
   test("should display conversation message count in feedback detail", async ({ page }) => {
     await openFeedbackManagement(page);
 
@@ -274,6 +296,7 @@ test.describe("Feedback Submission", () => {
     }
   });
 
+  // Depends on feedback created by prior tests - runs after feedback creation.
   test("should filter feedback by rating", async ({ page }) => {
     await openFeedbackManagement(page);
     await openNegativeFeedbackTab(page);
@@ -292,6 +315,7 @@ test.describe("Feedback Submission", () => {
     }
   });
 
+  // Depends on feedback created by prior tests - runs after feedback creation.
   test("should export feedback data", async ({ page }) => {
     await openFeedbackManagement(page);
 
