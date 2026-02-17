@@ -47,6 +47,23 @@ def _get_rating_signing_key(settings) -> str:
     return settings.ADMIN_API_KEY
 
 
+def _build_rate_token_for_escalation(
+    escalation,
+    message_id: str,
+    rater_id: str,
+    signing_key: str,
+    settings,
+) -> str | None:
+    if not escalation.staff_answer or not signing_key:
+        return None
+    return generate_rating_token(
+        message_id=message_id,
+        rater_id=rater_id,
+        signing_key=signing_key,
+        ttl_seconds=getattr(settings, "ESCALATION_RATING_TOKEN_TTL_SECONDS", 3600),
+    )
+
+
 @router.get("/escalations/{message_id}/response", response_model=UserPollResponse)
 async def poll_escalation_response(
     request: Request,
@@ -106,16 +123,13 @@ async def poll_escalation_response(
                 closed_at=None,
             )
         elif escalation.status == EscalationStatus.RESPONDED:
-            rate_token = None
-            if escalation.staff_answer and signing_key:
-                rate_token = generate_rating_token(
-                    message_id=message_id,
-                    rater_id=rater_id,
-                    signing_key=signing_key,
-                    ttl_seconds=getattr(
-                        settings, "ESCALATION_RATING_TOKEN_TTL_SECONDS", 3600
-                    ),
-                )
+            rate_token = _build_rate_token_for_escalation(
+                escalation=escalation,
+                message_id=message_id,
+                rater_id=rater_id,
+                signing_key=signing_key,
+                settings=settings,
+            )
             return UserPollResponse(
                 status="resolved",
                 staff_answer=escalation.staff_answer,
@@ -126,16 +140,13 @@ async def poll_escalation_response(
                 rate_token=rate_token,
             )
         elif escalation.status == EscalationStatus.CLOSED:
-            rate_token = None
-            if escalation.staff_answer and signing_key:
-                rate_token = generate_rating_token(
-                    message_id=message_id,
-                    rater_id=rater_id,
-                    signing_key=signing_key,
-                    ttl_seconds=getattr(
-                        settings, "ESCALATION_RATING_TOKEN_TTL_SECONDS", 3600
-                    ),
-                )
+            rate_token = _build_rate_token_for_escalation(
+                escalation=escalation,
+                message_id=message_id,
+                rater_id=rater_id,
+                signing_key=signing_key,
+                settings=settings,
+            )
             return UserPollResponse(
                 status="resolved",
                 staff_answer=escalation.staff_answer,

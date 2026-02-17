@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+# Custom HMAC token format is intentional to keep dependency surface minimal
+# for this single-purpose flow while retaining explicit verification logic.
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -33,6 +35,7 @@ class RatingTokenPayload:
     jti: str
     iat: int
     exp: int
+    nonce: Optional[str] = None
 
 
 def generate_rating_token(
@@ -82,6 +85,7 @@ def verify_rating_token(
             jti=str(payload["jti"]),
             iat=int(payload["iat"]),
             exp=int(payload["exp"]),
+            nonce=str(payload["nonce"]) if payload.get("nonce") is not None else None,
         )
     except Exception:
         return None

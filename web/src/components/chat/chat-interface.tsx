@@ -122,15 +122,15 @@ const ChatInterface = () => {
     ])
 
     // Handle staff answer rating
-    const handleStaffRating = useCallback(async (messageId: string, rating: number) => {
-        const token = messages.find(msg => msg.escalation_message_id === messageId)?.staff_response?.rate_token
+    const handleStaffRating = useCallback(
+        async (messageId: string, rating: number, rateToken?: string) => {
         try {
             const resp = await fetch(`${API_BASE_URL}/escalations/${messageId}/rate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     rating,
-                    ...(token ? { rate_token: token } : {}),
+                    ...(rateToken ? { rate_token: rateToken } : {}),
                 }),
             })
             if (resp.ok) {
@@ -146,7 +146,7 @@ const ChatInterface = () => {
         } catch (error) {
             console.error("Failed to submit staff answer rating:", error)
         }
-    }, [messages, setMessages])
+    }, [setMessages])
 
     // Format average response time for display
     const formattedAvgTime = formatResponseTime(avgResponseTime)

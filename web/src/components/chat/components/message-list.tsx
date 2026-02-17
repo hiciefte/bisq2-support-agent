@@ -15,7 +15,7 @@ interface MessageListProps {
     scrollAreaRef: React.RefObject<HTMLDivElement | null>
     loadingRef: React.RefObject<HTMLDivElement | null>
     onRating?: (messageId: string, rating: number) => void
-    onStaffRate?: (messageId: string, rating: number) => void
+    onStaffRate?: (messageId: string, rating: number, rateToken?: string) => void
 }
 
 export const MessageList = ({

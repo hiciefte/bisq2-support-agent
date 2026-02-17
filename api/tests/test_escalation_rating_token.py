@@ -48,6 +48,42 @@ def test_verify_rating_token_rejects_message_mismatch() -> None:
     assert payload is None
 
 
+def test_verify_rating_token_rejects_rater_mismatch() -> None:
+    token = generate_rating_token(
+        message_id="msg-1",
+        rater_id="user-1",
+        signing_key="secret",
+        ttl_seconds=60,
+    )
+
+    payload = verify_rating_token(
+        token=token,
+        message_id="msg-1",
+        rater_id="user-2",
+        signing_key="secret",
+    )
+
+    assert payload is None
+
+
+def test_verify_rating_token_rejects_tampered_signature() -> None:
+    token = generate_rating_token(
+        message_id="msg-1",
+        rater_id="user-1",
+        signing_key="secret",
+        ttl_seconds=60,
+    )
+
+    payload = verify_rating_token(
+        token=token,
+        message_id="msg-1",
+        rater_id="user-1",
+        signing_key="wrong",
+    )
+
+    assert payload is None
+
+
 def test_verify_rating_token_rejects_expired() -> None:
     token = generate_rating_token(
         message_id="msg-1",

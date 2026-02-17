@@ -12,6 +12,7 @@ interface StaffResponse {
   answer: string
   responded_at: string
   rating?: number
+  rate_token?: string
 }
 
 interface HumanResponseSectionProps {

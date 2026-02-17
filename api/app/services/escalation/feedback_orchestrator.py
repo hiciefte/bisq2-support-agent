@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,19 +47,42 @@ class StaffRatingSignal:
 class FeedbackOrchestrator:
     """Lane-B orchestration for trusted ratings."""
 
-    QUADRANT_WEIGHTS = {"A": 1.0, "B": 3.0, "C": 1.5, "D": 5.0}
-    SOURCE_WEIGHT_DELTAS = {"A": 0.05, "B": -0.10, "C": 0.0, "D": -0.10}
+    QUADRANT_WEIGHTS: ClassVar[Dict[str, float]] = {
+        "A": 1.0,
+        "B": 3.0,
+        "C": 1.5,
+        "D": 5.0,
+    }
+    SOURCE_WEIGHT_DELTAS: ClassVar[Dict[str, float]] = {
+        "A": 0.05,
+        "B": -0.10,
+        "C": 0.0,
+        "D": -0.10,
+    }
 
-    def __init__(self, learning_engine, weight_manager=None, cross_validator=None):
+    def __init__(
+        self,
+        learning_engine,
+        weight_manager=None,
+        cross_validator=None,
+        settings=None,
+    ):
         self.learning_engine = learning_engine
         self.weight_manager = weight_manager
         self.cross_validator = cross_validator
+        self._privacy_mode_enabled = bool(
+            getattr(settings, "PII_DETECTION_ENABLED", False)
+            or getattr(settings, "ENABLE_PRIVACY_MODE", False)
+        )
 
     def record_user_rating(self, signal: StaffRatingSignal) -> None:
         """Record trusted user feedback to learning systems."""
+        safe_message_id = str(signal.message_id)
+        if self._privacy_mode_enabled:
+            safe_message_id = safe_message_id[:8] if safe_message_id else "unknown"
         logger.info(
             "Processing staff rating signal: message=%s trusted=%s quadrant=%s",
-            signal.message_id,
+            safe_message_id,
             signal.trusted,
             signal.quadrant,
         )

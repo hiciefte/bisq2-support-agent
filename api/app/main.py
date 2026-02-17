@@ -155,6 +155,7 @@ async def lifespan(app: FastAPI):
     # State will be loaded later when unified_db_path is available
     learning_engine = LearningEngine()
     app.state.learning_engine = learning_engine
+    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
 
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
     app.state.escalation_service = None
@@ -167,10 +168,10 @@ async def lifespan(app: FastAPI):
         esc_db_path = os.path.join(settings.DATA_DIR, "escalations.db")
         esc_repo = EscalationRepository(db_path=esc_db_path)
         await esc_repo.initialize()
-        escalation_embeddings = LiteLLMEmbeddings.from_settings(settings)
         feedback_orchestrator = FeedbackOrchestrator(
             learning_engine=learning_engine,
             weight_manager=feedback_service.weight_manager,
+            settings=settings,
         )
         app.state.feedback_orchestrator = feedback_orchestrator
 
@@ -181,7 +182,7 @@ async def lifespan(app: FastAPI):
             learning_engine=learning_engine,
             settings=settings,
             feedback_orchestrator=feedback_orchestrator,
-            embeddings=escalation_embeddings,
+            embeddings=embeddings_model,
         )
         app.state.escalation_service = escalation_service
         logger.info("EscalationService initialized (singleton)")
@@ -256,7 +257,6 @@ async def lifespan(app: FastAPI):
     # Initialize AnswerComparisonEngine for real LLM-based answer comparison
     logger.info("Initializing AnswerComparisonEngine...")
     ai_client = aisuite.Client()
-    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
     comparison_engine = AnswerComparisonEngine(
         ai_client=ai_client,
         embeddings_model=embeddings_model,
