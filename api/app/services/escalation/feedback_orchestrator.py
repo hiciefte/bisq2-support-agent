@@ -77,10 +77,8 @@ class FeedbackOrchestrator:
 
     def record_user_rating(self, signal: StaffRatingSignal) -> None:
         """Record trusted user feedback to learning systems."""
-        safe_message_id = str(signal.message_id)[:8] if signal.message_id else "unknown"
         logger.info(
-            "Processing staff rating signal: message=%s trusted=%s quadrant=%s",
-            safe_message_id,
+            "Processing staff rating signal: trusted=%s quadrant=%s",
             signal.trusted,
             signal.quadrant,
         )
