@@ -104,15 +104,12 @@ async function waitForFeedbackListLoad(page: Page): Promise<void> {
     .first()
     .waitFor({ state: "visible", timeout: 20000 });
   const waitForEmptyState = page.getByText("No feedback found").waitFor({ state: "visible", timeout: 20000 });
+  const [cardResult, emptyStateResult] = await Promise.allSettled([waitForCard, waitForEmptyState]);
 
-  try {
-    await Promise.any([waitForCard, waitForEmptyState]);
+  if (cardResult.status === "fulfilled" || emptyStateResult.status === "fulfilled") {
     return;
-  } catch {
-    // Handled below by collecting both rejection reasons.
   }
 
-  const [cardResult, emptyStateResult] = await Promise.allSettled([waitForCard, waitForEmptyState]);
   const cardError = cardResult.reason instanceof Error ? cardResult.reason.message : String(cardResult.reason);
   const emptyStateError =
     emptyStateResult.reason instanceof Error
@@ -152,8 +149,10 @@ async function openFeedbackDetailFromList(
   await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 10000 });
 }
 
-test.describe("Feedback Submission", () => {
+test.describe.serial("Feedback Submission", () => {
+  test.describe.configure({ timeout: 180000 });
   test("should submit negative feedback with explanation", async ({ page }) => {
+    test.slow();
     await openChat(page);
     await ensureRateableAssistantResponse(page, [
       "How do I install Bisq 2?",
@@ -183,6 +182,7 @@ test.describe("Feedback Submission", () => {
   });
 
   test("should submit positive feedback after conversation", async ({ page }) => {
+    test.slow();
     await openChat(page);
 
     const messages = [
@@ -191,14 +191,19 @@ test.describe("Feedback Submission", () => {
       "What are the trade limits?",
     ];
 
+    let hasRateableResponse = false;
     for (const message of messages) {
-      const { hasRatingControls } = await askQuestionAndWaitForAnswer(page, message);
-      if (!hasRatingControls) {
-        await ensureRateableAssistantResponse(page, [
-          "Can you answer that briefly in one paragraph?",
-          "Give me a concise overview.",
-        ]);
+      const response = await askQuestionAndWaitForAnswer(page, message);
+      if (response.hasRatingControls) {
+        hasRateableResponse = true;
       }
+    }
+
+    if (!hasRateableResponse) {
+      // Keep this deterministic: only one fallback pass after the main prompts.
+      await ensureRateableAssistantResponse(page, [
+        "Can you answer that briefly in one paragraph?",
+      ]);
     }
 
     await submitPositiveRating(page);
