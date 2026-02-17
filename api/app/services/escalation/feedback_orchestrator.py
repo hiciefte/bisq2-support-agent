@@ -77,11 +77,7 @@ class FeedbackOrchestrator:
 
     def record_user_rating(self, signal: StaffRatingSignal) -> None:
         """Record trusted user feedback to learning systems."""
-        logger.info(
-            "Processing staff rating signal: trusted=%s quadrant=%s",
-            signal.trusted,
-            signal.quadrant,
-        )
+        logger.info("Processing staff rating signal")
         if not signal.trusted:
             return
         self._feed_threshold_learning(signal)
