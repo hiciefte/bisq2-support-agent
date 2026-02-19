@@ -113,13 +113,13 @@ groups:
           description: "The {{ $labels.source }} sync operation has failed. Q&A pairs may not be processed."
 
       - alert: TrainingSyncStale
-        expr: (time() - training_sync_last_success_timestamp) > 46800  # 13 hours (sync runs every 12h)
-        for: 10m
+        expr: (time() - training_sync_last_success_timestamp) > 90000  # 25 hours (tolerates one missed 12h cycle)
+        for: 1h
         labels:
           severity: warning
           component: training
         annotations:
-          summary: "Training sync stale for {{ $labels.source }} (>13h)"
+          summary: "Training sync stale for {{ $labels.source }} (>25h)"
           description: "Last successful sync for {{ $labels.source }} was {{ $value | humanizeDuration }} ago."
 
       - alert: TrainingQueueBacklog
