@@ -8,8 +8,9 @@
 #   - curl: HTTP client (usually pre-installed)
 
 # Configuration
-API_HOST="${API_HOST:-api:8000}"
-METRICS_ENDPOINT="http://$API_HOST/admin/metrics"
+METRICS_API_HOST="${API_HOST:-api}"
+METRICS_API_PORT="${API_PORT:-8000}"
+METRICS_ENDPOINT="http://${METRICS_API_HOST}:${METRICS_API_PORT}/admin/metrics"
 
 # Validate required dependencies and environment variables
 validate_metrics_environment() {
