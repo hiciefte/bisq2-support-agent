@@ -46,7 +46,11 @@ def handler(mock_runtime, mock_processor):
     """MatrixReactionHandler instance."""
     from app.channels.plugins.matrix.reaction_handler import MatrixReactionHandler
 
-    return MatrixReactionHandler(runtime=mock_runtime, processor=mock_processor)
+    return MatrixReactionHandler(
+        runtime=mock_runtime,
+        processor=mock_processor,
+        allowed_room_ids=["!room:server"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +83,10 @@ class TestMatrixReactionHandlerConstruction:
 
         custom = {"\U0001f44d": ReactionRating.NEGATIVE}
         h = MatrixReactionHandler(
-            runtime=mock_runtime, processor=mock_processor, emoji_rating_map=custom
+            runtime=mock_runtime,
+            processor=mock_processor,
+            allowed_room_ids=["!room:server"],
+            emoji_rating_map=custom,
         )
         assert h.map_emoji_to_rating("\U0001f44d") == ReactionRating.NEGATIVE
 
@@ -108,6 +115,8 @@ class TestMatrixReactionHandlerListening:
     @pytest.mark.asyncio
     async def test_start_listening_callback_targets(self, handler, mock_runtime):
         """Callbacks are registered for reaction and redaction events."""
+        from app.channels.plugins.matrix import reaction_handler as rh
+
         mock_client = MagicMock()
         mock_client.add_event_callback = MagicMock()
         mock_runtime.resolve.return_value = mock_client
@@ -119,9 +128,9 @@ class TestMatrixReactionHandlerListening:
         # Both should be callable handlers
         assert callable(calls[0][0][0])
         assert callable(calls[1][0][0])
-        # Verify event types
-        assert calls[0][0][1] == "m.reaction"
-        assert calls[1][0][1] == "m.room.redaction"
+        # Verify event classes (nio expects type filters, not string names)
+        assert calls[0][0][1] is rh.NioReactionEvent
+        assert calls[1][0][1] is rh.NioRedactionEvent
 
     @pytest.mark.asyncio
     async def test_stop_listening_removes_callback(self, handler, mock_runtime):
@@ -238,11 +247,49 @@ class TestMatrixReactionEventProcessing:
     async def test_ignores_unmapped_emoji(self, handler, mock_processor):
         """Unmapped emojis are logged and dropped."""
         room = self._make_room()
-        event = self._make_reaction_event(key="\U0001f389")  # party popper
+        event = self._make_reaction_event(key="\U0001f921")  # clown face
 
         await handler._on_reaction_event(room, event)
 
         mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_processes_party_reaction_as_positive(self, handler, mock_processor):
+        """Party emoji maps to POSITIVE for quick-reaction parity."""
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f389")
+
+        await handler._on_reaction_event(room, event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.rating == ReactionRating.POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_processes_rocket_reaction_as_positive(self, handler, mock_processor):
+        """Rocket emoji maps to POSITIVE for quick-reaction parity."""
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f680")
+
+        await handler._on_reaction_event(room, event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.rating == ReactionRating.POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_processes_skin_tone_thumbs_up_as_positive(
+        self, handler, mock_processor
+    ):
+        """Skin tone variants of thumbs up map to POSITIVE."""
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f44d\U0001f3fd")
+
+        await handler._on_reaction_event(room, event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.rating == ReactionRating.POSITIVE
 
     @pytest.mark.asyncio
     async def test_extracts_reactor_id_from_sender(self, handler, mock_processor):
@@ -310,6 +357,16 @@ class TestMatrixReactionEventProcessing:
         # Should not raise
         await handler._on_reaction_event(room, event)
 
+    @pytest.mark.asyncio
+    async def test_ignores_reaction_from_non_sync_room(self, handler, mock_processor):
+        """Reactions from rooms outside MATRIX_SYNC_ROOMS are ignored."""
+        room = self._make_room(room_id="!other:server")
+        event = self._make_reaction_event()
+
+        await handler._on_reaction_event(room, event)
+
+        mock_processor.process.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Redaction / Reaction Removal
@@ -332,6 +389,7 @@ class TestMatrixReactionRedaction:
         # Track the reaction event_id -> message mapping
         handler._reaction_to_message = {"$reaction1:server": "$msg1:server"}
         handler._reaction_to_sender = {"$reaction1:server": "@user:server"}
+        handler._reaction_to_key = {"$reaction1:server": "\U0001f44d"}
 
         await handler._on_redaction_event(room, event)
 
@@ -339,7 +397,26 @@ class TestMatrixReactionRedaction:
             channel_id="matrix",
             external_message_id="$msg1:server",
             reactor_id="@user:server",
+            raw_reaction="\U0001f44d",
         )
+
+    @pytest.mark.asyncio
+    async def test_on_redaction_ignores_non_sync_room(self, handler, mock_processor):
+        """Reaction redactions from non-sync rooms are ignored."""
+        room = MagicMock()
+        room.room_id = "!other:server"
+
+        event = MagicMock()
+        event.redacts = "$reaction1:server"
+        event.sender = "@user:server"
+
+        handler._reaction_to_message = {"$reaction1:server": "$msg1:server"}
+        handler._reaction_to_sender = {"$reaction1:server": "@user:server"}
+        handler._reaction_to_key = {"$reaction1:server": "\U0001f44d"}
+
+        await handler._on_redaction_event(room, event)
+
+        mock_processor.revoke_reaction.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_redaction_ignores_unknown(self, handler, mock_processor):

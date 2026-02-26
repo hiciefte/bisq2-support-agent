@@ -13,7 +13,7 @@ Covers:
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
 from app.core.config import Settings, get_settings
@@ -63,8 +63,8 @@ def mock_service():
     service = MagicMock()
     service.repository = MagicMock()
     service.repository.get_by_message_id = AsyncMock()
-    service.repository.update_rating = AsyncMock()
     service.repository.consume_rating_token_jti = AsyncMock(return_value=True)
+    service.record_staff_answer_rating = AsyncMock(return_value=True)
     service.feedback_orchestrator = MagicMock()
     service.feedback_orchestrator.record_user_rating = MagicMock()
     return service
@@ -99,7 +99,7 @@ class TestRateStaffAnswer:
         """Rating a responded escalation should succeed."""
         escalation = _make_escalation(status=EscalationStatus.RESPONDED)
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
 
         resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 1})
 
@@ -107,7 +107,12 @@ class TestRateStaffAnswer:
         data = resp.json()
         assert data["status"] == "resolved"
         assert data["staff_answer_rating"] == 1
-        mock_service.repository.update_rating.assert_awaited_once_with(MESSAGE_ID, 1)
+        mock_service.record_staff_answer_rating.assert_awaited_once_with(
+            escalation=escalation,
+            rating=1,
+            rater_id=ANY,
+            trusted=False,
+        )
 
     def test_rate_closed_escalation_with_staff_answer(self, client, mock_service):
         """Rating a closed escalation with a staff_answer should also succeed."""
@@ -116,7 +121,7 @@ class TestRateStaffAnswer:
             staff_answer="Closed with answer",
         )
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
 
         resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 0})
 
@@ -133,7 +138,7 @@ class TestRateStaffAnswer:
         )
         mock_service.repository.get_by_message_id.return_value = escalation
         # Atomic update returns False because staff_answer IS NOT NULL check fails
-        mock_service.repository.update_rating.return_value = False
+        mock_service.record_staff_answer_rating.return_value = False
 
         resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 1})
 
@@ -164,7 +169,7 @@ class TestRateStaffAnswer:
         """Re-rating should overwrite previous rating."""
         escalation = _make_escalation(staff_answer_rating=0)
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
 
         resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 1})
 
@@ -199,12 +204,17 @@ class TestRateStaffAnswer:
         """Untrusted submissions still update DB rating but do not trigger learning."""
         escalation = _make_escalation(status=EscalationStatus.RESPONDED)
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
 
         resp = client.post(f"/escalations/{MESSAGE_ID}/rate", json={"rating": 1})
 
         assert resp.status_code == 200
-        mock_service.feedback_orchestrator.record_user_rating.assert_not_called()
+        mock_service.record_staff_answer_rating.assert_awaited_once_with(
+            escalation=escalation,
+            rating=1,
+            rater_id=ANY,
+            trusted=False,
+        )
 
     def test_rate_with_invalid_token_returns_400(
         self, client, mock_service, monkeypatch
@@ -212,7 +222,7 @@ class TestRateStaffAnswer:
         """Invalid tokens are rejected."""
         escalation = _make_escalation(status=EscalationStatus.RESPONDED)
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
         monkeypatch.setattr(
             "app.routes.escalation_polling.verify_rating_token",
             lambda *args, **kwargs: None,
@@ -224,7 +234,7 @@ class TestRateStaffAnswer:
         )
 
         assert resp.status_code == 400
-        mock_service.feedback_orchestrator.record_user_rating.assert_not_called()
+        mock_service.record_staff_answer_rating.assert_not_awaited()
 
     def test_rate_with_valid_token_triggers_learning(
         self, client, mock_service, monkeypatch
@@ -238,7 +248,7 @@ class TestRateStaffAnswer:
             routing_action="queue_high",
         )
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
         mock_service.repository.consume_rating_token_jti.return_value = True
 
         monkeypatch.setattr(
@@ -256,21 +266,31 @@ class TestRateStaffAnswer:
         )
 
         assert resp.status_code == 200
-        mock_service.feedback_orchestrator.record_user_rating.assert_called_once()
+        mock_service.record_staff_answer_rating.assert_awaited_once_with(
+            escalation=escalation,
+            rating=0,
+            rater_id=ANY,
+            trusted=True,
+        )
 
         consume_idx = mock_service.repository.mock_calls.index(
             call.consume_rating_token_jti(message_id=MESSAGE_ID, token_jti="jti_1")
         )
-        update_idx = mock_service.repository.mock_calls.index(
-            call.update_rating(MESSAGE_ID, 0)
+        rate_idx = mock_service.mock_calls.index(
+            call.record_staff_answer_rating(
+                escalation=escalation,
+                rating=0,
+                rater_id=ANY,
+                trusted=True,
+            )
         )
-        assert consume_idx < update_idx
+        assert consume_idx < rate_idx
 
     def test_replayed_token_returns_409(self, client, mock_service, monkeypatch):
         """Reusing a consumed token jti should be rejected."""
         escalation = _make_escalation(status=EscalationStatus.RESPONDED)
         mock_service.repository.get_by_message_id.return_value = escalation
-        mock_service.repository.update_rating.return_value = True
+        mock_service.record_staff_answer_rating.return_value = True
         mock_service.repository.consume_rating_token_jti.return_value = False
         monkeypatch.setattr(
             "app.routes.escalation_polling.verify_rating_token",
@@ -291,4 +311,4 @@ class TestRateStaffAnswer:
             message_id=MESSAGE_ID,
             token_jti="jti_1",
         )
-        mock_service.repository.update_rating.assert_not_awaited()
+        mock_service.record_staff_answer_rating.assert_not_awaited()

@@ -27,7 +27,7 @@ transformers>=4.35.0
 # torch - installed from https://download.pytorch.org/whl/cpu index
 
 # Matrix integration
-matrix-nio>=0.21.0
+matrix-nio[e2e]>=0.21.0
 
 # LLM providers
 # AISuite for unified LLM interface with MCP support
@@ -58,6 +58,7 @@ aiosqlite
 pandas
 tqdm
 aiohttp
+websockets
 mwxml
 mwparserfromhell
 

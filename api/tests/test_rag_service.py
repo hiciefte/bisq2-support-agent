@@ -237,6 +237,23 @@ class TestChatHistoryFormatting:
         assert message_count <= test_settings.MAX_CHAT_HISTORY_LENGTH
 
 
+class TestSourceAwareVersionFallback:
+    """Test source-aware version fallback helpers."""
+
+    def test_resolve_source_default_version_for_bisq2(self, rag_service):
+        """Ambiguous bisq2-source text should default to Bisq 2."""
+        resolved = rag_service._resolve_source_default_version("WTF?!", "bisq2")
+        assert resolved is not None
+        version, confidence = resolved
+        assert version == "Bisq 2"
+        assert confidence >= 0.6
+
+    def test_resolve_source_default_version_returns_none_for_matrix(self, rag_service):
+        """Matrix source has no default and should remain unresolved."""
+        resolved = rag_service._resolve_source_default_version("WTF?!", "matrix")
+        assert resolved is None
+
+
 class TestPromptManagement:
     """Test prompt creation and management."""
 

@@ -122,8 +122,19 @@ class EscalationFilters(BaseModel):
     channel: Optional[str] = None
     priority: Optional[EscalationPriority] = None
     staff_id: Optional[str] = None
+    search: Optional[str] = Field(default=None, max_length=512)
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+
+    @field_validator("search", mode="before")
+    @classmethod
+    def normalize_search(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        return stripped or None
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +174,10 @@ class GenerateFAQRequest(BaseModel):
     answer: str = Field(..., min_length=1, max_length=10000)
     category: str = Field(default="General")
     protocol: Optional[str] = None
+    force: bool = Field(
+        default=False,
+        description="Force FAQ creation even when similar FAQs are detected",
+    )
 
     @field_validator("category", mode="before")
     @classmethod

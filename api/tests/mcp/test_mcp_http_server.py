@@ -158,6 +158,69 @@ class TestMCPHttpServerContract:
         assert "result" in data
         mock_bisq_service.get_offerbook_formatted.assert_called_once_with("EUR", "BUY")
 
+    def test_tool_call_get_offerbook_normalizes_lowercase_arguments(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should normalize lowercase currency/direction for robust tool calls."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"currency": "usd", "direction": "sell"},
+                },
+                "id": 4_1,
+            },
+        )
+
+        assert response.status_code == 200
+        mock_bisq_service.get_offerbook_formatted.assert_called_once_with("USD", "SELL")
+
+    def test_tool_call_get_offerbook_accepts_alias_currency_key(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should accept common alias keys for currency from model tool calls."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"quote_currency": "usd"},
+                },
+                "id": 4_2,
+            },
+        )
+
+        assert response.status_code == 200
+        mock_bisq_service.get_offerbook_formatted.assert_called_once_with("USD", None)
+
+    def test_tool_call_get_offerbook_requires_currency(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should return explicit validation error if currency is missing."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"direction": "BUY"},
+                },
+                "id": 4_3,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "currency is required" in text.lower()
+        mock_bisq_service.get_offerbook_formatted.assert_not_called()
+
     def test_tool_call_get_reputation_requires_profile_id(self, test_client):
         """get_reputation must require profile_id."""
         response = test_client.post(
@@ -383,6 +446,7 @@ class TestMCPToolSchemas:
 
         assert "currency" in schema.get("properties", {})
         assert "direction" in schema.get("properties", {})
+        assert "currency" in schema.get("required", [])
 
     def test_get_reputation_schema(self, test_client):
         """get_reputation schema should require profile_id parameter."""

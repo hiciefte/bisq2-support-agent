@@ -409,9 +409,9 @@ class TestReactionMappingContract:
         assert BISQ2_REACTION_MAP["THUMBS_DOWN"] == ReactionRating.NEGATIVE
 
     def test_unmapped_reactions_not_in_map(self):
-        """LAUGH(3) and PARTY(5) are intentionally unmapped (dropped)."""
+        """LAUGH(3) is intentionally unmapped (dropped)."""
         assert "LAUGH" not in BISQ2_REACTION_MAP
-        assert "PARTY" not in BISQ2_REACTION_MAP
+        assert BISQ2_REACTION_MAP["PARTY"] == ReactionRating.POSITIVE
 
     def test_all_mapped_reactions_have_valid_java_ordinals(self):
         """Every mapped reaction name corresponds to a valid Java enum ordinal."""

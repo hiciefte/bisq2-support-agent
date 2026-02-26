@@ -223,10 +223,47 @@ class TestMatrixChannelMessageHandling:
 
         outgoing = MagicMock(spec=OutgoingMessage)
         outgoing.answer = "Test response"
+        outgoing.in_reply_to = "$question-event"
         result = await channel.send_message("!room:matrix.org", outgoing)
 
         assert result is True
         mock_client.room_send.assert_called_once()
+        sent_content = mock_client.room_send.call_args.kwargs["content"]
+        assert sent_content["format"] == "org.matrix.custom.html"
+        assert "formatted_body" in sent_content
+        assert (
+            sent_content["m.relates_to"]["m.in_reply_to"]["event_id"]
+            == "$question-event"
+        )
+        assert (
+            mock_client.room_send.call_args.kwargs["ignore_unverified_devices"] is True
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_send_message_honors_ignore_unverified_toggle(self):
+        """send_message can enforce verified devices when explicitly configured."""
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.event_id = "$event123"
+        mock_client.room_send = AsyncMock(return_value=mock_response)
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=mock_client)
+        runtime.settings = MagicMock()
+        runtime.settings.MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES = False
+
+        channel = MatrixChannel(runtime)
+
+        outgoing = MagicMock(spec=OutgoingMessage)
+        outgoing.answer = "Test response"
+        result = await channel.send_message("!room:matrix.org", outgoing)
+
+        assert result is True
+        assert (
+            mock_client.room_send.call_args.kwargs["ignore_unverified_devices"] is False
+        )
 
     @pytest.mark.unit
     @pytest.mark.asyncio

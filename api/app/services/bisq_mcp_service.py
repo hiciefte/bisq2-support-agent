@@ -25,7 +25,24 @@ from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple
 import httpx
 from app.core.config import Settings
 from cachetools import TTLCache  # type: ignore[import-untyped]
-from pybreaker import CircuitBreaker, CircuitBreakerError
+
+try:
+    from pybreaker import CircuitBreaker, CircuitBreakerError
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
+
+    class CircuitBreakerError(Exception):
+        """Fallback circuit breaker error when pybreaker is unavailable."""
+
+    class CircuitBreaker:  # type: ignore[override]
+        """No-op fallback circuit breaker used in test environments."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.current_state = "closed"
+
+        def call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+            return func(*args, **kwargs)
+
+
 from tenacity import (
     retry,
     retry_if_exception_type,

@@ -32,6 +32,10 @@ class TestChannelGatewayRouting:
         mock_rag_service.query.assert_called_once()
         call_args = mock_rag_service.query.call_args
         assert call_args.kwargs["question"] == sample_incoming_message.question
+        assert (
+            call_args.kwargs["detection_source"]
+            == sample_incoming_message.channel.value
+        )
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -176,7 +176,39 @@ class SessionManager:
                 matrix_session_restores_total.labels(result="failure").inc()
                 return False
 
-            # Restore session credentials
+            # Guard against restoring a session that belongs to a different user.
+            # This can happen when operators rotate accounts but reuse session paths.
+            expected_user_id = str(
+                getattr(self.client, "user_id", "")
+                or getattr(self.client, "user", "")
+                or ""
+            ).strip()
+            session_user_id = str(config.get("user_id", "") or "").strip()
+            if (
+                expected_user_id
+                and session_user_id
+                and session_user_id != expected_user_id
+            ):
+                logger.warning(
+                    "Session file user_id mismatch (expected=%s, found=%s); "
+                    "ignoring session restore",
+                    expected_user_id,
+                    session_user_id,
+                )
+                matrix_session_restores_total.labels(result="failure").inc()
+                return False
+
+            # Restore session credentials.
+            # restore_login() initializes nio client internals used by crypto store.
+            restore_login = getattr(self.client, "restore_login", None)
+            if callable(restore_login):
+                restore_login(
+                    config["user_id"],
+                    config["device_id"],
+                    config["access_token"],
+                )
+
+            # Keep explicit fields set for compatibility with tests/mocks.
             self.client.access_token = config["access_token"]
             self.client.device_id = config["device_id"]
             self.client.user_id = config["user_id"]

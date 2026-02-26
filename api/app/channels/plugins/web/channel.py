@@ -7,8 +7,10 @@ from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
+from app.channels.registry import register_channel
 
 
+@register_channel("web")
 class WebChannel(ChannelBase):
     """Web channel for browser-based chat interface.
 
@@ -92,3 +94,5 @@ class WebChannel(ChannelBase):
         )
 
     # handle_incoming() inherited from ChannelBase
+    ENABLED_FLAG = "WEB_CHANNEL_ENABLED"
+    ENABLED_DEFAULT = True

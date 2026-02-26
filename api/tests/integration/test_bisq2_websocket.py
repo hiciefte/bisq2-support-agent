@@ -216,6 +216,24 @@ class TestBisq2WebSocketClientParsing:
         cb.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_parse_valid_json_with_type_field(self):
+        """Valid JSON with Bisq2 'type' field is parsed and dispatched."""
+        client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
+        cb = AsyncMock()
+        client.on_event(cb)
+
+        msg = json.dumps(
+            {
+                "type": "WebSocketEvent",
+                "sequenceNumber": 1,
+                "payload": '{"reaction":"THUMBS_UP"}',
+            }
+        )
+        await client._handle_message(msg)
+
+        cb.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_parse_invalid_json_ignored(self):
         """Invalid JSON is logged and ignored."""
         client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
@@ -228,13 +246,13 @@ class TestBisq2WebSocketClientParsing:
 
     @pytest.mark.asyncio
     async def test_subscription_response_not_dispatched(self):
-        """SubscriptionResponse messages are not dispatched as events."""
+        """SubscriptionResponse messages are not dispatched as events (type key)."""
         client = Bisq2WebSocketClient(url="ws://localhost:8090/websocket")
         cb = AsyncMock()
         client.on_event(cb)
 
         msg = json.dumps(
-            {"responseType": "SubscriptionResponse", "success": True, "payload": []}
+            {"type": "SubscriptionResponse", "success": True, "payload": []}
         )
         await client._handle_message(msg)
 

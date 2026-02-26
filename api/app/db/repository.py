@@ -167,7 +167,10 @@ class FeedbackRepository:
             # Get main feedback entry
             cursor.execute(
                 """
-                SELECT id, message_id, question, answer, rating, explanation, timestamp, created_at
+                SELECT id, message_id, question, answer, rating, explanation,
+                       sources, sources_used, timestamp, created_at, processed,
+                       processed_at, faq_id, channel, feedback_method,
+                       external_message_id, reactor_identity_hash, reaction_emoji
                 FROM feedback
                 WHERE message_id = ?
                 """,
@@ -180,6 +183,19 @@ class FeedbackRepository:
 
             feedback = dict(row)
             feedback_id = feedback["id"]
+
+            # Deserialize sources from JSON strings
+            if feedback.get("sources"):
+                try:
+                    feedback["sources"] = json.loads(feedback["sources"])
+                except (json.JSONDecodeError, TypeError):
+                    feedback["sources"] = None
+
+            if feedback.get("sources_used"):
+                try:
+                    feedback["sources_used"] = json.loads(feedback["sources_used"])
+                except (json.JSONDecodeError, TypeError):
+                    feedback["sources_used"] = None
 
             # Get conversation history
             cursor.execute(
@@ -227,6 +243,10 @@ class FeedbackRepository:
             )
             issues = [row["issue_type"] for row in cursor.fetchall()]
             metadata["issues"] = issues
+
+            # Keep explanation in metadata for FeedbackItem compatibility.
+            if feedback.get("explanation"):
+                metadata["explanation"] = feedback["explanation"]
 
             feedback["metadata"] = metadata
 
@@ -427,6 +447,18 @@ class FeedbackRepository:
             conn.commit()
             return cursor.rowcount > 0
 
+    def delete_feedback_by_id(self, feedback_id: int) -> bool:
+        """Delete feedback entry by internal feedback ID.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM feedback WHERE id = ?", (feedback_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_feedback_explanation(self, message_id: str, explanation: str) -> bool:
         """
         Update the explanation for an existing feedback entry.
@@ -511,6 +543,72 @@ class FeedbackRepository:
 
             conn.commit()
             return True
+
+    def set_feedback_metadata_value(
+        self,
+        message_id: str,
+        key: str,
+        value: Any,
+    ) -> bool:
+        """Upsert a feedback metadata key for the feedback row identified by message_id."""
+        if not key or not key.strip():
+            raise ValueError("metadata key must not be empty")
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT id FROM feedback WHERE message_id = ?",
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            feedback_id = int(row["id"])
+            value_as_text = value if isinstance(value, str) else json.dumps(value)
+            cursor.execute(
+                """
+                INSERT INTO feedback_metadata (feedback_id, key, value)
+                VALUES (?, ?, ?)
+                ON CONFLICT(feedback_id, key)
+                DO UPDATE SET value = excluded.value
+                """,
+                (feedback_id, key.strip(), value_as_text),
+            )
+            conn.commit()
+            return True
+
+    def get_feedback_metadata_value(
+        self,
+        message_id: str,
+        key: str,
+    ) -> Optional[Any]:
+        """Get a single metadata value for feedback identified by message_id."""
+        if not key or not key.strip():
+            return None
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT fm.value
+                FROM feedback_metadata fm
+                JOIN feedback f ON f.id = fm.feedback_id
+                WHERE f.message_id = ? AND fm.key = ?
+                LIMIT 1
+                """,
+                (message_id, key.strip()),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            raw = row["value"]
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return raw
 
     def delete_feedback(self, message_id: str) -> bool:
         """
@@ -717,6 +815,32 @@ class FeedbackRepository:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_active_reaction_rating(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+    ) -> Optional[int]:
+        """Return active reaction rating (0/1) for a reaction key.
+
+        Returns None when reaction is not currently active.
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT f.rating
+                FROM feedback_reactions r
+                JOIN feedback f ON f.id = r.feedback_id
+                WHERE r.channel = ? AND r.external_message_id = ? AND r.reactor_identity_hash = ?
+                  AND r.revoked_at IS NULL
+                LIMIT 1
+                """,
+                (channel, external_message_id, reactor_identity_hash),
+            )
+            row = cursor.fetchone()
+            return int(row["rating"]) if row and row["rating"] is not None else None
 
     def upsert_reaction_tracking(
         self,

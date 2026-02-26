@@ -2,13 +2,13 @@
 
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 from app.channels.plugins.matrix.services.export_parser import MatrixExportParser
-from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 from app.models.training import QAPair
 from app.services.training.comparison_engine import (
     AnswerComparisonEngine,
     ComparisonResult,
     extract_json_from_llm_response,
 )
+from app.services.training.ingest.matrix_sync_service import MatrixSyncService
 from app.services.training.substantive_filter import (
     FilterResult,
     SubstantiveAnswerFilter,

@@ -323,6 +323,7 @@ async def query(
                     confidence_score=metadata.confidence_score if metadata else None,
                     routing_action=metadata.routing_action if metadata else None,
                     requires_human=result.requires_human,
+                    delivery_target=incoming.message_id,
                 )
         except Exception:
             logger.warning("Failed to track web message for reactions", exc_info=True)

@@ -155,3 +155,47 @@ class TestEscalationHookRoutingReason:
 
         create_arg = mock_esc_service.create_escalation.call_args.args[0]
         assert create_arg.routing_reason is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_escalation_hook_creates_escalation_for_queue_medium(
+    sample_incoming_message,
+    mock_rag_service,
+):
+    from app.channels.gateway import ChannelGateway
+    from app.channels.hooks.escalation_hook import EscalationPostHook
+
+    async def rag_query(*args, **kwargs):
+        return {
+            "answer": "Draft answer pending review.",
+            "sources": [],
+            "response_time": 0.1,
+            "requires_human": False,
+            "routing_action": "queue_medium",
+        }
+
+    mock_rag_service.query = AsyncMock(side_effect=rag_query)
+
+    mock_escalation_service = AsyncMock()
+    mock_escalation_service.create_escalation = AsyncMock(
+        return_value=type("Esc", (), {"id": 321})()
+    )
+
+    gateway = ChannelGateway(rag_service=mock_rag_service)
+    gateway.register_post_hook(
+        EscalationPostHook(
+            escalation_service=mock_escalation_service,
+            channel_registry=None,
+            settings=type("S", (), {"ESCALATION_ENABLED": True})(),
+        )
+    )
+
+    result = await gateway.process_message(sample_incoming_message)
+
+    assert "forwarded to our support team" in result.answer.lower()
+    assert "#321" in result.answer
+    assert result.requires_human is True
+    assert mock_escalation_service.create_escalation.call_count == 1
+    create_arg = mock_escalation_service.create_escalation.call_args.args[0]
+    assert create_arg.routing_action == "queue_medium"

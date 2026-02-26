@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.db.repository import FeedbackRepository
+from app.services.feedback_service import FeedbackService
 
 
 @pytest.fixture()
@@ -254,6 +255,74 @@ class TestRepositoryReactionTracking:
         assert result is True
         row = db_conn.execute("SELECT revoked_at FROM feedback_reactions").fetchone()
         assert row["revoked_at"] is not None
+
+    def test_get_active_reaction_rating_returns_rating(self, repo, db_conn):
+        feedback_id = self._store_feedback(repo)
+        repo.upsert_reaction_tracking(
+            channel="matrix",
+            external_message_id="$evt:server",
+            reactor_identity_hash="hash1",
+            reaction_emoji="\U0001f44d",
+            feedback_id=feedback_id,
+        )
+        rating = repo.get_active_reaction_rating("matrix", "$evt:server", "hash1")
+        assert rating == 1
+
+    def test_get_active_reaction_rating_returns_none_when_revoked(self, repo, db_conn):
+        feedback_id = self._store_feedback(repo)
+        repo.upsert_reaction_tracking(
+            channel="matrix",
+            external_message_id="$evt:server",
+            reactor_identity_hash="hash1",
+            reaction_emoji="\U0001f44d",
+            feedback_id=feedback_id,
+        )
+        repo.revoke_reaction_tracking("matrix", "$evt:server", "hash1")
+        rating = repo.get_active_reaction_rating("matrix", "$evt:server", "hash1")
+        assert rating is None
+
+
+class TestFeedbackServiceReactionProjection:
+    """Test that reaction revocation removes active feedback projection."""
+
+    @staticmethod
+    def _service_with_repo(repo) -> FeedbackService:
+        service = FeedbackService.__new__(FeedbackService)
+        service.repository = repo
+        service._feedback_cache = None
+        service._last_load_time = None
+        return service
+
+    def test_revoke_reaction_feedback_removes_feedback_row(self, repo, db_conn):
+        feedback_id = repo.store_feedback(
+            message_id="m1",
+            question="Q",
+            answer="A",
+            rating=0,
+            timestamp="2024-01-01T00:00:00Z",
+            channel="matrix",
+            feedback_method="reaction",
+            external_message_id="$evt:server",
+            reactor_identity_hash="hash1",
+            reaction_emoji="\U0001f44e",
+        )
+        repo.upsert_reaction_tracking(
+            channel="matrix",
+            external_message_id="$evt:server",
+            reactor_identity_hash="hash1",
+            reaction_emoji="\U0001f44e",
+            feedback_id=feedback_id,
+        )
+        service = self._service_with_repo(repo)
+
+        result = service.revoke_reaction_feedback("matrix", "$evt:server", "hash1")
+
+        assert result is True
+        feedback_count = db_conn.execute(
+            "SELECT COUNT(*) AS c FROM feedback WHERE id = ?",
+            (feedback_id,),
+        ).fetchone()["c"]
+        assert feedback_count == 0
 
 
 # =============================================================================

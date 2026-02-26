@@ -11,6 +11,7 @@ from app.core.security import verify_admin_access
 from app.models.faq import (
     BulkFAQRequest,
     BulkFAQResponse,
+    FAQFilterOptionsResponse,
     FAQIdentifiedItem,
     FAQItem,
     FAQListResponse,
@@ -90,6 +91,37 @@ async def get_all_faqs_for_admin_route(
             detail="Failed to fetch FAQs",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="FAQ_FETCH_FAILED",
+        ) from e
+
+
+@router.get("/faqs/filter-options", response_model=FAQFilterOptionsResponse)
+async def get_faq_filter_options():
+    """Return full FAQ filter options independent of current pagination."""
+    try:
+        all_faqs = faq_service.get_all_faqs()
+
+        def _normalized_distinct(values):
+            unique_by_casefold = {}
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                trimmed = value.strip()
+                if not trimmed:
+                    continue
+                key = trimmed.casefold()
+                if key not in unique_by_casefold:
+                    unique_by_casefold[key] = trimmed
+            return sorted(unique_by_casefold.values(), key=str.casefold)
+
+        categories = _normalized_distinct(faq.category for faq in all_faqs)
+        sources = _normalized_distinct(faq.source for faq in all_faqs)
+        return FAQFilterOptionsResponse(categories=categories, sources=sources)
+    except Exception as e:
+        logger.exception("Failed to fetch FAQ filter options")
+        raise BaseAppException(
+            detail="Failed to fetch FAQ filter options",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="FAQ_FILTER_OPTIONS_FAILED",
         ) from e
 
 

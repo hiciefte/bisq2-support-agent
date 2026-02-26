@@ -14,9 +14,11 @@ This package organizes admin routes by domain:
 from app.routes.admin import (
     analytics,
     auth,
+    channel_autoresponse,
     escalations,
     faqs,
     feedback,
+    signals,
     training,
     vectorstore,
 )
@@ -39,14 +41,18 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(vectorstore.router)
     app.include_router(training.router)
     app.include_router(escalations.router)
+    app.include_router(signals.router)
+    app.include_router(channel_autoresponse.router)
 
 
 __all__ = [
     "analytics",
     "auth",
+    "channel_autoresponse",
     "escalations",
     "faqs",
     "feedback",
+    "signals",
     "include_admin_routers",
     "training",
     "vectorstore",

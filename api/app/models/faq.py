@@ -44,6 +44,11 @@ class FAQListResponse(BaseModel):
     total_pages: int = Field(ge=1)
 
 
+class FAQFilterOptionsResponse(BaseModel):
+    categories: List[str] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list)
+
+
 class BulkFAQRequest(BaseModel):
     """Request model for bulk FAQ operations."""
 

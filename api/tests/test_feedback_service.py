@@ -75,6 +75,38 @@ class TestFeedbackStorage:
 
         assert isinstance(feedback, list)
 
+    @pytest.mark.asyncio
+    async def test_feedback_details_include_sources_and_metadata(self, test_settings):
+        """Detail lookup should preserve retrieval context fields."""
+        service = FeedbackService(settings=test_settings)
+        message_id = str(uuid.uuid4())
+        sources = [
+            {"type": "wiki", "title": "Main Page", "url": "https://bisq.wiki/Main_Page"}
+        ]
+        sources_used = [
+            {"type": "faq", "title": "What is Bisq Easy?", "url": "/faq/bisq-easy"}
+        ]
+
+        await service.store_feedback(
+            {
+                "message_id": message_id,
+                "question": "What is Bisq Easy?",
+                "answer": "Bisq Easy is...",
+                "rating": 1,
+                "explanation": "helpful",
+                "sources": sources,
+                "sources_used": sources_used,
+            }
+        )
+
+        feedback = service.repository.get_feedback_by_message_id(message_id)
+        assert feedback is not None
+        assert feedback["sources"] == sources
+        assert feedback["sources_used"] == sources_used
+        assert feedback["channel"] == "web"
+        assert feedback["feedback_method"] == "web_dialog"
+        assert feedback["metadata"]["explanation"] == "helpful"
+
 
 class TestFeedbackStatistics:
     """Test feedback statistics calculation."""

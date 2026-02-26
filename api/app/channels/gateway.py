@@ -15,6 +15,7 @@ from app.channels.models import (
     IncomingMessage,
     OutgoingMessage,
 )
+from app.channels.rag_query import query_with_channel_context
 from app.channels.response_builder import build_metadata, build_sources
 from app.channels.runtime import RAGServiceProtocol
 from app.channels.security import ErrorFactory
@@ -118,9 +119,11 @@ class ChannelGateway:
                         for msg in message.chat_history
                     ]
 
-                rag_response = await self.rag_service.query(
+                rag_response = await query_with_channel_context(
+                    rag_service=self.rag_service,
                     question=message.question,
                     chat_history=chat_history,
+                    detection_source=message.channel.value,
                 )
 
             except Exception as e:

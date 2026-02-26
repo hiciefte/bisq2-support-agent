@@ -40,11 +40,12 @@ def _make_event(
     channel_id: str = "matrix",
     ext_id: str = "evt_123",
     rating: ReactionRating = ReactionRating.POSITIVE,
+    reactor_id: str = "user1",
 ) -> ReactionEvent:
     return ReactionEvent(
         channel_id=channel_id,
         external_message_id=ext_id,
-        reactor_id="reactor1",
+        reactor_id=reactor_id,
         rating=rating,
         raw_reaction="\U0001f44d",
         timestamp=datetime.now(timezone.utc),

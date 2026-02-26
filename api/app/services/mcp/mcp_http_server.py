@@ -6,6 +6,7 @@ data tools via the standard MCP JSON-RPC 2.0 protocol.
 """
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter
@@ -142,7 +143,7 @@ Example: If there are 56 EUR offers total (42 sell-to, 14 buy-from):
                     "description": "Optional: Filter by direction. SELL=user buys BTC, BUY=user sells BTC. Omit to get ALL offers.",
                 },
             },
-            "required": [],
+            "required": ["currency"],
         },
     },
     {
@@ -307,8 +308,16 @@ async def _execute_tool(name: str, args: dict) -> str:
         return await service.get_market_prices_formatted(currency)
 
     elif name == "get_offerbook":
-        currency = args.get("currency")
-        direction = args.get("direction")
+        currency = _extract_currency_arg(args)
+        direction = _extract_direction_arg(args)
+        logger.info(
+            "MCP get_offerbook args normalized (has_currency=%s, direction=%s, keys=%s)",
+            bool(currency),
+            direction,
+            sorted(args.keys()),
+        )
+        if not currency:
+            return "Error: currency is required for get_offerbook tool (e.g., EUR, USD, CHF)"
         return await service.get_offerbook_formatted(currency, direction)
 
     elif name == "get_reputation":
@@ -328,3 +337,35 @@ async def _execute_tool(name: str, args: dict) -> str:
 
     else:
         return f"Unknown tool: {name}"
+
+
+def _extract_currency_arg(args: dict[str, Any]) -> str | None:
+    """Extract and normalize currency from tool args with common key aliases."""
+    aliases = (
+        "currency",
+        "currency_code",
+        "currencyCode",
+        "quote_currency",
+        "quoteCurrency",
+        "market",
+    )
+    for key in aliases:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            candidate = value.strip().upper()
+            match = re.search(r"\b[A-Z]{2,5}\b", candidate)
+            if match:
+                return match.group(0)
+    return None
+
+
+def _extract_direction_arg(args: dict[str, Any]) -> str | None:
+    """Extract and normalize direction from tool args with common key aliases."""
+    aliases = ("direction", "side")
+    for key in aliases:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            normalized = value.strip().upper()
+            if normalized in {"BUY", "SELL"}:
+                return normalized
+    return None

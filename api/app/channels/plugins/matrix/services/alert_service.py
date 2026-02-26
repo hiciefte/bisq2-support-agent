@@ -9,11 +9,11 @@ Architecture:
 """
 
 import asyncio
-import html
 import logging
 import os
-import re
 from typing import Any, Optional, Protocol, runtime_checkable
+
+from app.channels.plugins.support_markdown import build_matrix_message_content
 
 try:
     from nio import AsyncClient, RoomSendResponse
@@ -39,12 +39,13 @@ class MatrixAlertSettings(Protocol):
 
     Attributes:
         MATRIX_HOMESERVER_URL: Matrix homeserver URL (e.g., https://matrix.org)
-        MATRIX_USER: Matrix bot user ID (e.g., @bot:matrix.org)
+        MATRIX_ALERT_USER: Matrix alert bot user ID (e.g., @alerts-bot:matrix.org)
         MATRIX_ALERT_ROOM: Room ID for alert notifications
     """
 
     MATRIX_HOMESERVER_URL: str
-    MATRIX_USER: str
+    MATRIX_ALERT_USER: str
+    MATRIX_ALERT_PASSWORD: str
     MATRIX_ALERT_ROOM: str
 
 
@@ -103,6 +104,20 @@ class MatrixAlertService:
         # 3. Default fallback
         return DEFAULT_ALERT_SESSION_PATH
 
+    def _get_alert_user(self) -> str:
+        resolved = getattr(self.settings, "MATRIX_ALERT_USER_RESOLVED", None)
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved.strip()
+        value = getattr(self.settings, "MATRIX_ALERT_USER", None)
+        return value.strip() if isinstance(value, str) else ""
+
+    def _get_alert_password(self) -> str:
+        resolved = getattr(self.settings, "MATRIX_ALERT_PASSWORD_RESOLVED", None)
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved.strip()
+        value = getattr(self.settings, "MATRIX_ALERT_PASSWORD", None)
+        return value.strip() if isinstance(value, str) else ""
+
     def is_configured(self) -> bool:
         """Check if Matrix alerting is configured.
 
@@ -155,8 +170,8 @@ class MatrixAlertService:
             )
 
             homeserver = self.settings.MATRIX_HOMESERVER_URL
-            user_id = self.settings.MATRIX_USER
-            password = getattr(self.settings, "MATRIX_PASSWORD", "")
+            user_id = self._get_alert_user()
+            password = self._get_alert_password()
             session_path = self._get_session_path()
 
             try:
@@ -214,12 +229,7 @@ class MatrixAlertService:
             response = await client.room_send(
                 room_id=alert_room,
                 message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": message,
-                    "format": "org.matrix.custom.html",
-                    "formatted_body": self._markdown_to_html(message),
-                },
+                content=build_matrix_message_content(message),
             )
 
             if isinstance(response, RoomSendResponse):
@@ -232,23 +242,6 @@ class MatrixAlertService:
         except Exception:
             logger.exception("Error sending alert to Matrix")
             return False
-
-    def _markdown_to_html(self, text: str) -> str:
-        """Convert simple markdown to HTML for Matrix formatting.
-
-        Args:
-            text: Text with simple markdown (bold, newlines)
-
-        Returns:
-            HTML formatted text with special characters escaped
-        """
-        # First escape HTML special characters to prevent XSS
-        escaped = html.escape(text)
-        # Convert **bold** to <strong>bold</strong>
-        result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
-        # Convert newlines to <br>
-        result = result.replace("\n", "<br>")
-        return result
 
     async def close(self) -> None:
         """Close the Matrix client connection.

@@ -32,7 +32,11 @@ def _make_incoming(**overrides) -> IncomingMessage:
     return IncomingMessage(**defaults)
 
 
-def _make_outgoing(requires_human: bool = False, **overrides) -> OutgoingMessage:
+def _make_outgoing(
+    requires_human: bool = False, routing_action: str | None = None, **overrides
+) -> OutgoingMessage:
+    if routing_action is None:
+        routing_action = "needs_human" if requires_human else "auto_send"
     defaults = dict(
         message_id="out-001",
         in_reply_to="550e8400-e29b-41d4-a716-446655440000",
@@ -44,7 +48,7 @@ def _make_outgoing(requires_human: bool = False, **overrides) -> OutgoingMessage
             rag_strategy="retrieval",
             model_name="gpt-4o",
             confidence_score=0.42,
-            routing_action="needs_human",
+            routing_action=routing_action,
         ),
         original_question="How do I restore my wallet?",
         requires_human=requires_human,
@@ -109,12 +113,10 @@ class TestEscalationPostHookExecution:
     """Test hook behavior in gateway pipeline."""
 
     @pytest.mark.asyncio
-    async def test_pass_through_when_not_requires_human(
-        self, hook, mock_escalation_service
-    ):
-        """requires_human=False -> return None (no action)."""
+    async def test_pass_through_when_auto_send(self, hook, mock_escalation_service):
+        """auto_send responses pass through without escalation."""
         incoming = _make_incoming()
-        outgoing = _make_outgoing(requires_human=False)
+        outgoing = _make_outgoing(requires_human=False, routing_action="auto_send")
 
         result = await hook.execute(incoming, outgoing)
 
@@ -133,6 +135,24 @@ class TestEscalationPostHookExecution:
 
         assert result is None
         mock_escalation_service.create_escalation.assert_awaited_once()
+        assert outgoing.requires_human is True
+
+    @pytest.mark.asyncio
+    async def test_creates_escalation_for_queue_medium_without_requires_human(
+        self, hook, mock_escalation_service
+    ):
+        """queue_medium should escalate even when requires_human is False."""
+        incoming = _make_incoming()
+        outgoing = _make_outgoing(
+            requires_human=False,
+            routing_action="queue_medium",
+        )
+
+        result = await hook.execute(incoming, outgoing)
+
+        assert result is None
+        mock_escalation_service.create_escalation.assert_awaited_once()
+        assert outgoing.requires_human is True
 
     @pytest.mark.asyncio
     async def test_replaces_answer_with_escalation_message(

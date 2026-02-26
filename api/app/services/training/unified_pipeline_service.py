@@ -23,9 +23,7 @@ from typing import Any, Dict, List, Literal, Optional, cast
 # Import sync services at module level for testability (mocking)
 from app.channels.plugins.bisq2.client.api import Bisq2API
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
-from app.channels.plugins.bisq2.services.sync_service import Bisq2SyncService
 from app.channels.plugins.matrix.client.polling_state import PollingStateManager
-from app.channels.plugins.matrix.services.sync_service import MatrixSyncService
 
 # Import shared threshold constants from config
 from app.core.config import (
@@ -47,7 +45,10 @@ from app.metrics.training_metrics import (
     update_queue_metrics,
 )
 from app.models.faq import FAQItem
+from app.services.faq.duplicate_guard import find_similar_faqs
 from app.services.rag.protocol_detector import ProtocolDetector, Source
+from app.services.training.ingest.bisq2_sync_service import Bisq2SyncService
+from app.services.training.ingest.matrix_sync_service import MatrixSyncService
 from app.services.training.unified_repository import (
     CalibrationStatus,
     UnifiedFAQCandidate,
@@ -981,7 +982,8 @@ class UnifiedPipelineService:
         # Use edited question if available (admin may have improved phrasing)
         question_to_check = candidate.edited_question_text or candidate.question_text
         if self.rag_service is not None and not force:
-            similar_faqs = await self.rag_service.search_faq_similarity(
+            similar_faqs = await find_similar_faqs(
+                self.rag_service,
                 question=question_to_check,
                 threshold=DUPLICATE_FAQ_THRESHOLD,
                 limit=3,

@@ -15,6 +15,7 @@ from app.models.escalation import (
     EscalationStatus,
 )
 from app.services.escalation.escalation_service import EscalationService
+from app.services.faq.duplicate_guard import DuplicateFAQError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -47,6 +48,7 @@ def mock_repository():
     repo.get_by_id = AsyncMock()
     repo.get_by_message_id = AsyncMock()
     repo.update = AsyncMock()
+    repo.update_rating = AsyncMock()
     repo.list_escalations = AsyncMock()
     repo.get_counts = AsyncMock()
     repo.close_stale = AsyncMock()
@@ -77,6 +79,13 @@ def mock_learning_engine():
 
 
 @pytest.fixture
+def mock_rag_service():
+    service = MagicMock()
+    service.search_faq_similarity = AsyncMock(return_value=[])
+    return service
+
+
+@pytest.fixture
 def mock_settings():
     settings = MagicMock()
     settings.ESCALATION_CLAIM_TTL_MINUTES = 30
@@ -93,6 +102,7 @@ def service(
     mock_faq_service,
     mock_learning_engine,
     mock_settings,
+    mock_rag_service,
 ):
     return EscalationService(
         repository=mock_repository,
@@ -100,6 +110,7 @@ def service(
         faq_service=mock_faq_service,
         learning_engine=mock_learning_engine,
         settings=mock_settings,
+        rag_service=mock_rag_service,
     )
 
 
@@ -150,6 +161,140 @@ class TestEscalationServiceCreate:
         result = await service.create_escalation(data)
         assert result.id == existing.id
         mock_repository.get_by_message_id.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Staff rating
+# ---------------------------------------------------------------------------
+
+
+class TestEscalationServiceStaffRating:
+    """Test user ratings for delivered staff responses."""
+
+    @pytest.mark.asyncio
+    async def test_record_staff_rating_updates_repository(
+        self, service, mock_repository
+    ):
+        escalation = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_answer="Staff answer",
+        )
+        mock_repository.update_rating.return_value = True
+
+        updated = await service.record_staff_answer_rating(
+            escalation=escalation,
+            rating=1,
+            rater_id="reactor_hash_1",
+            trusted=False,
+        )
+
+        assert updated is True
+        mock_repository.update_rating.assert_awaited_once_with(
+            escalation.message_id,
+            1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_record_staff_rating_trusted_forwards_to_orchestrator(
+        self,
+        mock_repository,
+        mock_response_delivery,
+        mock_faq_service,
+        mock_learning_engine,
+        mock_settings,
+        mock_rag_service,
+    ):
+        mock_repository.update_rating.return_value = True
+        feedback_orchestrator = MagicMock()
+        feedback_orchestrator.record_user_rating = MagicMock()
+
+        svc = EscalationService(
+            repository=mock_repository,
+            response_delivery=mock_response_delivery,
+            faq_service=mock_faq_service,
+            learning_engine=mock_learning_engine,
+            settings=mock_settings,
+            feedback_orchestrator=feedback_orchestrator,
+            rag_service=mock_rag_service,
+        )
+        escalation = _make_escalation(
+            id=11,
+            channel="matrix",
+            routing_action="queue_medium",
+            status=EscalationStatus.RESPONDED,
+            staff_answer="Staff answer",
+            edit_distance=0.2,
+            sources=[{"type": "wiki"}],
+        )
+
+        updated = await svc.record_staff_answer_rating(
+            escalation=escalation,
+            rating=0,
+            rater_id="reactor_hash_2",
+            trusted=True,
+        )
+
+        assert updated is True
+        feedback_orchestrator.record_user_rating.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Auto-reaction reversal
+# ---------------------------------------------------------------------------
+
+
+class TestEscalationServiceReactionAutoClose:
+    """Test auto-closing pending auto-reaction escalations."""
+
+    @pytest.mark.asyncio
+    async def test_auto_close_reaction_escalation_pending(
+        self, service, mock_repository
+    ):
+        pending = _make_escalation(
+            status=EscalationStatus.PENDING,
+            routing_reason="auto_reaction_negative:user_reported_incorrect(confidence=95%)",
+        )
+        closed = _make_escalation(status=EscalationStatus.CLOSED)
+        mock_repository.get_by_message_id.return_value = pending
+        mock_repository.update.return_value = closed
+
+        result = await service.auto_close_reaction_escalation(
+            message_id=pending.message_id,
+            reason="reaction_removed",
+        )
+
+        assert result is True
+        mock_repository.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_auto_close_skips_non_pending(self, service, mock_repository):
+        responded = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            routing_reason="auto_reaction_negative:user_reported_incorrect(confidence=95%)",
+        )
+        mock_repository.get_by_message_id.return_value = responded
+
+        result = await service.auto_close_reaction_escalation(
+            message_id=responded.message_id
+        )
+
+        assert result is False
+        mock_repository.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_close_skips_non_auto_reaction(self, service, mock_repository):
+        pending = _make_escalation(
+            status=EscalationStatus.PENDING,
+            routing_reason="queue_medium_confidence",
+        )
+        mock_repository.get_by_message_id.return_value = pending
+
+        result = await service.auto_close_reaction_escalation(
+            message_id=pending.message_id
+        )
+
+        assert result is False
+        mock_repository.update.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -350,9 +495,11 @@ class TestEscalationServiceRespond:
     ):
         """Delivery failure records delivery_status='failed'."""
         claimed = _make_escalation(
-            status=EscalationStatus.IN_REVIEW, staff_id="staff_1"
+            status=EscalationStatus.IN_REVIEW, staff_id="staff_1", channel="matrix"
         )
-        responded = _make_escalation(status=EscalationStatus.RESPONDED)
+        responded = _make_escalation(
+            status=EscalationStatus.RESPONDED, channel="matrix"
+        )
         mock_repository.get_by_id.return_value = claimed
         mock_repository.update.return_value = responded
         mock_response_delivery.deliver.return_value = False
@@ -434,6 +581,54 @@ class TestEscalationServiceGenerateFAQ:
         assert faq_item.question == "How to restore?"
         assert faq_item.source == "Escalation"
         assert faq_item.verified is True
+
+    @pytest.mark.asyncio
+    async def test_generate_faq_blocks_when_similar_faq_exists(
+        self, service, mock_repository, mock_rag_service, mock_faq_service
+    ):
+        responded = _make_escalation(status=EscalationStatus.RESPONDED)
+        mock_repository.get_by_id.return_value = responded
+        mock_rag_service.search_faq_similarity.return_value = [
+            {
+                "id": 55,
+                "question": "How to restore?",
+                "answer": "Use backup seed",
+                "similarity": 0.91,
+                "category": "Wallet",
+            }
+        ]
+
+        with pytest.raises(DuplicateFAQError):
+            await service.generate_faq_from_escalation(1, "How to restore?", "Answer")
+
+        mock_faq_service.add_faq.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_faq_force_override_bypasses_duplicate_block(
+        self, service, mock_repository, mock_rag_service, mock_faq_service
+    ):
+        responded = _make_escalation(status=EscalationStatus.RESPONDED)
+        mock_repository.get_by_id.return_value = responded
+        mock_repository.update.return_value = responded
+        mock_rag_service.search_faq_similarity.return_value = [
+            {
+                "id": 55,
+                "question": "How to restore?",
+                "answer": "Use backup seed",
+                "similarity": 0.91,
+                "category": "Wallet",
+            }
+        ]
+
+        result = await service.generate_faq_from_escalation(
+            1,
+            "How to restore?",
+            "Answer",
+            force=True,
+        )
+
+        assert "faq_id" in result
+        mock_faq_service.add_faq.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

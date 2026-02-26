@@ -259,10 +259,22 @@ class ChannelRuntime:
         enabled = []
         if hasattr(self.settings, "channels"):
             channels = self.settings.channels
-            for channel_name in ["web", "matrix", "bisq2"]:
-                config = getattr(channels, channel_name, None)
-                if config and getattr(config, "enabled", False):
-                    enabled.append(channel_name)
+            dumped = None
+            dump = getattr(channels, "model_dump", None)
+            if callable(dump):
+                dumped = dump()
+            if isinstance(dumped, dict):
+                for channel_name, config in dumped.items():
+                    if isinstance(config, dict) and bool(config.get("enabled", False)):
+                        enabled.append(str(channel_name))
+            else:
+                for channel_name, config in vars(channels).items():
+                    if channel_name.startswith("_"):
+                        continue
+                    if hasattr(config, "enabled") and bool(
+                        getattr(config, "enabled", False)
+                    ):
+                        enabled.append(str(channel_name))
         return enabled
 
 
@@ -281,12 +293,14 @@ class RAGServiceProtocol(Protocol):
         self,
         question: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
+        detection_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Query the RAG service.
 
         Args:
             question: User question.
             chat_history: Optional conversation history.
+            detection_source: Optional channel/source hint for protocol defaults.
 
         Returns:
             Response dictionary with answer and metadata.

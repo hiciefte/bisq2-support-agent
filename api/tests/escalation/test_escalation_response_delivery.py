@@ -263,3 +263,75 @@ class TestResponseDeliveryAdapterContract:
         assert outgoing_msg.original_question == "How do I backup?"
         assert outgoing_msg.metadata.rag_strategy == "escalation"
         assert outgoing_msg.metadata.model_name == "staff"
+
+    @pytest.mark.asyncio
+    async def test_delivery_includes_sources_and_confidence_when_answer_is_accepted(
+        self,
+    ):
+        """Accepted AI draft keeps provenance footer data for channel markdown rendering."""
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="target-id")
+        adapter.send_message = AsyncMock(return_value=True)
+
+        registry = MagicMock()
+        registry.get.return_value = adapter
+
+        delivery = ResponseDelivery(registry)
+        escalation = _make_escalation(
+            channel="bisq2",
+            channel_metadata={"conversation_id": "support.support"},
+            ai_draft_answer="Exact answer from AI",
+            confidence_score=0.71,
+            sources=[
+                {
+                    "document_id": "doc-1",
+                    "title": "Bisq Easy",
+                    "url": "https://bisq.wiki/Bisq_Easy",
+                    "relevance_score": 0.61,
+                    "category": "wiki",
+                }
+            ],
+        )
+
+        await delivery.deliver(escalation, "Exact answer from AI")
+
+        _, outgoing_msg = adapter.send_message.call_args[0]
+        assert len(outgoing_msg.sources) == 1
+        assert outgoing_msg.metadata.confidence_score == 0.71
+
+    @pytest.mark.asyncio
+    async def test_delivery_omits_sources_and_confidence_when_staff_edits_answer(self):
+        """Staff-edited answers should not inherit AI confidence/sources."""
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="target-id")
+        adapter.send_message = AsyncMock(return_value=True)
+
+        registry = MagicMock()
+        registry.get.return_value = adapter
+
+        delivery = ResponseDelivery(registry)
+        escalation = _make_escalation(
+            channel="bisq2",
+            channel_metadata={"conversation_id": "support.support"},
+            ai_draft_answer="Original AI answer",
+            confidence_score=0.71,
+            sources=[
+                {
+                    "document_id": "doc-1",
+                    "title": "Bisq Easy",
+                    "url": "https://bisq.wiki/Bisq_Easy",
+                    "relevance_score": 0.61,
+                    "category": "wiki",
+                }
+            ],
+        )
+
+        await delivery.deliver(escalation, "Edited by staff")
+
+        _, outgoing_msg = adapter.send_message.call_args[0]
+        assert outgoing_msg.sources == []
+        assert outgoing_msg.metadata.confidence_score is None

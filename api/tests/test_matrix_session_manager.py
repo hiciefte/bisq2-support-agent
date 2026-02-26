@@ -150,6 +150,27 @@ class TestSessionManagerLogin:
         mock_client.login.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_login_falls_back_when_session_user_mismatch(
+        self, session_manager, mock_client, mock_login_response
+    ):
+        """Session restore is rejected when file user differs from configured client."""
+        session_data = {
+            "access_token": "existing_token_123",
+            "device_id": "EXISTING_DEVICE",
+            "user_id": "@different:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        mock_client.login = AsyncMock(return_value=mock_login_response)
+
+        await session_manager.login()
+
+        mock_client.login.assert_called_once_with(
+            "test_password", device_name="Bisq Support Bot (Shadow Mode)"
+        )
+
+    @pytest.mark.asyncio
     async def test_login_failure(self, session_manager, mock_client):
         """Test login failure handling."""
         # Setup: Mock login failure
@@ -184,6 +205,11 @@ class TestSessionFileLoading:
         assert mock_client.access_token == "test_token"
         assert mock_client.device_id == "TEST_DEVICE"
         assert mock_client.user_id == "@test:matrix.org"
+        mock_client.restore_login.assert_called_once_with(
+            "@test:matrix.org",
+            "TEST_DEVICE",
+            "test_token",
+        )
 
     def test_load_session_file_not_exists(self, session_manager):
         """Test session loading when file doesn't exist."""
@@ -214,6 +240,43 @@ class TestSessionFileLoading:
 
         # Verify
         assert result is False
+
+    def test_load_session_user_mismatch(self, session_manager, mock_client):
+        """Session loading fails when session file belongs to a different user."""
+        session_data = {
+            "access_token": "test_token",
+            "device_id": "TEST_DEVICE",
+            "user_id": "@other-user:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        result = session_manager._load_session()
+
+        assert result is False
+        assert mock_client.access_token is None
+        assert mock_client.device_id is None
+        assert mock_client.user_id == "@test:matrix.org"
+
+    def test_load_session_user_mismatch_uses_client_user_fallback(
+        self, session_manager, mock_client
+    ):
+        """Mismatch guard uses client.user when client.user_id is empty."""
+        mock_client.user_id = ""
+        mock_client.user = "@test:matrix.org"
+        session_data = {
+            "access_token": "test_token",
+            "device_id": "TEST_DEVICE",
+            "user_id": "@other-user:matrix.org",
+        }
+        with open(session_manager.session_file, "w") as f:
+            json.dump(session_data, f)
+
+        result = session_manager._load_session()
+
+        assert result is False
+        assert mock_client.access_token is None
+        assert mock_client.device_id is None
 
 
 class TestSessionFileSaving:

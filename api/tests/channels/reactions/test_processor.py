@@ -1,5 +1,6 @@
-"""Tests for ReactionProcessor: identity hashing, process flow, untracked telemetry, revocation, auto-escalation."""
+"""Tests for ReactionProcessor: identity hashing, process flow, revocation, and auto-escalation."""
 
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -23,7 +24,7 @@ def tracker():
         internal_message_id="int-1",
         question="How does Bisq work?",
         answer="Bisq is a decentralized exchange.",
-        user_id="user1",
+        user_id="@voter:server",
         sources=[{"title": "FAQ", "score": 0.9}],
     )
     return t
@@ -35,6 +36,7 @@ def feedback_service():
     svc = MagicMock()
     svc.store_reaction_feedback = MagicMock()
     svc.revoke_reaction_feedback = MagicMock()
+    svc.get_active_reaction_rating = MagicMock(return_value=0)
     return svc
 
 
@@ -46,6 +48,14 @@ def processor(tracker, feedback_service):
         feedback_service=feedback_service,
         reactor_identity_salt="test-salt",
     )
+
+
+@pytest.fixture()
+def followup_coordinator():
+    svc = AsyncMock()
+    svc.start_followup = AsyncMock(return_value=True)
+    svc.cancel_followup = AsyncMock(return_value=None)
+    return svc
 
 
 # =============================================================================
@@ -186,6 +196,52 @@ class TestProcessFlow:
         expected_hash = processor.hash_reactor_identity("matrix", "@voter:server")
         assert call_kwargs.kwargs["reactor_identity_hash"] == expected_hash
 
+    @pytest.mark.asyncio()
+    async def test_non_asker_reaction_is_ignored(self, processor, feedback_service):
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            reactor_id="@someone-else:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor.process(event)
+        assert not result
+        feedback_service.store_reaction_feedback.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_conflicting_reactions_clear_projection(
+        self, tracker, feedback_service
+    ):
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            reactor_identity_salt="test-salt",
+        )
+        await processor.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="\U0001f44d",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        await processor.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        assert feedback_service.store_reaction_feedback.call_count == 1
+        feedback_service.revoke_reaction_feedback.assert_called_once()
+
 
 # =============================================================================
 # Untracked reaction telemetry
@@ -286,6 +342,14 @@ class TestRevocation:
         result = await p.revoke_reaction("matrix", "$evt:server", "@voter:server")
         assert result is False  # service unavailable → returns False
 
+    @pytest.mark.asyncio()
+    async def test_revoke_by_non_asker_is_ignored(self, processor, feedback_service):
+        result = await processor.revoke_reaction(
+            "matrix", "$evt:server", "@someone-else:server"
+        )
+        assert result is False
+        feedback_service.revoke_reaction_feedback.assert_not_called()
+
 
 # =============================================================================
 # Error handling
@@ -346,6 +410,11 @@ def escalation_service():
     """Mock escalation service."""
     svc = AsyncMock()
     svc.create_escalation = AsyncMock(return_value=type("Esc", (), {"id": 42})())
+    svc.record_staff_answer_rating = AsyncMock(return_value=True)
+    svc.auto_close_reaction_escalation = AsyncMock(return_value=True)
+    svc.repository = MagicMock()
+    svc.repository.get_by_id = AsyncMock(return_value=None)
+    svc.repository.get_by_message_id = AsyncMock(return_value=None)
     return svc
 
 
@@ -359,7 +428,7 @@ def high_conf_tracker():
         internal_message_id="int-1",
         question="How does Bisq work?",
         answer="Bisq is a decentralized exchange.",
-        user_id="user1",
+        user_id="@voter:server",
         sources=[{"title": "FAQ", "score": 0.9}],
         confidence_score=0.97,
         routing_action="auto_send",
@@ -424,7 +493,7 @@ class TestAutoEscalation:
             internal_message_id="int-1",
             question="Q",
             answer="A",
-            user_id="u1",
+            user_id="@voter:server",
             confidence_score=0.97,
             routing_action="needs_human",
             requires_human=True,
@@ -455,7 +524,7 @@ class TestAutoEscalation:
             internal_message_id="int-1",
             question="Q",
             answer="A",
-            user_id="u1",
+            user_id="@voter:server",
             confidence_score=0.35,
             routing_action="auto_send",
             requires_human=False,
@@ -486,7 +555,7 @@ class TestAutoEscalation:
             internal_message_id="int-1",
             question="Q",
             answer="A",
-            user_id="u1",
+            user_id="@voter:server",
         )
         p = ReactionProcessor(
             tracker=t,
@@ -514,7 +583,7 @@ class TestAutoEscalation:
             internal_message_id="int-1",
             question="Q",
             answer="A",
-            user_id="u1",
+            user_id="@voter:server",
             confidence_score=0.97,
             routing_action="auto_send",
             requires_human=False,
@@ -591,3 +660,352 @@ class TestAutoEscalation:
         assert result.escalation_created is True
         assert hasattr(result, "escalation_message_id")
         assert result.escalation_message_id == "$evt:server"
+
+    @pytest.mark.asyncio()
+    async def test_negative_escalation_is_stabilized_and_cancellable(
+        self, feedback_service, escalation_service
+    ):
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="@voter:server",
+            confidence_score=0.95,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+            auto_escalation_delay_seconds=0.05,
+        )
+        feedback_service.get_active_reaction_rating.return_value = 1
+
+        await p.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        await p.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="\U0001f44d",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+
+        await asyncio.sleep(0.08)
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_negative_escalation_fires_after_stabilization(
+        self, feedback_service, escalation_service
+    ):
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="@voter:server",
+            confidence_score=0.95,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+            auto_escalation_delay_seconds=0.05,
+        )
+        feedback_service.get_active_reaction_rating.return_value = 0
+
+        await p.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+
+        await asyncio.sleep(0.08)
+        escalation_service.create_escalation.assert_awaited_once()
+
+    @pytest.mark.asyncio()
+    async def test_revoke_cancels_pending_auto_escalation(
+        self, feedback_service, escalation_service
+    ):
+        t = SentMessageTracker(ttl_hours=24)
+        t.track(
+            channel_id="matrix",
+            external_message_id="$evt:server",
+            internal_message_id="int-1",
+            question="Q",
+            answer="A",
+            user_id="@voter:server",
+            confidence_score=0.95,
+            routing_action="auto_send",
+            requires_human=False,
+        )
+        p = ReactionProcessor(
+            tracker=t,
+            feedback_service=feedback_service,
+            escalation_service=escalation_service,
+            auto_escalation_delay_seconds=0.05,
+        )
+        feedback_service.get_active_reaction_rating.return_value = 0
+
+        await p.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        await p.revoke_reaction("matrix", "$evt:server", "@voter:server")
+
+        await asyncio.sleep(0.08)
+        escalation_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_conflicting_positive_after_negative_does_not_auto_close(
+        self, processor_with_esc, escalation_service
+    ):
+        await processor_with_esc.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        await processor_with_esc.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="\U0001f44d",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+
+        escalation_service.auto_close_reaction_escalation.assert_not_awaited()
+
+
+class TestReactionFollowup:
+    @pytest.mark.asyncio()
+    async def test_negative_reaction_starts_followup(
+        self, tracker, feedback_service, followup_coordinator
+    ):
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            reactor_identity_salt="test-salt",
+            followup_coordinator=followup_coordinator,
+        )
+        await processor.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.NEGATIVE,
+                raw_reaction="\U0001f44e",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+
+        followup_coordinator.start_followup.assert_awaited_once()
+        followup_coordinator.cancel_followup.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_positive_reaction_cancels_followup(
+        self, tracker, feedback_service, followup_coordinator
+    ):
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            reactor_identity_salt="test-salt",
+            followup_coordinator=followup_coordinator,
+        )
+        await processor.process(
+            ReactionEvent(
+                channel_id="matrix",
+                external_message_id="$evt:server",
+                reactor_id="@voter:server",
+                rating=ReactionRating.POSITIVE,
+                raw_reaction="\U0001f44d",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        followup_coordinator.start_followup.assert_not_awaited()
+        followup_coordinator.cancel_followup.assert_awaited_once()
+
+
+class TestStaffResponseRatings:
+    """Staff-response reactions should feed escalation rating lane."""
+
+    @pytest.mark.asyncio()
+    async def test_staff_response_rating_is_recorded(self, feedback_service):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="matrix",
+            external_message_id="$staff:server",
+            internal_message_id="escalation-7",
+            question="Q",
+            answer="Staff answer",
+            user_id="@user:server",
+            routing_action="staff_response",
+            confidence_score=0.93,
+        )
+        escalation = type(
+            "Escalation",
+            (),
+            {"id": 7, "message_id": "msg-7", "user_id": "@user:server"},
+        )()
+        esc_service = AsyncMock()
+        esc_service.repository = MagicMock()
+        esc_service.repository.get_by_id = AsyncMock(return_value=escalation)
+        esc_service.repository.get_by_message_id = AsyncMock(return_value=None)
+        esc_service.record_staff_answer_rating = AsyncMock(return_value=True)
+
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            reactor_identity_salt="test-salt",
+            escalation_service=esc_service,
+        )
+
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$staff:server",
+            reactor_id="@user:server",
+            rating=ReactionRating.NEGATIVE,
+            raw_reaction="\U0001f44e",
+            timestamp=datetime.now(timezone.utc),
+        )
+        await processor.process(event)
+
+        expected_hash = processor.hash_reactor_identity("matrix", "@user:server")
+        esc_service.record_staff_answer_rating.assert_awaited_once_with(
+            escalation=escalation,
+            rating=0,
+            rater_id=expected_hash,
+            trusted=True,
+        )
+        esc_service.create_escalation.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_staff_response_other_reactor_is_ignored(self, feedback_service):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="matrix",
+            external_message_id="$staff:server",
+            internal_message_id="escalation-8",
+            question="Q",
+            answer="Staff answer",
+            user_id="@user:server",
+            routing_action="staff_response",
+        )
+        escalation = type(
+            "Escalation",
+            (),
+            {"id": 8, "message_id": "msg-8", "user_id": "@user:server"},
+        )()
+        esc_service = AsyncMock()
+        esc_service.repository = MagicMock()
+        esc_service.repository.get_by_id = AsyncMock(return_value=escalation)
+        esc_service.repository.get_by_message_id = AsyncMock(return_value=None)
+        esc_service.record_staff_answer_rating = AsyncMock(return_value=True)
+
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            reactor_identity_salt="test-salt",
+            escalation_service=esc_service,
+        )
+
+        event = ReactionEvent(
+            channel_id="matrix",
+            external_message_id="$staff:server",
+            reactor_id="@other:server",
+            rating=ReactionRating.POSITIVE,
+            raw_reaction="\U0001f44d",
+            timestamp=datetime.now(timezone.utc),
+        )
+        result = await processor.process(event)
+
+        assert not result
+        feedback_service.store_reaction_feedback.assert_not_called()
+        esc_service.record_staff_answer_rating.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_staff_response_falls_back_to_in_reply_lookup(self, feedback_service):
+        tracker = SentMessageTracker(ttl_hours=24)
+        tracker.track(
+            channel_id="bisq2",
+            external_message_id="staff-msg-1",
+            internal_message_id="out-123",
+            question="Q",
+            answer="Staff answer",
+            user_id="user-1",
+            routing_action="staff_response",
+            in_reply_to="550e8400-e29b-41d4-a716-446655440000",
+        )
+        escalation = type(
+            "Escalation",
+            (),
+            {
+                "id": 9,
+                "message_id": "550e8400-e29b-41d4-a716-446655440000",
+                "user_id": "user-1",
+            },
+        )()
+        esc_service = AsyncMock()
+        esc_service.repository = MagicMock()
+        esc_service.repository.get_by_id = AsyncMock(return_value=None)
+        esc_service.repository.get_by_message_id = AsyncMock(return_value=escalation)
+        esc_service.record_staff_answer_rating = AsyncMock(return_value=True)
+
+        processor = ReactionProcessor(
+            tracker=tracker,
+            feedback_service=feedback_service,
+            escalation_service=esc_service,
+        )
+        event = ReactionEvent(
+            channel_id="bisq2",
+            external_message_id="staff-msg-1",
+            reactor_id="user-1",
+            rating=ReactionRating.POSITIVE,
+            raw_reaction="THUMBS_UP",
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        await processor.process(event)
+
+        esc_service.repository.get_by_id.assert_not_awaited()
+        esc_service.repository.get_by_message_id.assert_awaited_once_with(
+            "550e8400-e29b-41d4-a716-446655440000"
+        )
+        esc_service.record_staff_answer_rating.assert_awaited_once()

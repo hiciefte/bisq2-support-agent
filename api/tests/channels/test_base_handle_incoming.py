@@ -117,6 +117,7 @@ class TestChannelBaseHandleIncoming:
         mock_runtime.rag_service.query.assert_called_once_with(
             question="What is Bisq?",
             chat_history=None,
+            detection_source="test",
         )
 
     @pytest.mark.asyncio
@@ -204,6 +205,7 @@ class TestChannelBaseHandleIncoming:
                 {"role": "user", "content": "First question"},
                 {"role": "assistant", "content": "First answer"},
             ],
+            detection_source="test",
         )
 
     @pytest.mark.asyncio

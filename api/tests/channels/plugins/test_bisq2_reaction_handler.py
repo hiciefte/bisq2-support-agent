@@ -4,11 +4,12 @@ Covers:
 - Handler construction and properties
 - WebSocket subscription via start_listening / stop_listening
 - Event processing for ADDED and REMOVED modification types
-- Bisq2 reaction enum mapping (THUMBS_UP, THUMBS_DOWN, HAPPY, HEART)
-- Unmapped reaction handling (LAUGH, PARTY)
+- Bisq2 reaction enum mapping (THUMBS_UP, THUMBS_DOWN, HAPPY, HEART, PARTY)
+- Unmapped reaction handling (LAUGH)
 - Error handling for malformed events
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -79,11 +80,11 @@ class TestBisq2ReactionHandlerConstruction:
         assert handler.map_emoji_to_rating("THUMBS_DOWN") == ReactionRating.NEGATIVE
         assert handler.map_emoji_to_rating("HAPPY") == ReactionRating.POSITIVE
         assert handler.map_emoji_to_rating("HEART") == ReactionRating.POSITIVE
+        assert handler.map_emoji_to_rating("PARTY") == ReactionRating.POSITIVE
 
     def test_unmapped_reactions_return_none(self, handler):
-        """LAUGH and PARTY are not mapped."""
+        """LAUGH remains intentionally unmapped."""
         assert handler.map_emoji_to_rating("LAUGH") is None
-        assert handler.map_emoji_to_rating("PARTY") is None
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +221,74 @@ class TestBisq2ReactionEventProcessingAdded:
         reaction_event = mock_processor.process.call_args[0][0]
         assert reaction_event.raw_reaction == "HEART"
 
+    @pytest.mark.asyncio
+    async def test_parses_java_string_payload_format(self, handler, mock_processor):
+        """Java WS events send payload as JSON string; handler must parse it."""
+        event = {
+            "type": "WebSocketEvent",
+            "modificationType": "ADDED",
+            "payload": json.dumps(
+                {
+                    "reaction": "THUMBS_UP",
+                    "messageId": "msg-java-1",
+                    "senderUserProfileId": "user-java-1",
+                }
+            ),
+        }
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.external_message_id == "msg-java-1"
+        assert reaction_event.reactor_id == "user-java-1"
+        assert reaction_event.rating == ReactionRating.POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_reaction_id_payload_maps_to_rating(self, handler, mock_processor):
+        """reactionId ordinal payloads are normalized to reaction names."""
+        event = {
+            "type": "WebSocketEvent",
+            "modificationType": "ADDED",
+            "payload": {
+                "reactionId": 1,
+                "messageId": "msg-id-ordinal-1",
+                "senderUserProfileId": "user-ordinal-1",
+            },
+        }
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.raw_reaction == "THUMBS_DOWN"
+        assert reaction_event.rating == ReactionRating.NEGATIVE
+        assert reaction_event.external_message_id == "msg-id-ordinal-1"
+        assert reaction_event.reactor_id == "user-ordinal-1"
+
+    @pytest.mark.asyncio
+    async def test_nested_reaction_dto_payload_is_supported(
+        self, handler, mock_processor
+    ):
+        """Nested reactionDto payloads should still be processed."""
+        event = {
+            "type": "WebSocketEvent",
+            "modificationType": "ADDED",
+            "payload": {
+                "messageId": "nested-msg-1",
+                "reactionDto": {
+                    "reactionId": 0,
+                    "senderUserProfileId": "nested-user-1",
+                },
+            },
+        }
+        await handler._on_websocket_event(event)
+
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.raw_reaction == "THUMBS_UP"
+        assert reaction_event.rating == ReactionRating.POSITIVE
+        assert reaction_event.external_message_id == "nested-msg-1"
+        assert reaction_event.reactor_id == "nested-user-1"
+
 
 # ---------------------------------------------------------------------------
 # Unmapped Reactions
@@ -245,8 +314,8 @@ class TestBisq2UnmappedReactions:
         mock_processor.process.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_party_is_dropped(self, handler, mock_processor):
-        """PARTY reaction is logged and dropped."""
+    async def test_party_is_positive(self, handler, mock_processor):
+        """PARTY reaction is mapped as positive feedback."""
         event = {
             "responseType": "WebSocketEvent",
             "modificationType": "ADDED",
@@ -257,7 +326,9 @@ class TestBisq2UnmappedReactions:
             },
         }
         await handler._on_websocket_event(event)
-        mock_processor.process.assert_not_called()
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.rating == ReactionRating.POSITIVE
 
     @pytest.mark.asyncio
     async def test_unmapped_increments_counter(self, handler, mock_processor):
@@ -302,6 +373,7 @@ class TestBisq2ReactionEventProcessingRemoved:
             channel_id="bisq2",
             external_message_id="msg-123",
             reactor_id="user-abc",
+            raw_reaction="THUMBS_UP",
         )
 
     @pytest.mark.asyncio
@@ -318,6 +390,52 @@ class TestBisq2ReactionEventProcessingRemoved:
         }
         await handler._on_websocket_event(event)
         mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_removed_with_java_string_payload_calls_revoke(
+        self, handler, mock_processor
+    ):
+        """REMOVED event with string payload should revoke reaction."""
+        event = {
+            "type": "WebSocketEvent",
+            "modificationType": "REMOVED",
+            "payload": json.dumps(
+                {
+                    "reaction": "THUMBS_UP",
+                    "messageId": "msg-java-2",
+                    "senderUserProfileId": "user-java-2",
+                }
+            ),
+        }
+        await handler._on_websocket_event(event)
+
+        mock_processor.revoke_reaction.assert_called_once_with(
+            channel_id="bisq2",
+            external_message_id="msg-java-2",
+            reactor_id="user-java-2",
+            raw_reaction="THUMBS_UP",
+        )
+
+    @pytest.mark.asyncio
+    async def test_is_removed_flag_triggers_revoke(self, handler, mock_processor):
+        """Payload isRemoved=true should be treated as REMOVED even without event flag."""
+        event = {
+            "type": "WebSocketEvent",
+            "payload": {
+                "reactionId": 0,
+                "chatMessageId": "msg-removed-1",
+                "senderUserProfileId": "user-removed-1",
+                "isRemoved": True,
+            },
+        }
+        await handler._on_websocket_event(event)
+
+        mock_processor.revoke_reaction.assert_called_once_with(
+            channel_id="bisq2",
+            external_message_id="msg-removed-1",
+            reactor_id="user-removed-1",
+            raw_reaction="THUMBS_UP",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +460,17 @@ class TestBisq2ReactionHandlerErrors:
             "responseType": "WebSocketEvent",
             "modificationType": "ADDED",
             "payload": {"messageId": "msg-1", "senderUserProfileId": "user-1"},
+        }
+        await handler._on_websocket_event(event)
+        mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_payload_ignored(self, handler, mock_processor):
+        """Malformed JSON string payload is dropped safely."""
+        event = {
+            "type": "WebSocketEvent",
+            "modificationType": "ADDED",
+            "payload": "{not valid json",
         }
         await handler._on_websocket_event(event)
         mock_processor.process.assert_not_called()

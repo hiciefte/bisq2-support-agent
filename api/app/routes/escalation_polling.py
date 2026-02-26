@@ -13,7 +13,6 @@ from app.models.escalation import (
     UserPollResponse,
 )
 from app.routes.admin.escalations import get_escalation_service
-from app.services.escalation.feedback_orchestrator import StaffRatingSignal
 from app.services.escalation.rating_token import (
     generate_rating_token,
     verify_rating_token,
@@ -242,37 +241,18 @@ async def rate_staff_answer(
                     detail="Rating token already used",
                 )
 
-        updated = await service.repository.update_rating(message_id, body.rating)
+        updated = await service.record_staff_answer_rating(
+            escalation=escalation,
+            rating=body.rating,
+            rater_id=_derive_rater_id(request),
+            trusted=trusted,
+        )
 
         if not updated:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot rate: no staff answer yet",
             )
-
-        if (
-            trusted
-            and getattr(service, "feedback_orchestrator", None) is not None
-            and escalation is not None
-        ):
-            try:
-                signal = StaffRatingSignal(
-                    message_id=message_id,
-                    escalation_id=escalation.id,
-                    rater_id=_derive_rater_id(request),
-                    confidence_score=escalation.confidence_score,
-                    edit_distance=escalation.edit_distance or 0.0,
-                    user_rating=body.rating,
-                    routing_action=escalation.routing_action,
-                    channel=escalation.channel,
-                    trusted=True,
-                    sources=escalation.sources,
-                )
-                service.feedback_orchestrator.record_user_rating(signal)
-            except Exception:
-                logger.exception(
-                    "Feedback orchestrator failure for message %s", message_id
-                )
 
         return UserPollResponse(
             status="resolved",

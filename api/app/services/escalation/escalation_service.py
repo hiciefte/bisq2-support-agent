@@ -20,9 +20,11 @@ from app.models.escalation import (
     UserPollResponse,
 )
 from app.services.escalation.feedback_metrics import compute_hybrid_distance
+from app.services.faq.duplicate_guard import DuplicateFAQError, find_similar_faqs
 from prometheus_client import Counter, Histogram
 
 logger = logging.getLogger(__name__)
+AUTO_REACTION_ESCALATION_REASON_PREFIX = "auto_reaction_negative"
 
 ESCALATION_LIFECYCLE = Counter(
     "escalation_lifecycle_total",
@@ -61,6 +63,7 @@ class EscalationService:
         settings,
         feedback_orchestrator=None,
         embeddings=None,
+        rag_service=None,
     ):
         self.repository = repository
         self.response_delivery = response_delivery
@@ -69,6 +72,7 @@ class EscalationService:
         self.settings = settings
         self.feedback_orchestrator = feedback_orchestrator
         self.embeddings = embeddings
+        self.rag_service = rag_service
 
     # ------------------------------------------------------------------
     # Create
@@ -213,23 +217,47 @@ class EscalationService:
         # Attempt delivery (non-blocking)
         channel = escalation.channel
         if self.response_delivery is not None:
+            delivery_attempts = (updated.delivery_attempts or 0) + 1
             try:
                 delivered = await self.response_delivery.deliver(updated, staff_answer)
                 if delivered:
                     ESCALATION_DELIVERY.labels(channel=channel, outcome="success").inc()
+                    if channel != "web":
+                        updated = await self.repository.update(
+                            escalation_id,
+                            EscalationUpdate(
+                                delivery_status=EscalationDeliveryStatus.DELIVERED,
+                                delivery_error="",
+                                delivery_attempts=delivery_attempts,
+                                last_delivery_at=now,
+                            ),
+                        )
                 else:
                     ESCALATION_DELIVERY.labels(channel=channel, outcome="failed").inc()
                     logger.warning("Delivery failed for escalation %d", escalation_id)
-                    await self.repository.update(
-                        escalation_id,
-                        EscalationUpdate(
-                            delivery_status=EscalationDeliveryStatus.FAILED,
-                            delivery_error="Delivery returned False",
-                        ),
-                    )
+                    if channel != "web":
+                        updated = await self.repository.update(
+                            escalation_id,
+                            EscalationUpdate(
+                                delivery_status=EscalationDeliveryStatus.FAILED,
+                                delivery_error="Delivery returned False",
+                                delivery_attempts=delivery_attempts,
+                                last_delivery_at=now,
+                            ),
+                        )
             except Exception:
                 ESCALATION_DELIVERY.labels(channel=channel, outcome="error").inc()
                 logger.exception("Delivery error for escalation %d", escalation_id)
+                if channel != "web":
+                    updated = await self.repository.update(
+                        escalation_id,
+                        EscalationUpdate(
+                            delivery_status=EscalationDeliveryStatus.FAILED,
+                            delivery_error="Exception during delivery",
+                            delivery_attempts=delivery_attempts,
+                            last_delivery_at=now,
+                        ),
+                    )
         else:
             logger.debug(
                 "No response delivery configured, skipping for escalation %d",
@@ -264,6 +292,99 @@ class EscalationService:
         return updated
 
     # ------------------------------------------------------------------
+    # Staff Rating
+    # ------------------------------------------------------------------
+
+    async def record_staff_answer_rating(
+        self,
+        escalation: Escalation,
+        rating: int,
+        rater_id: str,
+        trusted: bool,
+    ) -> bool:
+        """Persist staff-answer rating and optionally feed trusted learning."""
+        normalized_rating = 1 if int(rating) > 0 else 0
+        updated = await self.repository.update_rating(
+            escalation.message_id,
+            normalized_rating,
+        )
+        if not updated:
+            return False
+
+        if trusted and self.feedback_orchestrator is not None:
+            try:
+                from app.services.escalation.feedback_orchestrator import (
+                    StaffRatingSignal,
+                )
+
+                signal = StaffRatingSignal(
+                    message_id=escalation.message_id,
+                    escalation_id=escalation.id,
+                    rater_id=str(rater_id),
+                    confidence_score=escalation.confidence_score,
+                    edit_distance=escalation.edit_distance or 0.0,
+                    user_rating=normalized_rating,
+                    routing_action=escalation.routing_action,
+                    channel=escalation.channel,
+                    trusted=True,
+                    sources=escalation.sources,
+                )
+                self.feedback_orchestrator.record_user_rating(signal)
+            except Exception:
+                logger.exception(
+                    "Feedback orchestrator failure for message %s",
+                    escalation.message_id,
+                )
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Auto-Reaction Escalation Reversal
+    # ------------------------------------------------------------------
+
+    async def auto_close_reaction_escalation(
+        self,
+        message_id: str,
+        reason: str = "reaction_reversed",
+    ) -> bool:
+        """Close a pending auto-reaction escalation when user reverses feedback."""
+        escalation = await self.repository.get_by_message_id(message_id)
+        if escalation is None:
+            return False
+
+        routing_reason = str(escalation.routing_reason or "").strip().lower()
+        is_auto_reaction = routing_reason.startswith(
+            AUTO_REACTION_ESCALATION_REASON_PREFIX
+        ) or ("user reported incorrect answer" in routing_reason)
+        if not is_auto_reaction:
+            return False
+
+        # Only auto-close unclaimed pending escalations.
+        if escalation.status != EscalationStatus.PENDING:
+            return False
+        if escalation.staff_id or escalation.responded_at:
+            return False
+
+        now = datetime.now(timezone.utc)
+        await self.repository.update(
+            escalation.id,
+            EscalationUpdate(
+                status=EscalationStatus.CLOSED,
+                closed_at=now,
+            ),
+        )
+        ESCALATION_LIFECYCLE.labels(action="auto_closed").inc()
+        logger.info(
+            "Auto-closed reaction escalation",
+            extra={
+                "message_id": message_id,
+                "escalation_id": escalation.id,
+                "reason": reason,
+            },
+        )
+        return True
+
+    # ------------------------------------------------------------------
     # Generate FAQ
     # ------------------------------------------------------------------
 
@@ -274,6 +395,7 @@ class EscalationService:
         answer: str,
         category: str = "General",
         protocol: Optional[Literal["multisig_v1", "bisq_easy", "musig", "all"]] = None,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Create auto-verified FAQ from resolved escalation."""
         from datetime import datetime, timezone
@@ -294,6 +416,17 @@ class EscalationService:
             raise EscalationNotRespondedError(
                 f"Escalation {escalation_id} has not been responded to"
             )
+
+        if not force:
+            similar_faqs = await find_similar_faqs(
+                self.rag_service,
+                question=question,
+            )
+            if similar_faqs:
+                raise DuplicateFAQError(
+                    f"Cannot create FAQ: {len(similar_faqs)} similar FAQ(s) already exist",
+                    similar_faqs=similar_faqs,
+                )
 
         faq_item = FAQItem(
             question=question,
@@ -348,6 +481,7 @@ class EscalationService:
         status: Optional[EscalationStatus] = None,
         channel: Optional[str] = None,
         priority=None,
+        search: Optional[str] = None,
         staff_id: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
@@ -357,6 +491,7 @@ class EscalationService:
             status=status,
             channel=channel,
             priority=priority,
+            search=search,
             staff_id=staff_id,
             limit=limit,
             offset=offset,

@@ -9,12 +9,25 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from app.channels.plugins.matrix.room_filter import normalize_room_ids
 from app.channels.reactions import (
     ReactionEvent,
     ReactionHandlerBase,
     ReactionProcessor,
     ReactionRating,
 )
+
+try:
+    from nio import ReactionEvent as NioReactionEvent
+    from nio import RedactionEvent as NioRedactionEvent
+except ImportError:  # pragma: no cover - exercised in environments without nio
+
+    class NioReactionEvent:  # type: ignore[too-many-ancestors]
+        """Fallback event type placeholder when matrix-nio is unavailable."""
+
+    class NioRedactionEvent:  # type: ignore[too-many-ancestors]
+        """Fallback event type placeholder when matrix-nio is unavailable."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,30 +47,41 @@ class MatrixReactionHandler(ReactionHandlerBase):
         self,
         runtime: Any,
         processor: "ReactionProcessor",
+        allowed_room_ids: Any | None = None,
         emoji_rating_map: Optional[Dict[str, ReactionRating]] = None,
     ):
         super().__init__(runtime, processor, emoji_rating_map)
+        self.allowed_room_ids = normalize_room_ids(allowed_room_ids)
         self._callback_registered = False
         # Track reaction_event_id -> target message_event_id for redaction (bounded)
         self._reaction_to_message: OrderedDict[str, str] = OrderedDict()
         # Track reaction_event_id -> sender for redaction (bounded)
         self._reaction_to_sender: OrderedDict[str, str] = OrderedDict()
+        # Track reaction_event_id -> reaction key for redaction (bounded)
+        self._reaction_to_key: OrderedDict[str, str] = OrderedDict()
 
     async def start_listening(self) -> None:
         """Register nio callbacks for m.reaction and m.room.redaction events."""
         client = self.runtime.resolve("matrix_client")
-        client.add_event_callback(self._on_reaction_event, "m.reaction")
-        client.add_event_callback(self._on_redaction_event, "m.room.redaction")
+        client.add_event_callback(self._on_reaction_event, NioReactionEvent)
+        client.add_event_callback(self._on_redaction_event, NioRedactionEvent)
         self._callback_registered = True
         self._logger.info("Matrix reaction listener started")
 
     async def stop_listening(self) -> None:
         """Remove nio callbacks."""
         client = self.runtime.resolve_optional("matrix_client")
-        if client and self._callback_registered:
+        if (
+            client
+            and self._callback_registered
+            and hasattr(client, "remove_event_callback")
+        ):
             client.remove_event_callback(self._on_reaction_event)
             client.remove_event_callback(self._on_redaction_event)
             self._callback_registered = False
+            self._reaction_to_message.clear()
+            self._reaction_to_sender.clear()
+            self._reaction_to_key.clear()
             self._logger.info("Matrix reaction listener stopped")
 
     async def _on_reaction_event(self, room: Any, event: Any) -> None:
@@ -67,6 +91,10 @@ class MatrixReactionHandler(ReactionHandlerBase):
         rating, and delegates to the processor.
         """
         try:
+            room_id = str(getattr(room, "room_id", "") or "").strip()
+            if not room_id or room_id not in self.allowed_room_ids:
+                return
+
             source = getattr(event, "source", {})
             content = source.get("content", {})
             relates_to = content.get("m.relates_to")
@@ -95,10 +123,12 @@ class MatrixReactionHandler(ReactionHandlerBase):
             if reaction_event_id:
                 self._reaction_to_message[reaction_event_id] = target_event_id
                 self._reaction_to_sender[reaction_event_id] = sender
+                self._reaction_to_key[reaction_event_id] = str(key)
                 # Evict oldest entries if over limit
                 while len(self._reaction_to_message) > self._MAX_TRACKED_REACTIONS:
                     self._reaction_to_message.popitem(last=False)
                     self._reaction_to_sender.popitem(last=False)
+                    self._reaction_to_key.popitem(last=False)
 
             ts = getattr(event, "server_timestamp", None)
             if ts:
@@ -132,9 +162,13 @@ class MatrixReactionHandler(ReactionHandlerBase):
         redacts = getattr(event, "redacts", None)
         if not redacts:
             return
+        room_id = str(getattr(room, "room_id", "") or "").strip()
+        if not room_id or room_id not in self.allowed_room_ids:
+            return
 
         target_msg_id = self._reaction_to_message.get(redacts)
         reactor_id = self._reaction_to_sender.get(redacts)
+        reaction_key = self._reaction_to_key.get(redacts)
 
         if not target_msg_id or not reactor_id:
             return
@@ -144,9 +178,11 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 channel_id="matrix",
                 external_message_id=target_msg_id,
                 reactor_id=reactor_id,
+                raw_reaction=reaction_key,
             )
             # Clean up tracking maps
             self._reaction_to_message.pop(redacts, None)
             self._reaction_to_sender.pop(redacts, None)
+            self._reaction_to_key.pop(redacts, None)
         except Exception:
             self._logger.exception("Error revoking Matrix reaction: %s", redacts)

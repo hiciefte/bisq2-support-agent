@@ -725,12 +725,27 @@ class FeedbackService:
         Returns True if revocation was processed.
         """
         try:
+            existing = self.repository.get_reaction_by_key(
+                channel=channel,
+                external_message_id=external_message_id,
+                reactor_identity_hash=reactor_identity_hash,
+            )
             result = self.repository.revoke_reaction_tracking(
                 channel=channel,
                 external_message_id=external_message_id,
                 reactor_identity_hash=reactor_identity_hash,
             )
             if result:
+                feedback_id = (
+                    int(existing.get("feedback_id"))
+                    if isinstance(existing, dict)
+                    and existing.get("feedback_id") is not None
+                    else None
+                )
+                if feedback_id is not None:
+                    # Reaction feedback should reflect current state. Removing a reaction
+                    # removes its active projection from feedback analytics/learning input.
+                    self.repository.delete_feedback_by_id(feedback_id)
                 self._feedback_cache = None
                 self._last_load_time = None
                 logger.info(
@@ -746,6 +761,27 @@ class FeedbackService:
                 external_message_id,
             )
             return False
+
+    def get_active_reaction_rating(
+        self,
+        channel: str,
+        external_message_id: str,
+        reactor_identity_hash: str,
+    ) -> Optional[int]:
+        """Return current active reaction rating (0/1) for a reaction key."""
+        try:
+            return self.repository.get_active_reaction_rating(
+                channel=channel,
+                external_message_id=external_message_id,
+                reactor_identity_hash=reactor_identity_hash,
+            )
+        except Exception:
+            logger.exception(
+                "Error reading active reaction rating: channel=%s ext_id=%s",
+                channel,
+                external_message_id,
+            )
+            return None
 
     def get_feedback_stats_enhanced(self) -> Dict[str, Any]:
         """Get enhanced feedback statistics for admin dashboard.

@@ -31,7 +31,7 @@ class TestMatrixAlertSettingsProtocol:
         # Protocol should define these attributes
         hints = get_type_hints(MatrixAlertSettings)
         assert "MATRIX_HOMESERVER_URL" in hints
-        assert "MATRIX_USER" in hints
+        assert "MATRIX_ALERT_USER" in hints
         assert "MATRIX_ALERT_ROOM" in hints
 
     def test_settings_class_satisfies_protocol(self):
@@ -44,7 +44,7 @@ class TestMatrixAlertSettingsProtocol:
         # Settings should have all required attributes
         settings = Settings()
         assert hasattr(settings, "MATRIX_HOMESERVER_URL")
-        assert hasattr(settings, "MATRIX_USER")
+        assert hasattr(settings, "MATRIX_ALERT_USER")
         assert hasattr(settings, "MATRIX_ALERT_ROOM")
 
         # Should be usable where MatrixAlertSettings is expected (duck typing)
@@ -67,8 +67,8 @@ class TestMatrixAlertServiceSessionPath:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         settings.MATRIX_ALERT_SESSION_FILE = "/custom/path/alert_session.json"
         settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
@@ -87,8 +87,8 @@ class TestMatrixAlertServiceSessionPath:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         # No explicit alert session path
         del settings.MATRIX_ALERT_SESSION_FILE
@@ -109,8 +109,8 @@ class TestMatrixAlertServiceSessionPath:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         # No paths configured
         del settings.MATRIX_ALERT_SESSION_FILE
@@ -131,8 +131,8 @@ class TestMatrixAlertServiceConcurrency:
         """Create mock settings for tests."""
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         settings.MATRIX_SYNC_SESSION_FILE = "/data/matrix_session.json"
         return settings
@@ -219,7 +219,15 @@ class TestMatrixAlertServiceConfig:
 
     def test_matrix_alert_room_can_be_set(self):
         """Test that MATRIX_ALERT_ROOM can be set via environment."""
-        with patch.dict("os.environ", {"MATRIX_ALERT_ROOM": "!test123:matrix.org"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "MATRIX_HOMESERVER_URL": "https://matrix.org",
+                "MATRIX_ALERT_USER": "@alerts:matrix.org",
+                "MATRIX_ALERT_PASSWORD": "secret",
+                "MATRIX_ALERT_ROOM": "!test123:matrix.org",
+            },
+        ):
             from app.core.config import Settings
 
             settings = Settings()
@@ -245,8 +253,8 @@ class TestMatrixAlertServiceInitialization:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
 
         service = MatrixAlertService(settings)
@@ -287,8 +295,8 @@ class TestMatrixAlertServiceInitialization:
 
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
 
         service = MatrixAlertService(settings)
@@ -303,8 +311,8 @@ class TestMatrixAlertServiceSendMessage:
         """Create mock settings for tests."""
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         settings.MATRIX_ALERT_SESSION_FILE = "/tmp/test_alert_session.json"
         return settings
@@ -354,6 +362,10 @@ class TestMatrixAlertServiceSendMessage:
                     call_kwargs = mock_client.room_send.call_args.kwargs
                     assert call_kwargs["room_id"] == "!alert:matrix.org"
                     assert call_kwargs["message_type"] == "m.room.message"
+                    content = call_kwargs["content"]
+                    assert content["msgtype"] == "m.text"
+                    assert content["format"] == "org.matrix.custom.html"
+                    assert "formatted_body" in content
 
     @pytest.mark.asyncio
     async def test_send_alert_message_handles_connection_error(self, mock_settings):
@@ -379,8 +391,8 @@ class TestAlertmanagerIntegration:
         """Create mock settings for tests."""
         settings = MagicMock()
         settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
-        settings.MATRIX_USER = "@bot:matrix.org"
-        settings.MATRIX_PASSWORD = "password"
+        settings.MATRIX_ALERT_USER = "@bot:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "password"
         settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
         return settings
 
@@ -431,3 +443,41 @@ class TestAlertmanagerIntegration:
         assert data["status"] == "ok"
         assert data["alerts_processed"] == 1
         service.send_alert_message.assert_called_once()
+
+
+class TestAlertCredentialResolution:
+    """Tests for alert credential resolution without shared fallback."""
+
+    def test_alert_helpers_prefer_lane_specific_values(self):
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
+
+        settings = MagicMock()
+        settings.MATRIX_ALERT_USER_RESOLVED = "@alert:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD_RESOLVED = "alert-secret"
+        settings.MATRIX_ALERT_USER = "@ignored:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "ignored-secret"
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+        service = MatrixAlertService(settings)
+        assert service._get_alert_user() == "@alert:matrix.org"
+        assert service._get_alert_password() == "alert-secret"
+
+    def test_alert_helpers_use_only_alert_values(self):
+        from app.channels.plugins.matrix.services.alert_service import (
+            MatrixAlertService,
+        )
+
+        settings = MagicMock()
+        settings.MATRIX_ALERT_USER_RESOLVED = ""
+        settings.MATRIX_ALERT_PASSWORD_RESOLVED = ""
+        settings.MATRIX_ALERT_USER = "@alert:matrix.org"
+        settings.MATRIX_ALERT_PASSWORD = "alert-secret"
+        settings.MATRIX_HOMESERVER_URL = "https://matrix.org"
+        settings.MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+        service = MatrixAlertService(settings)
+        assert service._get_alert_user() == "@alert:matrix.org"
+        assert service._get_alert_password() == "alert-secret"
