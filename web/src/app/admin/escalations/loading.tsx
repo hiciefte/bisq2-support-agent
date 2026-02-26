@@ -4,23 +4,29 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function Loading() {
   return (
     <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <Skeleton className="h-7 w-56" />
-          <Skeleton className="h-4 w-80" />
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-7 w-56" />
+            <Skeleton className="h-4 w-80" />
+          </div>
+          <Skeleton className="h-9 w-9" />
         </div>
-        <div className="flex gap-2">
-          <Skeleton className="h-9 w-24" />
-          <Skeleton className="h-9 w-24" />
+        <div className="rounded-lg border border-border/70 bg-card/40 p-1.5">
+          <div className="grid grid-cols-2 xl:grid-cols-5 gap-1">
+            {[1, 2, 3, 4, 5].map((item) => (
+              <Skeleton key={item} className="h-11 w-full" />
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="bg-card rounded-lg border border-border">
-        <div className="flex space-x-1 px-4 pt-3 pb-0">
-          <Skeleton className="h-9 w-16 rounded-t-lg" />
-          <Skeleton className="h-9 w-24 rounded-t-lg" />
-          <Skeleton className="h-9 w-28 rounded-t-lg" />
-          <Skeleton className="h-9 w-28 rounded-t-lg" />
+      <div className="sticky top-16 z-20 -mx-4 md:-mx-8 px-4 md:px-8 py-3 border-y border-border/70 bg-background/95">
+        <div className="flex flex-wrap items-center gap-2">
+          <Skeleton className="h-9 flex-1 min-w-[240px]" />
+          <Skeleton className="h-9 w-[130px]" />
+          <Skeleton className="h-9 w-[130px]" />
+          <Skeleton className="h-9 w-[110px]" />
         </div>
       </div>
 

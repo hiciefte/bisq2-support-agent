@@ -6,11 +6,13 @@
 import React from 'react';
 
 type LinkProps = { href?: string; children?: React.ReactNode };
+type ImageProps = { src?: string; alt?: string };
 
 interface ReactMarkdownProps {
   children: string;
   components?: {
     a?: React.ComponentType<LinkProps> | ((props: LinkProps) => React.ReactNode);
+    img?: React.ComponentType<ImageProps> | ((props: ImageProps) => React.ReactNode);
   };
 }
 
@@ -32,6 +34,21 @@ function MockReactMarkdown({ children, components }: ReactMarkdownProps) {
       regex: RegExp;
       render: (match: RegExpMatchArray) => React.ReactNode;
     }> = [
+      // Images: ![alt](src)
+      {
+        regex: /!\[([^\]]*)\]\(([^)]*)\)/,
+        render: (match) => {
+          const ImageComponent = components?.img;
+          const alt = match[1];
+          const src = match[2];
+          if (ImageComponent && typeof ImageComponent === 'function') {
+            const result = ImageComponent({ src, alt });
+            return <React.Fragment key={key++}>{result}</React.Fragment>;
+          }
+          // eslint-disable-next-line @next/next/no-img-element
+          return <img key={key++} src={src} alt={alt} />;
+        },
+      },
       // Code blocks: ```code```
       {
         regex: /```\n?([\s\S]*?)\n?```/,
@@ -153,7 +170,12 @@ function MockReactMarkdown({ children, components }: ReactMarkdownProps) {
       const paragraphBlocks = text.split(/\n\n+/);
       for (const block of paragraphBlocks) {
         if (block.trim()) {
-          elements.push(<p key={key++}>{parseMarkdown(block.trim())}</p>);
+          const trimmedBlock = block.trim();
+          if (trimmedBlock.startsWith('```') && trimmedBlock.endsWith('```')) {
+            elements.push(<React.Fragment key={key++}>{parseMarkdown(trimmedBlock)}</React.Fragment>);
+          } else {
+            elements.push(<p key={key++}>{parseMarkdown(trimmedBlock)}</p>);
+          }
         }
       }
     } else if (paragraphs.length > 0) {

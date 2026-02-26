@@ -2,13 +2,7 @@
 
 import { useHotkeys } from "react-hotkeys-hook";
 import { RefObject } from "react";
-
-interface FAQ {
-    id: string;
-    question: string;
-    verified: boolean;
-    protocol: "multisig_v1" | "bisq_easy" | "musig" | "all";
-}
+import type { FAQ } from "@/components/admin/faqs/InlineEditFAQ";
 
 interface UseManageFaqsKeyboardOptions {
     // Data
@@ -22,7 +16,6 @@ interface UseManageFaqsKeyboardOptions {
 
     // Setters
     setSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
-    setCommandPaletteOpen: React.Dispatch<React.SetStateAction<boolean>>;
     setBulkSelectionMode: React.Dispatch<React.SetStateAction<boolean>>;
     setSelectedFaqIds: React.Dispatch<React.SetStateAction<Set<string>>>;
     setIsFormOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -49,7 +42,6 @@ interface UseManageFaqsKeyboardOptions {
  * Keyboard shortcuts for FAQ management page.
  *
  * Shortcuts:
- * - Cmd/Ctrl+K: Open command palette
  * - /: Focus search
  * - j/k: Navigate down/up
  * - Enter: Enter edit mode
@@ -73,7 +65,6 @@ export function useManageFaqsKeyboard({
     isFormOpen,
     skipVerifyConfirmation,
     setSelectedIndex,
-    setCommandPaletteOpen,
     setBulkSelectionMode,
     setSelectedFaqIds,
     setIsFormOpen,
@@ -89,16 +80,6 @@ export function useManageFaqsKeyboard({
     handleBulkVerify,
     toast,
 }: UseManageFaqsKeyboardOptions) {
-    // Command palette (works everywhere)
-    useHotkeys(
-        "mod+k",
-        (e) => {
-            e.preventDefault();
-            setCommandPaletteOpen(true);
-        },
-        { enableOnFormTags: true }
-    );
-
     // Focus search
     useHotkeys(
         "/",

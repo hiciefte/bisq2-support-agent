@@ -1,18 +1,17 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, useTransition } from 'react'
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
-  Filter,
   RotateCcw,
   Search,
   ChevronLeft,
@@ -24,11 +23,19 @@ import {
   AlertTriangle,
   Users,
   Eye,
-  Loader2,
+  Info,
+  ChevronDown,
 } from 'lucide-react'
 import { makeAuthenticatedRequest } from '@/lib/auth'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useAdminPollingQuery } from '@/hooks/useAdminPollingQuery'
+import { useHotkeys } from "react-hotkeys-hook"
+import { AdminQueueShell } from "@/components/admin/queue/AdminQueueShell"
+import { QueuePageHeader } from "@/components/admin/queue/QueuePageHeader"
+import { QueueTabs } from "@/components/admin/queue/QueueTabs"
+import { QueueCommandBar } from "@/components/admin/queue/QueueCommandBar"
 import { EscalationReviewPanel } from './EscalationReviewPanel'
+import { normalizeRoutingReasonSourceCount } from "@/lib/escalation-routing"
 
 // --- Types ---
 
@@ -135,38 +142,69 @@ const PAGE_SIZE = 20
 
 // --- Component ---
 
+function getEscalationAgeBadge(
+  createdAt: string,
+  status: EscalationItem['status']
+): { label: string; className: string } | null {
+  if (status !== 'pending' && status !== 'in_review') return null
+
+  const created = new Date(createdAt).getTime()
+  if (!Number.isFinite(created)) return null
+
+  const ageHours = (Date.now() - created) / (1000 * 60 * 60)
+  if (ageHours >= 12) {
+    return {
+      label: `${Math.floor(ageHours)}h waiting`,
+      className: 'bg-red-500/15 text-red-400 border border-red-500/30',
+    }
+  }
+  if (ageHours >= 4) {
+    return {
+      label: `${Math.floor(ageHours)}h waiting`,
+      className: 'bg-orange-500/15 text-orange-400 border border-orange-500/30',
+    }
+  }
+  if (ageHours >= 1) {
+    return {
+      label: `${Math.floor(ageHours)}h waiting`,
+      className: 'bg-blue-500/15 text-blue-400 border border-blue-500/30',
+    }
+  }
+
+  const mins = Math.max(1, Math.floor(ageHours * 60))
+  return {
+    label: `${mins}m waiting`,
+    className: 'bg-muted text-muted-foreground border border-border',
+  }
+}
+
 export default function EscalationsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [, startUrlTransition] = useTransition()
 
-  // Data state
-  const [escalations, setEscalations] = useState<EscalationItem[]>([])
-  const [totalCount, setTotalCount] = useState(0)
-  const [counts, setCounts] = useState<EscalationCounts | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [isRefreshing, setIsRefreshing] = useState(false)
+  // Queue state
+  const [isManualRefresh, setIsManualRefresh] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
   // Filter state
-  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'in_review' | 'responded'>('all')
+  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'in_review' | 'responded' | 'closed'>('all')
   const [filters, setFilters] = useState({
     channel: 'all',
     priority: 'all',
     search_text: '',
     page: 1,
   })
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [initializedFromUrl, setInitializedFromUrl] = useState(false)
+  const [dismissedError, setDismissedError] = useState<string | null>(null)
 
   // Review panel
   const [selectedEscalation, setSelectedEscalation] = useState<EscalationItem | null>(null)
   const [showReviewPanel, setShowReviewPanel] = useState(false)
+  const [selectedEscalationIndex, setSelectedEscalationIndex] = useState<number>(-1)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const debouncedSearchText = useDebouncedValue(filters.search_text, 300)
-
-  // Refs for smart refresh
-  const previousDataHashRef = useRef<string>('')
 
   // Computed
   const activeFilterCount = useMemo(() => {
@@ -178,11 +216,25 @@ export default function EscalationsPage() {
   }, [filters])
 
   const hasActiveFilters = activeFilterCount > 0
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const shortcutHints = useMemo(
+    () => [
+      { keyCombo: '/', label: 'Search' },
+      { keyCombo: 'J / K', label: 'Navigate cases' },
+      { keyCombo: 'O', label: 'Open selected case' },
+      { keyCombo: 'E', label: 'Open pending in review panel' },
+      { keyCombo: 'R', label: 'Refresh queue' },
+    ],
+    [],
+  )
+  const activeFilterPills = useMemo(() => {
+    const pills: string[] = []
+    if (filters.search_text.trim()) pills.push(`Search: ${filters.search_text.trim()}`)
+    if (filters.channel !== 'all') pills.push(`Channel: ${getChannelBadge(filters.channel).label}`)
+    if (filters.priority !== 'all') pills.push(`Priority: ${humanizeEnumValue(filters.priority)}`)
+    return pills
+  }, [filters.search_text, filters.channel, filters.priority])
 
-  // --- Data Fetching ---
-
-  const fetchEscalations = useCallback(async () => {
+  const fetchEscalations = useCallback(async (): Promise<EscalationListResponse> => {
     const params = new URLSearchParams()
 
     if (activeTab !== 'all') {
@@ -201,54 +253,68 @@ export default function EscalationsPage() {
     params.append('offset', ((filters.page - 1) * PAGE_SIZE).toString())
 
     const response = await makeAuthenticatedRequest(`/admin/escalations?${params}`)
-
-    if (response.ok) {
-      const data: EscalationListResponse = await response.json()
-      const dataHash = JSON.stringify(data)
-
-      if (dataHash !== previousDataHashRef.current) {
-        previousDataHashRef.current = dataHash
-        setEscalations(data.escalations)
-        setTotalCount(data.total)
-      }
-    } else {
+    if (!response.ok) {
       throw new Error(`Failed to fetch escalations. Status: ${response.status}`)
     }
+    return response.json()
   }, [activeTab, filters.channel, filters.priority, filters.page, debouncedSearchText])
 
-  const fetchCounts = useCallback(async () => {
+  const fetchCounts = useCallback(async (): Promise<EscalationCounts> => {
     const response = await makeAuthenticatedRequest('/admin/escalations/counts')
-
-    if (response.ok) {
-      const data: EscalationCounts = await response.json()
-      setCounts(data)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch escalation counts. Status: ${response.status}`)
     }
+    return response.json()
   }, [])
 
-  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
-    if (!isBackgroundRefresh) {
-      setIsLoading(true)
-    } else {
-      setIsRefreshing(true)
-    }
+  const escalationListQuery = useAdminPollingQuery<EscalationListResponse, readonly unknown[]>({
+    queryKey: [
+      'admin',
+      'escalations',
+      {
+        status: activeTab,
+        channel: filters.channel,
+        priority: filters.priority,
+        search: debouncedSearchText,
+        page: filters.page,
+      },
+    ] as const,
+    queryFn: fetchEscalations,
+    enabled: initializedFromUrl,
+    placeholderData: (previousData) => previousData,
+  })
 
+  const escalationCountsQuery = useAdminPollingQuery<EscalationCounts, readonly unknown[]>({
+    queryKey: ['admin', 'escalations', 'counts'] as const,
+    queryFn: fetchCounts,
+    enabled: initializedFromUrl,
+  })
+
+  const escalations = escalationListQuery.data?.escalations ?? []
+  const totalCount = escalationListQuery.data?.total ?? 0
+  const counts = escalationCountsQuery.data ?? null
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const isLoading = !initializedFromUrl || escalationListQuery.isLoading || escalationCountsQuery.isLoading
+  const isRefreshing = isManualRefresh || escalationListQuery.isFetching || escalationCountsQuery.isFetching
+  const error = escalationListQuery.error?.message || escalationCountsQuery.error?.message || null
+  const visibleError = error && error !== dismissedError ? error : null
+  const statusTabs = [
+    { key: 'all' as const, label: 'All Cases', count: counts?.total ?? 0, icon: Users },
+    { key: 'pending' as const, label: 'Pending', count: counts?.pending ?? 0, icon: AlertCircle },
+    { key: 'in_review' as const, label: 'In Review', count: counts?.in_review ?? 0, icon: Eye },
+    { key: 'responded' as const, label: 'Responded', count: counts?.responded ?? 0, icon: BadgeCheck },
+    { key: 'closed' as const, label: 'Closed', count: counts?.closed ?? 0, icon: Clock },
+  ]
+
+  const refreshData = useCallback(async () => {
+    setDismissedError(null)
+    setIsManualRefresh(true)
     try {
-      await Promise.all([fetchEscalations(), fetchCounts()])
-      setError(null)
-      setLastUpdatedAt(new Date())
-    } catch (err) {
-      console.error('Error fetching escalation data:', err)
-      if (!isBackgroundRefresh) {
-        setError('Failed to fetch escalation data')
-      }
+      await Promise.all([escalationListQuery.refetch(), escalationCountsQuery.refetch()])
     } finally {
-      if (!isBackgroundRefresh) {
-        setIsLoading(false)
-      } else {
-        setIsRefreshing(false)
-      }
+      setIsManualRefresh(false)
     }
-  }, [fetchEscalations, fetchCounts])
+  }, [escalationListQuery, escalationCountsQuery])
 
   // Initialize tab/filters from URL once.
   useEffect(() => {
@@ -260,8 +326,8 @@ export default function EscalationsPage() {
     const searchParam = searchParams.get("search")
     const pageParam = searchParams.get("page")
 
-    const status: 'all' | 'pending' | 'in_review' | 'responded' =
-      (statusParam === "pending" || statusParam === "in_review" || statusParam === "responded") ? statusParam : "all"
+    const status: 'all' | 'pending' | 'in_review' | 'responded' | 'closed' =
+      (statusParam === "pending" || statusParam === "in_review" || statusParam === "responded" || statusParam === "closed") ? statusParam : "all"
     const channel: 'all' | 'web' | 'matrix' | 'bisq2' =
       (channelParam === "web" || channelParam === "matrix" || channelParam === "bisq2") ? channelParam : "all"
     const priority: 'all' | 'high' | 'normal' =
@@ -280,18 +346,21 @@ export default function EscalationsPage() {
   }, [initializedFromUrl, searchParams])
 
   useEffect(() => {
-    if (!initializedFromUrl) return
-    fetchData()
-  }, [initializedFromUrl, fetchData])
+    const updatedAt = Math.max(
+      escalationListQuery.dataUpdatedAt || 0,
+      escalationCountsQuery.dataUpdatedAt || 0,
+    )
+    if (updatedAt > 0) {
+      setLastUpdatedAt(new Date(updatedAt))
+    }
+  }, [escalationListQuery.dataUpdatedAt, escalationCountsQuery.dataUpdatedAt])
 
-  // Auto-refresh every 30 seconds
   useEffect(() => {
-    if (!initializedFromUrl) return
-    const intervalId = setInterval(() => {
-      fetchData(true)
-    }, 30000)
-    return () => clearInterval(intervalId)
-  }, [initializedFromUrl, fetchData])
+    if (!initializedFromUrl || !escalationListQuery.data) return
+    if (filters.page > totalPages) {
+      setFilters((prev) => ({ ...prev, page: totalPages }))
+    }
+  }, [initializedFromUrl, escalationListQuery.data, filters.page, totalPages])
 
   // Keep URL in sync with filters/tabs/pagination (deep-linkable state).
   useEffect(() => {
@@ -301,12 +370,14 @@ export default function EscalationsPage() {
     if (activeTab !== "all") params.set("status", activeTab)
     if (filters.channel !== "all") params.set("channel", filters.channel)
     if (filters.priority !== "all") params.set("priority", filters.priority)
-    if (filters.search_text.trim()) params.set("search", filters.search_text.trim())
+    if (debouncedSearchText.trim()) params.set("search", debouncedSearchText.trim())
     if (filters.page > 1) params.set("page", String(filters.page))
 
     const qs = params.toString()
-    router.replace(qs ? `?${qs}` : "/admin/escalations", { scroll: false })
-  }, [initializedFromUrl, router, activeTab, filters.channel, filters.priority, filters.search_text, filters.page])
+    startUrlTransition(() => {
+      router.replace(qs ? `?${qs}` : "/admin/escalations", { scroll: false })
+    })
+  }, [initializedFromUrl, router, activeTab, filters.channel, filters.priority, debouncedSearchText, filters.page, startUrlTransition])
 
   // --- Handlers ---
 
@@ -316,6 +387,9 @@ export default function EscalationsPage() {
       [key]: value,
       page: key === 'page' ? (value as number) : 1,
     }))
+    if (key !== "page") {
+      setSelectedEscalationIndex(-1)
+    }
   }
 
   const resetFilters = () => {
@@ -325,11 +399,13 @@ export default function EscalationsPage() {
       search_text: '',
       page: 1,
     })
+    setSelectedEscalationIndex(-1)
   }
 
-  const handleTabChange = (tab: 'all' | 'pending' | 'in_review' | 'responded') => {
+  const handleTabChange = (tab: 'all' | 'pending' | 'in_review' | 'responded' | 'closed') => {
     setActiveTab(tab)
     setFilters(prev => ({ ...prev, page: 1 }))
+    setSelectedEscalationIndex(-1)
   }
 
   const openReviewPanel = (escalation: EscalationItem) => {
@@ -359,57 +435,145 @@ export default function EscalationsPage() {
   }
 
   const handleEscalationUpdated = () => {
-    fetchData()
+    void refreshData()
   }
+
+  useEffect(() => {
+    if (escalations.length === 0) {
+      setSelectedEscalationIndex(-1)
+      return
+    }
+    if (selectedEscalationIndex >= escalations.length) {
+      setSelectedEscalationIndex(escalations.length - 1)
+    }
+  }, [escalations.length, selectedEscalationIndex])
+
+  useHotkeys(
+    "/",
+    (event) => {
+      event.preventDefault()
+      searchInputRef.current?.focus()
+    },
+    { enableOnFormTags: false },
+    [],
+  )
+
+  useHotkeys(
+    "j",
+    (event) => {
+      event.preventDefault()
+      if (!escalations.length || showReviewPanel) return
+      setSelectedEscalationIndex((prev) => {
+        if (prev < 0) return 0
+        return Math.min(prev + 1, escalations.length - 1)
+      })
+    },
+    { enableOnFormTags: false },
+    [escalations, showReviewPanel],
+  )
+
+  useHotkeys(
+    "k",
+    (event) => {
+      event.preventDefault()
+      if (!escalations.length || showReviewPanel) return
+      setSelectedEscalationIndex((prev) => Math.max(prev - 1, 0))
+    },
+    { enableOnFormTags: false },
+    [escalations, showReviewPanel],
+  )
+
+  useHotkeys(
+    "o",
+    (event) => {
+      event.preventDefault()
+      if (showReviewPanel) return
+      const selected = selectedEscalationIndex >= 0 ? escalations[selectedEscalationIndex] : escalations[0]
+      if (!selected) return
+      openReviewPanel(selected)
+    },
+    { enableOnFormTags: false },
+    [showReviewPanel, selectedEscalationIndex, escalations],
+  )
+
+  useHotkeys(
+    "e",
+    (event) => {
+      event.preventDefault()
+      if (showReviewPanel) return
+      setActiveTab("pending")
+      const selected = selectedEscalationIndex >= 0 ? escalations[selectedEscalationIndex] : escalations[0]
+      if (!selected) return
+      openReviewPanel(selected)
+    },
+    { enableOnFormTags: false },
+    [showReviewPanel, selectedEscalationIndex, escalations],
+  )
+
+  useHotkeys(
+    "r",
+    (event) => {
+      event.preventDefault()
+      void refreshData()
+    },
+    { enableOnFormTags: false },
+    [refreshData],
+  )
 
   // --- Render ---
 
   return (
     <TooltipProvider>
-      <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Escalation Queue</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Review and respond to escalated support questions
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {lastUpdatedAt && (
-            <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
-              {isRefreshing && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-              <span className="tabular-nums">Updated {formatTimeAgo(lastUpdatedAt.toISOString())}</span>
-            </div>
-          )}
-          <Button
-            onClick={() => setFiltersOpen(true)}
-            variant="outline"
-            size="sm"
-            className="border-border hover:border-primary"
-            aria-haspopup="dialog"
-            aria-expanded={filtersOpen}
+      <AdminQueueShell showVectorStoreBanner shortcutHints={shortcutHints}>
+      <QueuePageHeader
+        title="Escalation Queue"
+        description="Review, respond, and close escalated support cases across channels."
+        lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatTimeAgo(lastUpdatedAt.toISOString())}` : null}
+        isRefreshing={isRefreshing}
+        onRefresh={() => { void refreshData() }}
+        rightSlot={(
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground">
+                <Info className="h-3.5 w-3.5 mr-1.5" />
+                Case definitions
+                <ChevronDown className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="w-[min(420px,calc(100vw-2rem))] rounded-lg border border-border/60 bg-card/95 p-3 text-xs text-muted-foreground shadow-lg backdrop-blur supports-[backdrop-filter]:bg-card/80"
             >
-            <Filter className="mr-2 h-4 w-4" />
-            Filters
-            {hasActiveFilters && (
-              <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs rounded-full">
-                {activeFilterCount}
-              </Badge>
-            )}
-          </Button>
-        </div>
-      </div>
+              <p className="mb-2">
+                <span className="font-medium text-foreground">Pending:</span> waiting for staff triage or response.
+              </p>
+              <p className="mb-2">
+                <span className="font-medium text-foreground">In Review:</span> actively handled by support staff.
+              </p>
+              <p>
+                <span className="font-medium text-foreground">Responded/Closed:</span> delivered response or finalized case.
+              </p>
+            </PopoverContent>
+          </Popover>
+        )}
+      />
 
-      {/* Error Display */}
-      {error && (
+      <QueueTabs
+        tabs={statusTabs}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        gridClassName="grid-cols-2 xl:grid-cols-5"
+      />
+
+      {visibleError && (
         <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg" role="alert">
           <AlertCircle className="h-4 w-4 shrink-0" />
-          <span className="text-sm">{error}</span>
+          <span className="text-sm">{visibleError}</span>
           <button
             type="button"
             aria-label="Dismiss error"
-            onClick={() => setError(null)}
+            onClick={() => setDismissedError(visibleError)}
             className="ml-auto text-red-400/60 hover:text-red-400 transition-colors"
           >
             <X className="h-4 w-4" />
@@ -417,181 +581,70 @@ export default function EscalationsPage() {
         </div>
       )}
 
-      {/* Status Picker (harmonized "queue cards" style like Training) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {([
-          { key: 'all' as const, label: 'All', description: 'Everything in the queue', count: counts?.total, icon: Users },
-          { key: 'pending' as const, label: 'Pending', description: 'Awaiting staff review', count: counts?.pending, icon: AlertCircle },
-          { key: 'in_review' as const, label: 'In Review', description: 'Currently being reviewed', count: counts?.in_review, icon: Eye },
-          { key: 'responded' as const, label: 'Responded', description: 'Staff response provided', count: counts?.responded, icon: BadgeCheck },
-        ]).map((item) => {
-          const isSelected = activeTab === item.key
-          const Icon = item.icon
-          const count = item.count ?? 0
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => handleTabChange(item.key)}
-              className={`touch-manipulation text-left rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                isSelected ? 'ring-2 ring-primary ring-offset-2' : ''
-              }`}
-              aria-pressed={isSelected}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 rounded-lg bg-muted">
-                    <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{item.label}</p>
-                    <p className="text-xs text-muted-foreground truncate">{item.description}</p>
-                  </div>
-                </div>
-                <span
-                  className={`text-lg font-bold tabular-nums ${count > 0 ? 'text-foreground' : 'text-muted-foreground'}`}
-                  aria-label={`${item.label} count ${count}`}
-                >
-                  {count}
-                </span>
-              </div>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Filters Sheet */}
-      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overscroll-contain">
-          <SheetHeader>
-            <SheetTitle>Filters</SheetTitle>
-            <SheetDescription>Refine the escalation queue.</SheetDescription>
-          </SheetHeader>
-
-          <div className="mt-6 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
-            <div className="space-y-1.5">
-              <Label htmlFor="escalations-filter-search" className="text-xs text-muted-foreground">Search</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="escalations-filter-search"
-                  name="search"
-                  placeholder="Search questions…"
-                  value={filters.search_text}
-                  onChange={(e) => handleFilterChange('search_text', e.target.value)}
-                  className="pl-9"
-                  autoComplete="off"
-                />
-                {filters.search_text && (
-                  <button
-                    type="button"
-                    aria-label="Clear search"
-                    onClick={() => handleFilterChange('search_text', '')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="escalations-filter-channel" className="text-xs text-muted-foreground">Channel</Label>
-              <Select
-                value={filters.channel}
-                onValueChange={(value) => handleFilterChange('channel', value)}
+      <QueueCommandBar activeFilterPills={activeFilterPills}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder="Search questions, users, and escalation context..."
+              value={filters.search_text}
+              onChange={(e) => handleFilterChange('search_text', e.target.value)}
+              className="pl-9 pr-8"
+              autoComplete="off"
+            />
+            {filters.search_text && (
+              <button
+                type="button"
+                onClick={() => handleFilterChange('search_text', '')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear search"
               >
-                <SelectTrigger id="escalations-filter-channel">
-                  <SelectValue placeholder="All channels" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Channels</SelectItem>
-                  <SelectItem value="web">Web</SelectItem>
-                  <SelectItem value="matrix">Matrix</SelectItem>
-                  <SelectItem value="bisq2">Bisq2</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="escalations-filter-priority" className="text-xs text-muted-foreground">Priority</Label>
-              <Select
-                value={filters.priority}
-                onValueChange={(value) => handleFilterChange('priority', value)}
-              >
-                <SelectTrigger id="escalations-filter-priority">
-                  <SelectValue placeholder="All priorities" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Priorities</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="normal">Normal</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
-          <SheetFooter className="mt-6 gap-2 sm:gap-2">
-            {hasActiveFilters && (
-              <Button onClick={resetFilters} variant="outline" size="sm" className="sm:mr-auto">
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Reset filters
-              </Button>
-            )}
-            <SheetClose asChild>
-              <Button variant="default" size="sm">Done</Button>
-            </SheetClose>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          <Select value={filters.channel} onValueChange={(value) => handleFilterChange('channel', value)}>
+            <SelectTrigger className="w-[130px]">
+              <SelectValue placeholder="Channel" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Channels</SelectItem>
+              <SelectItem value="web">Web</SelectItem>
+              <SelectItem value="matrix">Matrix</SelectItem>
+              <SelectItem value="bisq2">Bisq2</SelectItem>
+            </SelectContent>
+          </Select>
 
-      {/* Active filters */}
-      {hasActiveFilters && (
-        <div className="flex flex-wrap items-center gap-2">
-          {filters.search_text && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              onClick={() => handleFilterChange('search_text', '')}
-              aria-label="Clear search filter"
-            >
-              Search: <span className="text-foreground/90 inline-block max-w-[220px] truncate align-bottom">{filters.search_text}</span>
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
-          )}
-          {filters.channel !== 'all' && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              onClick={() => handleFilterChange('channel', 'all')}
-              aria-label="Clear channel filter"
-            >
-              Channel: <span className="text-foreground/90">{filters.channel}</span>
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
-          )}
-          {filters.priority !== 'all' && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              onClick={() => handleFilterChange('priority', 'all')}
-              aria-label="Clear priority filter"
-            >
-              Priority: <span className="text-foreground/90">{filters.priority}</span>
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
-          )}
+          <Select value={filters.priority} onValueChange={(value) => handleFilterChange('priority', value)}>
+            <SelectTrigger className="w-[130px]">
+              <SelectValue placeholder="Priority" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Priorities</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+              <SelectItem value="normal">Normal</SelectItem>
+            </SelectContent>
+          </Select>
+
           <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
             onClick={resetFilters}
+            variant="outline"
+            size="sm"
+            className="border-border"
+            disabled={!hasActiveFilters}
           >
-            Clear all
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Reset filters
+            {hasActiveFilters && (
+              <Badge variant="secondary" className="ml-2 h-5 min-w-5 px-1.5 text-[10px] tabular-nums">
+                {activeFilterCount}
+              </Badge>
+            )}
           </Button>
         </div>
-      )}
+      </QueueCommandBar>
 
       {/* Escalation List */}
       <Card>
@@ -604,6 +657,7 @@ export default function EscalationsPage() {
                 {activeTab === 'pending' && 'Awaiting staff review'}
                 {activeTab === 'in_review' && 'Currently being reviewed'}
                 {activeTab === 'responded' && 'Staff response provided'}
+                {activeTab === 'closed' && 'Resolved and archived'}
                 <span className="ml-1 tabular-nums">
                   · {totalCount} {totalCount === 1 ? 'item' : 'items'}
                 </span>
@@ -646,6 +700,8 @@ export default function EscalationsPage() {
                       ? 'No escalations currently in review.'
                       : activeTab === 'responded'
                         ? 'No responded escalations to display.'
+                        : activeTab === 'closed'
+                          ? 'No closed escalations to display.'
                         : 'No escalations have been created yet.'}
               </p>
               {hasActiveFilters && (
@@ -657,27 +713,69 @@ export default function EscalationsPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {escalations.map((escalation) => {
+              {escalations.map((escalation, index) => {
                 const channelBadge = getChannelBadge(escalation.channel)
                 const statusBadge = getStatusBadge(escalation.status)
                 const priorityBadge = getPriorityBadge(escalation.priority)
-                const PriorityIcon = priorityBadge.icon
+                const ageBadge = getEscalationAgeBadge(escalation.created_at, escalation.status)
+                const isKeyboardSelected = index === selectedEscalationIndex
+                const caseTags = [
+                  { label: statusBadge.label, className: statusBadge.className },
+                  { label: `Priority: ${priorityBadge.label}`, className: priorityBadge.className },
+                  ...(ageBadge ? [{ label: ageBadge.label, className: ageBadge.className }] : []),
+                  ...(typeof escalation.confidence_score === "number"
+                    ? [{
+                      label: `${(escalation.confidence_score * 100).toFixed(0)}% confidence`,
+                      className: escalation.confidence_score < 0.3
+                        ? "bg-red-500/15 text-red-400"
+                        : escalation.confidence_score < 0.7
+                          ? "bg-yellow-500/15 text-yellow-400"
+                          : "bg-emerald-500/15 text-emerald-400",
+                    }]
+                    : []),
+                  ...(escalation.staff_id
+                    ? [{ label: `Owner: ${escalation.staff_id}`, className: "bg-primary/15 text-primary border border-primary/25" }]
+                    : []),
+                ]
+                const primaryTags = caseTags.slice(0, 2)
+                const overflowTags = caseTags.slice(2)
+                const rawRouting = normalizeRoutingReasonSourceCount(
+                  String(escalation.routing_reason || escalation.routing_action || "").trim(),
+                  escalation.sources?.length,
+                )
+                const shouldShowRouting = Boolean(rawRouting) && rawRouting.toLowerCase() !== "needs_human"
+                const routingLabel = (!/\s/.test(rawRouting) || /[_-]/.test(rawRouting))
+                  ? humanizeEnumValue(rawRouting)
+                  : rawRouting
 
                 return (
-                  <button
+                  <div
                     key={String(escalation.id)}
-                    type="button"
                     className={`group touch-manipulation relative border rounded-lg transition-colors hover:bg-accent/30 cursor-pointer ${
                       escalation.priority === 'high'
                           ? 'border-l-2 border-l-orange-500/50 border-t border-r border-b border-border'
                           : 'border border-border'
-                    } text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
-                    onClick={() => openReviewPanel(escalation)}
+                    } text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                      isKeyboardSelected ? 'ring-1 ring-primary/60 bg-accent/30' : ''
+                    }`}
+                    onClick={() => {
+                      setSelectedEscalationIndex(index)
+                      openReviewPanel(escalation)
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setSelectedEscalationIndex(index)
+                        openReviewPanel(escalation)
+                      }
+                    }}
+                    onMouseEnter={() => setSelectedEscalationIndex(index)}
                   >
                     <div className="p-4">
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
                         <div className="flex-1 min-w-0 space-y-1.5">
-                          {/* Meta row */}
                           <div className="flex items-center gap-2 flex-wrap">
                             <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                             <Tooltip>
@@ -693,62 +791,48 @@ export default function EscalationsPage() {
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${channelBadge.className}`}>
                               {channelBadge.label}
                             </span>
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${priorityBadge.className}`}>
-                              {PriorityIcon && <PriorityIcon className="h-2.5 w-2.5" />}
-                              {priorityBadge.label}
-                            </span>
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${statusBadge.className}`}>
-                              {statusBadge.label}
-                            </span>
-                            {typeof escalation.confidence_score === "number" && (
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                                  escalation.confidence_score < 0.3
-                                    ? "bg-red-500/15 text-red-400"
-                                    : escalation.confidence_score < 0.7
-                                      ? "bg-yellow-500/15 text-yellow-400"
-                                      : "bg-emerald-500/15 text-emerald-400"
-                                }`}
-                                aria-label={`AI confidence ${(escalation.confidence_score * 100).toFixed(0)} percent`}
-                              >
-                                {(escalation.confidence_score * 100).toFixed(0)}%
+                            {primaryTags.map((tag) => (
+                              <span key={tag.label} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${tag.className}`}>
+                                {tag.label}
                               </span>
-                            )}
-                            {escalation.staff_id && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/15 text-primary border border-primary/25">
-                                <Users className="h-2.5 w-2.5" />
-                                {escalation.staff_id}
-                              </span>
+                            ))}
+                            {overflowTags.length > 0 && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] text-muted-foreground"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    +{overflowTags.length} more
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" onClick={(event) => event.stopPropagation()}>
+                                  {overflowTags.map((tag) => (
+                                    <div key={tag.label} className="px-2 py-1.5 text-xs text-muted-foreground">
+                                      {tag.label}
+                                    </div>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             )}
                           </div>
 
-                          {/* Question preview */}
                           <p className="text-sm leading-relaxed line-clamp-2">
                             {escalation.question}
                           </p>
 
-                          {/* Reason */}
-                          {(() => {
-                            const rawRouting = String(escalation.routing_reason || escalation.routing_action || "").trim()
-                            const shouldShow = Boolean(rawRouting) && rawRouting.toLowerCase() !== "needs_human"
-                            if (!shouldShow) return null
-                            const routingLabel = (!/\s/.test(rawRouting) || /[_-]/.test(rawRouting))
-                              ? humanizeEnumValue(rawRouting)
-                              : rawRouting
-                            return (
-                              <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                                Escalated: {routingLabel}
-                              </p>
-                            )
-                          })()}
+                          {shouldShowRouting && (
+                            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                              Escalated: {routingLabel}
+                            </p>
+                          )}
                         </div>
 
-                        <div className="ml-3 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 shrink-0 text-muted-foreground">
-                          <Eye className="h-4 w-4" aria-hidden="true" />
-                        </div>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 )
               })}
 
@@ -812,7 +896,7 @@ export default function EscalationsPage() {
           onUpdated={handleEscalationUpdated}
         />
       )}
-      </div>
+      </AdminQueueShell>
     </TooltipProvider>
   )
 }

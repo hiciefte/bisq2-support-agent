@@ -77,6 +77,7 @@ interface CategorySelectorProps {
   onSaveCategory?: (category: string) => Promise<void>;
   isSaving?: boolean;
   className?: string;
+  showLabel?: boolean;
 }
 
 // Memoized CategorySelector component to prevent unnecessary re-renders (Rule 5.2)
@@ -87,6 +88,7 @@ export const CategorySelector = memo(function CategorySelector({
   onSaveCategory,
   isSaving = false,
   className,
+  showLabel = true,
 }: CategorySelectorProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>(
     currentCategory || suggestedCategory || "General"
@@ -117,15 +119,16 @@ export const CategorySelector = memo(function CategorySelector({
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
-      {/* Label row */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Category
-        </span>
-        {isSaving && (
-          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-        )}
-      </div>
+      {showLabel && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Category
+          </span>
+          {isSaving && (
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          )}
+        </div>
+      )}
 
       {/* Controls row - dropdown + AI suggestion */}
       <div className="flex items-center gap-2">

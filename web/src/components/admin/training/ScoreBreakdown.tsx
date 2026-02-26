@@ -26,7 +26,6 @@ import {
   Zap,
   Eye,
   ClipboardCheck,
-  Sparkles,
   CircleCheck,
   CircleAlert,
   CircleX,
@@ -40,7 +39,6 @@ interface ScoreBreakdownProps {
   completeness: number | null;
   hallucinationRisk: number | null;
   finalScore: number | null;
-  generationConfidence?: number | null;
   defaultCollapsed?: boolean;
 }
 
@@ -54,14 +52,6 @@ interface MetricConfig {
 }
 
 const METRIC_CONFIGS: Record<string, MetricConfig> = {
-  generationConfidence: {
-    label: "RAG Confidence",
-    weight: 0,  // Not part of comparison score calculation
-    icon: <Sparkles className="h-3.5 w-3.5" />,
-    actionableDescription: "How confident RAG is in its answer",
-    technicalDescription: "RAG system's self-assessed confidence in generating this answer (not part of comparison score)",
-    inverted: false,
-  },
   embeddingSimilarity: {
     label: "Meaning Match",
     weight: 15,
@@ -301,7 +291,6 @@ export const ScoreBreakdown = memo(function ScoreBreakdown({
   completeness,
   hallucinationRisk,
   finalScore,
-  generationConfidence,
   defaultCollapsed = true
 }: ScoreBreakdownProps) {
   const [isOpen, setIsOpen] = useState(!defaultCollapsed);
@@ -450,14 +439,6 @@ export const ScoreBreakdown = memo(function ScoreBreakdown({
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-2 space-y-4">
           {/* Level 2: Detailed metrics breakdown (shown on expand) */}
-
-          {/* RAG Confidence - shown only when available, at the top */}
-          {generationConfidence !== null && generationConfidence !== undefined && (
-            <>
-              <ScoreBar metricKey="generationConfidence" value={generationConfidence} />
-              <div className="border-t border-border/50 my-2" />
-            </>
-          )}
 
           {/* Comparison metrics - 5 core metrics */}
           <ScoreBar metricKey="embeddingSimilarity" value={embeddingSimilarity} />

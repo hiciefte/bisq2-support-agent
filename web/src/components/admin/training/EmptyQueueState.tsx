@@ -1,20 +1,11 @@
 "use client"
 
 import { useEffect, useRef, useState } from 'react';
-import confetti from 'canvas-confetti';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Inbox, Trophy, Zap, Target, Clock } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-
-type RoutingCategory = 'FULL_REVIEW' | 'SPOT_CHECK' | 'AUTO_APPROVE';
-
-interface QueueCounts {
-  FULL_REVIEW: number;
-  SPOT_CHECK: number;
-  AUTO_APPROVE: number;
-}
+import type { QueueCounts, RoutingCategory } from "./types";
 
 interface EmptyQueueStateProps {
   routing: RoutingCategory;
@@ -128,32 +119,44 @@ export function EmptyQueueState({
     if (allQueuesEmpty && sessionReviewCount > 0 && !confettiTriggered.current) {
       confettiTriggered.current = true;
       setShowCelebration(true);
+      let interval: ReturnType<typeof setInterval> | null = null;
+      let isCancelled = false;
 
-      // Fire confetti
-      const duration = 2000;
-      const animationEnd = Date.now() + duration;
-      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+      const runConfetti = async () => {
+        try {
+          const confettiModule = await import('canvas-confetti');
+          if (isCancelled) return;
 
-      const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+          const confetti = confettiModule.default;
+          const duration = 2000;
+          const animationEnd = Date.now() + duration;
+          const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+          const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-      const interval = setInterval(() => {
-        const timeLeft = animationEnd - Date.now();
-        if (timeLeft <= 0) {
-          clearInterval(interval);
-          return;
+          interval = setInterval(() => {
+            const timeLeft = animationEnd - Date.now();
+            if (timeLeft <= 0) {
+              if (interval) clearInterval(interval);
+              return;
+            }
+            const particleCount = 50 * (timeLeft / duration);
+            confetti({
+              ...defaults,
+              particleCount,
+              origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
+            });
+            confetti({
+              ...defaults,
+              particleCount,
+              origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
+            });
+          }, 250);
+        } catch {
+          // Optional celebratory effect; ignore loading/runtime failures.
         }
-        const particleCount = 50 * (timeLeft / duration);
-        confetti({
-          ...defaults,
-          particleCount,
-          origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
-        });
-        confetti({
-          ...defaults,
-          particleCount,
-          origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
-        });
-      }, 250);
+      };
+
+      void runConfetti();
 
       // Check for new achievements
       const unlockedIds = getUnlockedAchievements();
@@ -168,6 +171,11 @@ export function EmptyQueueState({
       }
 
       setNewAchievements(newlyUnlocked);
+
+      return () => {
+        isCancelled = true;
+        if (interval) clearInterval(interval);
+      };
     }
   }, [allQueuesEmpty, sessionReviewCount, sessionMinutes]);
 
@@ -185,12 +193,7 @@ export function EmptyQueueState({
       <CardContent className="p-12">
         <div className="text-center space-y-4">
           {/* Icon */}
-          <motion.div
-            className="flex justify-center"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          >
+          <div className="flex justify-center">
             {otherQueuesWithItems.length === 0 ? (
               <div className="p-4 bg-green-100 dark:bg-green-900/30 rounded-full">
                 <CheckCircle2 className="h-12 w-12 text-green-600 dark:text-green-400" />
@@ -200,14 +203,10 @@ export function EmptyQueueState({
                 <Inbox className="h-12 w-12 text-muted-foreground" />
               </div>
             )}
-          </motion.div>
+          </div>
 
           {/* Title and description */}
-          <motion.div
-            initial={{ y: 10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-          >
+          <div>
             <h3 className="text-lg font-semibold">
               {otherQueuesWithItems.length === 0
                 ? "All caught up!"
@@ -218,103 +217,76 @@ export function EmptyQueueState({
                 ? "There are no training pairs waiting for review."
                 : `The ${routingLabels[routing]} queue is empty.`}
             </p>
-          </motion.div>
+          </div>
 
           {/* Session stats - show when celebration is active */}
-          <AnimatePresence>
-            {showCelebration && sessionReviewCount > 0 && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                className="overflow-hidden"
-              >
-                <div className="py-4 px-6 bg-muted/50 rounded-lg space-y-3">
-                  <p className="text-sm font-medium text-foreground">
-                    Session Summary
-                  </p>
-                  <div className="flex justify-center gap-6">
+          {showCelebration && sessionReviewCount > 0 && (
+            <div className="overflow-hidden transition-all duration-200">
+              <div className="py-4 px-6 bg-muted/50 rounded-lg space-y-3">
+                <p className="text-sm font-medium text-foreground">
+                  Session Summary
+                </p>
+                <div className="flex justify-center gap-6">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-primary">
+                      {sessionReviewCount}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      items reviewed
+                    </div>
+                  </div>
+                  {sessionMinutes > 0 && (
                     <div className="text-center">
                       <div className="text-2xl font-bold text-primary">
-                        {sessionReviewCount}
+                        {sessionMinutes}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        items reviewed
+                        {sessionMinutes === 1 ? 'minute' : 'minutes'}
                       </div>
                     </div>
-                    {sessionMinutes > 0 && (
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-primary">
-                          {sessionMinutes}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {sessionMinutes === 1 ? 'minute' : 'minutes'}
-                        </div>
+                  )}
+                  {sessionMinutes > 0 && sessionReviewCount > 0 && (
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-primary">
+                        {Math.round((sessionReviewCount / sessionMinutes) * 10) / 10 || '-'}
                       </div>
-                    )}
-                    {sessionMinutes > 0 && sessionReviewCount > 0 && (
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-primary">
-                          {Math.round((sessionReviewCount / sessionMinutes) * 10) / 10 || '-'}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          per minute
-                        </div>
+                      <div className="text-xs text-muted-foreground">
+                        per minute
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+            </div>
+          )}
 
           {/* New achievements */}
-          <AnimatePresence>
-            {newAchievements.length > 0 && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3, delay: 0.5 }}
-                className="overflow-hidden"
-              >
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-foreground flex items-center justify-center gap-2">
-                    <Trophy className="h-4 w-4 text-yellow-500" />
-                    Achievement{newAchievements.length > 1 ? 's' : ''} Unlocked!
-                  </p>
-                  <div className="flex justify-center gap-2 flex-wrap">
-                    {newAchievements.map((achievement) => (
-                      <motion.div
-                        key={achievement.id}
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                      >
-                        <Badge
-                          variant="outline"
-                          className="gap-1.5 py-1 px-3 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800"
-                        >
-                          {achievement.icon}
-                          <span>{achievement.name}</span>
-                        </Badge>
-                      </motion.div>
-                    ))}
-                  </div>
+          {newAchievements.length > 0 && (
+            <div className="overflow-hidden transition-all duration-200">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground flex items-center justify-center gap-2">
+                  <Trophy className="h-4 w-4 text-yellow-500" />
+                  Achievement{newAchievements.length > 1 ? 's' : ''} Unlocked!
+                </p>
+                <div className="flex justify-center gap-2 flex-wrap">
+                  {newAchievements.map((achievement) => (
+                    <Badge
+                      key={achievement.id}
+                      variant="outline"
+                      className="gap-1.5 py-1 px-3 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800"
+                    >
+                      {achievement.icon}
+                      <span>{achievement.name}</span>
+                    </Badge>
+                  ))}
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+            </div>
+          )}
 
           {/* Switch queue buttons */}
           {otherQueuesWithItems.length > 0 && (
-            <motion.div
-              className="space-y-2"
-              initial={{ y: 10, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.2 }}
-            >
+            <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
                 Switch to another queue:
               </p>
@@ -329,7 +301,7 @@ export function EmptyQueueState({
                   </Button>
                 ))}
               </div>
-            </motion.div>
+            </div>
           )}
         </div>
       </CardContent>

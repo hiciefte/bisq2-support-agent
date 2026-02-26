@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,8 @@ import {
   Bot,
   MessageSquare,
   AlertCircle,
+  AlertTriangle,
+  ShieldCheck,
   ChevronDown,
   Pencil,
   Check,
@@ -32,12 +34,14 @@ import { MarkdownContent } from "@/components/chat/components/markdown-content"
 import { SourceBadges } from "@/components/chat/components/source-badges"
 import { ConfidenceBadge } from "@/components/chat/components/confidence-badge"
 import type { Source } from "@/components/chat/types/chat.types"
+import { normalizeRoutingReasonSourceCount } from "@/lib/escalation-routing"
 import {
   FAQ_CATEGORIES,
   FAQ_PROTOCOL_OPTIONS,
   inferFaqMetadata,
   type FAQProtocol,
 } from "@/lib/faq-metadata"
+import { SimilarFaqsPanel, type SimilarFAQItem } from "@/components/admin/SimilarFaqsPanel"
 
 interface EscalationReviewPanelProps {
   escalation: EscalationItem
@@ -84,6 +88,20 @@ function humanizeEnumValue(value: string): string {
   return cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+function normalizeAnswerForComparison(value: string): string {
+  return (value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function isMeaningfullyEditedAnswer(staffAnswer: string, aiDraftAnswer: string): boolean {
+  const normalizedStaff = normalizeAnswerForComparison(staffAnswer)
+  const normalizedDraft = normalizeAnswerForComparison(aiDraftAnswer)
+  if (!normalizedStaff) return false
+  if (!normalizedDraft) return true
+  return normalizedStaff !== normalizedDraft
+}
+
 export function EscalationReviewPanel({
   escalation,
   open,
@@ -106,19 +124,29 @@ export function EscalationReviewPanel({
   const [faqCategory, setFaqCategory] = useState('General')
   const [faqProtocol, setFaqProtocol] = useState<FAQProtocol>('all')
   const [isSubmittingFaq, setIsSubmittingFaq] = useState(false)
+  const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([])
+  const [isCheckingSimilarFaqs, setIsCheckingSimilarFaqs] = useState(false)
+  const [requiresForceOverride, setRequiresForceOverride] = useState(false)
 
   // Reset form when escalation changes
   useEffect(() => {
     aiDraftRef.current = escalation.ai_draft_answer || ""
     setStaffAnswer(escalation.staff_answer || escalation.ai_draft_answer || '')
     const hasExistingStaffResponse = Boolean((escalation.staff_answer || "").trim())
+    const hasMeaningfulEdit = isMeaningfullyEditedAnswer(
+      escalation.staff_answer || "",
+      escalation.ai_draft_answer || "",
+    )
     const shouldStartInFaq = hasExistingStaffResponse && (
-      escalation.status === "responded" || escalation.status === "closed"
+      hasMeaningfulEdit &&
+      (escalation.status === "responded" || escalation.status === "closed")
     )
     setPhase(shouldStartInFaq ? "faq" : "review")
     setIsEditingSuggestedAnswer(false)
     setFaqQuestion(escalation.question)
     setFaqAnswer(escalation.staff_answer || escalation.ai_draft_answer || '')
+    setSimilarFaqs([])
+    setRequiresForceOverride(false)
     const inferred = inferFaqMetadata({
       question: escalation.question,
       answer: escalation.staff_answer || escalation.ai_draft_answer,
@@ -162,13 +190,45 @@ export function EscalationReviewPanel({
       )
 
       if (response.ok) {
+        const trimmedAnswer = staffAnswer.trim()
+        const unchangedFromAiDraft = !isMeaningfullyEditedAnswer(
+          trimmedAnswer,
+          aiDraftRef.current,
+        )
+
+        if (unchangedFromAiDraft) {
+          try {
+            const closeResponse = await makeAuthenticatedRequest(
+              `/admin/escalations/${escalation.id}/close`,
+              { method: 'POST' },
+            )
+            if (closeResponse.ok) {
+              toast.success('Response sent and escalation resolved')
+              onUpdated()
+              onOpenChange(false)
+              return
+            }
+
+            const closeError = await closeResponse
+              .json()
+              .catch(() => ({ detail: 'Response sent, but auto-resolve failed. Please close manually.' }))
+            toast.error(closeError.detail || 'Response sent, but auto-resolve failed. Please close manually.')
+            onUpdated()
+            return
+          } catch {
+            toast.error('Response sent, but auto-resolve failed. Please close manually.')
+            onUpdated()
+            return
+          }
+        }
+
         toast.success('Response sent successfully')
         onUpdated()
         setPhase('faq')
-        setFaqAnswer(staffAnswer.trim())
+        setFaqAnswer(trimmedAnswer)
         const inferred = inferFaqMetadata({
           question: faqQuestion || escalation.question,
-          answer: staffAnswer.trim() || escalation.staff_answer || escalation.ai_draft_answer,
+          answer: trimmedAnswer || escalation.staff_answer || escalation.ai_draft_answer,
         })
         setFaqCategory(inferred.category)
         setFaqProtocol(inferred.protocol)
@@ -210,6 +270,10 @@ export function EscalationReviewPanel({
   }
 
   const handleComplete = async () => {
+    await createFaq(false)
+  }
+
+  const createFaq = async (force: boolean) => {
     if (!faqQuestion.trim() || !faqAnswer.trim()) {
       toast.error('Question and answer are required')
       return
@@ -217,11 +281,14 @@ export function EscalationReviewPanel({
 
     setIsSubmittingFaq(true)
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, unknown> = {
         question: faqQuestion.trim(),
         answer: faqAnswer.trim(),
         category: faqCategory,
         protocol: faqProtocol,
+      }
+      if (force) {
+        body.force = true
       }
 
       const response = await makeAuthenticatedRequest(
@@ -234,8 +301,21 @@ export function EscalationReviewPanel({
 
       if (response.ok) {
         toast.success('FAQ created')
+        setSimilarFaqs([])
+        setRequiresForceOverride(false)
         onUpdated()
         onOpenChange(false)
+      } else if (response.status === 409) {
+        const data = await response.json().catch(() => ({ detail: null }))
+        const detail = data?.detail
+        const matches = Array.isArray(detail?.similar_faqs) ? detail.similar_faqs : []
+        setSimilarFaqs(matches)
+        setRequiresForceOverride(true)
+        toast.error(
+          (typeof detail?.message === "string" && detail.message.trim())
+            ? detail.message
+            : "Similar FAQ already exists. Review matches or create anyway."
+        )
       } else {
         const data = await response.json().catch(() => ({ detail: 'Failed to create FAQ' }))
         toast.error(data.detail || 'Failed to create FAQ')
@@ -247,6 +327,57 @@ export function EscalationReviewPanel({
     }
   }
 
+  const checkSimilarFaqs = useCallback(async (question: string) => {
+    const trimmed = question.trim()
+    if (trimmed.length < 5) {
+      setSimilarFaqs([])
+      setRequiresForceOverride(false)
+      return
+    }
+
+    setIsCheckingSimilarFaqs(true)
+    try {
+      const response = await makeAuthenticatedRequest('/admin/faqs/check-similar', {
+        method: 'POST',
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: trimmed,
+          threshold: 0.85,
+          limit: 5,
+          exclude_id: null,
+        }),
+      })
+      if (!response.ok) {
+        return
+      }
+      const data = await response.json()
+      const matches = Array.isArray(data?.similar_faqs) ? data.similar_faqs : []
+      setSimilarFaqs(matches)
+      setRequiresForceOverride(matches.length > 0)
+    } catch {
+      // graceful degradation: FAQ creation still has server-side duplicate guard
+    } finally {
+      setIsCheckingSimilarFaqs(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (phase !== "faq") return
+    const timeoutId = setTimeout(() => {
+      void checkSimilarFaqs(faqQuestion)
+    }, 350)
+    return () => clearTimeout(timeoutId)
+  }, [phase, faqQuestion, checkSimilarFaqs])
+
+  const handleViewSimilarFaq = useCallback((faq: SimilarFAQItem) => {
+    import("@/lib/utils").then(({ generateFaqSlug }) => {
+      const slug = generateFaqSlug(faq.question, faq.id)
+      window.open(`/faq/${slug}`, "_blank", "noopener,noreferrer")
+    })
+  }, [])
+
   const statusBadge = getStatusBadge(escalation.status)
   const channelBadge = getChannelBadge(escalation.channel)
   const canRespond = escalation.status === 'pending' || escalation.status === 'in_review'
@@ -254,7 +385,10 @@ export function EscalationReviewPanel({
   const isActionInProgress = isResponding || isClosing || isSubmittingFaq
 
   const routingAction = (escalation.routing_action || "").trim()
-  const routingReason = (escalation.routing_reason || "").trim()
+  const routingReason = normalizeRoutingReasonSourceCount(
+    (escalation.routing_reason || "").trim(),
+    escalation.sources?.length,
+  )
   const routingActionLower = routingAction.toLowerCase()
   const routingReasonLower = routingReason.toLowerCase()
 
@@ -630,6 +764,35 @@ export function EscalationReviewPanel({
                   >
                     FAQ draft is ready to edit. Adjust question, answer, and metadata, then publish.
                   </div>
+
+                  <div className="rounded-lg border border-border/80 bg-muted/20 p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={faqQuestion.trim() ? "secondary" : "outline"} className="gap-1">
+                        {faqQuestion.trim() ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                        Question
+                      </Badge>
+                      <Badge variant={faqAnswer.trim() ? "secondary" : "outline"} className="gap-1">
+                        {faqAnswer.trim() ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                        Answer
+                      </Badge>
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          "gap-1",
+                          requiresForceOverride
+                            ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            : undefined
+                        )}
+                      >
+                        {requiresForceOverride ? <AlertTriangle className="h-3 w-3" /> : <ShieldCheck className="h-3 w-3" />}
+                        {requiresForceOverride ? "Potential duplicate" : "No close duplicate"}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Publishing is blocked only when exact duplicate guard triggers server-side. Similarity check helps you avoid near-duplicates early.
+                    </p>
+                  </div>
+
                   <div className="space-y-4">
                     <div className="space-y-1.5">
                       <Label htmlFor="escalation-faq-question" className="text-xs text-muted-foreground uppercase tracking-wider">Question</Label>
@@ -637,11 +800,37 @@ export function EscalationReviewPanel({
                         id="escalation-faq-question"
                         name="faq_question"
                         value={faqQuestion}
-                        onChange={(e) => setFaqQuestion(e.target.value)}
+                        onChange={(e) => {
+                          setFaqQuestion(e.target.value)
+                          setRequiresForceOverride(false)
+                        }}
+                        onBlur={() => {
+                          void checkSimilarFaqs(faqQuestion)
+                        }}
                         placeholder="FAQ question"
                         autoComplete="off"
                       />
+                      {isCheckingSimilarFaqs && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1" aria-live="polite">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Checking similar FAQs...
+                        </p>
+                      )}
                     </div>
+
+                    <SimilarFaqsPanel
+                      similarFaqs={similarFaqs}
+                      isLoading={isCheckingSimilarFaqs}
+                      onViewFaq={handleViewSimilarFaq}
+                    />
+
+                    {requiresForceOverride && similarFaqs.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                        <p className="text-sm text-amber-200">
+                          Similar FAQ content detected. Refine the question/answer to keep the knowledge base clean, or use <span className="font-semibold">Create FAQ Anyway</span> to override.
+                        </p>
+                      </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <Label htmlFor="escalation-faq-answer" className="text-xs text-muted-foreground uppercase tracking-wider">Answer</Label>
@@ -711,16 +900,29 @@ export function EscalationReviewPanel({
                 )}
 
                 {phase === 'faq' && (
-                  <Button
-                    onClick={handleComplete}
-                    size="sm"
-                    disabled={isActionInProgress || !faqQuestion.trim() || !faqAnswer.trim()}
-                  >
-                    {isSubmittingFaq ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
-                    Create FAQ & Close
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={handleComplete}
+                      size="sm"
+                      disabled={isActionInProgress || !faqQuestion.trim() || !faqAnswer.trim() || requiresForceOverride}
+                      title={requiresForceOverride ? "Resolve duplicate risk or use Create FAQ Anyway" : undefined}
+                    >
+                      {isSubmittingFaq ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : null}
+                      Create FAQ & Close
+                    </Button>
+                    {requiresForceOverride && (
+                      <Button
+                        onClick={() => void createFaq(true)}
+                        size="sm"
+                        variant="secondary"
+                        disabled={isActionInProgress || !faqQuestion.trim() || !faqAnswer.trim()}
+                      >
+                        Create FAQ Anyway
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
 

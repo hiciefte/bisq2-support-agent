@@ -4,15 +4,7 @@ import { memo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Eye, BarChart3 } from "lucide-react";
-import { motion } from "framer-motion";
-
-type RoutingCategory = 'FULL_REVIEW' | 'SPOT_CHECK' | 'AUTO_APPROVE';
-
-interface QueueCounts {
-  FULL_REVIEW: number;
-  SPOT_CHECK: number;
-  AUTO_APPROVE: number;
-}
+import type { QueueCounts, RoutingCategory } from "./types";
 
 interface QueueStatusProps {
   counts: QueueCounts;
@@ -67,25 +59,17 @@ export const QueueStatus = memo(function QueueStatus({ counts, selectedRouting, 
         const Icon = config.icon;
 
         return (
-          <motion.div
+          <Card
             key={routing}
-            initial={false}
-            animate={{
-              scale: isSelected ? 1 : 0.98,
-            }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.97 }}
-            transition={{
-              type: "spring",
-              stiffness: 400,
-              damping: 25,
-            }}
+            className={cn(
+              "transition-colors hover:bg-accent/30",
+              isSelected && "ring-2 ring-primary ring-offset-2"
+            )}
           >
-            <Card
-              className={cn(
-                "cursor-pointer transition-all hover:shadow-md",
-                isSelected && "ring-2 ring-primary ring-offset-2"
-              )}
+            <button
+              type="button"
+              className="w-full text-left"
+              aria-pressed={isSelected}
               onClick={() => onRoutingChange(routing)}
             >
               <CardContent className="p-4">
@@ -101,22 +85,18 @@ export const QueueStatus = memo(function QueueStatus({ counts, selectedRouting, 
                       </p>
                     </div>
                   </div>
-                  <motion.span
+                  <span
                     className={cn(
                       "text-lg font-bold tabular-nums",
                       count > 0 ? "text-foreground" : "text-muted-foreground"
                     )}
-                    key={count}
-                    initial={{ scale: 1.2, opacity: 0.5 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
                   >
                     {count}
-                  </motion.span>
+                  </span>
                 </div>
               </CardContent>
-            </Card>
-          </motion.div>
+            </button>
+          </Card>
         );
       })}
     </div>

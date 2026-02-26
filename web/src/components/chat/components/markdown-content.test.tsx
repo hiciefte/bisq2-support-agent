@@ -195,4 +195,29 @@ describe('MarkdownContent', () => {
       expect(screen.getByText(/Line 2/)).toBeInTheDocument();
     });
   });
+
+  describe('Images', () => {
+    test('should not render image when markdown image src is empty', () => {
+      const { container } = render(<MarkdownContent content="![]()" />);
+
+      expect(container.querySelector('img')).not.toBeInTheDocument();
+    });
+
+    test('should render image when markdown image src is valid', () => {
+      const { container } = render(
+        <MarkdownContent content="![Diagram](https://example.com/diagram.png)" />
+      );
+
+      const image = container.querySelector('img');
+      expect(image).toBeInTheDocument();
+      expect(image).toHaveAttribute('src', 'https://example.com/diagram.png');
+      expect(image).toHaveAttribute('alt', 'Diagram');
+    });
+
+    test('should not render image for unsafe markdown image scheme', () => {
+      const { container } = render(<MarkdownContent content="![bad](javascript:alert(1))" />);
+
+      expect(container.querySelector('img')).not.toBeInTheDocument();
+    });
+  });
 });

@@ -500,6 +500,48 @@ describe('TrainingReviewItem', () => {
     });
   });
 
+  describe('Generated Answer Rendering', () => {
+    test('strips answer-quality/source footer metadata from markdown body', () => {
+      const mockCandidate = createMockCandidate({
+        protocol: 'bisq_easy',
+        generated_answer: [
+          'Bisq Easy lets new buyers purchase Bitcoin with reputation-protected trades.',
+          '',
+          '---',
+          '',
+          '**Answer quality**',
+          '- Confidence: **Likely accurate (74%)**',
+          '',
+          '**Sources**',
+          '- [Wiki] Main Page',
+        ].join('\n'),
+        generated_answer_sources: [
+          {
+            title: 'Main Page',
+            source: 'wiki',
+            url: 'https://bisq.wiki/Main_Page',
+            score: 0.88,
+          },
+        ],
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      const markdown = screen.getByTestId('markdown-content');
+      expect(markdown).toHaveTextContent('Bisq Easy lets new buyers purchase Bitcoin');
+      expect(markdown).not.toHaveTextContent('Answer quality');
+      expect(markdown).not.toHaveTextContent('Likely accurate');
+      expect(screen.getByTestId('source-badges')).toHaveTextContent('1 sources');
+      expect(screen.getByTestId('confidence-badge')).toHaveTextContent('Confidence: 82%');
+    });
+  });
+
   describe('ARIA Accessibility for Interactive Elements (Cycle 15)', () => {
     test('approve button has accessible aria-label', () => {
       const mockCandidate = createMockCandidate({
@@ -921,7 +963,7 @@ describe('TrainingReviewItem', () => {
       expect(answerComponent).toHaveAttribute('data-editing', 'false');
     });
 
-    test('footer shortcut hint should show E for Edit (not separate Q and E)', () => {
+    test('does not render local shortcut legend (global queue footer owns keyboard hints)', () => {
       const mockCandidate = createMockCandidate({
         routing: 'FULL_REVIEW',
       });
@@ -934,9 +976,7 @@ describe('TrainingReviewItem', () => {
         />
       );
 
-      // Should show unified 'E Edit' shortcut
-      expect(screen.getByText(/E.*Edit/i)).toBeInTheDocument();
-      // Should NOT show separate 'Q Edit Question' shortcut
+      expect(screen.queryByText(/Press:\s*A/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/Q.*Edit Question/i)).not.toBeInTheDocument();
     });
 
@@ -1066,6 +1106,35 @@ describe('TrainingReviewItem', () => {
       expect(questionComponent.getAttribute('data-editing')).toBe(
         answerComponent.getAttribute('data-editing')
       );
+    });
+
+    test('opens reject reason menu when openRejectMenuSignal increments', () => {
+      const mockCandidate = createMockCandidate({
+        routing: 'FULL_REVIEW',
+      });
+
+      const { rerender } = render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          openRejectMenuSignal={0}
+          {...mockHandlers}
+        />
+      );
+
+      expect(screen.queryByText('Incorrect information')).not.toBeInTheDocument();
+
+      rerender(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          openRejectMenuSignal={1}
+          {...mockHandlers}
+        />
+      );
+
+      expect(screen.getByText('Incorrect information')).toBeInTheDocument();
+      expect(screen.getByText('Outdated content')).toBeInTheDocument();
     });
   });
 });

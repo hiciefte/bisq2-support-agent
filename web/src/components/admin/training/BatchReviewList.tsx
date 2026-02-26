@@ -6,21 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { stripGeneratedAnswerFooter } from "@/lib/answer-format";
 import { Check, Loader2, ChevronDown, ChevronUp } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-
-type ProtocolType = 'bisq_easy' | 'multisig_v1' | 'musig' | 'all';
-
-// Simplified candidate type for batch view
-interface BatchCandidate {
-  id: number;
-  question_text: string;
-  generated_answer: string | null;
-  final_score: number | null;
-  category: string | null;
-  protocol: ProtocolType | null;
-  source: string;
-}
+import type { BatchCandidate } from "./types";
 
 interface BatchReviewListProps {
   candidates: BatchCandidate[];
@@ -139,17 +127,17 @@ export function BatchReviewList({
 
       {/* Batch item list */}
       <div className="space-y-2">
-        {candidates.map((candidate) => (
-          <motion.div
-            key={candidate.id}
-            layout
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
+        {candidates.map((candidate) => {
+          const scorePct = candidate.final_score === null
+            ? null
+            : Math.round(candidate.final_score <= 1 ? candidate.final_score * 100 : candidate.final_score);
+          const cleanedGeneratedAnswer = stripGeneratedAnswerFooter(candidate.generated_answer || "");
+
+          return (
             <Card
+              key={candidate.id}
               className={cn(
-                "transition-all cursor-pointer hover:shadow-md",
+                "transition-colors hover:bg-accent/20",
                 selectedIds.has(candidate.id) && "ring-2 ring-primary ring-offset-2"
               )}
             >
@@ -160,27 +148,28 @@ export function BatchReviewList({
                     onCheckedChange={() => toggleSelection(candidate.id)}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <div
-                    className="flex-1 min-w-0"
+                  <button
+                    type="button"
+                    className="flex-1 min-w-0 text-left"
                     onClick={() => toggleExpand(candidate.id)}
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs text-muted-foreground">
                         #{candidate.id}
                       </span>
-                      {candidate.final_score !== null && (
+                      {scorePct !== null && (
                         <Badge
                           variant="outline"
                           className={cn(
                             "text-xs",
-                            candidate.final_score >= 80
+                            scorePct >= 80
                               ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800"
-                              : candidate.final_score >= 60
-                              ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800"
-                              : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"
+                              : scorePct >= 60
+                                ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800"
+                                : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"
                           )}
                         >
-                          {Math.round(candidate.final_score)}%
+                          {scorePct}%
                         </Badge>
                       )}
                       {candidate.category && (
@@ -195,7 +184,7 @@ export function BatchReviewList({
                     <p className="text-sm line-clamp-2 text-foreground">
                       {candidate.question_text}
                     </p>
-                  </div>
+                  </button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -212,49 +201,38 @@ export function BatchReviewList({
                   </Button>
                 </div>
 
-                {/* Expanded view */}
-                <AnimatePresence>
-                  {expandedId === candidate.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="mt-4 pt-4 border-t space-y-3">
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground mb-1">Question</p>
-                          <p className="text-sm">{candidate.question_text}</p>
-                        </div>
-                        {candidate.generated_answer && (
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-1">Generated Answer</p>
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-6">
-                              {candidate.generated_answer}
-                            </p>
-                          </div>
-                        )}
-                        <div className="flex justify-end">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onExpandItem(candidate);
-                            }}
-                          >
-                            View Full Details
-                          </Button>
-                        </div>
+                {expandedId === candidate.id && (
+                  <div className="mt-4 pt-4 border-t space-y-3">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Question</p>
+                      <p className="text-sm">{candidate.question_text}</p>
+                    </div>
+                    {cleanedGeneratedAnswer && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Generated Answer</p>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-6">
+                          {cleanedGeneratedAnswer}
+                        </p>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    )}
+                    <div className="flex justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onExpandItem(candidate);
+                        }}
+                      >
+                        View Full Details
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
-          </motion.div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

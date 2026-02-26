@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { type Period, type DateRange } from '@/types/dashboard';
 
 interface PeriodState {
@@ -15,21 +16,24 @@ const STORAGE_KEY = 'admin_dashboard_period';
  * with URL parameter support for shareability
  */
 export function usePeriodStorage(defaultPeriod: Period = "7d") {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [periodState, setPeriodState] = useState<PeriodState>({
     period: defaultPeriod,
   });
   const [isInitialized, setIsInitialized] = useState(false);
+  const hasInitializedRef = useRef(false);
 
   // Initialize from URL params or localStorage on mount
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (hasInitializedRef.current) return;
 
     try {
       // Check URL parameters first (for shareability)
-      const params = new URLSearchParams(window.location.search);
-      const urlPeriod = params.get('period') as Period;
-      const urlStartDate = params.get('start_date');
-      const urlEndDate = params.get('end_date');
+      const urlPeriod = searchParams.get('period') as Period;
+      const urlStartDate = searchParams.get('start_date');
+      const urlEndDate = searchParams.get('end_date');
 
       if (urlPeriod && ['24h', '7d', '30d', 'custom'].includes(urlPeriod)) {
         const state: PeriodState = { period: urlPeriod };
@@ -42,6 +46,7 @@ export function usePeriodStorage(defaultPeriod: Period = "7d") {
         }
 
         setPeriodState(state);
+        hasInitializedRef.current = true;
         setIsInitialized(true);
         return;
       }
@@ -62,20 +67,21 @@ export function usePeriodStorage(defaultPeriod: Period = "7d") {
     } catch (error) {
       console.error('Failed to load period from storage:', error);
     } finally {
+      hasInitializedRef.current = true;
       setIsInitialized(true);
     }
-  }, []);
+  }, [searchParams]);
 
   // Save to localStorage and update URL whenever period changes
   useEffect(() => {
-    if (!isInitialized || typeof window === 'undefined') return;
+    if (!isInitialized) return;
 
     try {
       // Save to localStorage
       localStorage.setItem(STORAGE_KEY, JSON.stringify(periodState));
 
       // Update URL parameters for shareability
-      const params = new URLSearchParams(window.location.search);
+      const params = new URLSearchParams(searchParams.toString());
       params.set('period', periodState.period);
 
       if (periodState.period === 'custom' && periodState.dateRange) {
@@ -86,13 +92,18 @@ export function usePeriodStorage(defaultPeriod: Period = "7d") {
         params.delete('end_date');
       }
 
-      // Update URL without page reload
-      const newUrl = `${window.location.pathname}?${params.toString()}`;
-      window.history.replaceState({}, '', newUrl);
+      const nextSearch = params.toString();
+      const currentSearch = searchParams.toString();
+      if (nextSearch !== currentSearch) {
+        const newUrl = nextSearch.length > 0
+          ? `${pathname}?${nextSearch}`
+          : pathname;
+        router.replace(newUrl);
+      }
     } catch (error) {
       console.error('Failed to save period to storage:', error);
     }
-  }, [periodState, isInitialized]);
+  }, [isInitialized, pathname, periodState, router, searchParams]);
 
   const updatePeriod = (period: Period, dateRange?: DateRange) => {
     setPeriodState({ period, dateRange });
