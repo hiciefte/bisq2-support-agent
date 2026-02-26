@@ -1,5 +1,7 @@
 services:
   nginx:
+    # Optional in local dev. Enable explicitly with: --profile nginx
+    profiles: ["nginx"]
     ports:
       - "8080:80"  # Use port 8080 locally to avoid macOS port 80 conflicts
     volumes:
@@ -28,8 +30,22 @@ services:
       - ../api/data:/data
     environment:
       - ENVIRONMENT=development
-      - BISQ_API_URL=http://bisq2-api:8090
+      # Default uses the dockerized bisq2-api service.
+      # To use a manually started host Bisq2 API, set:
+      #   BISQ_API_URL=http://host.docker.internal:8090
+      - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090}
+      - BISQ_API_AUTH_ENABLED=${BISQ_API_AUTH_ENABLED:-false}
+      - BISQ_API_CLIENT_ID=${BISQ_API_CLIENT_ID:-}
+      - BISQ_API_CLIENT_SECRET=${BISQ_API_CLIENT_SECRET:-}
+      - BISQ_API_SESSION_ID=${BISQ_API_SESSION_ID:-}
+      - BISQ_API_PAIRING_CODE_ID=${BISQ_API_PAIRING_CODE_ID:-}
+      - BISQ_API_PAIRING_QR_FILE=${BISQ_API_PAIRING_QR_FILE:-}
+      - BISQ_API_PAIRING_CLIENT_NAME=${BISQ_API_PAIRING_CLIENT_NAME:-bisq-support-agent}
+      - BISQ_API_AUTH_STATE_FILE=${BISQ_API_AUTH_STATE_FILE:-bisq_api_auth.json}
       - DATA_DIR=/data # Point to the non-reloaded data directory
+    # Linux compatibility for host access; Docker Desktop already provides host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Note: --loop asyncio disables uvloop to allow AISuite's MCP client to work
     # (nest_asyncio cannot patch uvloop, only standard asyncio event loops)
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --loop asyncio
@@ -54,8 +70,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Use same-origin '/api' in the browser to avoid CORS and mirror production routing.
-      - NEXT_PUBLIC_API_URL=/api
+      # Local dev defaults to direct API calls (nginx is optional/off by default).
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Server-side requests from the web container to API container.
       - API_URL_INTERNAL=http://api:8000
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
@@ -71,6 +88,9 @@ services:
       resources:
         limits:
           memory: 2G  # Next.js dev compilation needs more than 1GB
+    # Base compose sets read_only=true for production hardening.
+    # Disable it in local dev so Next.js can generate /app/.next manifests.
+    read_only: false
 
 networks:
   bisq-support-network:

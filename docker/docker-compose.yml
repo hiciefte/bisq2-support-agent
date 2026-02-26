@@ -79,6 +79,7 @@ services:
     environment:
       - BISQ_DATA_DIR=/opt/bisq2/data
       - JAVA_OPTS=-Xmx1g
+      - BISQ_USER_RATE_LIMIT_ENABLED=${BISQ_USER_RATE_LIMIT_ENABLED:-true}
     expose:
       - "8090"
     networks:
@@ -133,6 +134,15 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
       - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090} # URL for the containerized Bisq2 API service
+      - BISQ2_CHANNEL_ENABLED=${BISQ2_CHANNEL_ENABLED:-false}
+      - BISQ_API_AUTH_ENABLED=${BISQ_API_AUTH_ENABLED:-false}
+      - BISQ_API_CLIENT_ID=${BISQ_API_CLIENT_ID:-}
+      - BISQ_API_CLIENT_SECRET=${BISQ_API_CLIENT_SECRET:-}
+      - BISQ_API_SESSION_ID=${BISQ_API_SESSION_ID:-}
+      - BISQ_API_PAIRING_CODE_ID=${BISQ_API_PAIRING_CODE_ID:-}
+      - BISQ_API_PAIRING_QR_FILE=${BISQ_API_PAIRING_QR_FILE:-}
+      - BISQ_API_PAIRING_CLIENT_NAME=${BISQ_API_PAIRING_CLIENT_NAME:-bisq-support-agent}
+      - BISQ_API_AUTH_STATE_FILE=${BISQ_API_AUTH_STATE_FILE:-bisq_api_auth.json}
       - ENABLE_BISQ_MCP_INTEGRATION=${ENABLE_BISQ_MCP_INTEGRATION:-false} # Enable Bisq 2 MCP integration for live data
       # Tor hidden service configuration
       - TOR_HIDDEN_SERVICE=${TOR_HIDDEN_SERVICE}
@@ -144,8 +154,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       # Matrix integration configuration (sync lane + alert lane)
       - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL:-}
-      - MATRIX_USER=${MATRIX_USER:-}
-      - MATRIX_PASSWORD=${MATRIX_PASSWORD:-}
+      - MATRIX_SYNC_USER=${MATRIX_SYNC_USER:-}
+      - MATRIX_SYNC_PASSWORD=${MATRIX_SYNC_PASSWORD:-}
+      - MATRIX_ALERT_USER=${MATRIX_ALERT_USER:-}
+      - MATRIX_ALERT_PASSWORD=${MATRIX_ALERT_PASSWORD:-}
       - MATRIX_SYNC_ENABLED=${MATRIX_SYNC_ENABLED:-false}
       - MATRIX_SYNC_ROOMS=${MATRIX_SYNC_ROOMS:-}
       - MATRIX_SYNC_SESSION_FILE=${MATRIX_SYNC_SESSION_FILE:-}
@@ -175,6 +187,7 @@ services:
       # Escalation pipeline feature flags
       - ESCALATION_ENABLED=${ESCALATION_ENABLED:-true}
       - ESCALATION_BISQ2_WS_ENABLED=${ESCALATION_BISQ2_WS_ENABLED:-false}
+      - REACTION_NEGATIVE_STABILIZATION_SECONDS=${REACTION_NEGATIVE_STABILIZATION_SECONDS:-20}
     expose:
       - "8000"
     networks:
@@ -301,6 +314,8 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--storage.tsdb.retention.size=1GB'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
     expose:
@@ -322,7 +337,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: 1G
 
   # Monitoring - Grafana
   grafana:

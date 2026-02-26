@@ -140,21 +140,31 @@ groups:
       # ========================================
 
       - alert: ContainerHighMemory
-        expr: (container_memory_usage_bytes{name=~"docker-.*"} / container_spec_memory_limit_bytes{name=~"docker-.*"}) > 0.85 and container_spec_memory_limit_bytes{name=~"docker-.*"} > 0
-        for: 5m
-        labels:
-          severity: warning
-          component: infrastructure
-        annotations:
-          summary: "Container {{ $labels.name }} memory usage >85%"
-          description: "Container {{ $labels.name }} is using {{ $value | humanizePercentage }} of its memory limit."
-
-      - alert: ContainerHighCPU
-        expr: rate(container_cpu_usage_seconds_total{name=~"docker-.*"}[5m]) > 0.9
+        expr: avg_over_time((container_memory_usage_bytes{name=~"docker-.*"} / container_spec_memory_limit_bytes{name=~"docker-.*"})[15m:30s]) > 0.90 and container_spec_memory_limit_bytes{name=~"docker-.*"} > 0 and (time() - container_last_seen{name=~"docker-.*"}) < 60
         for: 10m
         labels:
           severity: warning
           component: infrastructure
         annotations:
-          summary: "Container {{ $labels.name }} CPU usage >90%"
-          description: "Container {{ $labels.name }} has sustained high CPU usage."
+          summary: "Container {{ $labels.name }} memory usage >90% (15m avg)"
+          description: "Container {{ $labels.name }} averaged {{ $value | humanizePercentage }} memory usage over the last 15 minutes."
+
+      - alert: ContainerHighCPU
+        expr: (rate(container_cpu_usage_seconds_total{name=~"docker-.*",cpu="total"}[5m]) / on(name, instance, id) clamp_min((container_spec_cpu_quota{name=~"docker-.*"} / container_spec_cpu_period{name=~"docker-.*"}), 0.001)) > 0.90 and container_spec_cpu_quota{name=~"docker-.*"} > 0 and (time() - container_last_seen{name=~"docker-.*"}) < 60
+        for: 15m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.name }} CPU usage >90% of limit"
+          description: "Container {{ $labels.name }} has sustained high CPU usage relative to its CPU quota."
+
+      - alert: ContainerCPUThrottlingHigh
+        expr: (rate(container_cpu_cfs_throttled_periods_total{name=~"docker-.*"}[5m]) / clamp_min(rate(container_cpu_cfs_periods_total{name=~"docker-.*"}[5m]), 1)) > 0.25 and container_spec_cpu_quota{name=~"docker-.*"} > 0 and (time() - container_last_seen{name=~"docker-.*"}) < 60
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.name }} CPU throttling >25%"
+          description: "Container {{ $labels.name }} is frequently throttled and may be CPU-starved."

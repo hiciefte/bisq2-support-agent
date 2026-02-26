@@ -32,8 +32,8 @@ check_matrix_config() {
         exit 0
     fi
 
-    if ! grep -q "MATRIX_PASSWORD=" docker/.env || [ -z "$(grep MATRIX_PASSWORD= docker/.env | cut -d= -f2)" ]; then
-        echo -e "${YELLOW}WARNING: MATRIX_PASSWORD not set in .env${NC}"
+    if ! grep -q "MATRIX_SYNC_PASSWORD=" docker/.env || [ -z "$(grep MATRIX_SYNC_PASSWORD= docker/.env | cut -d= -f2)" ]; then
+        echo -e "${YELLOW}WARNING: MATRIX_SYNC_PASSWORD not set in .env${NC}"
         echo "Matrix integration requires password authentication. Skipping test."
         exit 0
     fi
@@ -229,7 +229,7 @@ else
     echo ""
     echo "Recommendations:"
     echo "  - Check API logs: docker compose logs api | grep -i matrix"
-    echo "  - Verify MATRIX_PASSWORD is correct in .env"
+    echo "  - Verify MATRIX_SYNC_PASSWORD is correct in .env"
     echo "  - Ensure /data bind mount persists api/data across restarts"
     exit 1
 fi

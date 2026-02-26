@@ -32,6 +32,28 @@ For developing on your local machine, the project provides a comprehensive Docke
 ```
 This is the **only** command needed for local development. It uses `docker/.env` for secrets and `docker-compose.local.yml` for development-specific configurations like hot-reloading. The scripts in the `scripts/` directory are **not** intended for local use.
 
+If you want Dockerized support-agent services to use a manually started Bisq2 headless API on the host:
+
+```bash
+BISQ_API_URL=http://host.docker.internal:8090 ./run-local.sh
+```
+
+Important: the Bisq2 API process must be reachable from Docker (bind host `0.0.0.0`, not only `127.0.0.1`).
+
+If the Bisq2 API runs with `authorizationRequired=true`, enable authenticated support-agent access:
+
+```bash
+BISQ_API_AUTH_ENABLED=true
+# Either provide existing client credentials...
+BISQ_API_CLIENT_ID=...
+BISQ_API_CLIENT_SECRET=...
+# ...or provide pairing bootstrap input:
+# BISQ_API_PAIRING_CODE_ID=...
+# BISQ_API_PAIRING_QR_FILE=/path/to/pairing_qr_code.txt
+```
+
+Note: the current Bisq2 permission mapping must include `/api/v1/support/*` for fully authorized support export/send.
+
 ### Production Deployment
 
 This project is designed to be deployed via Docker on a dedicated server. The `scripts/` directory contains the necessary automation for installation, updates, and management.

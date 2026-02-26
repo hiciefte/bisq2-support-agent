@@ -62,22 +62,27 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Matrix homeserver URL used by both sync and alert lanes.
     *   Required: Yes (when Matrix lanes are enabled)
     *   Example: `https://matrix.org`
-*   **`MATRIX_USER`**
-    *   Description: Matrix bot user ID used by both lanes.
-    *   Required: Yes (when Matrix lanes are enabled)
-    *   Example: `@bisq-support:matrix.org`
-*   **`MATRIX_PASSWORD`**
-    *   Description: Matrix password used for password-based auth and session restoration.
-    *   Required: Yes (when `MATRIX_HOMESERVER_URL` is set)
 *   **`MATRIX_SYNC_ENABLED`**
     *   Description: Enables Matrix sync lane bootstrap.
     *   Default: `false`
+*   **`MATRIX_SYNC_USER`**
+    *   Description: Dedicated Matrix user for sync/support lane.
+    *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
+*   **`MATRIX_SYNC_PASSWORD`**
+    *   Description: Dedicated password for sync/support lane.
+    *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
 *   **`MATRIX_SYNC_ROOMS`**
     *   Description: Comma-separated room IDs polled for support Q/A ingestion.
     *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
 *   **`MATRIX_SYNC_SESSION_FILE`**
     *   Description: Session file for Matrix sync lane.
     *   Default: `matrix_session.json` (resolved under `DATA_DIR`)
+*   **`MATRIX_ALERT_USER`**
+    *   Description: Dedicated Matrix user for alert lane.
+    *   Required: Yes (when `MATRIX_ALERT_ROOM` is set)
+*   **`MATRIX_ALERT_PASSWORD`**
+    *   Description: Dedicated password for alert lane.
+    *   Required: Yes (when `MATRIX_ALERT_ROOM` is set)
 *   **`MATRIX_ALERT_ROOM`**
     *   Description: Destination room for operational alerts.
     *   Required: Optional
@@ -94,6 +99,10 @@ The Matrix integration uses lane-specific names to separate support-channel inge
 *   **`HYBRID_KEYWORD_WEIGHT`**
     *   Description: Sparse/BM25 weight in hybrid retrieval.
     *   Default: `0.4`
+*   **`REACTION_NEGATIVE_STABILIZATION_SECONDS`**
+    *   Description: Delay window before auto-escalating negative reactions to avoid false positives when users quickly change or remove a thumbs-down reaction.
+    *   Default: `20`
+    *   Production recommendation: `20` (set explicitly in `/etc/bisq-support/deploy.env` or `docker/.env`)
 *   **`EXPOSE_API_PORT`**
     *   Description: Internal port used by the API container.
     *   Default: `8000`
