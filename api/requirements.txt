@@ -620,7 +620,7 @@ uvicorn==0.41.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==21.0.0
+virtualenv==21.1.0
     # via pre-commit
 websockets==16.0
     # via -r api/requirements.in
