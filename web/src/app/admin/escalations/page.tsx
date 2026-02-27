@@ -501,7 +501,6 @@ export default function EscalationsPage() {
     (event) => {
       event.preventDefault()
       if (showReviewPanel) return
-      setActiveTab("pending")
       const selected = selectedEscalationIndex >= 0 ? escalations[selectedEscalationIndex] : escalations[0]
       if (!selected) return
       openReviewPanel(selected)

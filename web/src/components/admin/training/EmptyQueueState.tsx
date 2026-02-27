@@ -107,6 +107,9 @@ export function EmptyQueueState({
   const sessionMinutes = sessionStartTime
     ? Math.round((Date.now() - sessionStartTime) / 60000)
     : 0;
+  const reviewsPerMinute = sessionMinutes > 0
+    ? Math.round((sessionReviewCount / sessionMinutes) * 10) / 10
+    : null;
 
   // Check if all queues are empty (celebration trigger)
   const allQueuesEmpty = !queueCounts ||
@@ -248,7 +251,9 @@ export function EmptyQueueState({
                   {sessionMinutes > 0 && sessionReviewCount > 0 && (
                     <div className="text-center">
                       <div className="text-2xl font-bold text-primary">
-                        {Math.round((sessionReviewCount / sessionMinutes) * 10) / 10 || '-'}
+                        {reviewsPerMinute !== null && Number.isFinite(reviewsPerMinute)
+                          ? reviewsPerMinute.toFixed(1)
+                          : '-'}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         per minute

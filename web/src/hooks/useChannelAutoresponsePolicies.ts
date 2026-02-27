@@ -158,13 +158,12 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
       setError("Could not update channel auto-response policy.");
       return false;
     } finally {
-      if (mutationVersionRef.current[channelId] !== mutationVersion) {
-        return;
+      if (mutationVersionRef.current[channelId] === mutationVersion) {
+        setIsSavingByChannel((current) => ({
+          ...current,
+          [channelId]: false,
+        }));
       }
-      setIsSavingByChannel((current) => ({
-        ...current,
-        [channelId]: false,
-      }));
     }
   }, [refresh]);
 

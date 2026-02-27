@@ -150,7 +150,7 @@ groups:
           description: "Container {{ $labels.name }} averaged {{ $value | humanizePercentage }} memory usage over the last 15 minutes."
 
       - alert: ContainerHighCPU
-        expr: (rate(container_cpu_usage_seconds_total{name=~"docker-.*",cpu="total"}[5m]) / on(name, instance, id) clamp_min((container_spec_cpu_quota{name=~"docker-.*"} / container_spec_cpu_period{name=~"docker-.*"}), 0.001)) > 0.90 and container_spec_cpu_quota{name=~"docker-.*"} > 0 and (time() - container_last_seen{name=~"docker-.*"}) < 60
+        expr: (rate(container_cpu_usage_seconds_total{name=~"docker-.*",cpu="total"}[5m]) / on(name, instance, id) clamp_min((container_spec_cpu_quota{name=~"docker-.*"} / container_spec_cpu_period{name=~"docker-.*"}), 0.001)) > 0.90 and on(name, instance, id) container_spec_cpu_quota{name=~"docker-.*"} > 0 and on(name, instance, id) (time() - container_last_seen{name=~"docker-.*"}) < 60
         for: 15m
         labels:
           severity: warning

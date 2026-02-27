@@ -67,6 +67,24 @@ describe("BatchReviewList", () => {
     expect(screen.getByText("85%")).toBeInTheDocument();
   });
 
+  it("treats exact 1 as a 1% score", () => {
+    render(
+      <BatchReviewList
+        candidates={[
+          {
+            ...baseCandidate,
+            final_score: 1,
+          },
+        ]}
+        isLoading={false}
+        onBatchApprove={jest.fn()}
+        onExpandItem={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1%")).toBeInTheDocument();
+  });
+
   it("strips generated footer metadata in expanded preview", () => {
     const footerAnswer = [
       "Bisq Easy is a reputation-based buying flow.",

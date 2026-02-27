@@ -130,7 +130,17 @@ export function BatchReviewList({
         {candidates.map((candidate) => {
           const scorePct = candidate.final_score === null
             ? null
-            : Math.round(candidate.final_score <= 1 ? candidate.final_score * 100 : candidate.final_score);
+            : Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(
+                    candidate.final_score >= 0 && candidate.final_score < 1
+                      ? candidate.final_score * 100
+                      : candidate.final_score,
+                  ),
+                ),
+              );
           const cleanedGeneratedAnswer = stripGeneratedAnswerFooter(candidate.generated_answer || "");
 
           return (

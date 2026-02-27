@@ -41,9 +41,15 @@ function MockReactMarkdown({ children, components }: ReactMarkdownProps) {
           const ImageComponent = components?.img;
           const alt = match[1];
           const src = match[2];
-          if (ImageComponent && typeof ImageComponent === 'function') {
-            const result = ImageComponent({ src, alt });
-            return <React.Fragment key={key++}>{result}</React.Fragment>;
+          if (ImageComponent) {
+            return (
+              <React.Fragment key={key++}>
+                {React.createElement(
+                  ImageComponent as React.ComponentType<ImageProps>,
+                  { src, alt },
+                )}
+              </React.Fragment>
+            );
           }
           // eslint-disable-next-line @next/next/no-img-element
           return <img key={key++} src={src} alt={alt} />;
@@ -80,10 +86,16 @@ function MockReactMarkdown({ children, components }: ReactMarkdownProps) {
           const LinkComponent = components?.a;
           const href = match[2];
           const text = match[1];
-          if (LinkComponent && typeof LinkComponent === 'function') {
-            // Call as function (handles both component and render function)
-            const result = LinkComponent({ href, children: text });
-            return <React.Fragment key={key++}>{result}</React.Fragment>;
+          if (LinkComponent) {
+            return (
+              <React.Fragment key={key++}>
+                {React.createElement(
+                  LinkComponent as React.ComponentType<LinkProps>,
+                  { href },
+                  text,
+                )}
+              </React.Fragment>
+            );
           }
           return (
             <a key={key++} href={href} target="_blank" rel="noopener noreferrer">
