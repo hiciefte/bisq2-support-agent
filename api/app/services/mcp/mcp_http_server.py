@@ -360,7 +360,7 @@ def _extract_currency_arg(args: dict[str, Any]) -> str | None:
             match = re.search(r"\b[A-Z]{2,5}\b", candidate)
             if match:
                 token = match.group(0)
-                if token == "BTC":
+                if token in {"BTC", "XBT"}:
                     continue
                 return token
     return None

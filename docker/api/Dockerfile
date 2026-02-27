@@ -26,6 +26,7 @@ FROM python:3.11-slim AS development
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    libolm3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up work directory
@@ -62,6 +63,7 @@ FROM python:3.11-slim AS final
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gosu \
+    libolm3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Arguments for user and group IDs

@@ -74,6 +74,7 @@ class Bisq2Channel(ChannelBase):
     _ws_startup_timeout_seconds: float
     _question_prefilter: QuestionPrefilterProtocol
     _VALID_USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-@.:]{1,128}$")
+    _MAX_WS_MESSAGE_BUFFER = 5000
     ENABLED_FLAG = "BISQ2_CHANNEL_ENABLED"
     ENABLED_DEFAULT = False
 
@@ -451,7 +452,7 @@ class Bisq2Channel(ChannelBase):
         self._seen_message_order = deque()
         self._max_seen_message_ids = 10000
         self._message_cache_by_id = {}
-        self._ws_message_buffer = deque()
+        self._ws_message_buffer = deque(maxlen=self._MAX_WS_MESSAGE_BUFFER)
         self._ws_listener_task = None
         self._ws_callback_registered = False
         self._ws_callback_client = None
@@ -607,6 +608,14 @@ class Bisq2Channel(ChannelBase):
                 if normalized is None:
                     return
                 self._cache_message(normalized)
+                if (
+                    self._ws_message_buffer.maxlen is not None
+                    and len(self._ws_message_buffer) == self._ws_message_buffer.maxlen
+                ):
+                    self._logger.warning(
+                        "Bisq2 websocket buffer full (%s); dropping oldest message",
+                        self._ws_message_buffer.maxlen,
+                    )
                 self._ws_message_buffer.append(normalized)
                 return
 
@@ -689,10 +698,14 @@ class Bisq2Channel(ChannelBase):
     ) -> List[IncomingMessage]:
         """Run dedupe + transform pipeline for raw messages."""
         new_messages = []
+        seen_in_batch: set[str] = set()
         for msg in messages:
             message_id = self._derive_message_id(msg)
-            if not self._should_process_message(message_id):
+            if message_id in seen_in_batch or not self._should_process_message(
+                message_id
+            ):
                 continue
+            seen_in_batch.add(message_id)
             msg_with_id = dict(msg)
             msg_with_id["messageId"] = message_id
             new_messages.append(msg_with_id)

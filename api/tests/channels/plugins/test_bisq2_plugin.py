@@ -7,6 +7,7 @@ not by the channel plugin. Bisq2 sends responses via REST API.
 """
 
 import asyncio
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -816,6 +817,78 @@ class TestBisq2ChannelPolling:
         assert len(first_poll) == 1
         assert first_poll[0].message_id == "msg-repeat-1"
         assert second_poll == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_process_raw_messages_deduplicates_ids_within_same_batch(self):
+        """Duplicate message IDs within one batch should only be processed once."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=None)
+        channel = Bisq2Channel(runtime)
+
+        batch = [
+            {
+                "messageId": "dup-msg-1",
+                "author": "Dumb User",
+                "authorId": "user-123",
+                "message": "Is Bisq 2 open source?",
+                "conversationId": "support.support",
+                "channelId": "support.support",
+                "date": "2026-02-20T15:33:23.966Z",
+            },
+            {
+                "messageId": "dup-msg-1",
+                "author": "Dumb User",
+                "authorId": "user-123",
+                "message": "Is Bisq 2 open source?",
+                "conversationId": "support.support",
+                "channelId": "support.support",
+                "date": "2026-02-20T15:33:23.966Z",
+            },
+        ]
+
+        incoming = await channel._process_raw_messages(batch, source_name="batch")
+        assert len(incoming) == 1
+        assert incoming[0].message_id == "dup-msg-1"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_websocket_buffer_is_bounded_and_drops_oldest(self):
+        """Websocket buffer should drop oldest events once maxlen is reached."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=None)
+        channel = Bisq2Channel(runtime)
+        channel._ws_message_buffer = deque(maxlen=2)
+
+        async def push(msg_id: str) -> None:
+            await channel._on_websocket_event(
+                {
+                    "topic": "SUPPORT_CHAT_MESSAGES",
+                    "modificationType": "ADDED",
+                    "payload": {
+                        "messageId": msg_id,
+                        "channelId": "support.support",
+                        "conversationId": "support.support",
+                        "senderUserProfileId": "user-123",
+                        "author": "Dumb User",
+                        "text": f"Question {msg_id}",
+                        "timestamp": 1760000000000,
+                    },
+                }
+            )
+
+        await push("buf-1")
+        await push("buf-2")
+        await push("buf-3")
+
+        buffered_ids = [item.get("messageId") for item in channel._ws_message_buffer]
+        assert buffered_ids == ["buf-2", "buf-3"]
 
     @pytest.mark.unit
     @pytest.mark.asyncio

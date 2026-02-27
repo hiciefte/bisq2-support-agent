@@ -120,7 +120,15 @@ class ChannelResponseDispatcher:
                     getattr(incoming, "message_id", "<unknown>"),
                 )
                 return False
-            return bool(await self.channel.send_message(target, response))
+            try:
+                return bool(await self.channel.send_message(target, response))
+            except Exception:
+                logger.exception(
+                    "Failed sending %s message_id=%s",
+                    self.channel_id,
+                    getattr(incoming, "message_id", "<unknown>"),
+                )
+                return False
 
         if self.should_create_escalation(response):
             escalation = await self.create_escalation_for_review(incoming, response)

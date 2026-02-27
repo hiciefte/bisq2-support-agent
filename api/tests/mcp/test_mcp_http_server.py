@@ -280,6 +280,28 @@ class TestMCPHttpServerContract:
         assert "currency is required" in text or "fiat" in text
         mock_bisq_service.get_offerbook_formatted.assert_not_called()
 
+    def test_tool_call_get_offerbook_rejects_xbt_currency(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should reject XBT as a currency argument."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"currency": "XBT"},
+                },
+                "id": 4_51,
+            },
+        )
+
+        assert response.status_code == 200
+        text = response.json()["result"]["content"][0]["text"].lower()
+        assert "currency is required" in text or "fiat" in text
+        mock_bisq_service.get_offerbook_formatted.assert_not_called()
+
     def test_tool_call_get_offerbook_requires_currency(
         self, test_client, mock_bisq_service
     ):
