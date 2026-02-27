@@ -34,3 +34,36 @@ export function getApiBaseUrl(): string {
   }
   return API_BASE_URL;
 }
+
+/**
+ * Build an API URL that always targets exactly one `/api` prefix.
+ *
+ * Supports both base URL styles:
+ * - Base already includes `/api` (e.g. "/api", "http://nginx:80/api")
+ * - Base points to host root (e.g. "http://localhost:8000")
+ */
+export function buildApiUrl(pathAfterApi: string, baseUrl: string = getApiBaseUrl()): string {
+  const trimmedBase = baseUrl.replace(/\/+$/, '');
+  const normalizedPath = pathAfterApi.startsWith('/') ? pathAfterApi : `/${pathAfterApi}`;
+  const apiPath = normalizedPath.startsWith('/api/') || normalizedPath === '/api'
+    ? normalizedPath
+    : `/api${normalizedPath}`;
+
+  if (!trimmedBase) {
+    return apiPath;
+  }
+
+  if (trimmedBase.endsWith('/api') && apiPath.startsWith('/api/')) {
+    return `${trimmedBase}${apiPath.slice(4)}`;
+  }
+
+  if (trimmedBase.endsWith('/api') && apiPath === '/api') {
+    return trimmedBase;
+  }
+
+  return `${trimmedBase}${apiPath}`;
+}
+
+export function isAbsoluteHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}

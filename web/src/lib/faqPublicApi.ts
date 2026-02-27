@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from './config';
+import { buildApiUrl, getApiBaseUrl, isAbsoluteHttpUrl } from './config';
 
 /**
  * Public FAQ types - sanitized version of FAQs for public consumption
@@ -52,10 +52,10 @@ export async function fetchPublicFAQs(options?: {
   if (options?.category) params.set('category', options.category);
 
   const queryString = params.toString();
-  const baseUrl = getApiBaseUrl();
-  const url = `${baseUrl}/api/public/faqs${queryString ? `?${queryString}` : ''}`;
+  const url = buildApiUrl('/public/faqs');
+  const urlWithQuery = queryString ? `${url}?${queryString}` : url;
 
-  const response = await fetch(url, {
+  const response = await fetch(urlWithQuery, {
     method: 'GET',
     headers: {
       'Accept': 'application/json',
@@ -75,8 +75,7 @@ export async function fetchPublicFAQs(options?: {
  * Fetch a single FAQ by its slug
  */
 export async function fetchPublicFAQBySlug(slug: string): Promise<PublicFAQ | null> {
-  const baseUrl = getApiBaseUrl();
-  const url = `${baseUrl}/api/public/faqs/${encodeURIComponent(slug)}`;
+  const url = buildApiUrl(`/public/faqs/${encodeURIComponent(slug)}`);
 
   const response = await fetch(url, {
     method: 'GET',
@@ -101,8 +100,7 @@ export async function fetchPublicFAQBySlug(slug: string): Promise<PublicFAQ | nu
  * Fetch all FAQ categories with counts
  */
 export async function fetchPublicFAQCategories(): Promise<PublicFAQCategory[]> {
-  const baseUrl = getApiBaseUrl();
-  const url = `${baseUrl}/api/public/faqs/categories`;
+  const url = buildApiUrl('/public/faqs/categories');
 
   const response = await fetch(url, {
     method: 'GET',
@@ -133,10 +131,18 @@ export async function fetchAllFAQSlugs(): Promise<string[]> {
 
   try {
     const baseUrl = getApiBaseUrl();
+    const isServerSide = typeof window === 'undefined';
+
+    // During production image builds, server-side base URL may be relative (`/api`),
+    // which is invalid for Node fetch at build time. Skip pre-generation in that case.
+    if (isServerSide && !isAbsoluteHttpUrl(baseUrl)) {
+      return allSlugs;
+    }
 
     while (hasMore) {
+      const url = `${buildApiUrl('/public/faqs', baseUrl)}?limit=${limit}&page=${page}`;
       const response = await fetch(
-        `${baseUrl}/api/public/faqs?limit=${limit}&page=${page}`,
+        url,
         {
           method: 'GET',
           headers: {
