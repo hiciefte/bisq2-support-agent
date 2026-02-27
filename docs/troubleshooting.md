@@ -214,11 +214,18 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 5. If Bisq2 API has `authorizationRequired=true`, ensure support-agent auth is configured:
    ```bash
-   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_CLIENT_ID|BISQ_API_CLIENT_SECRET|BISQ_API_SESSION_ID|BISQ_API_PAIRING_CODE_ID|BISQ_API_PAIRING_QR_FILE)=' docker/.env
+   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_PAIRING_QR_FILE|BISQ_API_PAIRING_CODE_ID|BISQ_API_AUTH_STATE_FILE|BISQ_API_PAIRING_CLIENT_NAME)=' docker/.env
    ```
-   - Use either `BISQ_API_CLIENT_ID` + `BISQ_API_CLIENT_SECRET` (recommended), or pairing bootstrap (`BISQ_API_PAIRING_CODE_ID` / `BISQ_API_PAIRING_QR_FILE`).
-   - For credential flow, ensure both `BISQ_API_CLIENT_SECRET` and `BISQ_API_SESSION_ID` are present in runtime config.
-   - If logs still show `Required permissions not granted` for `/api/v1/support/*`, verify secret/session presence and update Bisq2 REST permission mapping to allow support endpoints for your client.
+   - Recommended flow is pairing bootstrap via QR file:
+     1. Set `BISQ_API_AUTH_ENABLED=true` and `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
+     2. Copy current QR payload from Bisq2 API runtime data into API data volume:
+        ```bash
+        docker compose -f docker/docker-compose.yml exec bisq2-api cat /opt/bisq2/data/pairing_qr_code.txt > api/data/pairing_qr_code.txt
+        ```
+     3. Restart `api` container and confirm `/data/bisq_api_auth.json` is created.
+   - If logs show `Missing clientId`, pairing did not complete (missing/invalid QR file or auth disabled in support-agent).
+   - If logs show `Required permissions not granted` for `/api/v1/support/*`, Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients.
+   - If Docker healthcheck for `bisq2-api` uses authenticated endpoint and fails with `403`, use a non-`-f` curl healthcheck so auth-mode `403` still counts as liveness.
 
 ## Monitoring Issues
 
