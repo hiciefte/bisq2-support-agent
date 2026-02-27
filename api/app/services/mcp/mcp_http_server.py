@@ -353,9 +353,34 @@ def _extract_currency_arg(args: dict[str, Any]) -> str | None:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             candidate = value.strip().upper()
+            if key == "market":
+                quote_currency = _extract_quote_currency_from_market(candidate)
+                if quote_currency:
+                    return quote_currency
             match = re.search(r"\b[A-Z]{2,5}\b", candidate)
             if match:
-                return match.group(0)
+                token = match.group(0)
+                if token == "BTC":
+                    continue
+                return token
+    return None
+
+
+def _extract_quote_currency_from_market(market: str) -> str | None:
+    normalized = market.strip().upper()
+    if not normalized:
+        return None
+
+    for separator in ("/", "_", "-", ":"):
+        if separator in normalized:
+            parts = [
+                part.strip() for part in normalized.split(separator) if part.strip()
+            ]
+            if len(parts) >= 2:
+                quote = parts[1]
+                if re.fullmatch(r"[A-Z]{2,5}", quote) and quote != "BTC":
+                    return quote
+            return None
     return None
 
 

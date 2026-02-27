@@ -38,6 +38,12 @@ def _outgoing_response(*, routing_action: str = "auto_send") -> MagicMock:
     return outgoing
 
 
+def _enabled_policy_service() -> MagicMock:
+    svc = MagicMock()
+    svc.get_policy.return_value = MagicMock(enabled=True, generation_enabled=True)
+    return svc
+
+
 @pytest.mark.asyncio
 async def test_start_registers_callback_and_starts_sync_loop() -> None:
     client = MagicMock()
@@ -156,6 +162,7 @@ async def test_on_message_dispatches_to_channel() -> None:
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )
@@ -211,6 +218,7 @@ async def test_on_message_decrypts_encrypted_event_before_dispatch(monkeypatch) 
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
         channel_id="matrix",
     )
@@ -253,6 +261,7 @@ async def test_on_message_skips_on_encrypted_decrypt_error(monkeypatch) -> None:
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
     )
 
@@ -354,6 +363,7 @@ async def test_on_message_consumes_feedback_followup_before_processing() -> None
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
     )
 

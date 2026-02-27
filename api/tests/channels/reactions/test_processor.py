@@ -14,6 +14,34 @@ from app.channels.reactions import (
 )
 
 
+async def _wait_until(
+    predicate,
+    *,
+    timeout: float = 0.2,
+    interval: float = 0.01,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval)
+    raise AssertionError("Condition did not become true before timeout")
+
+
+async def _assert_no_new_awaits(
+    async_mock,
+    *,
+    duration: float = 0.12,
+    interval: float = 0.01,
+) -> None:
+    baseline = async_mock.await_count
+    deadline = asyncio.get_running_loop().time() + duration
+    while asyncio.get_running_loop().time() < deadline:
+        if async_mock.await_count != baseline:
+            raise AssertionError("Unexpected async call observed during quiet window")
+        await asyncio.sleep(interval)
+
+
 @pytest.fixture()
 def tracker():
     """Tracker pre-loaded with one message."""
@@ -706,7 +734,7 @@ class TestAutoEscalation:
             )
         )
 
-        await asyncio.sleep(0.08)
+        await _assert_no_new_awaits(escalation_service.create_escalation)
         escalation_service.create_escalation.assert_not_called()
 
     @pytest.mark.asyncio()
@@ -744,7 +772,10 @@ class TestAutoEscalation:
             )
         )
 
-        await asyncio.sleep(0.08)
+        await _wait_until(
+            lambda: escalation_service.create_escalation.await_count == 1,
+            timeout=0.2,
+        )
         escalation_service.create_escalation.assert_awaited_once()
 
     @pytest.mark.asyncio()
@@ -783,7 +814,7 @@ class TestAutoEscalation:
         )
         await p.revoke_reaction("matrix", "$evt:server", "@voter:server")
 
-        await asyncio.sleep(0.08)
+        await _assert_no_new_awaits(escalation_service.create_escalation)
         escalation_service.create_escalation.assert_not_called()
 
     @pytest.mark.asyncio()

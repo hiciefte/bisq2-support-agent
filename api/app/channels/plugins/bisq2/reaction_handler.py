@@ -24,6 +24,7 @@ BISQ2_REACTION_MAP: Dict[str, ReactionRating] = {
     "THUMBS_UP": ReactionRating.POSITIVE,
     "THUMBS_DOWN": ReactionRating.NEGATIVE,
     "HAPPY": ReactionRating.POSITIVE,
+    "LAUGH": ReactionRating.POSITIVE,
     "HEART": ReactionRating.POSITIVE,
     "PARTY": ReactionRating.POSITIVE,
 }
@@ -69,10 +70,7 @@ class Bisq2ReactionHandler(ReactionHandlerBase):
             )
         self._ws_client = ws_client
 
-        is_connected_attr = getattr(ws_client, "is_connected", False)
-        is_connected = (
-            is_connected_attr if isinstance(is_connected_attr, bool) else False
-        )
+        is_connected = await self._resolve_is_connected(ws_client)
         if not is_connected:
             await ws_client.connect()
         ws_client.on_event(self._on_websocket_event)
@@ -143,6 +141,28 @@ class Bisq2ReactionHandler(ReactionHandlerBase):
                 "Error processing Bisq2 reaction event: %s",
                 message_id,
             )
+
+    async def _resolve_is_connected(self, ws_client: Any) -> bool:
+        is_connected_attr = getattr(ws_client, "is_connected", False)
+        if callable(is_connected_attr):
+            result = is_connected_attr()
+            if hasattr(result, "__await__"):
+                result = await result
+            candidate = result
+        else:
+            candidate = is_connected_attr
+
+        if isinstance(candidate, bool):
+            return candidate
+        if isinstance(candidate, (int, float)):
+            return bool(candidate)
+        if isinstance(candidate, str):
+            lowered = candidate.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        return False
 
     def _extract_reaction_fields(
         self,

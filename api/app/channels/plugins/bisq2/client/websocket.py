@@ -143,7 +143,15 @@ class Bisq2WebSocketClient:
         Args:
             callback: Async callable receiving parsed event dicts.
         """
-        self._event_callbacks.append(callback)
+        if callback not in self._event_callbacks:
+            self._event_callbacks.append(callback)
+
+    def off_event(self, callback: EventCallback) -> None:
+        """Unregister an event callback if present."""
+        try:
+            self._event_callbacks.remove(callback)
+        except ValueError:
+            return
 
     async def _dispatch_event(self, event: Dict[str, Any]) -> None:
         """Dispatch an event to all registered callbacks."""

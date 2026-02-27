@@ -120,11 +120,18 @@ def render_markdown_for_matrix(markdown_text: str) -> str:
 
     # Minimal fallback renderer for environments without markdown-it-py.
     escaped = html.escape(source)
-    escaped = re.sub(
-        r"\[(.+?)\]\((https?://[^)]+)\)",
-        r'<a href="\2">\1</a>',
-        escaped,
-    )
+    link_pattern = re.compile(r"\[(.+?)\]\(([^)]+)\)")
+
+    def _render_safe_fallback_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        url = html.unescape(match.group(2))
+        sanitized_url = _sanitize_outbound_url(url)
+        if not sanitized_url:
+            return label
+        escaped_url = html.escape(sanitized_url, quote=True)
+        return f'<a href="{escaped_url}">{label}</a>'
+
+    escaped = link_pattern.sub(_render_safe_fallback_link, escaped)
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
     escaped = escaped.replace("\n", "<br>")
     return escaped

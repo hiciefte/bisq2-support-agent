@@ -720,9 +720,11 @@ class FeedbackService:
         external_message_id: str,
         reactor_identity_hash: str,
     ) -> bool:
-        """Revoke a reaction (soft delete — marks revoked, does not delete feedback).
+        """Revoke a reaction and remove its active feedback projection.
 
-        Returns True if revocation was processed.
+        The reaction tracking row is marked revoked, and the linked feedback row is
+        deleted so analytics and learning only reflect currently active reactions.
+        Returns True when revocation was applied.
         """
         try:
             existing = self.repository.get_reaction_by_key(

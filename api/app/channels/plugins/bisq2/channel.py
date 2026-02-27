@@ -68,6 +68,7 @@ class Bisq2Channel(ChannelBase):
     _ws_message_buffer: Deque[Dict[str, Any]]
     _ws_listener_task: Optional[asyncio.Task[None]]
     _ws_callback_registered: bool
+    _ws_callback_client: Any
     _last_rest_fallback_poll_at: float
     _ws_rest_fallback_interval_seconds: float
     _ws_startup_timeout_seconds: float
@@ -204,7 +205,11 @@ class Bisq2Channel(ChannelBase):
                 )
 
         self._ws_message_buffer.clear()
+        ws_client = self.runtime.resolve_optional("bisq2_websocket_client")
+        if ws_client is not None:
+            self._detach_websocket_callback(ws_client)
         self._ws_callback_registered = False
+        self._ws_callback_client = None
         self._is_connected = False
         self._logger.info("Bisq2 channel stopped")
 
@@ -324,28 +329,29 @@ class Bisq2Channel(ChannelBase):
         """
         self._logger.debug("Polling Bisq2 API for new conversations")
 
+        incoming_messages: List[IncomingMessage] = []
         ws_messages = self._drain_ws_messages()
         if ws_messages:
-            incoming_messages = await self._process_raw_messages(
+            ws_incoming = await self._process_raw_messages(
                 ws_messages, source_name="Bisq2 WebSocket"
             )
-            if incoming_messages:
+            incoming_messages.extend(ws_incoming)
+            if ws_incoming:
                 self._logger.info(
                     "Consumed %s messages from Bisq2 WebSocket",
-                    len(incoming_messages),
+                    len(ws_incoming),
                 )
-            return incoming_messages
 
         # When websocket is configured, REST export acts as low-frequency backfill.
         ws_client = self.runtime.resolve_optional("bisq2_websocket_client")
         if ws_client and not self._should_run_rest_fallback_poll():
-            return []
+            return incoming_messages
 
         # Get Bisq2API from runtime services
         bisq_api = self.runtime.resolve_optional("bisq2_api")
         if not bisq_api:
             self._logger.warning("Bisq2API not registered in runtime, cannot poll")
-            return []
+            return incoming_messages
 
         try:
             # Export messages from Bisq2 API
@@ -354,7 +360,7 @@ class Bisq2Channel(ChannelBase):
                 self._logger.warning(
                     "Bisq2 API export response missing 'messages'; skipping poll cycle"
                 )
-                return []
+                return incoming_messages
             messages = result.get("messages", [])
 
             export_timestamp = self._extract_export_timestamp(result)
@@ -363,11 +369,12 @@ class Bisq2Channel(ChannelBase):
 
             if not messages:
                 self._last_poll_since = export_timestamp
-                return []
+                return incoming_messages
 
-            incoming_messages = await self._process_raw_messages(
+            rest_incoming = await self._process_raw_messages(
                 messages, source_name="Bisq2 API"
             )
+            incoming_messages.extend(rest_incoming)
 
             self._logger.info(
                 f"Polled {len(incoming_messages)} messages from Bisq2 API"
@@ -377,7 +384,7 @@ class Bisq2Channel(ChannelBase):
 
         except Exception:
             self._logger.exception("Error polling Bisq2 API")
-            return []
+            return incoming_messages
 
     def _transform_bisq_message(
         self,
@@ -447,6 +454,7 @@ class Bisq2Channel(ChannelBase):
         self._ws_message_buffer = deque()
         self._ws_listener_task = None
         self._ws_callback_registered = False
+        self._ws_callback_client = None
         self._last_rest_fallback_poll_at = 0.0
         self._ws_rest_fallback_interval_seconds = self._resolve_ws_fallback_interval()
         self._ws_startup_timeout_seconds = self._resolve_ws_startup_timeout()
@@ -457,14 +465,17 @@ class Bisq2Channel(ChannelBase):
     async def _start_support_message_websocket(self, ws_client: Any) -> bool:
         """Start SUPPORT_CHAT_MESSAGES websocket stream when available."""
         try:
+            if (
+                self._ws_callback_client is not ws_client
+                and self._ws_callback_registered
+            ):
+                self._detach_websocket_callback(self._ws_callback_client)
             if not self._ws_callback_registered:
                 ws_client.on_event(self._on_websocket_event)
                 self._ws_callback_registered = True
+                self._ws_callback_client = ws_client
 
-            is_connected_attr = getattr(ws_client, "is_connected", False)
-            is_connected = (
-                is_connected_attr if isinstance(is_connected_attr, bool) else False
-            )
+            is_connected = await self._resolve_ws_connected(ws_client)
             connect_fn = getattr(ws_client, "connect", None)
             if not is_connected and callable(connect_fn):
                 await self._await_with_startup_timeout(connect_fn())
@@ -501,6 +512,43 @@ class Bisq2Channel(ChannelBase):
         except Exception:
             self._logger.exception("Failed to start Bisq2 support websocket stream")
             return False
+
+    async def _resolve_ws_connected(self, ws_client: Any) -> bool:
+        is_connected_attr = getattr(ws_client, "is_connected", False)
+        if callable(is_connected_attr):
+            result = is_connected_attr()
+            if inspect.isawaitable(result):
+                result = await result
+            candidate = result
+        else:
+            candidate = is_connected_attr
+
+        if isinstance(candidate, bool):
+            return candidate
+        if isinstance(candidate, (int, float)):
+            return bool(candidate)
+        if isinstance(candidate, str):
+            lowered = candidate.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        return False
+
+    def _detach_websocket_callback(self, ws_client: Any) -> None:
+        if ws_client is None:
+            return
+        remove_fn = getattr(ws_client, "off_event", None)
+        if callable(remove_fn):
+            try:
+                remove_fn(self._on_websocket_event)
+                self._ws_callback_registered = False
+                self._ws_callback_client = None
+            except Exception:
+                self._logger.debug(
+                    "Failed to remove Bisq2 websocket callback",
+                    exc_info=True,
+                )
 
     async def _prime_rest_fallback_cursor(self, bisq_api: Any) -> None:
         """Initialize REST fallback cursor to avoid replaying full export history."""

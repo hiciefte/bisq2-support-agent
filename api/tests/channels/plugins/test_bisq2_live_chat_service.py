@@ -33,6 +33,15 @@ def _outgoing(routing_action: str = "auto_send", requires_human: bool = False):
     return msg
 
 
+def _policy_service(enabled: bool = True, generation_enabled: bool = True):
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = MagicMock(
+        enabled=enabled,
+        generation_enabled=generation_enabled,
+    )
+    return policy_service
+
+
 @pytest.mark.asyncio
 async def test_run_once_polls_and_sends_responses() -> None:
     channel = MagicMock()
@@ -43,7 +52,11 @@ async def test_run_once_polls_and_sends_responses() -> None:
     channel.get_delivery_target = MagicMock(return_value="support.support")
     channel.send_message = AsyncMock(return_value=True)
 
-    service = Bisq2LiveChatService(channel=channel, poll_interval_seconds=0.01)
+    service = Bisq2LiveChatService(
+        channel=channel,
+        autoresponse_policy_service=_policy_service(),
+        poll_interval_seconds=0.01,
+    )
 
     processed = await service.run_once()
 
@@ -63,7 +76,11 @@ async def test_run_once_skips_message_without_delivery_target() -> None:
     channel.get_delivery_target = MagicMock(return_value="")
     channel.send_message = AsyncMock(return_value=True)
 
-    service = Bisq2LiveChatService(channel=channel, poll_interval_seconds=0.01)
+    service = Bisq2LiveChatService(
+        channel=channel,
+        autoresponse_policy_service=_policy_service(),
+        poll_interval_seconds=0.01,
+    )
 
     processed = await service.run_once()
 
@@ -85,6 +102,7 @@ async def test_run_once_creates_escalation_for_non_autosend_routing_actions() ->
 
     service = Bisq2LiveChatService(
         channel=channel,
+        autoresponse_policy_service=_policy_service(),
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )
@@ -117,6 +135,7 @@ async def test_run_once_sends_clarification_messages_without_escalation() -> Non
 
     service = Bisq2LiveChatService(
         channel=channel,
+        autoresponse_policy_service=_policy_service(),
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )
@@ -141,6 +160,7 @@ async def test_run_once_fails_open_and_sends_for_unknown_routing_action() -> Non
 
     service = Bisq2LiveChatService(
         channel=channel,
+        autoresponse_policy_service=_policy_service(),
         escalation_service=escalation_service,
         poll_interval_seconds=0.01,
     )

@@ -277,6 +277,28 @@ class ReactionProcessor:
         self._pending_auto_escalations_lock: asyncio.Lock = asyncio.Lock()
         self._active_reactions: Dict[str, _ReactionAggregate] = {}
         self._active_reactions_lock: asyncio.Lock = asyncio.Lock()
+        self._reaction_locks: Dict[str, asyncio.Lock] = {}
+        self._reaction_locks_guard: asyncio.Lock = asyncio.Lock()
+
+    async def _acquire_reaction_lock(self, key: str) -> asyncio.Lock:
+        async with self._reaction_locks_guard:
+            lock = self._reaction_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._reaction_locks[key] = lock
+        await lock.acquire()
+        return lock
+
+    async def _release_reaction_lock(self, key: str, lock: asyncio.Lock) -> None:
+        lock.release()
+        waiters = getattr(lock, "_waiters", None)
+        has_waiters = bool(waiters)
+        if has_waiters:
+            return
+        async with self._reaction_locks_guard:
+            current = self._reaction_locks.get(key)
+            if current is lock and not lock.locked():
+                self._reaction_locks.pop(key, None)
 
     def hash_reactor_identity(self, channel_id: str, reactor_id: str) -> str:
         """Compute deterministic privacy-safe hash of reactor identity."""
@@ -333,6 +355,23 @@ class ReactionProcessor:
             return ProcessResult(success=False)
 
         reactor_hash = self.hash_reactor_identity(event.channel_id, event.reactor_id)
+        reaction_key = self._reaction_key(
+            event.channel_id,
+            event.external_message_id,
+            reactor_hash,
+        )
+        lock = await self._acquire_reaction_lock(reaction_key)
+        try:
+            return await self._process_locked(event, record, reactor_hash)
+        finally:
+            await self._release_reaction_lock(reaction_key, lock)
+
+    async def _process_locked(
+        self,
+        event: ReactionEvent,
+        record: SentMessageRecord,
+        reactor_hash: str,
+    ) -> ProcessResult:
         aggregate = await self._apply_add_reaction(event, reactor_hash)
         effective_rating = aggregate.effective_rating()
         if effective_rating is None:
@@ -774,109 +813,21 @@ class ReactionProcessor:
             return False
 
         reactor_hash = self.hash_reactor_identity(channel_id, reactor_id)
+        reaction_key = self._reaction_key(
+            channel_id,
+            external_message_id,
+            reactor_hash,
+        )
+        lock = await self._acquire_reaction_lock(reaction_key)
         try:
-            aggregate = await self._apply_remove_reaction(
-                channel_id=channel_id,
-                external_message_id=external_message_id,
-                reactor_hash=reactor_hash,
-                raw_reaction=raw_reaction,
-            )
-            effective_rating = aggregate.effective_rating() if aggregate else None
-
-            await self._cancel_pending_auto_escalation(
-                channel_id,
-                external_message_id,
-                reactor_hash,
-            )
-            await self._cancel_feedback_followup(
-                record=record,
-                channel_id=channel_id,
-                external_message_id=external_message_id,
-                reactor_hash=reactor_hash,
-            )
-
-            if effective_rating is None:
-                if self.feedback_service and hasattr(
-                    self.feedback_service, "revoke_reaction_feedback"
-                ):
-                    await asyncio.to_thread(
-                        self._run_revoke,
-                        channel_id,
-                        external_message_id,
-                        reactor_hash,
-                    )
-                    if record is not None and self._should_auto_escalate(record):
-                        await self._try_auto_close_reversed_escalation(
-                            record,
-                            reason="reaction_removed",
-                        )
-                    await self._trigger_learning()
-                    return True
-                logger.debug("FeedbackService unavailable for revocation")
-                return False
-
-            feedback_data = {
-                "message_id": record.internal_message_id,
-                "question": record.question,
-                "answer": record.answer,
-                "rating": (
-                    "positive"
-                    if effective_rating == ReactionRating.POSITIVE
-                    else "negative"
-                ),
-                "channel": channel_id,
-                "feedback_method": "reaction",
-                "external_message_id": external_message_id,
-                "reactor_identity_hash": reactor_hash,
-                "reaction_emoji": aggregate.representative_token() if aggregate else "",
-                "sources": record.sources,
-            }
-            await asyncio.to_thread(self._store_feedback, feedback_data)
-
-            synthetic_event = ReactionEvent(
+            return await self._revoke_locked(
                 channel_id=channel_id,
                 external_message_id=external_message_id,
                 reactor_id=reactor_id,
-                rating=effective_rating,
-                raw_reaction=aggregate.representative_token() if aggregate else "",
-                timestamp=datetime.now(timezone.utc),
+                raw_reaction=raw_reaction,
+                record=record,
+                reactor_hash=reactor_hash,
             )
-            if self.escalation_service is not None and self._should_auto_escalate(
-                record
-            ):
-                if effective_rating == ReactionRating.NEGATIVE:
-                    await self._handle_negative_reaction(
-                        record=record,
-                        event=synthetic_event,
-                        reactor_hash=reactor_hash,
-                    )
-                else:
-                    await self._cancel_pending_auto_escalation(
-                        channel_id,
-                        external_message_id,
-                        reactor_hash,
-                    )
-                    await self._try_auto_close_reversed_escalation(
-                        record,
-                        reason="reaction_changed_to_positive",
-                    )
-
-            if effective_rating == ReactionRating.NEGATIVE:
-                await self._maybe_start_feedback_followup(
-                    record=record,
-                    event=synthetic_event,
-                    reactor_hash=reactor_hash,
-                )
-            else:
-                await self._cancel_feedback_followup(
-                    record=record,
-                    channel_id=channel_id,
-                    external_message_id=external_message_id,
-                    reactor_hash=reactor_hash,
-                )
-
-            await self._trigger_learning()
-            return True
         except Exception:
             logger.exception(
                 "Failed to revoke reaction: channel=%s ext_id=%s",
@@ -884,6 +835,119 @@ class ReactionProcessor:
                 external_message_id,
             )
             return False
+        finally:
+            await self._release_reaction_lock(reaction_key, lock)
+
+    async def _revoke_locked(
+        self,
+        *,
+        channel_id: str,
+        external_message_id: str,
+        reactor_id: str,
+        raw_reaction: Optional[str],
+        record: SentMessageRecord,
+        reactor_hash: str,
+    ) -> bool:
+        aggregate = await self._apply_remove_reaction(
+            channel_id=channel_id,
+            external_message_id=external_message_id,
+            reactor_hash=reactor_hash,
+            raw_reaction=raw_reaction,
+        )
+        effective_rating = aggregate.effective_rating() if aggregate else None
+
+        await self._cancel_pending_auto_escalation(
+            channel_id,
+            external_message_id,
+            reactor_hash,
+        )
+        await self._cancel_feedback_followup(
+            record=record,
+            channel_id=channel_id,
+            external_message_id=external_message_id,
+            reactor_hash=reactor_hash,
+        )
+
+        if effective_rating is None:
+            if self.feedback_service and hasattr(
+                self.feedback_service, "revoke_reaction_feedback"
+            ):
+                await asyncio.to_thread(
+                    self._run_revoke,
+                    channel_id,
+                    external_message_id,
+                    reactor_hash,
+                )
+                if self._should_auto_escalate(record):
+                    await self._try_auto_close_reversed_escalation(
+                        record,
+                        reason="reaction_removed",
+                    )
+                await self._trigger_learning()
+                return True
+            logger.debug("FeedbackService unavailable for revocation")
+            return False
+
+        feedback_data = {
+            "message_id": record.internal_message_id,
+            "question": record.question,
+            "answer": record.answer,
+            "rating": (
+                "positive"
+                if effective_rating == ReactionRating.POSITIVE
+                else "negative"
+            ),
+            "channel": channel_id,
+            "feedback_method": "reaction",
+            "external_message_id": external_message_id,
+            "reactor_identity_hash": reactor_hash,
+            "reaction_emoji": aggregate.representative_token() if aggregate else "",
+            "sources": record.sources,
+        }
+        await asyncio.to_thread(self._store_feedback, feedback_data)
+
+        synthetic_event = ReactionEvent(
+            channel_id=channel_id,
+            external_message_id=external_message_id,
+            reactor_id=reactor_id,
+            rating=effective_rating,
+            raw_reaction=aggregate.representative_token() if aggregate else "",
+            timestamp=datetime.now(timezone.utc),
+        )
+        if self.escalation_service is not None and self._should_auto_escalate(record):
+            if effective_rating == ReactionRating.NEGATIVE:
+                await self._handle_negative_reaction(
+                    record=record,
+                    event=synthetic_event,
+                    reactor_hash=reactor_hash,
+                )
+            else:
+                await self._cancel_pending_auto_escalation(
+                    channel_id,
+                    external_message_id,
+                    reactor_hash,
+                )
+                await self._try_auto_close_reversed_escalation(
+                    record,
+                    reason="reaction_changed_to_positive",
+                )
+
+        if effective_rating == ReactionRating.NEGATIVE:
+            await self._maybe_start_feedback_followup(
+                record=record,
+                event=synthetic_event,
+                reactor_hash=reactor_hash,
+            )
+        else:
+            await self._cancel_feedback_followup(
+                record=record,
+                channel_id=channel_id,
+                external_message_id=external_message_id,
+                reactor_hash=reactor_hash,
+            )
+
+        await self._trigger_learning()
+        return True
 
     def _store_feedback(self, feedback_data: Dict[str, Any]) -> None:
         """Store feedback via FeedbackService (synchronous).

@@ -232,7 +232,12 @@ class ChannelAutoResponsePolicyService:
                 conn.commit()
             finally:
                 conn.close()
-        return self.get_policy(normalized)
+        return ChannelAutoResponsePolicy(
+            channel_id=normalized,
+            enabled=next_enabled,
+            generation_enabled=next_generation_enabled,
+            updated_at=now,
+        )
 
     @staticmethod
     def _row_to_policy(row: sqlite3.Row) -> ChannelAutoResponsePolicy:

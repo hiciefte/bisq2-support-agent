@@ -198,6 +198,48 @@ class TestMCPHttpServerContract:
         assert response.status_code == 200
         mock_bisq_service.get_offerbook_formatted.assert_called_once_with("USD", None)
 
+    def test_tool_call_get_offerbook_accepts_market_pair_alias(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should resolve quote fiat from market pair aliases."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"market": "BTC/USD"},
+                },
+                "id": 4_4,
+            },
+        )
+
+        assert response.status_code == 200
+        mock_bisq_service.get_offerbook_formatted.assert_called_once_with("USD", None)
+
+    def test_tool_call_get_offerbook_rejects_btc_currency(
+        self, test_client, mock_bisq_service
+    ):
+        """get_offerbook should reject BTC as a currency argument."""
+        response = test_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_offerbook",
+                    "arguments": {"currency": "BTC"},
+                },
+                "id": 4_5,
+            },
+        )
+
+        assert response.status_code == 200
+        text = response.json()["result"]["content"][0]["text"].lower()
+        assert "currency is required" in text or "fiat" in text
+        mock_bisq_service.get_offerbook_formatted.assert_not_called()
+
     def test_tool_call_get_offerbook_requires_currency(
         self, test_client, mock_bisq_service
     ):

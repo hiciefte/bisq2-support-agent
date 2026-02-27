@@ -135,6 +135,66 @@ def _as_text(value: Any) -> str:
     return str(value)
 
 
+def _feedback_matches_filters(
+    feedback: Dict[str, Any],
+    *,
+    channel: Optional[str],
+    rating: Optional[int],
+    search: Optional[str],
+) -> bool:
+    if channel and _as_text(feedback.get("channel") or "web") != channel:
+        return False
+    if rating is not None and int(feedback.get("rating") or 0) != rating:
+        return False
+    if search:
+        needle = search.strip().lower()
+        if needle:
+            question = _as_text(feedback.get("question")).lower()
+            answer = _as_text(feedback.get("answer")).lower()
+            if needle not in question and needle not in answer:
+                return False
+    return True
+
+
+def _coverage_state_for_escalation(
+    escalation: Any | None,
+) -> Literal["not_linked", "linked_escalation", "auto_closed"]:
+    if escalation is None:
+        return "not_linked"
+    if escalation.status == EscalationStatus.CLOSED and _is_auto_closed_reaction_case(
+        escalation.routing_reason
+    ):
+        return "auto_closed"
+    return "linked_escalation"
+
+
+def _build_signal_summary(
+    *,
+    feedback: Dict[str, Any],
+    metadata: Dict[str, Any],
+    trust_level: Literal["asker", "non_asker", "staff", "untrusted"],
+    coverage_state: Literal["not_linked", "linked_escalation", "auto_closed"],
+    escalation: Any | None,
+) -> SignalSummary:
+    issues = metadata.get("issues")
+    return SignalSummary(
+        signal_id=_as_text(feedback.get("message_id")),
+        message_id=_as_text(feedback.get("message_id")),
+        channel=_as_text(feedback.get("channel") or "web"),
+        rating=int(feedback.get("rating") or 0),
+        timestamp=_as_text(feedback.get("timestamp")),
+        question=_as_text(feedback.get("question")),
+        answer=_as_text(feedback.get("answer")),
+        feedback_method=feedback.get("feedback_method"),
+        trust_level=trust_level,
+        coverage_state=coverage_state,
+        linked_escalation_id=escalation.id if escalation else None,
+        linked_escalation_status=escalation.status.value if escalation else None,
+        explanation=metadata.get("explanation"),
+        issues=[str(issue) for issue in issues] if isinstance(issues, list) else [],
+    )
+
+
 async def _resolve_linked_escalation(
     feedback: Dict[str, Any],
     feedback_service,
@@ -176,33 +236,12 @@ async def _to_signal_summary(
         feedback_service=feedback_service,
         escalation_service=escalation_service,
     )
-    if escalation is None:
-        coverage_state: Literal["not_linked", "linked_escalation", "auto_closed"] = (
-            "not_linked"
-        )
-    elif escalation.status == EscalationStatus.CLOSED and _is_auto_closed_reaction_case(
-        escalation.routing_reason
-    ):
-        coverage_state = "auto_closed"
-    else:
-        coverage_state = "linked_escalation"
-
-    issues = metadata.get("issues")
-    return SignalSummary(
-        signal_id=_as_text(feedback.get("message_id")),
-        message_id=_as_text(feedback.get("message_id")),
-        channel=_as_text(feedback.get("channel") or "web"),
-        rating=int(feedback.get("rating") or 0),
-        timestamp=_as_text(feedback.get("timestamp")),
-        question=_as_text(feedback.get("question")),
-        answer=_as_text(feedback.get("answer")),
-        feedback_method=feedback.get("feedback_method"),
+    return _build_signal_summary(
+        feedback=feedback,
+        metadata=metadata,
         trust_level=_trust_level(metadata),
-        coverage_state=coverage_state,
-        linked_escalation_id=escalation.id if escalation else None,
-        linked_escalation_status=escalation.status.value if escalation else None,
-        explanation=metadata.get("explanation"),
-        issues=[str(issue) for issue in issues] if isinstance(issues, list) else [],
+        coverage_state=_coverage_state_for_escalation(escalation),
+        escalation=escalation,
     )
 
 
@@ -238,51 +277,72 @@ async def list_signals(
     escalation_service=Depends(get_escalation_service),
 ) -> SignalListResponse:
     all_feedback = feedback_service.repository.get_all_feedback()
-    summaries: List[SignalSummary] = []
-    for feedback in all_feedback:
-        summary = await _to_signal_summary(
-            feedback=feedback,
-            feedback_service=feedback_service,
-            escalation_service=escalation_service,
+    filtered_feedback = [
+        feedback
+        for feedback in all_feedback
+        if _feedback_matches_filters(
+            feedback,
+            channel=channel,
+            rating=rating,
+            search=search,
         )
-        summaries.append(summary)
+    ]
 
-    if channel:
-        summaries = [item for item in summaries if item.channel == channel]
-    if rating is not None:
-        summaries = [item for item in summaries if item.rating == rating]
-    if search:
-        needle = search.strip().lower()
-        if needle:
-            summaries = [
-                item
-                for item in summaries
-                if needle in item.question.lower() or needle in item.answer.lower()
-            ]
+    escalation_cache: Dict[str, Any | None] = {}
+    selected: List[tuple[Dict[str, Any], Dict[str, Any], Any | None, Any, Any]] = []
+    actionable_count = 0
+    covered_count = 0
 
-    actionable_count = sum(
-        1
-        for item in summaries
-        if item.rating == 0
-        and item.trust_level == "asker"
-        and item.coverage_state == "not_linked"
-    )
-    covered_count = sum(1 for item in summaries if item.coverage_state != "not_linked")
+    for feedback in filtered_feedback:
+        metadata = feedback.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        message_id = _as_text(feedback.get("message_id"))
+        if message_id in escalation_cache:
+            escalation = escalation_cache[message_id]
+        else:
+            escalation = await _resolve_linked_escalation(
+                feedback=feedback,
+                feedback_service=feedback_service,
+                escalation_service=escalation_service,
+            )
+            escalation_cache[message_id] = escalation
 
-    if status_filter == "needs_action":
-        summaries = [
-            item
-            for item in summaries
-            if item.rating == 0
-            and item.trust_level == "asker"
-            and item.coverage_state == "not_linked"
-        ]
-    elif status_filter == "covered":
-        summaries = [item for item in summaries if item.coverage_state != "not_linked"]
+        trust_level = _trust_level(metadata)
+        coverage_state = _coverage_state_for_escalation(escalation)
+        rating_value = int(feedback.get("rating") or 0)
+        needs_action = (
+            rating_value == 0
+            and trust_level == "asker"
+            and coverage_state == "not_linked"
+        )
+        if needs_action:
+            actionable_count += 1
+        if coverage_state != "not_linked":
+            covered_count += 1
 
-    summaries.sort(key=lambda item: item.timestamp, reverse=True)
-    total = len(summaries)
-    paginated = summaries[offset : offset + limit]
+        include = status_filter == "all"
+        if status_filter == "needs_action":
+            include = needs_action
+        elif status_filter == "covered":
+            include = coverage_state != "not_linked"
+        if include:
+            selected.append(
+                (feedback, metadata, escalation, trust_level, coverage_state)
+            )
+
+    total = len(selected)
+    paginated_rows = selected[offset : offset + limit]
+    paginated = [
+        _build_signal_summary(
+            feedback=feedback,
+            metadata=metadata,
+            trust_level=trust_level,
+            coverage_state=coverage_state,
+            escalation=escalation,
+        )
+        for feedback, metadata, escalation, trust_level, coverage_state in paginated_rows
+    ]
 
     return SignalListResponse(
         signals=paginated,
@@ -300,29 +360,42 @@ async def get_signal_counts(
     escalation_service=Depends(get_escalation_service),
 ) -> SignalCountsResponse:
     all_feedback = feedback_service.repository.get_all_feedback()
-    summaries = [
-        await _to_signal_summary(
-            feedback=feedback,
-            feedback_service=feedback_service,
-            escalation_service=escalation_service,
-        )
-        for feedback in all_feedback
-    ]
-
     by_channel: Dict[str, int] = {}
-    for summary in summaries:
-        by_channel[summary.channel] = by_channel.get(summary.channel, 0) + 1
+    escalation_cache: Dict[str, Any | None] = {}
+    actionable = 0
+    covered = 0
+    for feedback in all_feedback:
+        channel_id = _as_text(feedback.get("channel") or "web")
+        by_channel[channel_id] = by_channel.get(channel_id, 0) + 1
 
-    actionable = sum(
-        1
-        for summary in summaries
-        if summary.rating == 0
-        and summary.trust_level == "asker"
-        and summary.coverage_state == "not_linked"
-    )
-    covered = sum(1 for summary in summaries if summary.coverage_state != "not_linked")
+        metadata = feedback.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        message_id = _as_text(feedback.get("message_id"))
+        if message_id in escalation_cache:
+            escalation = escalation_cache[message_id]
+        else:
+            escalation = await _resolve_linked_escalation(
+                feedback=feedback,
+                feedback_service=feedback_service,
+                escalation_service=escalation_service,
+            )
+            escalation_cache[message_id] = escalation
+
+        trust_level = _trust_level(metadata)
+        coverage_state = _coverage_state_for_escalation(escalation)
+        rating_value = int(feedback.get("rating") or 0)
+        if (
+            rating_value == 0
+            and trust_level == "asker"
+            and coverage_state == "not_linked"
+        ):
+            actionable += 1
+        if coverage_state != "not_linked":
+            covered += 1
+
     return SignalCountsResponse(
-        total=len(summaries),
+        total=len(all_feedback),
         actionable=actionable,
         covered=covered,
         by_channel=by_channel,

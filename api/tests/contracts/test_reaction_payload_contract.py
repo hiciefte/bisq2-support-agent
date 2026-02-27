@@ -408,9 +408,9 @@ class TestReactionMappingContract:
         """THUMBS_DOWN(1) -> NEGATIVE (core contract)."""
         assert BISQ2_REACTION_MAP["THUMBS_DOWN"] == ReactionRating.NEGATIVE
 
-    def test_unmapped_reactions_not_in_map(self):
-        """LAUGH(3) is intentionally unmapped (dropped)."""
-        assert "LAUGH" not in BISQ2_REACTION_MAP
+    def test_laugh_is_positive_in_map(self):
+        """LAUGH(3) is treated as positive feedback."""
+        assert BISQ2_REACTION_MAP["LAUGH"] == ReactionRating.POSITIVE
         assert BISQ2_REACTION_MAP["PARTY"] == ReactionRating.POSITIVE
 
     def test_all_mapped_reactions_have_valid_java_ordinals(self):

@@ -3,7 +3,6 @@ FastAPI application for the Bisq Support Assistant.
 This module sets up the API server with routes, middleware, and error handling.
 """
 
-import importlib
 import ipaddress
 import logging
 import os
@@ -80,12 +79,6 @@ logging.basicConfig(
 
 logger = logging.getLogger("app.main")
 
-DEFAULT_CHANNEL_PLUGIN_MODULES = [
-    "app.channels.plugins.web.channel",
-    "app.channels.plugins.matrix.channel",
-    "app.channels.plugins.bisq2.channel",
-]
-
 # Settings will be lazily initialized when first accessed
 # No module-level initialization to avoid side effects during imports/testing
 
@@ -129,17 +122,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing FeedbackService...")
     feedback_service = FeedbackService(settings=settings)
-
-    plugin_modules = getattr(
-        settings, "CHANNEL_PLUGINS", DEFAULT_CHANNEL_PLUGIN_MODULES
-    )
-    for module_path in plugin_modules:
-        try:
-            importlib.import_module(module_path)
-        except Exception:
-            logger.debug(
-                "Skipping channel plugin import '%s'", module_path, exc_info=True
-            )
 
     app.state.channel_autoresponse_policy_service = ChannelAutoResponsePolicyService(
         db_path=os.path.join(settings.DATA_DIR, "feedback.db"),

@@ -32,12 +32,16 @@ def collect_trusted_staff_ids(settings: Any) -> list[str]:
     ):
         if isinstance(candidate, str):
             staff_ids.extend(
-                [value.strip() for value in candidate.split(",") if value.strip()]
+                [
+                    value.strip().lower()
+                    for value in candidate.split(",")
+                    if value.strip()
+                ]
             )
         elif isinstance(candidate, list):
             staff_ids.extend(
                 [
-                    value.strip()
+                    value.strip().lower()
                     for value in candidate
                     if isinstance(value, str) and value.strip()
                 ]

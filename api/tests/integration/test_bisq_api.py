@@ -134,8 +134,6 @@ class TestSendSupportMessage:
     @pytest.mark.asyncio
     async def test_raises_on_client_error(self, api):
         """ClientError from HTTP request propagates."""
-        import aiohttp
-
         with patch.object(
             api,
             "_make_request",
@@ -336,8 +334,6 @@ class TestSendReaction:
     @pytest.mark.asyncio
     async def test_raises_on_error(self, api):
         """Errors propagate to caller."""
-        import aiohttp
-
         with patch.object(
             api,
             "_make_request",
@@ -441,7 +437,7 @@ class TestBisqApiAuth:
             assert headers["Bisq-Session-Id"] == "session-paired"
             saved = json.loads(auth_state_file.read_text(encoding="utf-8"))
             assert saved["client_id"] == "client-paired"
-            assert saved["client_secret"] == "secret-paired"
+            assert "client_secret" not in saved
 
     @pytest.mark.asyncio
     async def test_creates_session_when_credentials_exist_but_session_missing(self):
@@ -481,7 +477,6 @@ class TestBisqApiAuth:
             json.dumps(
                 {
                     "client_id": "state-client",
-                    "client_secret": "state-secret",
                 }
             ),
             encoding="utf-8",
@@ -500,4 +495,4 @@ class TestBisqApiAuth:
         api = Bisq2API(settings=settings)
 
         assert api._client_id == "state-client"
-        assert api._client_secret == "state-secret"
+        assert api._client_secret == ""

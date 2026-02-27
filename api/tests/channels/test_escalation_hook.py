@@ -27,7 +27,7 @@ async def test_escalation_hook_runs_after_pii_filter_and_creates_escalation(
     # so PII filter redacts it before the escalation hook persists ai_draft_answer.
     pii_answer = "Contact me at test@example.com"
 
-    async def rag_query(*args, **kwargs):
+    async def rag_query(*_args, **_kwargs):
         return {
             "answer": pii_answer,
             "sources": [],

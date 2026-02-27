@@ -53,7 +53,7 @@ class Bisq2API:
         self._pairing_qr_file = self._resolve_path(
             "BISQ_API_PAIRING_QR_PATH", "BISQ_API_PAIRING_QR_FILE"
         )
-        if self._auth_enabled and (not self._client_id or not self._client_secret):
+        if self._auth_enabled and not self._client_id:
             self._load_auth_state()
         if self._auth_enabled and not self._pairing_code_id:
             self._pairing_code_id = self._load_pairing_code_id_from_qr_file()
@@ -191,10 +191,9 @@ class Bisq2API:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             client_id = str(payload.get("client_id", "")).strip()
-            client_secret = str(payload.get("client_secret", "")).strip()
-            if client_id and client_secret:
+            if client_id:
                 self._client_id = client_id
-                self._client_secret = client_secret
+            if client_id:
                 logger.info("Loaded Bisq API auth state from %s", path)
         except Exception:
             logger.exception("Failed to load Bisq API auth state from %s", path)
@@ -202,7 +201,7 @@ class Bisq2API:
     def _save_auth_state(self) -> None:
         if not self._auth_state_file:
             return
-        if not self._client_id or not self._client_secret:
+        if not self._client_id:
             return
 
         path = Path(self._auth_state_file)
@@ -211,7 +210,6 @@ class Bisq2API:
         try:
             payload = {
                 "client_id": self._client_id,
-                "client_secret": self._client_secret,
             }
             temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             temp_path.replace(path)
@@ -276,6 +274,7 @@ class Bisq2API:
         session_id = str(payload.get("sessionId", "")).strip()
         if session_id:
             self._session_id = session_id
+            self._save_auth_state()
             logger.info("Created Bisq API session")
 
     async def _pair_client(self, base_url: str) -> None:
@@ -301,6 +300,7 @@ class Bisq2API:
             logger.info("Paired Bisq API client successfully")
         if session_id:
             self._session_id = session_id
+            self._save_auth_state()
 
     async def _ensure_authenticated(self, base_url: str) -> None:
         if not self._auth_enabled:
@@ -313,9 +313,11 @@ class Bisq2API:
             if self._client_id and self._session_id:
                 return
 
-            if not self._client_id or not self._client_secret:
-                if not self._client_id or not self._client_secret:
-                    self._load_auth_state()
+            if not self._client_id or not self._session_id:
+                self._load_auth_state()
+
+            if self._client_id and self._session_id:
+                return
 
             if not self._pairing_code_id:
                 self._pairing_code_id = self._load_pairing_code_id_from_qr_file()
@@ -346,7 +348,8 @@ class Bisq2API:
 
         last_connection_error: Optional[aiohttp.ClientConnectionError] = None
         is_access_endpoint = self._is_access_endpoint(endpoint)
-        for base_url in self.base_urls:
+        saw_not_found = False
+        for index, base_url in enumerate(self.base_urls):
             url = f"{base_url}/{endpoint.lstrip('/')}"
             try:
                 if self._auth_enabled and not is_access_endpoint:
@@ -361,7 +364,13 @@ class Bisq2API:
                         method, url, **request_kwargs
                     ) as response:
                         if response.status == 404:
-                            return {}
+                            saw_not_found = True
+                            if index < len(self.base_urls) - 1:
+                                logger.warning(
+                                    "Bisq2 API returned 404 at %s; trying next candidate",
+                                    base_url,
+                                )
+                            break
                         if (
                             self._auth_enabled
                             and not is_access_endpoint
@@ -399,6 +408,8 @@ class Bisq2API:
                 exc_info=True,
             )
             raise last_connection_error
+        if saw_not_found:
+            return {}
         return {}
 
     async def export_chat_messages(

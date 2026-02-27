@@ -118,11 +118,14 @@ class FeedbackFollowupCoordinator:
 
         channel = self._resolve_channel(channel_id)
         if channel is None:
+            async with self._lock:
+                self._pending_by_context.pop(context_key, None)
+                self._context_by_reaction_key.pop(reaction_key, None)
             return False
         prompt_text = _PROMPT_TEMPLATE_BY_CHANNEL.get(
             channel_id, _PROMPT_TEMPLATE_BY_CHANNEL["bisq2"]
         )
-        return await self._send_system_message(
+        sent = await self._send_system_message(
             channel=channel,
             channel_id=channel_id,
             target=delivery_target,
@@ -130,6 +133,11 @@ class FeedbackFollowupCoordinator:
             text=prompt_text,
             routing_action="feedback_followup_prompt",
         )
+        if not sent:
+            async with self._lock:
+                self._pending_by_context.pop(context_key, None)
+                self._context_by_reaction_key.pop(reaction_key, None)
+        return sent
 
     async def cancel_followup(
         self,

@@ -83,8 +83,8 @@ class TestBisq2ReactionHandlerConstruction:
         assert handler.map_emoji_to_rating("PARTY") == ReactionRating.POSITIVE
 
     def test_unmapped_reactions_return_none(self, handler):
-        """LAUGH remains intentionally unmapped."""
-        assert handler.map_emoji_to_rating("LAUGH") is None
+        """Unknown reactions remain unmapped."""
+        assert handler.map_emoji_to_rating("UNKNOWN_REACTION") is None
 
 
 # ---------------------------------------------------------------------------
@@ -299,8 +299,8 @@ class TestBisq2UnmappedReactions:
     """Test unmapped reaction handling."""
 
     @pytest.mark.asyncio
-    async def test_laugh_is_dropped(self, handler, mock_processor):
-        """LAUGH reaction is logged and dropped."""
+    async def test_laugh_is_positive(self, handler, mock_processor):
+        """LAUGH reaction is mapped as positive feedback."""
         event = {
             "responseType": "WebSocketEvent",
             "modificationType": "ADDED",
@@ -311,7 +311,9 @@ class TestBisq2UnmappedReactions:
             },
         }
         await handler._on_websocket_event(event)
-        mock_processor.process.assert_not_called()
+        mock_processor.process.assert_called_once()
+        reaction_event = mock_processor.process.call_args[0][0]
+        assert reaction_event.rating == ReactionRating.POSITIVE
 
     @pytest.mark.asyncio
     async def test_party_is_positive(self, handler, mock_processor):
@@ -337,7 +339,7 @@ class TestBisq2UnmappedReactions:
             "responseType": "WebSocketEvent",
             "modificationType": "ADDED",
             "payload": {
-                "reaction": "LAUGH",
+                "reaction": "UNKNOWN_REACTION",
                 "messageId": "msg-1",
                 "senderUserProfileId": "user-1",
             },

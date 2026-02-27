@@ -17,10 +17,11 @@ AUTOSEND_DISABLED_REASON = "Channel auto-response disabled by admin policy."
 
 
 def is_generation_enabled(policy_service: Any | None, channel_id: str) -> bool:
+    normalized = str(channel_id or "").strip().lower()
     if policy_service is None:
-        return True
+        return bool(DEFAULT_GENERATION_ENABLED.get(normalized, normalized == "web"))
     try:
-        policy = policy_service.get_policy(channel_id)
+        policy = policy_service.get_policy(normalized)
         generation_enabled = getattr(policy, "generation_enabled", None)
         if isinstance(generation_enabled, bool):
             return generation_enabled
@@ -28,25 +29,26 @@ def is_generation_enabled(policy_service: Any | None, channel_id: str) -> bool:
     except Exception:
         logger.exception(
             "Failed to read generation policy for channel=%s; falling back to default=%s",
-            channel_id,
-            DEFAULT_GENERATION_ENABLED.get(channel_id, False),
+            normalized,
+            DEFAULT_GENERATION_ENABLED.get(normalized, normalized == "web"),
         )
-        return bool(DEFAULT_GENERATION_ENABLED.get(channel_id, False))
+        return bool(DEFAULT_GENERATION_ENABLED.get(normalized, normalized == "web"))
 
 
 def is_autosend_enabled(policy_service: Any | None, channel_id: str) -> bool:
+    normalized = str(channel_id or "").strip().lower()
     if policy_service is None:
-        return True
+        return bool(DEFAULT_AUTORESPONSE_ENABLED.get(normalized, normalized == "web"))
     try:
-        policy = policy_service.get_policy(channel_id)
+        policy = policy_service.get_policy(normalized)
         return bool(getattr(policy, "enabled", False))
     except Exception:
         logger.exception(
             "Failed to read auto-send policy for channel=%s; falling back to default=%s",
-            channel_id,
-            DEFAULT_AUTORESPONSE_ENABLED.get(channel_id, False),
+            normalized,
+            DEFAULT_AUTORESPONSE_ENABLED.get(normalized, normalized == "web"),
         )
-        return bool(DEFAULT_AUTORESPONSE_ENABLED.get(channel_id, False))
+        return bool(DEFAULT_AUTORESPONSE_ENABLED.get(normalized, normalized == "web"))
 
 
 def apply_autosend_policy(response: Any, autosend_enabled: bool) -> Any:

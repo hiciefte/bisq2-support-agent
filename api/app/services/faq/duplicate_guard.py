@@ -53,10 +53,10 @@ def build_duplicate_faq_detail(
         "message": message,
         "similar_faqs": [
             {
-                "id": faq["id"],
-                "question": faq["question"],
+                "id": faq.get("id"),
+                "question": str(faq.get("question", "")),
                 "answer": _truncate_answer(str(faq.get("answer", ""))),
-                "similarity": faq["similarity"],
+                "similarity": faq.get("similarity"),
                 "category": faq.get("category"),
                 "protocol": faq.get("protocol"),
             }

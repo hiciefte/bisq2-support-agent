@@ -65,6 +65,18 @@ class LivePollingService:
 
     async def run_once(self) -> int:
         messages = await self.channel.poll_conversations()
+        if messages is None:
+            return 0
+        if not isinstance(messages, list):
+            try:
+                messages = list(messages)
+            except TypeError:
+                logger.warning(
+                    "Invalid poll payload for channel=%s (type=%s)",
+                    self.channel_id,
+                    type(messages).__name__,
+                )
+                return 0
         processed = 0
 
         if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):

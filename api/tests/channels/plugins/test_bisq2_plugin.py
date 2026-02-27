@@ -773,7 +773,7 @@ class TestBisq2ChannelPolling:
         assert len(messages) == 1
         assert messages[0].message_id == "ws-msg-001"
         assert messages[0].question == "What is Bisq Easy?"
-        mock_bisq_api.export_chat_messages.assert_not_awaited()
+        mock_bisq_api.export_chat_messages.assert_awaited_once()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

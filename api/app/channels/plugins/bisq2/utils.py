@@ -9,7 +9,9 @@ def build_bisq_websocket_url(api_url: str) -> str:
     """Convert BISQ_API_URL to websocket endpoint URL."""
     parsed = urlparse(api_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return "ws://host.docker.internal:8090/websocket"
+        raise ValueError(
+            f"Invalid BISQ_API_URL: {api_url!r}. Expected absolute http(s) URL."
+        )
 
     ws_scheme = "wss" if parsed.scheme == "https" else "ws"
     return urlunparse(

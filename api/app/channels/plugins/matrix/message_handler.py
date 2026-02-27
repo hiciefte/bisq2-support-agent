@@ -188,7 +188,7 @@ class MatrixMessageHandler:
         if self._dispatcher is None or self._dispatcher.channel is not self.channel:
             self._dispatcher = ChannelResponseDispatcher(
                 channel=self.channel,
-                channel_id="matrix",
+                channel_id=self.channel_id,
             )
         return self._dispatcher
 

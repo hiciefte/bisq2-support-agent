@@ -236,8 +236,8 @@ class MatrixChannel(ChannelBase):
                 self._logger.warning(f"Failed to start reaction handler: {e}")
 
         runtime_settings = getattr(self.runtime, "settings", None)
-        rooms = list(getattr(runtime_settings, "MATRIX_SYNC_ROOMS", []))
-        for room_id in rooms:
+        allowed_rooms = resolve_allowed_sync_rooms(runtime_settings)
+        for room_id in allowed_rooms:
             await self.join_room(str(room_id))
 
     async def stop(self) -> None:

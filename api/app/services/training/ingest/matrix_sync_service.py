@@ -7,6 +7,7 @@ Uses UnifiedFAQExtractor for single-pass LLM extraction instead of
 pattern-based reply matching.
 """
 
+import asyncio
 import logging
 import time as time_module
 from typing import Any, Dict, List, Optional, Set
@@ -78,6 +79,7 @@ class MatrixSyncService:
 
         # Matrix client (created lazily)
         self._client: Optional["AsyncClient"] = None
+        self._client_lock = asyncio.Lock()
         self._connection_manager: Optional[Any] = None
         self._session_manager: Optional[Any] = None
         self._error_handler: Optional[Any] = None
@@ -154,20 +156,25 @@ class MatrixSyncService:
         try:
             client = await self._get_client()
 
+            had_room_errors = False
             for room_id in rooms:
                 try:
                     processed = await self._sync_single_room(client, room_id)
                     total_processed += processed
                 except Exception:
                     logger.exception(f"Failed to sync room {room_id}")
+                    had_room_errors = True
                     # Continue with other rooms
 
             # Save state after all rooms processed
             self.polling_state.save_batch_processed()
 
             # Record sync success metrics
-            sync_last_status.labels(source="matrix").set(1)
-            sync_last_success_timestamp.labels(source="matrix").set(time_module.time())
+            sync_last_status.labels(source="matrix").set(0 if had_room_errors else 1)
+            if not had_room_errors:
+                sync_last_success_timestamp.labels(source="matrix").set(
+                    time_module.time()
+                )
             sync_pairs_processed.labels(source="matrix").inc(total_processed)
 
             logger.info(f"Matrix sync complete: processed {total_processed} Q&A pairs")
@@ -194,45 +201,50 @@ class MatrixSyncService:
         """
         if self._client is not None:
             return self._client
+        async with self._client_lock:
+            if self._client is not None:
+                return self._client
 
-        # Import here to avoid circular imports
-        from app.channels.plugins.matrix.client.connection_manager import (
-            ConnectionManager,
-        )
-        from app.channels.plugins.matrix.client.error_handler import ErrorHandler
-        from app.channels.plugins.matrix.client.session_manager import SessionManager
+            # Import here to avoid circular imports
+            from app.channels.plugins.matrix.client.connection_manager import (
+                ConnectionManager,
+            )
+            from app.channels.plugins.matrix.client.error_handler import ErrorHandler
+            from app.channels.plugins.matrix.client.session_manager import (
+                SessionManager,
+            )
 
-        homeserver = self.settings.MATRIX_HOMESERVER_URL
-        user_id = self._get_sync_user(self.settings)
-        password = self._get_sync_password(self.settings)
-        session_path = self._get_sync_session_path(self.settings)
+            homeserver = self.settings.MATRIX_HOMESERVER_URL
+            user_id = self._get_sync_user(self.settings)
+            password = self._get_sync_password(self.settings)
+            session_path = self._get_sync_session_path(self.settings)
 
-        # Create client
-        self._client = AsyncClient(homeserver, user_id)
+            # Create client
+            self._client = AsyncClient(homeserver, user_id)
 
-        # Create session manager
-        self._session_manager = SessionManager(
-            client=self._client,
-            password=password,
-            session_file=session_path,
-        )
+            # Create session manager
+            self._session_manager = SessionManager(
+                client=self._client,
+                password=password,
+                session_file=session_path,
+            )
 
-        # Create connection manager
-        self._connection_manager = ConnectionManager(
-            client=self._client,
-            session_manager=self._session_manager,
-        )
+            # Create connection manager
+            self._connection_manager = ConnectionManager(
+                client=self._client,
+                session_manager=self._session_manager,
+            )
 
-        # Create error handler for retry logic
-        self._error_handler = ErrorHandler(
-            session_manager=self._session_manager,
-            max_retries=3,
-        )
+            # Create error handler for retry logic
+            self._error_handler = ErrorHandler(
+                session_manager=self._session_manager,
+                max_retries=3,
+            )
 
-        # Connect
-        await self._connection_manager.connect()
+            # Connect
+            await self._connection_manager.connect()
 
-        return self._client
+            return self._client
 
     async def _sync_single_room(self, client: "AsyncClient", room_id: str) -> int:
         """Sync a single Matrix room using LLM-based FAQ extraction.
@@ -291,23 +303,18 @@ class MatrixSyncService:
                 self.polling_state.update_room_token(room_id, response.end)
             return 0
 
-        # Mark ALL input messages as processed BEFORE sending to LLM
-        # This prevents duplicate processing on subsequent polls, regardless
-        # of whether the LLM extracts any FAQs from them
-        for msg in new_messages:
-            event_id = msg.get("event_id", "")
-            if event_id:
-                self.polling_state.mark_processed(event_id)
-
-        logger.debug(f"Marked {len(new_messages)} input messages as processed")
-
         # Use LLM-based extraction via pipeline service
-        # This sends all messages to UnifiedFAQExtractor for single-pass extraction
         results = await self.pipeline_service.extract_faqs_batch(
             messages=new_messages,
             source="matrix",
             staff_identifiers=self.trusted_staff_ids,
         )
+
+        for msg in new_messages:
+            event_id = msg.get("event_id", "")
+            if event_id:
+                self.polling_state.mark_processed(event_id)
+        logger.debug(f"Marked {len(new_messages)} input messages as processed")
 
         # Count successful candidates
         for result in results:

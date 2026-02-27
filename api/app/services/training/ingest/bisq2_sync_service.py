@@ -103,16 +103,6 @@ class Bisq2SyncService:
                 logger.info("No new messages to process")
                 return 0
 
-            # Mark ALL input messages as processed BEFORE sending to LLM
-            # This prevents duplicate processing on subsequent polls, regardless
-            # of whether the LLM extracts any FAQs from them
-            for msg in new_messages:
-                msg_id = msg.get("messageId", "")
-                if msg_id:
-                    self.state_manager.mark_processed(msg_id)
-
-            logger.info(f"Marked {len(new_messages)} input messages as processed")
-
             # Use LLM-based extraction via pipeline service
             # This sends all messages to UnifiedFAQExtractor for single-pass extraction
             results = await self.pipeline_service.extract_faqs_batch(
@@ -120,6 +110,13 @@ class Bisq2SyncService:
                 source="bisq2",
                 staff_identifiers=self.staff_users,
             )
+
+            # Mark all input messages processed only after extraction completes.
+            for msg in new_messages:
+                msg_id = msg.get("messageId", "")
+                if msg_id:
+                    self.state_manager.mark_processed(msg_id)
+            logger.info(f"Marked {len(new_messages)} input messages as processed")
 
             # Count successfully processed candidates
             for result in results:
@@ -163,7 +160,9 @@ class Bisq2SyncService:
         for attempt in range(max_retries):
             try:
                 result = await self.bisq_api.export_chat_messages(
-                    since=self.state_manager.last_sync_timestamp
+                    since=self.state_manager.last_sync_timestamp,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
                 )
                 return result.get("messages", [])
             except Exception as e:
