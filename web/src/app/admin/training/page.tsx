@@ -111,6 +111,7 @@ export default function TrainingPage() {
   const queueCountRequestId = useRef(0);
   const currentItemRequestId = useRef(0);
   const batchRequestId = useRef(0);
+  const hasInitializedRoutingEffect = useRef(false);
 
   // Batch mode state (for AUTO_APPROVE queue)
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -234,6 +235,11 @@ export default function TrainingPage() {
 
   // Refetch when routing changes
   useEffect(() => {
+    if (!hasInitializedRoutingEffect.current) {
+      hasInitializedRoutingEffect.current = true;
+      return;
+    }
+
     if (selectedRouting === 'AUTO_APPROVE' && isBatchMode) {
       fetchBatchItems();
     } else {

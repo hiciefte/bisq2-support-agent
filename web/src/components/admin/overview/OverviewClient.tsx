@@ -51,6 +51,7 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
   const {
     dashboardData,
     actionCounts,
+    isActionCountsAvailable,
     totalOpenActions,
     isLoading,
     isRefreshing,
@@ -92,6 +93,27 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
     return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
   };
 
+  const formatUptime = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds) || seconds < 0) {
+      return "N/A";
+    }
+    const totalSeconds = Math.floor(seconds);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+    if (days > 0) {
+      return `${days}d ${hours}h`;
+    }
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m`;
+    }
+    return `${totalSeconds}s`;
+  };
+
   const formatRelativeTime = (isoTimestamp: string) => {
     const timestamp = new Date(isoTimestamp).getTime();
     const now = Date.now();
@@ -124,14 +146,17 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
 
   const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
   const helpfulRateValue = dashboardData ? Math.max(0, Math.min(100, dashboardData.helpful_rate)) : 0;
-  const hasActionBacklog = totalOpenActions > 0;
+  const hasActionBacklog = isActionCountsAvailable && totalOpenActions > 0;
 
   const queueSummaryLabel = useMemo(() => {
+    if (!isActionCountsAvailable) {
+      return "Action queue syncing";
+    }
     if (hasActionBacklog) {
       return `${totalOpenActions} items need attention`;
     }
     return "No pending admin actions";
-  }, [hasActionBacklog, totalOpenActions]);
+  }, [hasActionBacklog, isActionCountsAvailable, totalOpenActions]);
 
   if (isLoading && !dashboardData) {
     return <OverviewSkeleton />;
@@ -320,15 +345,20 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
                 icon={<Gauge className="h-4 w-4 text-emerald-300" />}
                 label="Training"
                 count={actionCounts.training_queue}
+                status={isActionCountsAvailable ? "known" : "unknown"}
                 description={
-                  actionCounts.training_queue > 0
+                  !isActionCountsAvailable
+                    ? "Training queue status is temporarily unavailable."
+                    : actionCounts.training_queue > 0
                     ? "Candidate answers waiting in training queues."
                     : "Training queues are currently clear."
                 }
                 href="/admin/training"
                 cta="Open training"
                 detail={
-                  actionCounts.training_queue > 0
+                  !isActionCountsAvailable
+                    ? "Open Training for authoritative queue counts."
+                    : actionCounts.training_queue > 0
                     ? "Unified training queue has pending items."
                     : "No training actions waiting."
                 }
@@ -411,11 +441,13 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-3xl font-semibold tracking-tight tabular-nums">
-                  {dashboardData.system_uptime.toFixed(1)}%
+                  {formatUptime(dashboardData.system_uptime)}
                 </div>
                 <CheckCircle2 className="h-5 w-5 text-emerald-400" />
               </div>
-              <Progress value={Math.max(0, Math.min(100, dashboardData.system_uptime))} className="h-1.5 bg-emerald-500/20" />
+              <div className="text-xs text-muted-foreground">
+                API process uptime
+              </div>
               <div className="text-xs text-muted-foreground">
                 FAQs created: <span className="tabular-nums">{formatNumber(dashboardData.total_faqs_created)}</span>
               </div>
@@ -477,19 +509,24 @@ interface ActionTaskCardProps {
   icon: ReactNode;
   label: string;
   count: number;
+  status?: "known" | "unknown";
   description: string;
   href: string;
   cta: string;
   detail?: string;
 }
 
-function ActionTaskCard({ icon, label, count, description, href, cta, detail }: ActionTaskCardProps) {
-  const hasWork = count > 0;
+function ActionTaskCard({ icon, label, count, status = "known", description, href, cta, detail }: ActionTaskCardProps) {
+  const hasWork = status === "known" && count > 0;
+  const countLabel = status === "unknown" ? "—" : count;
 
   return (
     <article
       className={cn(
         "rounded-xl border p-4 transition-colors",
+        status === "unknown"
+          ? "border-border/70 bg-background/40"
+          : null,
         hasWork
           ? "border-amber-500/30 bg-amber-500/5"
           : "border-border/70 bg-background/40",
@@ -501,18 +538,21 @@ function ActionTaskCard({ icon, label, count, description, href, cta, detail }: 
             {icon}
             {label}
           </div>
-          <div className="text-3xl font-semibold tracking-tight tabular-nums">{count}</div>
+          <div className="text-3xl font-semibold tracking-tight tabular-nums">{countLabel}</div>
         </div>
         <Badge
           variant="secondary"
           className={cn(
             "text-xs",
+            status === "unknown"
+              ? "bg-muted text-muted-foreground border border-border"
+              : null,
             hasWork
               ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
               : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
           )}
         >
-          {hasWork ? "Needs action" : "Clear"}
+          {status === "unknown" ? "Syncing" : hasWork ? "Needs action" : "Clear"}
         </Badge>
       </div>
 

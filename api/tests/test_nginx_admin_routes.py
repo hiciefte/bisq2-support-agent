@@ -33,12 +33,15 @@ def _get_nginx_allowed_prefixes(conf_path: Path) -> set[str]:
 def _get_registered_admin_prefixes() -> set[str]:
     """Scan admin route files and extract their prefix segments.
 
-    Each admin router uses prefix="/admin/<segment>" or prefix="/admin"
+    Each admin router uses prefix="/admin/<segment>" (optionally nested, e.g.
+    "/admin/channels/autoresponse") or prefix="/admin"
     with routes like "/faqs", "/feedback/*".  We extract the first path
     segment after /admin/ that the frontend would call.
     """
     admin_routes_dir = PROJECT_ROOT / "api" / "app" / "routes" / "admin"
-    prefix_re = re.compile(r'prefix\s*=\s*["\']/?admin/?(\w+)?["\']')
+    prefix_re = re.compile(
+        r'prefix\s*=\s*["\']/?admin(?:/([^"\'/]+)(?:/[^"\'/]*)*)?["\']'
+    )
 
     prefixes: set[str] = set()
     for py_file in admin_routes_dir.glob("*.py"):
@@ -52,7 +55,7 @@ def _get_registered_admin_prefixes() -> set[str]:
             else:
                 # prefix="/admin" — routes define the segment themselves
                 # Extract first segment from route decorators
-                route_re = re.compile(r'@router\.\w+\(\s*["\']/?(\w+)')
+                route_re = re.compile(r'@router\.\w+\(\s*["\']/?([^"\'/]+)')
                 for rm in route_re.finditer(content):
                     prefixes.add(rm.group(1))
     return prefixes

@@ -49,6 +49,6 @@ export const EMPTY_ACTION_COUNTS: AdminActionCounts = {
 
 export interface OverviewInitialData {
   dashboardData: DashboardData | null;
-  actionCounts: AdminActionCounts;
+  actionCounts: AdminActionCounts | null;
   channelPolicies: ChannelAutoresponsePolicy[];
 }

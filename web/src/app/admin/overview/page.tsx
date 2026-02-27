@@ -5,7 +5,6 @@ import {
   type AdminActionCounts,
   type ChannelAutoresponsePolicy,
   type DashboardData,
-  EMPTY_ACTION_COUNTS,
 } from "@/components/admin/overview/types";
 import { fetchAdminApiJson } from "@/lib/server-admin-api";
 
@@ -18,7 +17,7 @@ async function fetchInitialOverviewData() {
 
   return {
     dashboardData,
-    actionCounts: actionCounts ?? EMPTY_ACTION_COUNTS,
+    actionCounts,
     channelPolicies: channelPolicies ?? [],
   };
 }

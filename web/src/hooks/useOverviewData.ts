@@ -14,7 +14,7 @@ interface UseOverviewDataOptions {
   dateRange?: { from: Date; to: Date };
   isInitialized: boolean;
   initialDashboardData: DashboardData | null;
-  initialActionCounts: AdminActionCounts;
+  initialActionCounts: AdminActionCounts | null;
   refreshIntervalMs?: number;
 }
 
@@ -71,6 +71,9 @@ export function useOverviewData({
   const [actionCounts, setActionCounts] = useState<AdminActionCounts>(
     initialActionCounts ?? EMPTY_ACTION_COUNTS,
   );
+  const [isActionCountsAvailable, setIsActionCountsAvailable] = useState<boolean>(
+    initialActionCounts !== null,
+  );
   const [isLoading, setIsLoading] = useState(initialDashboardData === null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +117,7 @@ export function useOverviewData({
 
       if (!countsFailed) {
         setActionCounts(countsResult.value);
+        setIsActionCountsAvailable(true);
       } else {
         console.error("Overview action-counts fetch error:", countsResult.reason);
       }
@@ -155,6 +159,7 @@ export function useOverviewData({
   return {
     dashboardData,
     actionCounts,
+    isActionCountsAvailable,
     totalOpenActions,
     isLoading,
     isRefreshing,
