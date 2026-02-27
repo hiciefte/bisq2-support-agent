@@ -64,6 +64,13 @@ class LivePollingService:
         logger.info("Live polling service stopped for channel=%s", self.channel_id)
 
     async def run_once(self) -> int:
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
+            logger.debug(
+                "AI generation disabled for channel=%s; ignoring inbound messages",
+                self.channel_id,
+            )
+            return 0
+
         messages = await self.channel.poll_conversations()
         if messages is None:
             return 0
@@ -78,13 +85,6 @@ class LivePollingService:
                 )
                 return 0
         processed = 0
-
-        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
-            logger.debug(
-                "AI generation disabled for channel=%s; ignoring inbound messages",
-                self.channel_id,
-            )
-            return 0
 
         autosend_enabled = is_autosend_enabled(
             self.autoresponse_policy_service,

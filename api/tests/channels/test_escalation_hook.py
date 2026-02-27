@@ -166,7 +166,7 @@ async def test_escalation_hook_creates_escalation_for_queue_medium(
     from app.channels.gateway import ChannelGateway
     from app.channels.hooks.escalation_hook import EscalationPostHook
 
-    async def rag_query(*args, **kwargs):
+    async def rag_query(*_args, **_kwargs):
         return {
             "answer": "Draft answer pending review.",
             "sources": [],
