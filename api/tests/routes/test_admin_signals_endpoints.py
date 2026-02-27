@@ -1,4 +1,5 @@
 """Tests for admin quality-signal routes."""
+
 # flake8: noqa: E402
 
 import sys
