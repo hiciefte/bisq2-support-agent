@@ -59,38 +59,38 @@ These variables configure the application services running inside Docker contain
 
 When Bisq2 API is configured with `authorizationRequired=true`, the support-agent must be configured for pairing/session bootstrap.
 
-*   **`BISQ_API_URL`**
-    *   Description: Base URL used by support-agent to call Bisq2 API.
-    *   Default: `http://bisq2-api:8090`
-*   **`BISQ_API_TIMEOUT`**
-    *   Description: Request timeout in seconds for Bisq2 API calls.
-    *   Default: `5`
-*   **`BISQ_API_AUTH_ENABLED`**
-    *   Description: Enables authenticated Bisq2 API request flow.
-    *   Default: `false`
-*   **`BISQ_API_PAIRING_QR_FILE`**
-    *   Description: Pairing QR payload file path (relative to `DATA_DIR` if not absolute). Recommended bootstrap path.
-    *   Example: `pairing_qr_code.txt`
-*   **`BISQ_API_PAIRING_CODE_ID`**
-    *   Description: Optional direct pairing code ID. Use this only if not using `BISQ_API_PAIRING_QR_FILE`.
-    *   Default: empty
-*   **`BISQ_API_PAIRING_CLIENT_NAME`**
-    *   Description: Client name sent during pairing bootstrap.
-    *   Default: `bisq-support-agent`
-*   **`BISQ_API_AUTH_STATE_FILE`**
-    *   Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute).
-    *   Default: `bisq_api_auth.json`
-*   **`BISQ_API_CLIENT_ID`**
-    *   Description: Optional manual override for Bisq2 API client ID. Use when bypassing QR bootstrap (`BISQ_API_PAIRING_QR_FILE`) and persisted auth state (`BISQ_API_AUTH_STATE_FILE`).
-    *   Default: empty
-*   **`BISQ_API_CLIENT_SECRET`**
-    *   Description: Optional manual override for Bisq2 API client secret. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are used instead of pairing-file bootstrap/session restore.
-    *   Default: empty
+* **`BISQ_API_URL`**
+  * Description: Base URL used by support-agent to call Bisq2 API.
+  * Default: `http://bisq2-api:8090`
+* **`BISQ_API_TIMEOUT`**
+  * Description: Request timeout in seconds for Bisq2 API calls.
+  * Default: `5`
+* **`BISQ_API_AUTH_ENABLED`**
+  * Description: Enables authenticated Bisq2 API request flow.
+  * Default: `false`
+* **`BISQ_API_PAIRING_QR_FILE`**
+  * Description: Pairing QR payload file path (relative to `DATA_DIR` if not absolute). Recommended bootstrap path.
+  * Example: `pairing_qr_code.txt`
+* **`BISQ_API_PAIRING_CODE_ID`**
+  * Description: Optional direct pairing code ID. Use this only if not using `BISQ_API_PAIRING_QR_FILE`.
+  * Default: empty
+* **`BISQ_API_PAIRING_CLIENT_NAME`**
+  * Description: Client name sent during pairing bootstrap.
+  * Default: `bisq-support-agent`
+* **`BISQ_API_AUTH_STATE_FILE`**
+  * Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute).
+  * Default: `bisq_api_auth.json`
+* **`BISQ_API_CLIENT_ID`**
+  * Description: Optional manual override for Bisq2 API client ID. Use when bypassing QR bootstrap (`BISQ_API_PAIRING_QR_FILE`) and persisted auth state (`BISQ_API_AUTH_STATE_FILE`).
+  * Default: empty
+* **`BISQ_API_CLIENT_SECRET`**
+  * Description: Optional manual override for Bisq2 API client secret. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are used instead of pairing-file bootstrap/session restore.
+  * Default: empty
 
 Notes:
-*   On first startup with auth enabled, support-agent reads pairing QR/code, pairs, then persists credentials/session to `BISQ_API_AUTH_STATE_FILE`.
-*   `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` are optional manual overrides and typically should not be set when using pairing-file bootstrap.
-*   In Dockerized production, copy the current Bisq2 pairing QR payload to `${BISQ_SUPPORT_INSTALL_DIR}/api/data/pairing_qr_code.txt` and set `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
+* On first startup with auth enabled, support-agent reads pairing QR/code, pairs, then persists credentials/session to `BISQ_API_AUTH_STATE_FILE`.
+* `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` are optional manual overrides and typically should not be set when using pairing-file bootstrap.
+* In Dockerized production, copy the current Bisq2 pairing QR payload to `${BISQ_SUPPORT_INSTALL_DIR}/api/data/pairing_qr_code.txt` and set `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
 
 ### Matrix Variables (Sync vs Alerts)
 

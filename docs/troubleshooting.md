@@ -219,9 +219,11 @@ If the FAQ extractor runs but doesn't generate new FAQs:
    - Recommended flow is pairing bootstrap via QR file:
      1. Set `BISQ_API_AUTH_ENABLED=true` and `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
      2. Copy current QR payload from Bisq2 API runtime data into API data volume:
+
         ```bash
         docker compose -f docker/docker-compose.yml exec bisq2-api cat /opt/bisq2/data/pairing_qr_code.txt > api/data/pairing_qr_code.txt
         ```
+
      3. Restart `api` container and confirm `/data/bisq_api_auth.json` is created.
    - Pairing did not complete when logs show `Missing clientId` (missing/invalid QR file or auth disabled in support-agent).
    - Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients when logs show `Required permissions not granted` for `/api/v1/support/*`.
