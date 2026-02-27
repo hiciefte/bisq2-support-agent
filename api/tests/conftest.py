@@ -238,6 +238,30 @@ def reset_faq_service_singleton():
     FAQService._instance = None
 
 
+@pytest.fixture(autouse=True)
+def reset_feedback_service_singleton():
+    """Reset FeedbackService singleton and cache state before each test."""
+    from app.services.feedback_service import FeedbackService
+
+    if FeedbackService._instance is not None:
+        if hasattr(FeedbackService._instance, "initialized"):
+            delattr(FeedbackService._instance, "initialized")
+    FeedbackService._instance = None
+    FeedbackService._feedback_cache = None
+    FeedbackService._last_load_time = None
+    FeedbackService._update_lock = None
+
+    yield
+
+    if FeedbackService._instance is not None:
+        if hasattr(FeedbackService._instance, "initialized"):
+            delattr(FeedbackService._instance, "initialized")
+    FeedbackService._instance = None
+    FeedbackService._feedback_cache = None
+    FeedbackService._last_load_time = None
+    FeedbackService._update_lock = None
+
+
 @pytest.fixture
 def faq_service(test_settings: Settings, sample_faq_data: list[dict]) -> FAQService:
     """Create an FAQService instance with sample data.

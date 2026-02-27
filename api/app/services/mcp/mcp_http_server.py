@@ -371,6 +371,16 @@ def _extract_quote_currency_from_market(market: str) -> str | None:
     if not normalized:
         return None
 
+    compact = re.sub(r"\s+", "", normalized)
+    if compact.startswith("BTC") and len(compact) > 3:
+        quote = compact[3:]
+        if re.fullmatch(r"[A-Z]{2,5}", quote) and quote not in {"BTC", "XBT"}:
+            return quote
+    if compact.startswith("XBT") and len(compact) > 3:
+        quote = compact[3:]
+        if re.fullmatch(r"[A-Z]{2,5}", quote) and quote not in {"BTC", "XBT"}:
+            return quote
+
     for separator in ("/", "_", "-", ":"):
         if separator in normalized:
             parts = [
@@ -378,9 +388,15 @@ def _extract_quote_currency_from_market(market: str) -> str | None:
             ]
             if len(parts) >= 2:
                 quote = parts[1]
-                if re.fullmatch(r"[A-Z]{2,5}", quote) and quote != "BTC":
+                if re.fullmatch(r"[A-Z]{2,5}", quote) and quote not in {"BTC", "XBT"}:
                     return quote
             return None
+
+    spaced_pair = re.match(r"^(?:BTC|XBT)\s+([A-Z]{2,5})$", normalized)
+    if spaced_pair:
+        quote = spaced_pair.group(1)
+        if quote not in {"BTC", "XBT"}:
+            return quote
     return None
 
 

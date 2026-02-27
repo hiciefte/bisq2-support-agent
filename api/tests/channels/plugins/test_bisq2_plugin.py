@@ -944,6 +944,79 @@ class TestBisq2ChannelPolling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_poll_conversations_builds_history_when_profile_ids_missing(self):
+        """History should still build when Bisq messages only include author aliases."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        staff_resolver = MagicMock()
+        staff_resolver.is_staff.side_effect = lambda value: value in {"Support Staff"}
+
+        def resolve_optional(name: str):
+            if name == "staff_resolver":
+                return staff_resolver
+            return None
+
+        runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+        channel = Bisq2Channel(runtime)
+
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "alias-user-1",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "author": "Dumb User",
+                    "text": "How does Bisq Easy work?",
+                    "timestamp": 1760000010000,
+                },
+            }
+        )
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "alias-staff-1",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "author": "Support Staff",
+                    "text": "Bisq Easy helps with simple BTC buys.",
+                    "citationMessageId": "alias-user-1",
+                    "timestamp": 1760000010100,
+                },
+            }
+        )
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "alias-user-2",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "author": "Dumb User",
+                    "text": "Can I use SEPA?",
+                    "timestamp": 1760000010200,
+                },
+            }
+        )
+
+        messages = await channel.poll_conversations()
+        by_id = {message.message_id: message for message in messages}
+        follow_up = by_id["alias-user-2"]
+
+        assert follow_up.chat_history is not None
+        history_text = [item.content for item in follow_up.chat_history or []]
+        assert "How does Bisq Easy work?" in history_text
+        assert "Bisq Easy helps with simple BTC buys." in history_text
+        assert "Can I use SEPA?" in history_text
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_poll_conversations_filters_staff_messages_from_incoming_queue(self):
         """Trusted staff messages must not be forwarded as incoming user questions."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel

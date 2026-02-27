@@ -155,6 +155,11 @@ class ChannelResponseDispatcher:
         if routing_action in _DIRECT_DELIVERY_ACTIONS:
             return True
         # Fail-open for unknown legacy actions to avoid silent user drops.
+        if routing_action and routing_action not in _REVIEW_QUEUE_ACTIONS:
+            logger.warning(
+                "Unknown routing_action=%r for channel dispatcher; defaulting to autosend",
+                routing_action,
+            )
         return routing_action not in _REVIEW_QUEUE_ACTIONS
 
     @staticmethod

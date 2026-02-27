@@ -213,7 +213,7 @@ class ChannelBootstrapper:
         """Wire shared reaction-followup coordinator against channel registry."""
         try:
             from app.channels.feedback_followup import FeedbackFollowupCoordinator
-        except Exception:
+        except ImportError:
             logger.debug("FeedbackFollowupCoordinator unavailable", exc_info=True)
             return
 
@@ -233,7 +233,7 @@ class ChannelBootstrapper:
         )
         processor = runtime.resolve_optional("reaction_processor")
         if processor is not None:
-            setattr(processor, "followup_coordinator", coordinator)
+            processor.followup_coordinator = coordinator
         logger.debug("Wired feedback follow-up coordinator")
 
     @staticmethod

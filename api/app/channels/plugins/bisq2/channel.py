@@ -820,7 +820,10 @@ class Bisq2Channel(ChannelBase):
         conversation_id = str(
             msg.get("conversationId", msg.get("channelId", "")) or ""
         ).strip()
-        requester_id = self._resolve_sender_profile_id(msg)
+        requester_id = self._derive_user_id(
+            author_id=self._resolve_sender_profile_id(msg),
+            author=self._resolve_sender_alias(msg),
+        )
         current_message_id = self._derive_message_id(msg)
         if not conversation_id or not requester_id or not current_message_id:
             return None
@@ -871,9 +874,12 @@ class Bisq2Channel(ChannelBase):
     ) -> Optional[ConversationMessage]:
         message_id = self._derive_message_id(msg)
         text = str(msg.get("message", "") or "").strip()
-        sender_id = self._resolve_sender_profile_id(msg)
         sender_alias = self._resolve_sender_alias(msg)
-        if not message_id or not text or not sender_id:
+        sender_id = self._derive_user_id(
+            author_id=self._resolve_sender_profile_id(msg),
+            author=sender_alias,
+        )
+        if not message_id or not text:
             return None
 
         return ConversationMessage(
