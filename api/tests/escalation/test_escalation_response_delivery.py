@@ -335,3 +335,68 @@ class TestResponseDeliveryAdapterContract:
         _, outgoing_msg = adapter.send_message.call_args[0]
         assert outgoing_msg.sources == []
         assert outgoing_msg.metadata.confidence_score is None
+
+
+class TestResponseDeliveryLocalization:
+    """Test user-language localization for delivered staff answers."""
+
+    @pytest.mark.asyncio
+    async def test_delivery_translates_staff_answer_for_non_english_user(self):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="!abc:matrix.org")
+        adapter.send_message = AsyncMock(return_value=True)
+
+        registry = MagicMock()
+        registry.get.return_value = adapter
+
+        translation_service = MagicMock()
+        translation_service.translate_response = AsyncMock(
+            return_value={"translated_text": "Lokalisierte Antwort"}
+        )
+
+        delivery = ResponseDelivery(registry, translation_service=translation_service)
+        escalation = _make_escalation(
+            channel="matrix",
+            channel_metadata={"room_id": "!abc:matrix.org"},
+            user_language="de",
+        )
+
+        await delivery.deliver(escalation, "Canonical English answer")
+
+        translation_service.translate_response.assert_awaited_once_with(
+            "Canonical English answer",
+            target_lang="de",
+            source_lang="en",
+        )
+        _, outgoing_msg = adapter.send_message.call_args[0]
+        assert outgoing_msg.answer == "Lokalisierte Antwort"
+
+    @pytest.mark.asyncio
+    async def test_delivery_falls_back_to_canonical_answer_when_translation_fails(self):
+        from app.services.escalation.response_delivery import ResponseDelivery
+
+        adapter = MagicMock()
+        adapter.get_delivery_target = MagicMock(return_value="!abc:matrix.org")
+        adapter.send_message = AsyncMock(return_value=True)
+
+        registry = MagicMock()
+        registry.get.return_value = adapter
+
+        translation_service = MagicMock()
+        translation_service.translate_response = AsyncMock(
+            side_effect=RuntimeError("translation outage")
+        )
+
+        delivery = ResponseDelivery(registry, translation_service=translation_service)
+        escalation = _make_escalation(
+            channel="matrix",
+            channel_metadata={"room_id": "!abc:matrix.org"},
+            user_language="de",
+        )
+
+        await delivery.deliver(escalation, "Canonical English answer")
+
+        _, outgoing_msg = adapter.send_message.call_args[0]
+        assert outgoing_msg.answer == "Canonical English answer"

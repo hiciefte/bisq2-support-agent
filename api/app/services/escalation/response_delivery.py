@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any
 
+from app.channels.escalation_localization import normalize_language_code
 from app.channels.models import (
     ChannelType,
     DocumentReference,
@@ -22,13 +23,19 @@ logger = logging.getLogger(__name__)
 class ResponseDelivery:
     """Routes staff responses to the correct channel adapter."""
 
-    def __init__(self, channel_registry: Any) -> None:
+    def __init__(
+        self,
+        channel_registry: Any,
+        translation_service: Any | None = None,
+    ) -> None:
         """Initialize response delivery service.
 
         Args:
             channel_registry: ChannelRegistry instance with get(channel_id) method
+            translation_service: Optional TranslationService for user-facing localization
         """
         self.channel_registry = channel_registry
+        self.translation_service = translation_service
 
     async def deliver(self, escalation: Escalation, staff_answer: str) -> bool:
         """Deliver staff response to user's original channel.
@@ -70,12 +77,16 @@ class ResponseDelivery:
             confidence_score = (
                 escalation.confidence_score if include_ai_provenance else None
             )
+            rendered_answer = await self._localize_staff_answer(
+                escalation=escalation,
+                staff_answer=staff_answer,
+            )
 
             # Build outgoing message
             outgoing_msg = OutgoingMessage(
                 message_id=f"escalation-{escalation.id}",
                 channel=ChannelType(escalation.channel),
-                answer=staff_answer,
+                answer=rendered_answer,
                 sources=sources,
                 user=UserContext(
                     user_id=escalation.user_id,
@@ -115,6 +126,48 @@ class ResponseDelivery:
                 f"Escalation {escalation.id}: Exception during delivery to {escalation.channel}: {e}"
             )
             return False
+
+    async def _localize_staff_answer(
+        self,
+        escalation: Escalation,
+        staff_answer: str,
+    ) -> str:
+        """Translate canonical staff answer to user's language when needed."""
+        answer = str(staff_answer or "").strip()
+        if not answer:
+            return answer
+
+        if self.translation_service is None:
+            return answer
+
+        target_lang = normalize_language_code(
+            getattr(escalation, "user_language", None)
+        )
+        if target_lang == "en":
+            return answer
+
+        try:
+            translated = await self.translation_service.translate_response(
+                answer,
+                target_lang=target_lang,
+                source_lang="en",
+            )
+            translated_text = str(
+                translated.get("translated_text")
+                if isinstance(translated, dict)
+                else ""
+            ).strip()
+            if translated_text:
+                return translated_text
+        except Exception:
+            logger.warning(
+                "Escalation %s: Failed to localize staff answer to %s; using canonical answer",
+                getattr(escalation, "id", "<unknown>"),
+                target_lang,
+                exc_info=True,
+            )
+
+        return answer
 
 
 def _answers_match(draft_answer: str, staff_answer: str) -> bool:

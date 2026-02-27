@@ -51,6 +51,7 @@ from app.services.tor_monitoring_service import TorMonitoringService
 from app.services.training.comparison_engine import AnswerComparisonEngine
 from app.services.training.unified_pipeline_service import UnifiedPipelineService
 from app.services.training.unified_repository import UnifiedFAQCandidateRepository
+from app.services.translation import TranslationService
 from app.services.wiki_service import WikiService
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -154,6 +155,34 @@ async def lifespan(app: FastAPI):
 
     # Set up the RAG service (loads data, builds vector store)
     await rag_service.setup()
+
+    # Wire multilingual translation service to the initialized RAG runtime.
+    # This enables the English-pivot flow (translate in -> retrieve/generate -> translate out).
+    try:
+        if rag_service.llm is None:
+            raise RuntimeError("RAG LLM is not initialized")
+
+        translation_service = TranslationService(
+            llm_provider=rag_service.llm,
+            cache_db_path=os.path.join(settings.DATA_DIR, "translation_cache.db"),
+            translation_skip_en_confidence=settings.MULTILINGUAL_TRANSLATION_SKIP_EN_CONFIDENCE,
+            lid_backend=settings.MULTILINGUAL_LID_BACKEND,
+            lid_confidence_threshold=settings.MULTILINGUAL_LID_CONFIDENCE_THRESHOLD,
+            lid_short_text_chars=settings.MULTILINGUAL_LID_SHORT_TEXT_CHARS,
+            lid_mixed_margin_threshold=settings.MULTILINGUAL_LID_MIXED_MARGIN_THRESHOLD,
+            lid_mixed_secondary_min=settings.MULTILINGUAL_LID_MIXED_SECONDARY_MIN,
+            lid_enable_llm_tiebreaker=settings.MULTILINGUAL_LID_ENABLE_LLM_TIEBREAKER,
+        )
+        rag_service.translation_service = translation_service
+        app.state.translation_service = translation_service
+        logger.info("TranslationService initialized and attached to RAG service")
+    except Exception:
+        rag_service.translation_service = None
+        app.state.translation_service = None
+        logger.warning(
+            "TranslationService initialization failed; continuing without multilingual translation",
+            exc_info=True,
+        )
 
     # Eager load ColBERT reranker if enabled and using Qdrant backend
     if settings.RETRIEVER_BACKEND == "qdrant" and settings.ENABLE_COLBERT_RERANK:
@@ -315,7 +344,8 @@ async def lifespan(app: FastAPI):
             from app.services.escalation.response_delivery import ResponseDelivery
 
             escalation_service.response_delivery = ResponseDelivery(
-                bootstrap_result.registry
+                bootstrap_result.registry,
+                translation_service=getattr(app.state, "translation_service", None),
             )
             app.state.escalation_delivery_registry = bootstrap_result.registry
             logger.info(

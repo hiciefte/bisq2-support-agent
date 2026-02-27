@@ -642,6 +642,63 @@ class TestPollingEndpoint:
         assert data["responded_at"] is not None
         assert data["resolution"] == "responded"
 
+    def test_poll_responded_returns_localized_answer_when_user_language_is_set(
+        self, polling_client, mock_escalation_service
+    ):
+        """Polling should localize canonical staff answer for end users."""
+        translation_service = MagicMock()
+        translation_service.translate_response = AsyncMock(
+            return_value={"translated_text": "Lokalisierte finale Antwort"}
+        )
+        polling_client.app.state.translation_service = translation_service
+
+        responded_escalation = Escalation(
+            id=1,
+            message_id="12345678-1234-1234-1234-123456789abc",
+            channel="web",
+            user_id="@user:matrix.org",
+            username="testuser",
+            channel_metadata={},
+            question="Test question",
+            ai_draft_answer="Draft answer",
+            user_language="de",
+            confidence_score=0.65,
+            routing_action="needs_human",
+            routing_reason=None,
+            sources=[],
+            staff_answer="Final staff answer",
+            staff_id="admin1",
+            delivery_status=EscalationDeliveryStatus.DELIVERED,
+            delivery_error=None,
+            delivery_attempts=1,
+            last_delivery_at=datetime(2025, 1, 15, 12, 30, 0),
+            generated_faq_id=None,
+            status=EscalationStatus.RESPONDED,
+            priority=EscalationPriority.NORMAL,
+            created_at=datetime(2025, 1, 15, 10, 0, 0),
+            claimed_at=datetime(2025, 1, 15, 11, 0, 0),
+            responded_at=datetime(2025, 1, 15, 12, 0, 0),
+            closed_at=None,
+        )
+        mock_escalation_service.repository.get_by_message_id.return_value = (
+            responded_escalation
+        )
+
+        response = polling_client.get(
+            "/escalations/12345678-1234-1234-1234-123456789abc/response"
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "resolved"
+        assert data["staff_answer"] == "Lokalisierte finale Antwort"
+        assert data["resolution"] == "responded"
+        translation_service.translate_response.assert_awaited_once_with(
+            "Final staff answer",
+            target_lang="de",
+            source_lang="en",
+        )
+
     def test_poll_closed_returns_resolved_without_answer(
         self, polling_client, mock_escalation_service
     ):
@@ -687,6 +744,53 @@ class TestPollingEndpoint:
         assert data["status"] == "resolved"
         assert data["staff_answer"] is None
         assert data["resolution"] == "closed"
+        assert data["closed_at"] is not None
+
+    def test_poll_closed_with_staff_answer_still_returns_responded_resolution(
+        self, polling_client, mock_escalation_service
+    ):
+        """Closed lifecycle status after response must still surface as responded."""
+        closed_with_answer = Escalation(
+            id=1,
+            message_id="12345678-1234-1234-1234-123456789abc",
+            channel="matrix",
+            user_id="@user:matrix.org",
+            username="testuser",
+            channel_metadata={},
+            question="Test question",
+            ai_draft_answer="Draft answer",
+            confidence_score=0.65,
+            routing_action="needs_human",
+            routing_reason=None,
+            sources=[],
+            staff_answer="Final staff answer",
+            staff_id="admin1",
+            delivery_status=EscalationDeliveryStatus.DELIVERED,
+            delivery_error=None,
+            delivery_attempts=1,
+            last_delivery_at=datetime(2025, 1, 15, 12, 30, 0),
+            generated_faq_id=None,
+            status=EscalationStatus.CLOSED,
+            priority=EscalationPriority.NORMAL,
+            created_at=datetime(2025, 1, 15, 10, 0, 0),
+            claimed_at=datetime(2025, 1, 15, 11, 0, 0),
+            responded_at=datetime(2025, 1, 15, 12, 0, 0),
+            closed_at=datetime(2025, 1, 15, 13, 0, 0),
+        )
+        mock_escalation_service.repository.get_by_message_id.return_value = (
+            closed_with_answer
+        )
+
+        response = polling_client.get(
+            "/escalations/12345678-1234-1234-1234-123456789abc/response"
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "resolved"
+        assert data["staff_answer"] == "Final staff answer"
+        assert data["resolution"] == "responded"
+        assert data["responded_at"] is not None
         assert data["closed_at"] is not None
 
     def test_poll_invalid_uuid_returns_422(self, polling_client):

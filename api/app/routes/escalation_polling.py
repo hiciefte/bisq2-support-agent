@@ -5,6 +5,7 @@ User-facing polling endpoint for escalation responses.
 import logging
 import re
 
+from app.channels.escalation_localization import normalize_language_code
 from app.channels.plugins.web.identity import derive_web_user_context
 from app.core.config import get_settings
 from app.models.escalation import (
@@ -30,6 +31,21 @@ router = APIRouter()
 MESSAGE_ID_PATTERN = re.compile(
     r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+
+
+def _derive_user_resolution(escalation) -> str | None:
+    """Map internal escalation state to user-visible resolution semantics.
+
+    If a staff answer exists, this must be surfaced as "responded" even when
+    the escalation lifecycle status is already "closed" after response handling.
+    """
+    if escalation.staff_answer:
+        return "responded"
+    if escalation.status == EscalationStatus.CLOSED:
+        return "closed"
+    if escalation.status == EscalationStatus.RESPONDED:
+        return "responded"
+    return None
 
 
 def _derive_rater_id(request: Request) -> str:
@@ -61,6 +77,46 @@ def _build_rate_token_for_escalation(
         signing_key=signing_key,
         ttl_seconds=getattr(settings, "ESCALATION_RATING_TOKEN_TTL_SECONDS", 3600),
     )
+
+
+async def _localize_staff_answer(
+    *,
+    request: Request,
+    escalation,
+) -> str | None:
+    """Translate canonical staff answer for user-facing polling payloads."""
+    answer = str(getattr(escalation, "staff_answer", "") or "").strip()
+    if not answer:
+        return None
+
+    target_lang = normalize_language_code(getattr(escalation, "user_language", None))
+    if target_lang == "en":
+        return answer
+
+    translation_service = getattr(request.app.state, "translation_service", None)
+    if translation_service is None:
+        return answer
+
+    try:
+        translated = await translation_service.translate_response(
+            answer,
+            target_lang=target_lang,
+            source_lang="en",
+        )
+        translated_text = str(
+            translated.get("translated_text") if isinstance(translated, dict) else ""
+        ).strip()
+        if translated_text:
+            return translated_text
+    except Exception:
+        logger.warning(
+            "Failed to localize polled staff answer for message_id=%s (lang=%s)",
+            getattr(escalation, "message_id", "<unknown>"),
+            target_lang,
+            exc_info=True,
+        )
+
+    return answer
 
 
 @router.get("/escalations/{message_id}/response", response_model=UserPollResponse)
@@ -103,6 +159,10 @@ async def poll_escalation_response(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"status": "not_found"},
             )
+        localized_staff_answer = await _localize_staff_answer(
+            request=request,
+            escalation=escalation,
+        )
 
         # Check status and return appropriate response
         if escalation.status == EscalationStatus.PENDING:
@@ -112,6 +172,7 @@ async def poll_escalation_response(
                 responded_at=None,
                 resolution=None,
                 closed_at=None,
+                user_language=escalation.user_language,
             )
         elif escalation.status == EscalationStatus.IN_REVIEW:
             return UserPollResponse(
@@ -120,6 +181,7 @@ async def poll_escalation_response(
                 responded_at=None,
                 resolution=None,
                 closed_at=None,
+                user_language=escalation.user_language,
             )
         elif escalation.status == EscalationStatus.RESPONDED:
             rate_token = _build_rate_token_for_escalation(
@@ -131,12 +193,13 @@ async def poll_escalation_response(
             )
             return UserPollResponse(
                 status="resolved",
-                staff_answer=escalation.staff_answer,
+                staff_answer=localized_staff_answer,
                 responded_at=escalation.responded_at,
                 resolution="responded",
                 closed_at=None,
                 staff_answer_rating=escalation.staff_answer_rating,
                 rate_token=rate_token,
+                user_language=escalation.user_language,
             )
         elif escalation.status == EscalationStatus.CLOSED:
             rate_token = _build_rate_token_for_escalation(
@@ -148,12 +211,13 @@ async def poll_escalation_response(
             )
             return UserPollResponse(
                 status="resolved",
-                staff_answer=escalation.staff_answer,
+                staff_answer=localized_staff_answer,
                 responded_at=escalation.responded_at,
-                resolution="closed",
+                resolution=_derive_user_resolution(escalation),
                 closed_at=escalation.closed_at,
                 staff_answer_rating=escalation.staff_answer_rating,
                 rate_token=rate_token,
+                user_language=escalation.user_language,
             )
         else:
             # Unknown status, return pending to be safe
@@ -163,6 +227,7 @@ async def poll_escalation_response(
                 responded_at=None,
                 resolution=None,
                 closed_at=None,
+                user_language=escalation.user_language,
             )
 
     except HTTPException:
@@ -253,14 +318,19 @@ async def rate_staff_answer(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot rate: no staff answer yet",
             )
+        localized_staff_answer = await _localize_staff_answer(
+            request=request,
+            escalation=escalation,
+        )
 
         return UserPollResponse(
             status="resolved",
-            staff_answer=escalation.staff_answer,
+            staff_answer=localized_staff_answer,
             responded_at=escalation.responded_at,
-            resolution=escalation.status.value,
+            resolution=_derive_user_resolution(escalation),
             closed_at=escalation.closed_at,
             staff_answer_rating=body.rating,
+            user_language=escalation.user_language,
         )
 
     except HTTPException:
