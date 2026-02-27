@@ -80,6 +80,12 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 *   **`BISQ_API_AUTH_STATE_FILE`**
     *   Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute).
     *   Default: `bisq_api_auth.json`
+*   **`BISQ_API_CLIENT_ID`**
+    *   Description: Optional manual override for Bisq2 API client ID. Use when bypassing QR bootstrap (`BISQ_API_PAIRING_QR_FILE`) and persisted auth state (`BISQ_API_AUTH_STATE_FILE`).
+    *   Default: empty
+*   **`BISQ_API_CLIENT_SECRET`**
+    *   Description: Optional manual override for Bisq2 API client secret. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are used instead of pairing-file bootstrap/session restore.
+    *   Default: empty
 
 Notes:
 *   On first startup with auth enabled, support-agent reads pairing QR/code, pairs, then persists credentials/session to `BISQ_API_AUTH_STATE_FILE`.

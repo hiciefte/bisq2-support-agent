@@ -223,9 +223,9 @@ If the FAQ extractor runs but doesn't generate new FAQs:
         docker compose -f docker/docker-compose.yml exec bisq2-api cat /opt/bisq2/data/pairing_qr_code.txt > api/data/pairing_qr_code.txt
         ```
      3. Restart `api` container and confirm `/data/bisq_api_auth.json` is created.
-   - If logs show `Missing clientId`, pairing did not complete (missing/invalid QR file or auth disabled in support-agent).
-   - If logs show `Required permissions not granted` for `/api/v1/support/*`, Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients.
-   - If Docker healthcheck for `bisq2-api` uses authenticated endpoint and fails with `403`, use a non-`-f` curl healthcheck so auth-mode `403` still counts as liveness.
+   - Pairing did not complete when logs show `Missing clientId` (missing/invalid QR file or auth disabled in support-agent).
+   - Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients when logs show `Required permissions not granted` for `/api/v1/support/*`.
+   - When Docker healthcheck for `bisq2-api` uses an authenticated endpoint and returns `403`, use a non-`-f` curl healthcheck so auth-mode `403` still counts as liveness.
 
 ## Monitoring Issues
 
