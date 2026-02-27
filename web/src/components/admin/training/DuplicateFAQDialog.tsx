@@ -77,7 +77,7 @@ export function DuplicateFAQDialog({
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent className="max-w-3xl gap-0 overflow-hidden border-amber-500/35 p-0">
         <AlertDialogHeader className="space-y-0">
-          <div className="border-b border-amber-500/20 bg-amber-500/8 px-6 py-5">
+          <div className="border-b border-amber-500/20 bg-amber-500/10 px-6 py-5">
             <AlertDialogTitle className="flex items-center gap-2 text-lg font-semibold text-amber-300">
               <AlertTriangle className="h-5 w-5 shrink-0" />
               Similar FAQ already exists
@@ -163,7 +163,7 @@ export function DuplicateFAQDialog({
             Reject if duplicate. Approve only for net-new value.
           </p>
           <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:items-center">
-            <AlertDialogCancel onClick={onClose} className="mt-0">
+            <AlertDialogCancel className="mt-0">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction asChild onClick={onRejectAsDuplicate}>
