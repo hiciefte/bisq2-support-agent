@@ -16,6 +16,9 @@ interface RebuildStatus {
 export function VectorStoreStatusBanner() {
   const [status, setStatus] = useState<RebuildStatus | null>(null);
   const [isRebuilding, setIsRebuilding] = useState(false);
+  const [isPageVisible, setIsPageVisible] = useState(
+    typeof document === "undefined" ? true : !document.hidden
+  );
   const { toast } = useToast();
 
   // Memoized fetchStatus to prevent stale closures and ESLint warnings
@@ -36,21 +39,51 @@ export function VectorStoreStatusBanner() {
     }
   }, []); // No dependencies - uses only stable APIs
 
-  // Poll status every 5 seconds when component is mounted
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsPageVisible(!document.hidden);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  // Poll status with adaptive cadence:
+  // - rebuilding: 2.5s
+  // - pending changes: 5s
+  // - idle: 30s
+  // Also pause polling when tab is hidden to avoid background load.
   useEffect(() => {
     const abortController = new AbortController();
 
     // Initial fetch
-    fetchStatus(abortController.signal);
+    if (isPageVisible) {
+      void fetchStatus(abortController.signal);
+    }
+
+    if (!isPageVisible) {
+      return () => {
+        abortController.abort();
+      };
+    }
+
+    const pollIntervalMs = status?.rebuild_in_progress
+      ? 2500
+      : status?.needs_rebuild
+        ? 5000
+        : 30000;
 
     // Set up polling interval
-    const interval = setInterval(() => fetchStatus(abortController.signal), 5000);
+    const interval = setInterval(() => {
+      void fetchStatus(abortController.signal);
+    }, pollIntervalMs);
 
     return () => {
       clearInterval(interval);
       abortController.abort();
     };
-  }, [fetchStatus]);
+  }, [fetchStatus, isPageVisible, status?.needs_rebuild, status?.rebuild_in_progress]);
 
   async function handleRebuild() {
     setIsRebuilding(true);

@@ -35,6 +35,7 @@ interface MarkdownContentProps {
 
 /** Allowed URL schemes (whitelist approach for security) */
 const SAFE_URL_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'];
+const SAFE_IMAGE_URL_SCHEMES = ['http:', 'https:'];
 
 /**
  * Validate URL safety using a strict whitelist approach
@@ -65,6 +66,30 @@ function getSafeHref(href: string | undefined): string {
 }
 
 /**
+ * Validate image src and return null for invalid/unsafe values.
+ * This prevents React warnings from rendering `src=""`.
+ */
+function getSafeImageSrc(src: string | undefined): string | null {
+  if (!src) return null;
+
+  const trimmedSrc = src.trim();
+  if (!trimmedSrc) return null;
+
+  const normalizedSrc = trimmedSrc.toLowerCase();
+
+  const colonIndex = normalizedSrc.indexOf(':');
+  const slashIndex = normalizedSrc.indexOf('/');
+  const isRelativeUrl = colonIndex === -1 || (slashIndex !== -1 && slashIndex < colonIndex);
+  if (isRelativeUrl) return trimmedSrc;
+
+  const isSafeScheme = SAFE_IMAGE_URL_SCHEMES.some((scheme) =>
+    normalizedSrc.startsWith(scheme)
+  );
+
+  return isSafeScheme ? trimmedSrc : null;
+}
+
+/**
  * Custom link component that opens in new tab with visual indicator
  * Defined outside memo component for stable reference
  */
@@ -90,6 +115,20 @@ function CustomLink({
   );
 }
 
+function CustomImage({
+  src,
+  alt,
+}: {
+  src?: string;
+  alt?: string;
+}) {
+  const safeSrc = getSafeImageSrc(src);
+  if (!safeSrc) return null;
+
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={safeSrc} alt={alt ?? ''} loading="lazy" />;
+}
+
 /**
  * Fallback content while markdown loads - shows plain text
  */
@@ -111,6 +150,10 @@ export const MarkdownContent = memo(function MarkdownContent({
       // Custom link with external indicator and security
       a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
         <CustomLink href={href}>{children}</CustomLink>
+      ),
+      // Custom image guard to avoid `src=""` warnings and block unsafe schemes
+      img: ({ src, alt }: { src?: string; alt?: string }) => (
+        <CustomImage src={src} alt={alt} />
       ),
     }),
     []

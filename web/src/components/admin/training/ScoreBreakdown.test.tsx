@@ -1,7 +1,7 @@
 /**
  * Unit tests for ScoreBreakdown component
  *
- * TDD Implementation: Tests for accessibility (WCAG 1.4.1) and generation_confidence display
+ * TDD Implementation: Tests for accessibility (WCAG 1.4.1) and score clarity
  *
  * Cycle 14: Score display with icons for accessibility
  * Cycle 25: Traffic Light System with Progressive Disclosure
@@ -28,7 +28,6 @@ jest.mock('lucide-react', () => ({
   Zap: () => <span data-testid="icon-zap" />,
   Eye: () => <span data-testid="icon-eye" />,
   ClipboardCheck: () => <span data-testid="icon-clipboard-check" />,
-  Sparkles: () => <span data-testid="icon-sparkles" />,
   CircleCheck: () => <span data-testid="icon-circle-check" />,
   CircleAlert: () => <span data-testid="icon-circle-alert" />,
   CircleX: () => <span data-testid="icon-circle-x" />,
@@ -71,7 +70,6 @@ describe('ScoreBreakdown', () => {
     completeness: 0.8,
     hallucinationRisk: 0.1,
     finalScore: 0.85,
-    generationConfidence: null,
     defaultCollapsed: false,
   };
 
@@ -108,57 +106,6 @@ describe('ScoreBreakdown', () => {
       expect(screen.getAllByText('No Conflicts').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText('Coverage').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText('Grounded').length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe('Generation Confidence Display', () => {
-    it('displays generation confidence when provided', () => {
-      render(
-        <ScoreBreakdown
-          {...defaultProps}
-          generationConfidence={0.82}
-        />
-      );
-
-      // Should show RAG Confidence metric (may appear in label and tooltip)
-      expect(screen.getAllByText('RAG Confidence').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText('82%').length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('does not display generation confidence when null', () => {
-      render(
-        <ScoreBreakdown
-          {...defaultProps}
-          generationConfidence={null}
-        />
-      );
-
-      // Should not show RAG Confidence metric
-      expect(screen.queryByText('RAG Confidence')).not.toBeInTheDocument();
-    });
-
-    it('differentiates generation_confidence from comparison_score visually', () => {
-      render(
-        <ScoreBreakdown
-          {...defaultProps}
-          generationConfidence={0.78}
-        />
-      );
-
-      // RAG Confidence should have the sparkles icon
-      expect(screen.getByTestId('icon-sparkles')).toBeInTheDocument();
-    });
-
-    it('displays generation confidence with different semantics label', () => {
-      render(
-        <ScoreBreakdown
-          {...defaultProps}
-          generationConfidence={0.78}
-        />
-      );
-
-      // Should have description that differs from comparison metrics
-      expect(screen.getByText(/How confident RAG is in its answer/i)).toBeInTheDocument();
     });
   });
 
@@ -201,7 +148,6 @@ describe('ScoreBreakdown', () => {
           completeness={null}
           hallucinationRisk={null}
           finalScore={null}
-          generationConfidence={null}
         />
       );
 
@@ -243,16 +189,11 @@ describe('ScoreBreakdown', () => {
       });
     });
 
-    it('includes generation confidence in accessible meters when provided', () => {
-      render(
-        <ScoreBreakdown
-          {...defaultProps}
-          generationConfidence={0.82}
-        />
-      );
-
+    it('renders 5 accessible meters (comparison metrics only)', () => {
+      render(<ScoreBreakdown {...defaultProps} />);
       const meters = screen.getAllByRole('meter');
-      expect(meters.length).toBeGreaterThanOrEqual(6); // 5 comparison + 1 generation
+      expect(meters.length).toBeGreaterThanOrEqual(5);
+      expect(screen.queryByText('RAG Confidence')).not.toBeInTheDocument();
     });
   });
 
@@ -313,7 +254,7 @@ describe('ScoreBreakdown', () => {
     });
 
     describe('Detailed View (Level 2 - on expand)', () => {
-      it('shows all 6 metrics when expanded', () => {
+      it('shows all comparison metrics when expanded', () => {
         render(<ScoreBreakdown {...defaultProps} defaultCollapsed={false} />);
 
         // All metrics visible in expanded view

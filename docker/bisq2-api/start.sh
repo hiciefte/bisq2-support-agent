@@ -25,4 +25,8 @@ fi
 
 echo "Starting Bisq2 API Application as user bisq-support..."
 # Keep --data-dir as it seems to affect logging and is used by ApplicationService to find bisq.conf.
-exec gosu bisq-support /opt/bisq2/app/bin/api-app --data-dir=$BISQ_DATA_DIR
+# Use config override for local/dev chat rate-limit behavior when needed.
+BISQ_USER_RATE_LIMIT_ENABLED="${BISQ_USER_RATE_LIMIT_ENABLED:-true}"
+exec gosu bisq-support /opt/bisq2/app/bin/api-app \
+  --data-dir="$BISQ_DATA_DIR" \
+  --application.user.rateLimitEnabled="$BISQ_USER_RATE_LIMIT_ENABLED"

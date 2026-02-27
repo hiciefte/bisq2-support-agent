@@ -20,6 +20,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   XCircle,
@@ -45,66 +50,18 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ScoreBreakdown } from './ScoreBreakdown';
-import { ProtocolSelector, ProtocolType } from './ProtocolSelector';
+import { ProtocolSelector } from './ProtocolSelector';
 import { EditableAnswer } from './EditableAnswer';
 import { EditableQuestion } from './EditableQuestion';
 import { CategorySelector } from './CategorySelector';
-import { StickyActionFooter } from './StickyActionFooter';
 import { SimilarFaqsPanel, SimilarFAQItem } from '@/components/admin/SimilarFaqsPanel';
 import { SourceBadges } from '@/components/chat/components/source-badges';
 import { ConfidenceBadge } from '@/components/chat/components/confidence-badge';
 import { MarkdownContent } from '@/components/chat/components/markdown-content';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+import { stripGeneratedAnswerFooter } from '@/lib/answer-format';
 import debounce from 'lodash.debounce';
-import type { Source } from '@/components/chat/types/chat.types';
-
-// Unified FAQ Candidate type (from unified pipeline)
-interface UnifiedCandidate {
-  id: number;
-  source: string;  // "bisq2" | "matrix"
-  source_event_id: string;
-  source_timestamp: string;
-  question_text: string;
-  staff_answer: string;
-  generated_answer: string | null;
-  staff_sender: string | null;
-  embedding_similarity: number | null;
-  factual_alignment: number | null;
-  contradiction_score: number | null;
-  completeness: number | null;
-  hallucination_risk: number | null;
-  final_score: number | null;
-  generation_confidence: number | null;  // RAG's self-confidence in its answer
-  llm_reasoning: string | null;
-  routing: string;
-  review_status: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  rejection_reason: string | null;
-  faq_id: string | null;
-  is_calibration_sample: boolean;
-  created_at: string;
-  updated_at: string | null;
-  // Phase 8 fields for multi-turn conversation support
-  conversation_context: string | null;  // JSON string of full conversation
-  has_correction: boolean | null;
-  is_multi_turn: boolean | null;
-  message_count: number | null;
-  needs_distillation: boolean | null;
-  // Protocol selection and answer editing fields
-  protocol: ProtocolType | null;
-  edited_staff_answer: string | null;
-  // Category field
-  category: string | null;
-  // RAG-generated answer sources for verification
-  generated_answer_sources: Source[] | null;
-  // Original conversational user question before LLM transformation
-  original_user_question: string | null;
-  // Original conversational staff answer before LLM transformation
-  original_staff_answer: string | null;
-  // User-edited version of question
-  edited_question_text: string | null;
-}
+import type { ProtocolType, UnifiedCandidate } from './types';
 
 // Type for conversation context message
 interface ConversationMessage {
@@ -121,6 +78,7 @@ interface TrainingReviewItemProps {
   onUpdateCandidate: (updates: { edited_staff_answer?: string; edited_question_text?: string; category?: string }) => Promise<void>;
   onRegenerateAnswer: (protocol: ProtocolType) => Promise<void>;
   onRateGeneratedAnswer?: (rating: 'good' | 'needs_improvement') => Promise<void>;
+  openRejectMenuSignal?: number;
   isLoading: boolean;
 }
 
@@ -206,6 +164,7 @@ export function TrainingReviewItem({
   onUpdateCandidate,
   onRegenerateAnswer,
   onRateGeneratedAnswer,
+  openRejectMenuSignal = 0,
   isLoading
 }: TrainingReviewItemProps) {
   const [showRejectSelect, setShowRejectSelect] = useState(false);
@@ -229,35 +188,11 @@ export function TrainingReviewItem({
   const [isRatingAnswer, setIsRatingAnswer] = useState(false);
   // P3: Confirmation dialog state for reject action
   const [pendingRejectReason, setPendingRejectReason] = useState<string | null>(null);
+  const isCalibrationItem = pair.routing === 'AUTO_APPROVE';
 
   // Real-time similarity checking state (Feedback Immediacy principle)
   const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([]);
   const [isCheckingSimilarity, setIsCheckingSimilarity] = useState(false);
-
-  // Sticky footer visibility state
-  const [showStickyFooter, setShowStickyFooter] = useState(false);
-  const footerRef = useRef<HTMLDivElement>(null);
-
-  // Intersection Observer for sticky footer
-  useEffect(() => {
-    const footer = footerRef.current;
-    if (!footer) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        // Show sticky footer when original footer is not visible
-        setShowStickyFooter(!entry.isIntersecting);
-      },
-      {
-        root: null,
-        rootMargin: '0px',
-        threshold: 0.1,
-      }
-    );
-
-    observer.observe(footer);
-    return () => observer.disconnect();
-  }, []);
 
   // Sync protocol when pair changes
   useEffect(() => {
@@ -286,6 +221,12 @@ export function TrainingReviewItem({
     setShowConversation(shouldExpand);
   }, [pair.id, pair.has_correction, pair.is_multi_turn, pair.message_count, pair.routing, pair.conversation_context]);
 
+  // Global keyboard shortcut from page requests opening the reject reason menu.
+  useEffect(() => {
+    if (openRejectMenuSignal <= 0 || isCalibrationItem) return;
+    setShowRejectSelect(true);
+  }, [openRejectMenuSignal, isCalibrationItem]);
+
   // Memoized handlers to prevent unnecessary re-renders (Rule 5.5)
   // Streamlined reject: Direct rejection for standard reasons (no confirmation dialog)
   // Only "Other" reason shows confirmation dialog for custom input
@@ -293,6 +234,7 @@ export function TrainingReviewItem({
     if (reason === 'other') {
       // Show confirmation dialog only for "Other" reason
       setPendingRejectReason(reason);
+      setShowRejectSelect(false);
     } else {
       // Direct rejection for standard reasons (Speed Through Subtraction principle)
       onReject(reason);
@@ -543,8 +485,10 @@ export function TrainingReviewItem({
   }, [conversationMessages]);
 
   // Memoized derived values to avoid recalculation (Rule 7.4)
-  // Check if this is a calibration queue item (primary action is rating, not approval)
-  const isCalibrationItem = pair.routing === 'AUTO_APPROVE';
+  const cleanedGeneratedAnswer = useMemo(
+    () => stripGeneratedAnswerFooter(pair.generated_answer || ''),
+    [pair.generated_answer],
+  );
 
   return (
     <Card>
@@ -736,13 +680,22 @@ export function TrainingReviewItem({
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               )}
             </div>
+            <div className="mb-3 rounded-lg border border-border bg-muted/20 p-3">
+              <ProtocolSelector
+                currentProtocol={currentProtocol}
+                onProtocolChange={handleProtocolChange}
+                onRegenerateAnswer={handleRegenerateAnswer}
+                isRegenerating={isRegenerating}
+                showRegeneratePrompt={!cleanedGeneratedAnswer}
+              />
+            </div>
             <div className={cn(
               "p-4 rounded-lg border min-h-[120px] bg-muted/30 border-border",
               isRegenerating && "animate-pulse"
             )}>
-              {pair.generated_answer ? (
+              {cleanedGeneratedAnswer ? (
                 <>
-                  <MarkdownContent content={pair.generated_answer} className="text-sm" />
+                  <MarkdownContent content={cleanedGeneratedAnswer} className="text-sm" />
                   {/* Sources and Confidence */}
                   {(pair.generated_answer_sources?.length > 0 || pair.generation_confidence !== null) && (
                     <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
@@ -757,7 +710,7 @@ export function TrainingReviewItem({
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No generated answer available. Select a protocol above to generate one.
+                  No generated answer available. Select a protocol to generate one.
                 </p>
               )}
             </div>
@@ -765,7 +718,7 @@ export function TrainingReviewItem({
             {/* Answer Quality Rating for LearningEngine - only show when protocol is set
                 For Calibration queue: This is the PRIMARY action (prominent styling)
                 For other queues: Secondary action (subtle styling) */}
-            {pair.generated_answer && onRateGeneratedAnswer && pair.protocol && (
+            {cleanedGeneratedAnswer && onRateGeneratedAnswer && pair.protocol && (
               <div className={cn(
                 "mt-3 flex items-center justify-between p-3 rounded-lg",
                 isCalibrationItem
@@ -871,26 +824,6 @@ export function TrainingReviewItem({
           )}
         </div>
 
-        {/* Category and Protocol - grouped in combining frame */}
-        <div className="p-4 rounded-lg bg-muted/30 border border-border">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <CategorySelector
-              currentCategory={currentCategory}
-              suggestedCategory={pair.category}
-              onCategoryChange={handleCategoryChange}
-              onSaveCategory={handleSaveCategory}
-              isSaving={isSavingCategory}
-            />
-            <ProtocolSelector
-              currentProtocol={currentProtocol}
-              onProtocolChange={handleProtocolChange}
-              onRegenerateAnswer={handleRegenerateAnswer}
-              isRegenerating={isRegenerating}
-              showRegeneratePrompt={!pair.generated_answer}
-            />
-          </div>
-        </div>
-
         {/* Score Breakdown - P6: Hide when no protocol is set (score is meaningless without protocol context) */}
         {/* Progressive Disclosure: Auto-expand for FULL_REVIEW items (critical decision info) */}
         {pair.protocol && (
@@ -901,8 +834,7 @@ export function TrainingReviewItem({
             completeness={pair.completeness}
             hallucinationRisk={pair.hallucination_risk}
             finalScore={pair.final_score}
-            generationConfidence={pair.generation_confidence}
-            defaultCollapsed={pair.routing !== 'FULL_REVIEW'}
+            defaultCollapsed
           />
         )}
 
@@ -996,30 +928,44 @@ export function TrainingReviewItem({
         )}
       </CardContent>
 
-      <CardFooter ref={footerRef} className="flex justify-between border-t pt-4">
-        <div className="text-xs text-muted-foreground">
-          {isCalibrationItem ? (
-            // Calibration queue: Primary action is rating, Skip to move to next
-            <>
-              Primary: Rate answer quality above | {" "}
-              <kbd className="px-1 py-0.5 bg-muted rounded text-xs">S</kbd> Next
-            </>
-          ) : (
-            // Knowledge/Minor Gap queues: Standard approve/reject/skip
-            <>
-              Press: <kbd className="px-1 py-0.5 bg-muted rounded text-xs">A</kbd> Approve |{" "}
-              <kbd className="px-1 py-0.5 bg-muted rounded text-xs">R</kbd> Reject |{" "}
-              <kbd className="px-1 py-0.5 bg-muted rounded text-xs">S</kbd> Skip |{" "}
-              <kbd className="px-1 py-0.5 bg-muted rounded text-xs">E</kbd> Edit
-              {pair.conversation_context && (
-                <> | <kbd className="px-1 py-0.5 bg-muted rounded text-xs">C</kbd> Conversation</>
-              )}
-            </>
-          )}
-        </div>
+      <CardFooter className="border-t pt-4">
+        <div className="w-full space-y-4">
+          <div className="rounded-xl border border-border/70 bg-gradient-to-br from-background via-background to-muted/40 p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <PlusCircle className="h-4 w-4 text-primary/70" />
+                  FAQ Creation Settings
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Set FAQ classification before approving this candidate.
+                </p>
+              </div>
+              <Badge variant="outline" className="h-6 text-[11px] font-medium">
+                Applied on approval
+              </Badge>
+            </div>
+            <div className="mt-3 flex flex-col gap-3 rounded-lg border border-border/60 bg-background/80 p-3 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-foreground">Category</p>
+                <p className="text-xs text-muted-foreground">
+                  Improves FAQ discoverability and retrieval filters.
+                </p>
+              </div>
+              <CategorySelector
+                currentCategory={currentCategory}
+                suggestedCategory={pair.category}
+                onCategoryChange={handleCategoryChange}
+                onSaveCategory={handleSaveCategory}
+                isSaving={isSavingCategory}
+                showLabel={false}
+                className="md:items-end"
+              />
+            </div>
+          </div>
 
-        <TooltipProvider delayDuration={300}>
-          <div className="flex items-center gap-2">
+          <TooltipProvider delayDuration={300}>
+            <div className="flex items-center justify-end gap-2">
             {isCalibrationItem ? (
               // Calibration queue: Skip is primary (move to next after rating)
               <>
@@ -1080,46 +1026,53 @@ export function TrainingReviewItem({
                   </TooltipContent>
                 </Tooltip>
 
-                {showRejectSelect ? (
-                  <div className="flex items-center gap-1 flex-wrap animate-in fade-in slide-in-from-right-2 duration-200">
-                    {REJECT_REASONS.map((reason) => (
-                      <Button
-                        key={reason.value}
-                        variant={reason.value === 'other' ? 'outline' : 'destructive'}
-                        size="sm"
-                        onClick={() => handleDirectReject(reason.value)}
-                        disabled={isLoading}
-                        className={reason.value === 'other' ? 'text-destructive border-destructive/50 hover:bg-destructive/10' : ''}
-                      >
-                        {reason.label}
-                      </Button>
-                    ))}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowRejectSelect(false)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
+                <Popover open={showRejectSelect} onOpenChange={setShowRejectSelect}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="destructive"
-                        onClick={() => setShowRejectSelect(true)}
-                        disabled={isLoading}
-                        aria-label="Reject this FAQ candidate"
-                      >
-                        <XCircle className="h-4 w-4 mr-2" />
-                        Reject
-                      </Button>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="destructive"
+                          disabled={isLoading}
+                          aria-label="Reject this FAQ candidate"
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Reject
+                        </Button>
+                      </PopoverTrigger>
                     </TooltipTrigger>
                     <TooltipContent side="top">
                       <p>Discard this FAQ candidate</p>
                     </TooltipContent>
                   </Tooltip>
-                )}
+                  <PopoverContent align="end" className="w-60 p-2">
+                    <div className="space-y-1">
+                      {REJECT_REASONS.map((reason) => (
+                        <Button
+                          key={reason.value}
+                          variant={reason.value === 'other' ? 'outline' : 'ghost'}
+                          size="sm"
+                          onClick={() => handleDirectReject(reason.value)}
+                          disabled={isLoading}
+                          className={cn(
+                            "w-full justify-start",
+                            reason.value !== 'other' && "text-destructive hover:text-destructive hover:bg-destructive/10",
+                            reason.value === 'other' && "text-muted-foreground"
+                          )}
+                        >
+                          {reason.label}
+                        </Button>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowRejectSelect(false)}
+                        className="w-full justify-start"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1143,8 +1096,9 @@ export function TrainingReviewItem({
                 </Tooltip>
               </>
             )}
-          </div>
-        </TooltipProvider>
+            </div>
+          </TooltipProvider>
+        </div>
       </CardFooter>
 
       {/* Reject Confirmation Dialog - Only for "Other" reason */}
@@ -1170,19 +1124,6 @@ export function TrainingReviewItem({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Sticky Action Footer - appears when original footer scrolls out of view */}
-      <StickyActionFooter
-        isVisible={showStickyFooter}
-        candidateId={pair.id}
-        score={pair.final_score}
-        category={pair.category}
-        routing={pair.routing}
-        isLoading={isLoading}
-        onApprove={onApprove}
-        onReject={handleDirectReject}
-        onSkip={onSkip}
-      />
     </Card>
   );
 }

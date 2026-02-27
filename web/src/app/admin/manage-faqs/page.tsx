@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, FormEvent, useMemo, useCallback } from "react";
-import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { VectorStoreStatusBanner } from "@/components/admin/VectorStoreStatusBanner";
 import { SimilarFaqsPanel, SimilarFAQItem } from "@/components/admin/SimilarFaqsPanel";
 import {
     AlertDialog,
@@ -37,7 +35,6 @@ import {
     Check,
     FileQuestion,
     MoreVertical,
-    Download,
     Clock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -53,14 +50,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import {
     Command,
-    CommandDialog,
     CommandEmpty,
     CommandGroup,
     CommandInput,
     CommandItem,
     CommandList,
-    CommandSeparator,
-    CommandShortcut,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -91,6 +85,9 @@ import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "sonner";
 import { useManageFaqsKeyboard } from "@/hooks/useManageFaqsKeyboard";
 import { InlineEditFAQ, FAQ } from "@/components/admin/faqs/InlineEditFAQ";
+import { AdminQueueShell } from "@/components/admin/queue/AdminQueueShell";
+import { QueuePageHeader } from "@/components/admin/queue/QueuePageHeader";
+import { QueueCommandBar } from "@/components/admin/queue/QueueCommandBar";
 
 interface FAQListResponse {
     faqs: FAQ[];
@@ -141,8 +138,12 @@ export default function ManageFaqsPage() {
         protocol: "bisq_easy" as FAQProtocol,
     });
     const [error, setError] = useState<string | null>(null);
+    const [dismissedError, setDismissedError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize] = useState(10);
+    const [isManualRefresh, setIsManualRefresh] = useState(false);
+    const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
+    const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
     // Filter state
     const [showFilters, setShowFilters] = useState(false);
@@ -155,6 +156,7 @@ export default function ManageFaqsPage() {
         verified_from: undefined as Date | undefined,
         verified_to: undefined as Date | undefined,
     });
+    const [searchInputValue, setSearchInputValue] = useState("");
 
     // Available categories and sources from the data
     const [availableCategories, setAvailableCategories] = useState<string[]>([]);
@@ -174,9 +176,6 @@ export default function ManageFaqsPage() {
     // Bulk selection state
     const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
     const [selectedFaqIds, setSelectedFaqIds] = useState<Set<string>>(new Set());
-
-    // Command Palette state
-    const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
     // Keyboard navigation state
     const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -216,6 +215,18 @@ export default function ManageFaqsPage() {
     // Server-side search handles all filtering - no client-side filtering needed
     const displayFaqs = faqData;
 
+    const fetchFilterOptions = useCallback(async () => {
+        try {
+            const response = await makeAuthenticatedRequest("/admin/faqs/filter-options");
+            if (!response.ok) return;
+            const data = await response.json();
+            setAvailableCategories(Array.isArray(data.categories) ? data.categories : []);
+            setAvailableSources(Array.isArray(data.sources) ? data.sources : []);
+        } catch (fetchError) {
+            console.warn("Failed to fetch FAQ filter options:", fetchError);
+        }
+    }, []);
+
     // Keep the ref in sync with the latest page
     useEffect(() => {
         currentPageRef.current = currentPage;
@@ -230,8 +241,9 @@ export default function ManageFaqsPage() {
     }, [faqData, availableCategories, availableSources]);
 
     useEffect(() => {
-        // Since we're wrapped with SecureAuth, we know we're authenticated
-        fetchFaqs();
+        // Since we're wrapped with SecureAuth, we know we're authenticated.
+        // FAQ list loading is handled by the filters effect below.
+        void fetchFilterOptions();
 
         // Load "do not show again" preference from localStorage
         try {
@@ -240,8 +252,7 @@ export default function ManageFaqsPage() {
         } catch {
             // ignore storage errors; default is to show confirmation
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [fetchFilterOptions]);
 
     // Re-fetch data when filters change (NO interval here - that's separate)
     useEffect(() => {
@@ -300,6 +311,8 @@ export default function ManageFaqsPage() {
             // Only show loading spinner if not a background refresh
             if (!isBackgroundRefresh) {
                 setIsLoading(true);
+            } else {
+                setIsBackgroundRefreshing(true);
             }
 
             try {
@@ -345,6 +358,7 @@ export default function ManageFaqsPage() {
 
                     // Clear error on successful response (regardless of whether data changed)
                     setError(null);
+                    setDismissedError(null);
 
                     // Calculate hash of new data for comparison
                     const dataHash = JSON.stringify(data);
@@ -353,32 +367,8 @@ export default function ManageFaqsPage() {
                     if (dataHash !== previousDataHashRef.current) {
                         previousDataHashRef.current = dataHash;
                         setFaqData(data);
-
-                        // Compute hasActiveFilters inline to avoid stale closure
-                        const activeFilters =
-                            filters.search_text ||
-                            filters.categories.length > 0 ||
-                            filters.source ||
-                            filters.verified !== "all" ||
-                            filters.protocol ||
-                            filters.verified_from ||
-                            filters.verified_to;
-
-                        // Extract unique categories and sources ONLY if no filters are active
-                        // This prevents the category list from disappearing when a category filter is applied
-                        if (data.faqs && !activeFilters) {
-                            const categories = [
-                                ...new Set(
-                                    data.faqs.map((faq: FAQ) => faq.category).filter(Boolean)
-                                ),
-                            ] as string[];
-                            const sources = [
-                                ...new Set(data.faqs.map((faq: FAQ) => faq.source).filter(Boolean)),
-                            ] as string[];
-                            setAvailableCategories(categories);
-                            setAvailableSources(sources);
-                        }
                     }
+                    setLastUpdatedAt(new Date());
                 } else {
                     const errorText = `Failed to fetch FAQs. Status: ${response.status}`;
                     console.error(errorText);
@@ -395,6 +385,8 @@ export default function ManageFaqsPage() {
             } finally {
                 if (!isBackgroundRefresh) {
                     setIsLoading(false);
+                } else {
+                    setIsBackgroundRefreshing(false);
                 }
             }
         },
@@ -440,6 +432,7 @@ export default function ManageFaqsPage() {
 
             if (response.ok) {
                 await fetchFaqs(currentPage);
+                await fetchFilterOptions();
                 setIsFormOpen(false);
                 setFormData({
                     question: "",
@@ -563,6 +556,7 @@ export default function ManageFaqsPage() {
                 // Success - optimistic update already applied, no need to refetch
                 // The FAQ is already removed from the UI, maintaining scroll position
                 setError(null);
+                await fetchFilterOptions();
                 toast({
                     title: "FAQ Deleted",
                     description: "The FAQ has been successfully deleted.",
@@ -709,6 +703,7 @@ export default function ManageFaqsPage() {
                         title: "FAQ Deleted",
                         description: "The FAQ has been successfully deleted.",
                     });
+                    await fetchFilterOptions();
                     return true;
                 } else {
                     // Rollback on error
@@ -937,7 +932,7 @@ export default function ManageFaqsPage() {
 
         // Store FAQs being deleted for potential rollback
         const deletingIds = Array.from(selectedFaqIds);
-        const deletedFaqs = displayFaqs?.faqs.filter((faq) => selectedFaqIds.has(faq.id)) || [];
+        const originalFaqData = faqData;
 
         // Show loading toast with vector store rebuild info
         toast({
@@ -965,6 +960,9 @@ export default function ManageFaqsPage() {
                 body: JSON.stringify({ faq_ids: deletingIds }),
             });
 
+            if (!response.ok) {
+                throw new Error(`Bulk delete failed with status ${response.status}`);
+            }
             const result = await response.json();
 
             // Success - wait for delete animation to complete before fetching new FAQs
@@ -1039,19 +1037,10 @@ export default function ManageFaqsPage() {
                     description: `${result.failed_count} FAQ${result.failed_count > 1 ? "s" : ""} could not be deleted`,
                 });
             }
+            await fetchFilterOptions();
         } catch (error) {
-            // Rollback on error: restore deleted FAQs
-            setFaqData((prev) => {
-                if (!prev) return prev;
-                return {
-                    ...prev,
-                    faqs: [...deletedFaqs, ...prev.faqs].sort((a, b) => {
-                        // Sort to maintain original order (newest first)
-                        return a.id.localeCompare(b.id);
-                    }),
-                    total_count: prev.total_count + deletedFaqs.length,
-                };
-            });
+            // Rollback on error: restore original snapshot
+            setFaqData(originalFaqData);
             const errorText = "Failed to delete FAQs. Changes have been rolled back.";
             console.error(errorText, error);
             setError(errorText);
@@ -1098,6 +1087,9 @@ export default function ManageFaqsPage() {
                 body: JSON.stringify({ faq_ids: verifyingIds }),
             });
 
+            if (!response.ok) {
+                throw new Error(`Bulk verify failed with status ${response.status}`);
+            }
             const result = await response.json();
 
             // Success - optimistic update already applied, no refetch needed
@@ -1119,6 +1111,7 @@ export default function ManageFaqsPage() {
                     description: `${result.failed_count} FAQ${result.failed_count > 1 ? "s" : ""} could not be verified`,
                 });
             }
+            await fetchFilterOptions();
         } catch (error) {
             // Rollback on error: restore verified status
             setFaqData((prev) => {
@@ -1289,6 +1282,7 @@ export default function ManageFaqsPage() {
             }
 
             sonnerToast.success("FAQ updated successfully");
+            await fetchFilterOptions();
         } catch {
             // Rollback optimistic update
             setFaqData(originalFaqData);
@@ -1326,9 +1320,19 @@ export default function ManageFaqsPage() {
     );
 
     const handleSearchChange = (value: string) => {
-        // Update local state immediately for responsive UI
+        setSearchInputValue(value);
         debouncedSearchChange(value);
     };
+
+    useEffect(() => {
+        return () => {
+            debouncedSearchChange.cancel();
+        };
+    }, [debouncedSearchChange]);
+
+    useEffect(() => {
+        setSearchInputValue(filters.search_text);
+    }, [filters.search_text]);
 
     const handleCategoryToggle = (category: string) => {
         setFilters((prev) => ({
@@ -1344,6 +1348,7 @@ export default function ManageFaqsPage() {
     };
 
     const clearAllFilters = () => {
+        debouncedSearchChange.cancel();
         setFilters({
             search_text: "",
             categories: [],
@@ -1353,10 +1358,7 @@ export default function ManageFaqsPage() {
             verified_from: undefined,
             verified_to: undefined,
         });
-        // Also clear the input field value
-        if (searchInputRef.current) {
-            searchInputRef.current.value = "";
-        }
+        setSearchInputValue("");
     };
 
     const hasActiveFilters =
@@ -1367,6 +1369,33 @@ export default function ManageFaqsPage() {
         filters.protocol ||
         filters.verified_from ||
         filters.verified_to;
+    const activeFilterPills = useMemo(() => {
+        const pills: string[] = [];
+        if (filters.search_text.trim()) pills.push(`Search: ${filters.search_text.trim()}`);
+        if (filters.categories.length > 0) pills.push(`Category: ${filters.categories[0]}`);
+        if (filters.source) pills.push(`Source: ${filters.source}`);
+        if (filters.verified !== "all") pills.push(`Status: ${filters.verified}`);
+        if (filters.protocol) pills.push(`Protocol: ${filters.protocol}`);
+        if (filters.verified_from) pills.push(`From: ${filters.verified_from.toISOString().slice(0, 10)}`);
+        if (filters.verified_to) pills.push(`To: ${filters.verified_to.toISOString().slice(0, 10)}`);
+        return pills;
+    }, [filters]);
+    const visibleError = error && error !== dismissedError ? error : null;
+    const shortcutHints = useMemo(
+        () => [
+            { keyCombo: "/", label: "Search" },
+            { keyCombo: "J / K", label: "Navigate" },
+            { keyCombo: "Enter", label: "Edit selected" },
+            { keyCombo: "V", label: "Verify selected" },
+            { keyCombo: "D", label: "Delete selected" },
+            { keyCombo: "N", label: "New FAQ" },
+            { keyCombo: "B", label: "Bulk mode" },
+            { keyCombo: "A", label: "Select all (bulk)" },
+            { keyCombo: "E / 1 / M / 0", label: "Set protocol" },
+            { keyCombo: "Esc", label: "Exit mode / clear selection" },
+        ],
+        []
+    );
 
     // Keyboard shortcuts - extracted to custom hook for better code organization
     useManageFaqsKeyboard({
@@ -1378,7 +1407,6 @@ export default function ManageFaqsPage() {
         isFormOpen,
         skipVerifyConfirmation,
         setSelectedIndex,
-        setCommandPaletteOpen,
         setBulkSelectionMode,
         setSelectedFaqIds,
         setIsFormOpen,
@@ -1397,517 +1425,276 @@ export default function ManageFaqsPage() {
 
     return (
         <TooltipProvider>
-            <div className="min-h-screen bg-background">
-                {/* Persistent banner at top */}
-                <VectorStoreStatusBanner />
+            <AdminQueueShell showVectorStoreBanner shortcutHints={shortcutHints}>
+                    <QueuePageHeader
+                        title="FAQ Management"
+                        description="Create and curate knowledge base entries used across support channels."
+                        lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatTimestamp(lastUpdatedAt.toISOString())}` : null}
+                        isRefreshing={isManualRefresh || isBackgroundRefreshing}
+                        onRefresh={() => {
+                            setIsManualRefresh(true);
+                            void fetchFaqs(currentPage, true).finally(() => {
+                                setIsManualRefresh(false);
+                            });
+                        }}
+                    />
 
-                <div className="p-8 space-y-8 pt-16 lg:pt-8">
-                    {/* Header with persistent search */}
-                    <div className="flex flex-col gap-4">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <h1 className="text-2xl font-semibold tracking-tight leading-tight">
-                                    FAQ Management
-                                </h1>
-                                <p className="text-muted-foreground text-sm mt-1">
-                                    Create and manage frequently asked questions for the support
-                                    system
-                                </p>
+                    <QueueCommandBar
+                        activeFilterPills={activeFilterPills}
+                        advancedContent={
+                            <div
+                                className={`grid transition-all duration-200 ease-out ${showFilters ? "grid-rows-[1fr] opacity-100 mt-3" : "grid-rows-[0fr] opacity-0"}`}
+                            >
+                                <div className="overflow-hidden">
+                                    <div className="rounded-lg border border-border/60 bg-card/40 p-3 space-y-3">
+                                        <div className="space-y-1.5">
+                                            <Label className="text-xs text-muted-foreground">
+                                                Categories
+                                            </Label>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {availableCategories.map((category) => (
+                                                    <Badge
+                                                        key={category}
+                                                        variant={
+                                                            filters.categories.includes(category)
+                                                                ? "default"
+                                                                : "outline"
+                                                        }
+                                                        className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
+                                                        onClick={() => handleCategoryToggle(category)}
+                                                    >
+                                                        {category}
+                                                    </Badge>
+                                                ))}
+                                                {availableCategories.length === 0 && (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        No categories available
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            <div className="space-y-1.5">
+                                                <Label
+                                                    htmlFor="advanced-source"
+                                                    className="text-xs text-muted-foreground"
+                                                >
+                                                    Source
+                                                </Label>
+                                                <Select
+                                                    value={filters.source || "all"}
+                                                    onValueChange={handleSourceChange}
+                                                >
+                                                    <SelectTrigger id="advanced-source">
+                                                        <SelectValue placeholder="All Sources" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="all">
+                                                            All Sources
+                                                        </SelectItem>
+                                                        {availableSources.map((source) => (
+                                                            <SelectItem key={source} value={source}>
+                                                                {source}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <Label
+                                                    htmlFor="advanced-protocol"
+                                                    className="text-xs text-muted-foreground"
+                                                >
+                                                    Protocol
+                                                </Label>
+                                                <Select
+                                                    value={filters.protocol || "show_all"}
+                                                    onValueChange={(value) => {
+                                                        setFilters((prev) => ({
+                                                            ...prev,
+                                                            protocol: value === "show_all" ? "" : value,
+                                                        }));
+                                                    }}
+                                                >
+                                                    <SelectTrigger id="advanced-protocol">
+                                                        <SelectValue placeholder="All Protocols" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="show_all">
+                                                            All Protocols
+                                                        </SelectItem>
+                                                        {FAQ_PROTOCOL_OPTIONS.filter(
+                                                            (option) => option.value !== "all"
+                                                        ).map((option) => (
+                                                            <SelectItem
+                                                                key={option.value}
+                                                                value={option.value}
+                                                            >
+                                                                {option.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs text-muted-foreground">
+                                                    Date Range
+                                                </Label>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <DatePicker
+                                                        value={filters.verified_from}
+                                                        onChange={(date) =>
+                                                            setFilters((prev) => ({
+                                                                ...prev,
+                                                                verified_from: date,
+                                                            }))
+                                                        }
+                                                        placeholder="From"
+                                                    />
+                                                    <DatePicker
+                                                        value={filters.verified_to}
+                                                        onChange={(date) =>
+                                                            setFilters((prev) => ({
+                                                                ...prev,
+                                                                verified_to: date,
+                                                            }))
+                                                        }
+                                                        placeholder="To"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={clearAllFilters}
+                                                className="text-muted-foreground hover:text-foreground"
+                                            >
+                                                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                                                Reset filters
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-
-                        {/* Persistent Search Bar and Filter Chips */}
-                        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                            {/* Persistent Inline Search */}
-                            <div className="relative w-full sm:w-64 lg:w-96">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70 z-10 pointer-events-none" />
+                        }
+                    >
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative flex-1 min-w-[240px]">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                 <Input
                                     ref={searchInputRef}
                                     placeholder="Search FAQs... (/)"
-                                    className="pl-9 pr-4 h-9 bg-background/60 backdrop-blur-sm border-border/40 focus:border-primary focus:bg-background transition-all"
-                                    defaultValue={filters.search_text}
+                                    className="pl-9 pr-8"
+                                    value={searchInputValue}
                                     onChange={(e) => handleSearchChange(e.target.value)}
                                 />
-                                {filters.search_text && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                {searchInputValue && (
+                                    <button
+                                        type="button"
                                         onClick={() => {
+                                            debouncedSearchChange.cancel();
+                                            setSearchInputValue("");
                                             setFilters((prev) => ({ ...prev, search_text: "" }));
-                                            if (searchInputRef.current) {
-                                                searchInputRef.current.value = "";
-                                            }
                                         }}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                        aria-label="Clear search"
                                     >
-                                        <X className="h-3 w-3" />
-                                    </Button>
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
                                 )}
                             </div>
 
-                            {/* Filter Chips Row */}
-                            <div className="flex items-center gap-2 flex-wrap flex-1">
-                                {/* Category Filter Chip */}
-                                <Select
-                                    value={
-                                        filters.categories.length > 0
-                                            ? filters.categories[0]
-                                            : "all"
+                            <Select
+                                value={filters.categories.length > 0 ? filters.categories[0] : "all"}
+                                onValueChange={(value) => {
+                                    if (value === "all") {
+                                        setFilters((prev) => ({ ...prev, categories: [] }));
+                                    } else {
+                                        setFilters((prev) => ({ ...prev, categories: [value] }));
                                     }
-                                    onValueChange={(value) => {
-                                        if (value === "all") {
-                                            setFilters((prev) => ({ ...prev, categories: [] }));
-                                        } else {
-                                            setFilters((prev) => ({
-                                                ...prev,
-                                                categories: [value],
-                                            }));
-                                        }
-                                    }}
-                                >
-                                    <SelectTrigger className="h-8 w-auto gap-2 px-3 border-dashed">
-                                        <Badge variant="outline" className="px-0 border-0">
-                                            {filters.categories.length > 0
-                                                ? filters.categories[0]
-                                                : "All Categories"}
-                                        </Badge>
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Categories</SelectItem>
-                                        {availableCategories.map((category) => (
-                                            <SelectItem key={category} value={category}>
-                                                {category}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                }}
+                            >
+                                <SelectTrigger className="w-[160px]">
+                                    <SelectValue placeholder="Category" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Categories</SelectItem>
+                                    {availableCategories.map((category) => (
+                                        <SelectItem key={category} value={category}>
+                                            {category}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
 
-                                {/* Verified Status Filter Chip */}
-                                <Select
-                                    value={filters.verified || "all"}
-                                    onValueChange={(value) => {
-                                        setFilters((prev) => ({
-                                            ...prev,
-                                            verified: value as "all" | "verified" | "unverified",
-                                        }));
-                                    }}
-                                >
-                                    <SelectTrigger className="h-8 w-auto gap-2 px-3 border-dashed">
-                                        <Badge variant="outline" className="px-0 border-0">
-                                            {filters.verified === "verified"
-                                                ? "Verified"
-                                                : filters.verified === "unverified"
-                                                  ? "Unverified"
-                                                  : "All Status"}
-                                        </Badge>
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Status</SelectItem>
-                                        <SelectItem value="verified">Verified Only</SelectItem>
-                                        <SelectItem value="unverified">Unverified Only</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                            <Select
+                                value={filters.verified || "all"}
+                                onValueChange={(value) => {
+                                    setFilters((prev) => ({
+                                        ...prev,
+                                        verified: value as "all" | "verified" | "unverified",
+                                    }));
+                                }}
+                            >
+                                <SelectTrigger className="w-[140px]">
+                                    <SelectValue placeholder="Status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Status</SelectItem>
+                                    <SelectItem value="verified">Verified</SelectItem>
+                                    <SelectItem value="unverified">Unverified</SelectItem>
+                                </SelectContent>
+                            </Select>
 
-                                {/* Advanced Filter Button */}
-                                <Button
-                                    onClick={() => setShowFilters(!showFilters)}
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 border-dashed"
-                                >
-                                    <Filter className="mr-2 h-4 w-4" />
-                                    Advanced
-                                </Button>
-
-                                {/* Reset All Filters Button */}
+                            <Button
+                                onClick={() => setShowFilters(!showFilters)}
+                                variant="outline"
+                                size="sm"
+                                className={showFilters ? "bg-accent border-primary" : "border-border"}
+                            >
+                                <Filter className="mr-2 h-4 w-4" />
+                                Advanced
                                 {hasActiveFilters && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={clearAllFilters}
-                                        className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                                    <Badge
+                                        variant="secondary"
+                                        className="ml-2 h-5 min-w-5 px-1.5 text-[10px] tabular-nums"
                                     >
-                                        <RotateCcw className="mr-1 h-3 w-3" />
-                                        Reset
-                                    </Button>
+                                        {activeFilterPills.length}
+                                    </Badge>
                                 )}
-                            </div>
-                        </div>
-                    </div>
+                            </Button>
 
-                    {/* Error Display */}
-                    {error && (
-                        <div
-                            className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg"
-                            role="alert"
-                        >
-                            <strong className="font-bold">Error: </strong>
-                            <span className="block sm:inline">{error}</span>
-                        </div>
-                    )}
-
-                    {/* Filters Panel */}
-                    {showFilters && (
-                        <Card>
-                            <CardHeader className="relative">
+                            {hasActiveFilters && (
                                 <Button
-                                    onClick={() => setShowFilters(false)}
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
-                                    className="absolute right-2 top-2 h-8 w-8 p-0"
-                                    aria-label="Close filters"
+                                    onClick={clearAllFilters}
+                                    className="text-muted-foreground hover:text-foreground"
                                 >
-                                    <X className="h-4 w-4" />
+                                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                                    Reset
                                 </Button>
-                                <CardTitle className="flex items-center gap-2">
-                                    <Filter className="h-5 w-5" />
-                                    Filters
-                                </CardTitle>
-                                <CardDescription>
-                                    Filter FAQs by text search, categories, and source
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-6">
-                                {/* Search Text */}
-                                <div className="space-y-2">
-                                    <Label htmlFor="search">Search Text</Label>
-                                    <div className="relative">
-                                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                        <Input
-                                            id="search"
-                                            placeholder="Search in questions and answers..."
-                                            value={filters.search_text}
-                                            onChange={(e) => handleSearchChange(e.target.value)}
-                                            className="pl-10"
-                                        />
-                                    </div>
-                                </div>
+                            )}
+                        </div>
+                    </QueueCommandBar>
 
-                                {/* Categories */}
-                                <div className="space-y-2">
-                                    <Label>Categories</Label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {availableCategories.map((category) => (
-                                            <Badge
-                                                key={category}
-                                                variant={
-                                                    filters.categories.includes(category)
-                                                        ? "default"
-                                                        : "outline"
-                                                }
-                                                className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
-                                                onClick={() => handleCategoryToggle(category)}
-                                            >
-                                                {category}
-                                            </Badge>
-                                        ))}
-                                        {availableCategories.length === 0 && (
-                                            <p className="text-sm text-muted-foreground">
-                                                No categories available
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Verified Status, Source, and Bisq Version - Three columns */}
-                                <div className="grid grid-cols-3 gap-4">
-                                    {/* Verified Status */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="verified-status">Verification Status</Label>
-                                        <Select
-                                            value={filters.verified || "all"}
-                                            onValueChange={(value) => {
-                                                setFilters((prev) => ({
-                                                    ...prev,
-                                                    verified: value as
-                                                        | "all"
-                                                        | "verified"
-                                                        | "unverified",
-                                                }));
-                                            }}
-                                        >
-                                            <SelectTrigger id="verified-status">
-                                                <SelectValue placeholder="All Status" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All Status</SelectItem>
-                                                <SelectItem value="verified">
-                                                    Verified Only
-                                                </SelectItem>
-                                                <SelectItem value="unverified">
-                                                    Unverified Only
-                                                </SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    {/* Source */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="source">Source</Label>
-                                        <Select
-                                            value={filters.source || "all"}
-                                            onValueChange={handleSourceChange}
-                                        >
-                                            <SelectTrigger id="source">
-                                                <SelectValue placeholder="Select source" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All Sources</SelectItem>
-                                                {availableSources.map((source) => (
-                                                    <SelectItem key={source} value={source}>
-                                                        {source}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    {/* Protocol */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="protocol-filter">Protocol</Label>
-                                        <Select
-                                            value={filters.protocol || "show_all"}
-                                            onValueChange={(value) => {
-                                                setFilters({
-                                                    ...filters,
-                                                    protocol: value === "show_all" ? "" : value,
-                                                });
-                                                setCurrentPage(1);
-                                            }}
-                                        >
-                                            <SelectTrigger id="protocol-filter">
-                                                <SelectValue placeholder="All Protocols" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="show_all">All Protocols</SelectItem>
-                                                {FAQ_PROTOCOL_OPTIONS.filter((option) => option.value !== "all").map((option) => (
-                                                    <SelectItem key={option.value} value={option.value}>
-                                                        {option.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
-
-                                {/* Date Range Filtering */}
-                                <div className="space-y-4 pt-4 border-t">
-                                    <div className="space-y-2">
-                                        <Label className="text-sm font-medium">
-                                            Verification Date Range
-                                        </Label>
-                                        <p className="text-xs text-muted-foreground">
-                                            Filter FAQs verified within a specific date range
-                                        </p>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {/* From Date */}
-                                        <div className="space-y-2">
-                                            <Label className="text-xs text-muted-foreground">
-                                                From Date
-                                            </Label>
-                                            <DatePicker
-                                                value={filters.verified_from}
-                                                onChange={(date) => {
-                                                    setFilters({ ...filters, verified_from: date });
-                                                    setCurrentPage(1);
-                                                }}
-                                                placeholder="Select start date"
-                                            />
-                                        </div>
-
-                                        {/* To Date */}
-                                        <div className="space-y-2">
-                                            <Label className="text-xs text-muted-foreground">
-                                                To Date
-                                            </Label>
-                                            <DatePicker
-                                                value={filters.verified_to}
-                                                onChange={(date) => {
-                                                    setFilters({ ...filters, verified_to: date });
-                                                    setCurrentPage(1);
-                                                }}
-                                                placeholder="Select end date"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Filter Actions - Reset and Export */}
-                                <div className="space-y-3 pt-4 border-t">
-                                    {/* Action Buttons Row */}
-                                    <div className="flex items-center gap-3">
-                                        <Button
-                                            variant="outline"
-                                            onClick={clearAllFilters}
-                                            disabled={!hasActiveFilters}
-                                            size="sm"
-                                            className="flex-shrink-0"
-                                        >
-                                            <RotateCcw className="mr-2 h-4 w-4" />
-                                            Reset Filters
-                                        </Button>
-
-                                        <Button
-                                            onClick={async () => {
-                                                if (!faqData || faqData.total_count === 0) {
-                                                    sonnerToast.error("No FAQs to export");
-                                                    return;
-                                                }
-
-                                                try {
-                                                    // Build query parameters for export endpoint
-                                                    const params = new URLSearchParams();
-
-                                                    if (
-                                                        filters.search_text &&
-                                                        filters.search_text.trim()
-                                                    ) {
-                                                        params.append(
-                                                            "search_text",
-                                                            filters.search_text.trim()
-                                                        );
-                                                    }
-
-                                                    if (filters.categories.length > 0) {
-                                                        params.append(
-                                                            "categories",
-                                                            filters.categories.join(",")
-                                                        );
-                                                    }
-
-                                                    if (filters.source && filters.source.trim()) {
-                                                        params.append(
-                                                            "source",
-                                                            filters.source.trim()
-                                                        );
-                                                    }
-
-                                                    if (filters.verified !== "all") {
-                                                        params.append(
-                                                            "verified",
-                                                            filters.verified === "verified"
-                                                                ? "true"
-                                                                : "false"
-                                                        );
-                                                    }
-
-                                                    if (
-                                                        filters.protocol &&
-                                                        filters.protocol.trim()
-                                                    ) {
-                                                        params.append(
-                                                            "protocol",
-                                                            filters.protocol.trim()
-                                                        );
-                                                    }
-
-                                                    if (filters.verified_from) {
-                                                        const serialized = serializeDateFilter(
-                                                            filters.verified_from,
-                                                            false
-                                                        );
-                                                        if (serialized)
-                                                            params.append(
-                                                                "verified_from",
-                                                                serialized
-                                                            );
-                                                    }
-
-                                                    if (filters.verified_to) {
-                                                        const serialized = serializeDateFilter(
-                                                            filters.verified_to,
-                                                            true
-                                                        );
-                                                        if (serialized)
-                                                            params.append(
-                                                                "verified_to",
-                                                                serialized
-                                                            );
-                                                    }
-
-                                                    // Fetch CSV via server-side streaming endpoint
-                                                    // Authentication handled via cookies in makeAuthenticatedRequest
-                                                    // makeAuthenticatedRequest internally prefixes with API_BASE_URL
-                                                    const response = await makeAuthenticatedRequest(
-                                                        `/admin/faqs/export?${params.toString()}`
-                                                    );
-
-                                                    if (!response.ok) {
-                                                        throw new Error(
-                                                            `Export failed: ${response.status}`
-                                                        );
-                                                    }
-
-                                                    // Create blob and trigger download
-                                                    const blob = await response.blob();
-                                                    const url = window.URL.createObjectURL(blob);
-                                                    const a = document.createElement("a");
-                                                    a.href = url;
-
-                                                    // Extract filename from Content-Disposition header or use default
-                                                    const contentDisposition =
-                                                        response.headers.get("Content-Disposition");
-                                                    const filenameMatch =
-                                                        contentDisposition?.match(
-                                                            /filename="?([^"]+)"?/
-                                                        );
-                                                    a.download = filenameMatch
-                                                        ? filenameMatch[1]
-                                                        : "faqs_export.csv";
-
-                                                    document.body.appendChild(a);
-                                                    a.click();
-                                                    document.body.removeChild(a);
-                                                    window.URL.revokeObjectURL(url);
-
-                                                    sonnerToast.success("Export complete", {
-                                                        description: hasActiveFilters
-                                                            ? "Filtered FAQs downloaded"
-                                                            : "All FAQs downloaded",
-                                                    });
-                                                } catch (error) {
-                                                    console.error("Export failed:", error);
-                                                    sonnerToast.error("Failed to export FAQs", {
-                                                        description: "Please try again",
-                                                    });
-                                                }
-                                            }}
-                                            variant="default"
-                                            size="sm"
-                                            disabled={!faqData || faqData.total_count === 0}
-                                        >
-                                            <Download className="mr-2 h-4 w-4" />
-                                            Export {faqData?.total_count || 0} FAQs to CSV
-                                        </Button>
-                                    </div>
-
-                                    {/* Active Filters Summary */}
-                                    {hasActiveFilters && (
-                                        <div className="text-sm text-muted-foreground">
-                                            <span>
-                                                {[
-                                                    filters.search_text && "Text search",
-                                                    filters.categories.length > 0 &&
-                                                        `${filters.categories.length} categor${filters.categories.length === 1 ? "y" : "ies"}`,
-                                                    filters.source && "Source",
-                                                    filters.verified !== "all" &&
-                                                        "Verification status",
-                                                    filters.protocol && "Protocol",
-                                                    (filters.verified_from ||
-                                                        filters.verified_to) &&
-                                                        "Date range",
-                                                ]
-                                                    .filter(Boolean)
-                                                    .join(", ")}{" "}
-                                                applied
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            </CardContent>
-                        </Card>
+                    {visibleError && (
+                        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg" role="alert">
+                            <AlertCircle className="h-4 w-4 shrink-0" />
+                            <span className="text-sm">{visibleError}</span>
+                            <button
+                                type="button"
+                                onClick={() => setDismissedError(visibleError)}
+                                className="ml-auto text-red-400/60 hover:text-red-400 transition-colors"
+                                aria-label="Dismiss error"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
                     )}
 
                     {/* FAQ Form */}
@@ -2098,8 +1885,8 @@ export default function ManageFaqsPage() {
                     </Sheet>
 
                     {/* FAQ List */}
-                    <Card className="bg-card border border-border shadow-sm">
-                        <CardHeader className="flex flex-row items-center justify-between">
+                    <Card className="bg-card border border-border">
+                        <CardHeader className="pb-3 flex flex-row items-center justify-between">
                             <div>
                                 <CardTitle>FAQ List</CardTitle>
                                 <CardDescription>
@@ -2161,13 +1948,13 @@ export default function ManageFaqsPage() {
                                 )}
                             </div>
                         </CardHeader>
-                        <CardContent>
+                        <CardContent className="pt-0">
                             {isLoading ? (
-                                <div className="space-y-4">
+                                <div className="space-y-3">
                                     {[1, 2, 3].map((i) => (
                                         <div
                                             key={i}
-                                            className="bg-card border rounded-lg p-6 space-y-4"
+                                            className="bg-card border rounded-lg p-4 space-y-3"
                                         >
                                             <div className="flex items-start justify-between">
                                                 <div className="flex-1 space-y-3">
@@ -2183,10 +1970,10 @@ export default function ManageFaqsPage() {
                                     ))}
                                 </div>
                             ) : (
-                                <div className="space-y-4">
+                                <div className="space-y-2">
                                     {/* Bulk Action Toolbar */}
                                     {bulkSelectionMode && (
-                                        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b px-4 py-3 -mx-6 -mt-4 mb-4">
+                                        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b px-4 py-2 -mx-4 -mt-2 mb-2">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-4">
                                                     <Checkbox
@@ -2289,58 +2076,35 @@ export default function ManageFaqsPage() {
                                             );
                                         }
 
-                                        // Smart expansion logic: verified FAQs can be collapsed, unverified FAQs always expanded
-                                        const isExpanded = !faq.verified || expandedIds.has(faq.id);
+                                        // Default to compact list; open details on explicit user action.
+                                        const isExpanded = expandedIds.has(faq.id);
                                         const isSelected = index === selectedIndex;
                                         const hasFailed = failedFaqIds.has(faq.id);
 
                                         return (
-                                            <motion.div
-                                                key={faq.id}
-                                                initial={{
-                                                    opacity: 0,
-                                                    height: 0,
-                                                    marginBottom: 0,
-                                                }}
-                                                animate={{
-                                                    opacity: 1,
-                                                    height: "auto",
-                                                    marginBottom: "1rem",
-                                                }}
-                                                exit={{
-                                                    opacity: 0,
-                                                    height: 0,
-                                                    marginBottom: 0,
-                                                    transition: { duration: 0.4 },
-                                                }}
-                                                transition={{ duration: 0.2 }}
-                                                layout
-                                            >
+                                            <div key={faq.id} className="mb-2">
                                                 <Collapsible
                                                     key={faq.id}
                                                     open={isExpanded}
                                                     onOpenChange={(open) => {
-                                                        // Only allow collapsing verified FAQs
-                                                        if (faq.verified) {
-                                                            setExpandedIds((prev) => {
-                                                                const newSet = new Set(prev);
-                                                                if (open) {
-                                                                    newSet.add(faq.id);
-                                                                } else {
-                                                                    newSet.delete(faq.id);
-                                                                }
-                                                                return newSet;
-                                                            });
-                                                        }
+                                                        setExpandedIds((prev) => {
+                                                            const newSet = new Set(prev);
+                                                            if (open) {
+                                                                newSet.add(faq.id);
+                                                            } else {
+                                                                newSet.delete(faq.id);
+                                                            }
+                                                            return newSet;
+                                                        });
                                                     }}
                                                     ref={setFaqRef(faq.id)}
                                                     className={`
                                             bg-card border rounded-lg group
-                                            transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]
+                                            transition-colors duration-150
                                             ${
                                                 isSelected
-                                                    ? "border-green-500 shadow-lg shadow-green-500/20 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background"
-                                                    : "border-border hover:shadow-md hover:border-border/60 hover:-translate-y-0.5"
+                                                    ? "border-green-500 ring-2 ring-green-500/30 ring-offset-2 ring-offset-background"
+                                                    : "border-border hover:border-border/60"
                                             }
                                         `}
                                                     tabIndex={-1}
@@ -2348,7 +2112,7 @@ export default function ManageFaqsPage() {
                                                         outline: "none", // Remove default outline, we use custom ring
                                                     }}
                                                 >
-                                                    <div className="p-6">
+                                                    <div className="p-4">
                                                         {faq.verified ? (
                                                             <div className="flex items-start gap-3">
                                                                 {bulkSelectionMode && (
@@ -2373,40 +2137,14 @@ export default function ManageFaqsPage() {
                                                                         // Sync Tab navigation with keyboard selection
                                                                         setSelectedIndex(index);
                                                                     }}
-                                                                    onClick={(e) => {
-                                                                        const target =
-                                                                            e.target as HTMLElement;
-                                                                        const isArrowClick =
-                                                                            target.closest("svg") ||
-                                                                            (target.classList.contains(
-                                                                                "relative"
-                                                                            ) &&
-                                                                                target.querySelector(
-                                                                                    "svg"
-                                                                                ));
-
-                                                                        if (isExpanded) {
-                                                                            if (isArrowClick) {
-                                                                                // Collapsing via arrow: Don't update selection
-                                                                                // This avoids animation conflict between collapse and layout animations
-                                                                                return; // Let collapse happen naturally
-                                                                            } else {
-                                                                                // Clicking content when expanded: Select but stay expanded
-                                                                                setSelectedIndex(
-                                                                                    index
-                                                                                );
-                                                                                e.preventDefault();
-                                                                            }
-                                                                        } else {
-                                                                            // Expanding: Always set selection
-                                                                            setSelectedIndex(index);
-                                                                        }
-                                                                    }}
+                                                                onClick={() => {
+                                                                    setSelectedIndex(index);
+                                                                }}
                                                                 >
                                                                     <div className="flex items-start justify-between gap-3 text-left">
                                                                         <div className="flex-1 space-y-2">
                                                                             <div className="flex items-start gap-2">
-                                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
+                                                                                <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1 line-clamp-1">
                                                                                     {faq.question}
                                                                                 </h3>
                                                                                 {hasFailed && (
@@ -2431,7 +2169,7 @@ export default function ManageFaqsPage() {
                                                                                 </div>
                                                                             </div>
 
-                                                                            <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                            <div className="flex items-center gap-3 text-[12px] text-muted-foreground">
                                                                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
                                                                                     {faq.category}
                                                                                 </span>
@@ -2546,20 +2284,21 @@ export default function ManageFaqsPage() {
                                                                                     </Tooltip>
                                                                                 )}
                                                                             </div>
+                                                                            <p className="text-xs text-muted-foreground line-clamp-1">
+                                                                                {faq.answer}
+                                                                            </p>
                                                                         </div>
                                                                     </div>
                                                                 </CollapsibleTrigger>
                                                             </div>
                                                         ) : (
-                                                            <div
-                                                                className="w-full focus-visible:outline-none cursor-pointer"
-                                                                tabIndex={0}
+                                                            <CollapsibleTrigger
+                                                                className="w-full group/trigger focus-visible:outline-none text-left"
                                                                 onFocus={() => {
                                                                     // Sync Tab navigation with keyboard selection
                                                                     setSelectedIndex(index);
                                                                 }}
                                                                 onClick={() => {
-                                                                    // Set selection when clicking on FAQ
                                                                     setSelectedIndex(index);
                                                                 }}
                                                             >
@@ -2584,7 +2323,7 @@ export default function ManageFaqsPage() {
                                                                     )}
                                                                     <div className="flex-1 space-y-2">
                                                                         <div className="flex items-start gap-2">
-                                                                            <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1">
+                                                                            <h3 className="font-medium text-card-foreground text-[15px] leading-[1.4] tracking-tight flex-1 line-clamp-1">
                                                                                 {faq.question}
                                                                             </h3>
                                                                             {hasFailed && (
@@ -2596,9 +2335,16 @@ export default function ManageFaqsPage() {
                                                                                     Failed
                                                                                 </Badge>
                                                                             )}
+                                                                            <ChevronRight
+                                                                                className={`h-5 w-5 text-muted-foreground transition-transform duration-150 mt-0.5 ${
+                                                                                    isExpanded
+                                                                                        ? "rotate-90"
+                                                                                        : ""
+                                                                                }`}
+                                                                            />
                                                                         </div>
 
-                                                                        <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                                                        <div className="flex items-center gap-3 text-[12px] text-muted-foreground">
                                                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium text-[12px] tracking-[0.3px] uppercase">
                                                                                 {faq.category}
                                                                             </span>
@@ -2667,12 +2413,15 @@ export default function ManageFaqsPage() {
                                                                                 </TooltipContent>
                                                                             </Tooltip>
                                                                         </div>
+                                                                        <p className="text-xs text-muted-foreground line-clamp-1">
+                                                                            {faq.answer}
+                                                                        </p>
                                                                     </div>
                                                                 </div>
-                                                            </div>
+                                                            </CollapsibleTrigger>
                                                         )}
 
-                                                        <CollapsibleContent className="pt-3 data-[state=open]:animate-slide-down data-[state=closed]:animate-slide-up overflow-hidden">
+                                                        <CollapsibleContent className="pt-3 overflow-hidden">
                                                             <div className="flex items-start justify-between gap-4">
                                                                 <div className="flex-1 space-y-3">
                                                                     <div>
@@ -2944,7 +2693,7 @@ export default function ManageFaqsPage() {
                                                         </CollapsibleContent>
                                                     </div>
                                                 </Collapsible>
-                                            </motion.div>
+                                            </div>
                                         );
                                     })}
                                 </div>
@@ -3057,305 +2806,6 @@ export default function ManageFaqsPage() {
                         </CardContent>
                     </Card>
 
-                    {/* Command Palette */}
-                    <CommandDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen}>
-                        <CommandInput placeholder="Type a command or search..." />
-                        <CommandList>
-                            <CommandEmpty>No results found.</CommandEmpty>
-                            <CommandGroup heading="Actions">
-                                <CommandItem
-                                    onSelect={() => {
-                                        openNewFaqForm();
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <PlusCircle className="mr-2 h-4 w-4" />
-                                    <span>Add New FAQ</span>
-                                    <CommandShortcut>N</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        setBulkSelectionMode(!bulkSelectionMode);
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <CheckSquare className="mr-2 h-4 w-4" />
-                                    <span>
-                                        {bulkSelectionMode ? "Exit" : "Enable"} Bulk Selection
-                                    </span>
-                                    <CommandShortcut>B</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        searchInputRef.current?.focus();
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <Search className="mr-2 h-4 w-4" />
-                                    <span>Focus Search</span>
-                                    <CommandShortcut>/</CommandShortcut>
-                                </CommandItem>
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <CommandGroup heading="Filters">
-                                <CommandItem
-                                    onSelect={() => {
-                                        setFilters((prev) => ({
-                                            ...prev,
-                                            categories: [],
-                                            source: "",
-                                        }));
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <X className="mr-2 h-4 w-4" />
-                                    <span>Reset All Filters</span>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        setFilters((prev) => ({
-                                            ...prev,
-                                            categories: ["general"],
-                                        }));
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <span>Filter: General</span>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        setFilters((prev) => ({
-                                            ...prev,
-                                            categories: ["technical"],
-                                        }));
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <span>Filter: Technical</span>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        setFilters((prev) => ({
-                                            ...prev,
-                                            categories: ["trading"],
-                                        }));
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <span>Filter: Trading</span>
-                                </CommandItem>
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <CommandGroup heading="FAQ Navigation">
-                                <CommandItem disabled>
-                                    <span>Navigate Down</span>
-                                    <CommandShortcut>J</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem disabled>
-                                    <span>Navigate Up</span>
-                                    <CommandShortcut>K</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem disabled>
-                                    <span>Expand/Collapse Selected</span>
-                                    <CommandShortcut>Enter</CommandShortcut>
-                                </CommandItem>
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <CommandGroup heading="FAQ Actions">
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            enterEditMode(displayFaqs.faqs[selectedIndex]);
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Pencil className="mr-2 h-4 w-4" />
-                                    <span>Edit Selected FAQ</span>
-                                    <CommandShortcut>Enter</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            const selectedFaq = displayFaqs.faqs[selectedIndex];
-                                            setFaqToDelete(selectedFaq);
-                                            setShowDeleteConfirmDialog(true);
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    <span>Delete Selected FAQ</span>
-                                    <CommandShortcut>D</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            const selectedFaq = displayFaqs.faqs[selectedIndex];
-                                            if (!selectedFaq.verified) {
-                                                if (skipVerifyConfirmation) {
-                                                    handleVerifyFaq(selectedFaq);
-                                                } else {
-                                                    const verifyButton = document.querySelector(
-                                                        `button[aria-label="Verify FAQ: ${selectedFaq.question}"]`
-                                                    ) as HTMLButtonElement;
-                                                    if (verifyButton) {
-                                                        verifyButton.click();
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <BadgeCheck className="mr-2 h-4 w-4" />
-                                    <span>Verify Selected FAQ</span>
-                                    <CommandShortcut>V</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        setSelectedIndex(-1);
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <X className="mr-2 h-4 w-4" />
-                                    <span>Clear Selection</span>
-                                    <CommandShortcut>Esc</CommandShortcut>
-                                </CommandItem>
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <CommandGroup heading="Set Protocol">
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            handleSetProtocol(
-                                                displayFaqs.faqs[selectedIndex],
-                                                "bisq_easy"
-                                            );
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Badge
-                                        variant="outline"
-                                        className="mr-2 h-4 border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-[10px] px-1"
-                                    >
-                                        Easy
-                                    </Badge>
-                                    <span>Bisq Easy</span>
-                                    <CommandShortcut>E</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            handleSetProtocol(
-                                                displayFaqs.faqs[selectedIndex],
-                                                "multisig_v1"
-                                            );
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Badge
-                                        variant="outline"
-                                        className="mr-2 h-4 border-blue-500/50 bg-blue-500/10 text-blue-500 text-[10px] px-1"
-                                    >
-                                        Multisig
-                                    </Badge>
-                                    <span>Multisig</span>
-                                    <CommandShortcut>1</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            handleSetProtocol(
-                                                displayFaqs.faqs[selectedIndex],
-                                                "musig"
-                                            );
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Badge
-                                        variant="outline"
-                                        className="mr-2 h-4 border-purple-500/50 bg-purple-500/10 text-purple-500 text-[10px] px-1"
-                                    >
-                                        MuSig
-                                    </Badge>
-                                    <span>MuSig</span>
-                                    <CommandShortcut>M</CommandShortcut>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        if (
-                                            selectedIndex >= 0 &&
-                                            displayFaqs?.faqs[selectedIndex]
-                                        ) {
-                                            handleSetProtocol(
-                                                displayFaqs.faqs[selectedIndex],
-                                                "all"
-                                            );
-                                        }
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                    disabled={selectedIndex < 0}
-                                >
-                                    <Badge
-                                        variant="outline"
-                                        className="mr-2 h-4 border-blue-500/50 bg-blue-500/10 text-blue-500 text-[10px] px-1"
-                                    >
-                                        All
-                                    </Badge>
-                                    <span>All Protocols</span>
-                                    <CommandShortcut>0</CommandShortcut>
-                                </CommandItem>
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <CommandGroup heading="Navigation">
-                                <CommandItem
-                                    onSelect={() => {
-                                        window.location.href = "/admin/dashboard";
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <span>Go to Dashboard</span>
-                                </CommandItem>
-                                <CommandItem
-                                    onSelect={() => {
-                                        window.location.href = "/admin/feedback";
-                                        setCommandPaletteOpen(false);
-                                    }}
-                                >
-                                    <span>Go to Feedback</span>
-                                </CommandItem>
-                            </CommandGroup>
-                        </CommandList>
-                    </CommandDialog>
-
                     {/* Shared Delete Confirmation Dialog (for keyboard shortcut) */}
                     <AlertDialog
                         open={showDeleteConfirmDialog}
@@ -3393,8 +2843,7 @@ export default function ManageFaqsPage() {
                             </AlertDialogFooter>
                         </AlertDialogContent>
                     </AlertDialog>
-                </div>
-            </div>
+            </AdminQueueShell>
         </TooltipProvider>
     );
 }

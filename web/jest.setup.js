@@ -4,6 +4,7 @@ import '@testing-library/jest-dom'
 // Mock lucide-react icons
 jest.mock('lucide-react', () => ({
   ChevronDown: ({ className }) => <svg className={className} data-testid="chevron-down-icon" />,
+  ExternalLink: ({ className }) => <svg className={className} data-testid="external-link-icon" />,
 }))
 
 // Mock Radix UI Dialog components

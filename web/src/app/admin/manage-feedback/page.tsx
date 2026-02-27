@@ -1,9 +1,8 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import {
@@ -18,8 +19,6 @@ import {
   MessageCircle,
   ThumbsDown,
   ThumbsUp,
-  Filter,
-  PlusCircle,
   Eye,
   RotateCcw,
   Download,
@@ -30,26 +29,30 @@ import {
   ChevronRight,
   AlertCircle,
   Bot,
-  Check,
   Clock,
-  Pencil,
   ChevronDown,
-  User
+  User,
+  ArrowUpRight,
+  Link2,
+  MoreHorizontal,
+  SlidersHorizontal,
+  Info,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { makeAuthenticatedRequest } from '@/lib/auth';
 import { ConversationHistory } from '@/components/admin/ConversationHistory';
 import { ConversationMessage } from '@/types/feedback';
 import { useFeedbackDeletion } from '@/hooks/useFeedbackDeletion';
+import { useAdminPollingQuery } from '@/hooks/useAdminPollingQuery';
+import { useHotkeys } from "react-hotkeys-hook";
+import { AdminQueueShell } from "@/components/admin/queue/AdminQueueShell";
+import { QueuePageHeader } from "@/components/admin/queue/QueuePageHeader";
+import { QueueTabs } from "@/components/admin/queue/QueueTabs";
+import { QueueCommandBar } from "@/components/admin/queue/QueueCommandBar";
 import { MarkdownContent } from "@/components/chat/components/markdown-content";
 import { SourceBadges } from "@/components/chat/components/source-badges";
 import type { Source } from "@/components/chat/types/chat.types";
-import {
-  FAQ_CATEGORIES,
-  FAQ_PROTOCOL_OPTIONS,
-  inferFaqMetadata,
-  type FAQProtocol,
-} from "@/lib/faq-metadata";
+import { stripGeneratedAnswerFooter } from "@/lib/answer-format";
 
 interface FeedbackItem {
   message_id: string;
@@ -77,6 +80,7 @@ interface FeedbackItem {
   is_processed?: boolean;
   processed_at?: string;
   faq_id?: string;
+  needs_faq?: boolean;
   // Index signature for compatibility with useFeedbackDeletion hook
   [key: string]: unknown;
 }
@@ -120,12 +124,71 @@ interface FeedbackStats {
   feedback_by_method?: Record<string, ChannelMethodStats>;
 }
 
-interface EscalationMetrics {
-  total_routing_decisions: number;
-  auto_send_count: number;
-  queue_medium_count: number;
-  needs_human_count: number;
-  escalation_rate: number;
+interface ConversationOutcome {
+  message_id: string;
+  signal?: {
+    coverage_state: 'not_linked' | 'linked_escalation' | 'auto_closed';
+    linked_escalation_id?: number | null;
+  } | null;
+  escalation?: {
+    id: number;
+    status: string;
+    priority: string;
+  } | null;
+  recommended_action: 'none' | 'review_case' | 'promote_case' | 'await_feedback';
+}
+
+function normalizeReactionToken(value?: string | null): string {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[:_\-\s]/g, "");
+}
+
+function getReactionDisplayLabel(reactionEmoji?: string | null): string {
+  const token = normalizeReactionToken(reactionEmoji);
+  const tokenToEmoji: Record<string, string> = {
+    "thumbsup": "👍",
+    "+1": "👍",
+    "like": "👍",
+    "thumbsdown": "👎",
+    "-1": "👎",
+    "dislike": "👎",
+    "heart": "❤️",
+    "happy": "😊",
+    "party": "🎉",
+    "laugh": "😂",
+  };
+
+  if (tokenToEmoji[token]) return tokenToEmoji[token];
+
+  const raw = (reactionEmoji || "").trim();
+  return raw || "Reaction";
+}
+
+function isCanonicalThumbReaction(
+  reactionEmoji: string | undefined,
+  isPositive: boolean,
+  isNegative: boolean,
+): boolean {
+  const token = normalizeReactionToken(reactionEmoji);
+  if (!token) return false;
+
+  const thumbsUpTokens = new Set(["👍", "+1", "thumbsup", "like"]);
+  const thumbsDownTokens = new Set(["👎", "-1", "thumbsdown", "dislike"]);
+
+  if (isPositive) return thumbsUpTokens.has(token);
+  if (isNegative) return thumbsDownTokens.has(token);
+  return thumbsUpTokens.has(token) || thumbsDownTokens.has(token);
+}
+
+function shouldShowReactionTag(feedback: FeedbackItem): boolean {
+  if (feedback.feedback_method !== "reaction") return false;
+  return !isCanonicalThumbReaction(
+    feedback.reaction_emoji,
+    feedback.is_positive,
+    feedback.is_negative,
+  );
 }
 
 // Custom hook for debounced values
@@ -142,11 +205,10 @@ export default function ManageFeedbackPage() {
   // Authentication state - handled by SecureAuth wrapper at layout level
 
   // Data state
-  const [feedbackData, setFeedbackData] = useState<FeedbackListResponse | null>(null);
-  const [stats, setStats] = useState<FeedbackStats | null>(null);
-  const [escalationMetrics, setEscalationMetrics] = useState<EscalationMetrics | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Filter state
   const [filters, setFilters] = useState({
@@ -158,7 +220,6 @@ export default function ManageFeedbackPage() {
     issues: [] as string[],
     source_types: [] as string[],
     search_text: '',
-    needs_faq: false,
     page: 1,
     page_size: 25,
     sort_by: 'newest'
@@ -178,7 +239,6 @@ export default function ManageFeedbackPage() {
       issues: filters.issues,
       source_types: filters.source_types,
       search_text: debouncedSearchText,
-      needs_faq: filters.needs_faq,
       page: filters.page,
       page_size: filters.page_size,
       sort_by: filters.sort_by,
@@ -192,7 +252,6 @@ export default function ManageFeedbackPage() {
       filters.feedback_method,
       filters.issues,
       filters.source_types,
-      filters.needs_faq,
       filters.page,
       filters.page_size,
       filters.sort_by,
@@ -200,40 +259,16 @@ export default function ManageFeedbackPage() {
   );
 
   // UI state
-  const [activeTab, setActiveTab] = useState<'all' | 'negative' | 'needs_faq'>('needs_faq');
+  const [activeTab, setActiveTab] = useState<'all' | 'negative'>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
+  const [selectedSignalIndex, setSelectedSignalIndex] = useState<number>(-1);
   const [showFeedbackDetail, setShowFeedbackDetail] = useState(false);
-  const [detailPhase, setDetailPhase] = useState<"review" | "faq">("review");
-
-  // FAQ creation state
-  const [faqForm, setFaqForm] = useState({
-    message_id: '',
-    suggested_question: '',
-    suggested_answer: '',
-    category: '',
-    protocol: 'all' as FAQProtocol,
-    additional_notes: ''
-  });
-  const [isSubmittingFAQ, setIsSubmittingFAQ] = useState(false);
-  const [customCategory, setCustomCategory] = useState('');
-  const [isCustomCategory, setIsCustomCategory] = useState(false);
-  const [isEditingFaqAnswer, setIsEditingFaqAnswer] = useState(false);
-  const faqAnswerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  // Delete feedback hook
-  const {
-    showDeleteConfirm,
-    feedbackToDelete,
-    isDeleting,
-    error: deleteError,
-    openDeleteConfirmation,
-    closeDeleteConfirmation,
-    handleDelete,
-  } = useFeedbackDeletion(async () => {
-    await fetchData();
-    setError(null);
-  });
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [conversationOutcome, setConversationOutcome] = useState<ConversationOutcome | null>(null);
+  const [isLoadingOutcome, setIsLoadingOutcome] = useState(false);
+  const [isPromotingCase, setIsPromotingCase] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Compute active filter count and boolean
   const activeFilterCount = useMemo(() => {
@@ -246,50 +281,14 @@ export default function ManageFeedbackPage() {
       filters.feedback_method !== 'all',
       filters.issues.length > 0,
       filters.source_types.length > 0,
-      filters.needs_faq
     ].filter(Boolean).length;
   }, [filters]);
 
   const hasActiveFilters = activeFilterCount > 0;
-
-  // Refs to track previous data hashes for smart updates
-  const previousFeedbackHashRef = useRef<string>('');
-  const previousStatsHashRef = useRef<string>('');
-  const savedScrollPositionRef = useRef<number | null>(null);
-
-  // Restore scroll position after background refresh if it was saved
-  useEffect(() => {
-    if (savedScrollPositionRef.current !== null) {
-      window.scrollTo(0, savedScrollPositionRef.current);
-      savedScrollPositionRef.current = null;
-    }
-  }, [feedbackData, stats]);
-
-  useEffect(() => {
-    // SECURITY: No longer using localStorage for API keys - migrating to secure HTTP-only cookies
-    // const storedApiKey = localStorage.getItem('admin_api_key');
-    // This component will be replaced by the SecureAuth wrapper in the layout
-    // For now, just set loading to false since authentication is handled at layout level
-    setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (!isEditingFaqAnswer) return;
-    requestAnimationFrame(() => {
-      if (!faqAnswerTextareaRef.current) return;
-      faqAnswerTextareaRef.current.focus();
-      faqAnswerTextareaRef.current.style.height = "auto";
-      faqAnswerTextareaRef.current.style.height = `${faqAnswerTextareaRef.current.scrollHeight}px`;
-    });
-  }, [isEditingFaqAnswer, showFeedbackDetail, detailPhase]);
-
-  const fetchFeedbackList = useCallback(async () => {
-    // Adjust filters based on active tab, using debounced search text
+  const fetchFeedbackList = useCallback(async (): Promise<FeedbackListResponse> => {
     const adjustedFilters = { ...stableFilters };
     if (activeTab === 'negative') {
       adjustedFilters.rating = 'negative';
-    } else if (activeTab === 'needs_faq') {
-      adjustedFilters.needs_faq = true;
     }
 
     const params = new URLSearchParams();
@@ -307,111 +306,83 @@ export default function ManageFeedbackPage() {
     });
 
     const response = await makeAuthenticatedRequest(`/admin/feedback/list?${params}`);
-
-    if (response.ok) {
-      const data = await response.json();
-
-      if (data.total_pages > 0 && stableFilters.page > data.total_pages) {
-        setFilters(prev => (
-          prev.page > data.total_pages
-            ? { ...prev, page: data.total_pages }
-            : prev
-        ));
-        return;
-      }
-
-      if (data.total_pages === 0 && stableFilters.page !== 1) {
-        setFilters(prev => (prev.page !== 1 ? { ...prev, page: 1 } : prev));
-        return;
-      }
-
-      // Calculate hash of new data for comparison
-      const dataHash = JSON.stringify(data);
-
-      // Only update state if data has actually changed
-      if (dataHash !== previousFeedbackHashRef.current) {
-        previousFeedbackHashRef.current = dataHash;
-        setFeedbackData(data);
-      }
-    } else {
+    if (!response.ok) {
       throw new Error(`Failed to fetch feedback. Status: ${response.status}`);
     }
+    return response.json();
   }, [stableFilters, activeTab]);
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (): Promise<FeedbackStats> => {
     const response = await makeAuthenticatedRequest('/admin/feedback/stats');
-
-    if (response.ok) {
-      const data = await response.json();
-
-      // Calculate hash of new data for comparison
-      const dataHash = JSON.stringify(data);
-
-      // Only update state if data has actually changed
-      if (dataHash !== previousStatsHashRef.current) {
-        previousStatsHashRef.current = dataHash;
-        setStats(data);
-      }
-    } else {
+    if (!response.ok) {
       throw new Error(`Failed to fetch stats. Status: ${response.status}`);
     }
+    return response.json();
   }, []);
 
-  const fetchEscalationMetrics = useCallback(async () => {
-    try {
-      const response = await makeAuthenticatedRequest('/admin/dashboard/overview?period=30d');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.escalation_metrics) {
-          setEscalationMetrics(data.escalation_metrics);
-        }
-      }
-    } catch {
-      // Non-critical: escalation metrics are supplementary
-    }
-  }, []);
+  const feedbackQuery = useAdminPollingQuery<FeedbackListResponse, readonly unknown[]>({
+    queryKey: [
+      'admin',
+      'quality-signals',
+      {
+        tab: activeTab,
+        filters: stableFilters,
+      },
+    ] as const,
+    queryFn: fetchFeedbackList,
+    placeholderData: (previousData) => previousData,
+  });
 
-  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
-    // Save scroll position for background refreshes
-    if (isBackgroundRefresh) {
-      savedScrollPositionRef.current = window.scrollY;
-    }
+  const statsQuery = useAdminPollingQuery<FeedbackStats, readonly unknown[]>({
+    queryKey: ['admin', 'quality-signals', 'stats'] as const,
+    queryFn: fetchStats,
+  });
 
-    // Only show loading spinner if not a background refresh
-    if (!isBackgroundRefresh) {
-      setIsLoading(true);
-    }
+  const feedbackData = feedbackQuery.data ?? null;
+  const stats = statsQuery.data ?? null;
+  const isLoading = feedbackQuery.isLoading || statsQuery.isLoading;
+  const isRefreshing = isManualRefresh || feedbackQuery.isFetching || statsQuery.isFetching;
+  const error = actionError || feedbackQuery.error?.message || statsQuery.error?.message || null;
+  const visibleError = error && error !== dismissedError ? error : null;
 
+  const refreshData = useCallback(async () => {
+    setDismissedError(null);
+    setActionError(null);
+    setIsManualRefresh(true);
     try {
       await Promise.all([
-        fetchFeedbackList(),
-        fetchStats(),
-        fetchEscalationMetrics()
+        feedbackQuery.refetch(),
+        statsQuery.refetch(),
       ]);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError('Failed to fetch feedback data');
     } finally {
-      if (!isBackgroundRefresh) {
-        setIsLoading(false);
-      }
+      setIsManualRefresh(false);
     }
-  }, [fetchFeedbackList, fetchStats, fetchEscalationMetrics]);
+  }, [feedbackQuery, statsQuery]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const updatedAt = Math.max(
+      feedbackQuery.dataUpdatedAt || 0,
+      statsQuery.dataUpdatedAt || 0,
+    );
+    if (updatedAt > 0) {
+      setLastUpdatedAt(new Date(updatedAt));
+    }
+  }, [feedbackQuery.dataUpdatedAt, statsQuery.dataUpdatedAt]);
 
   useEffect(() => {
-    // Auto-refresh every 30 seconds (background refresh - no loading spinner)
-    const intervalId = setInterval(() => {
-      fetchData(true);
-    }, 30000);
-
-    // Cleanup interval on unmount
-    return () => clearInterval(intervalId);
-  }, [fetchData]);
+    if (!feedbackData) return;
+    if (feedbackData.total_pages > 0 && stableFilters.page > feedbackData.total_pages) {
+      setFilters((prev) => (
+        prev.page > feedbackData.total_pages
+          ? { ...prev, page: feedbackData.total_pages }
+          : prev
+      ));
+      return;
+    }
+    if (feedbackData.total_pages === 0 && stableFilters.page !== 1) {
+      setFilters((prev) => (prev.page !== 1 ? { ...prev, page: 1 } : prev));
+    }
+  }, [feedbackData, stableFilters.page]);
 
   // Note: Login/logout handlers are managed by SecureAuth wrapper at layout level
 
@@ -428,6 +399,9 @@ export default function ManageFeedbackPage() {
 
       return nextFilters;
     });
+    if (key !== "page") {
+      setSelectedSignalIndex(-1);
+    }
   };
 
   const handlePageChange = (page: number) => {
@@ -437,9 +411,10 @@ export default function ManageFeedbackPage() {
     }));
   };
 
-  const handleTabChange = (tab: 'all' | 'negative' | 'needs_faq') => {
+  const handleTabChange = (tab: 'all' | 'negative') => {
     setActiveTab(tab);
     setFilters(prev => ({ ...prev, page: 1 }));
+    setSelectedSignalIndex(-1);
   };
 
   const resetFilters = () => {
@@ -452,12 +427,26 @@ export default function ManageFeedbackPage() {
       issues: [],
       source_types: [],
       search_text: '',
-      needs_faq: false,
       page: 1,
       page_size: 25,
       sort_by: 'newest'
     });
+    setSelectedSignalIndex(-1);
   };
+
+  // Delete feedback hook
+  const {
+    showDeleteConfirm,
+    feedbackToDelete,
+    isDeleting,
+    error: deleteError,
+    openDeleteConfirmation,
+    closeDeleteConfirmation,
+    handleDelete,
+  } = useFeedbackDeletion(async () => {
+    await refreshData();
+    setDismissedError(null);
+  });
 
   const fetchFullFeedbackDetails = async (feedback: FeedbackItem): Promise<FeedbackItem> => {
     try {
@@ -478,101 +467,85 @@ export default function ManageFeedbackPage() {
     return feedback;
   };
 
-  const initializeFaqDraft = (feedback: FeedbackItem) => {
-    const inferred = inferFaqMetadata({
-      question: feedback.question,
-      answer: feedback.answer,
-    });
-    setFaqForm({
-      message_id: feedback.message_id,
-      suggested_question: feedback.question,
-      suggested_answer: feedback.answer || '',
-      category: inferred.category,
-      protocol: inferred.protocol,
-      additional_notes: feedback.explanation || '',
-    });
-    setIsCustomCategory(false);
-    setCustomCategory('');
-    setIsEditingFaqAnswer(true);
-  };
+  const fetchConversationOutcome = useCallback(async (messageId: string) => {
+    setIsLoadingOutcome(true);
+    try {
+      const response = await makeAuthenticatedRequest(`/admin/conversations/${encodeURIComponent(messageId)}/outcome`);
+      if (response.ok) {
+        const payload: ConversationOutcome = await response.json();
+        setConversationOutcome(payload);
+        return;
+      }
+    } catch (error) {
+      console.error('Error fetching conversation outcome:', error);
+    } finally {
+      setIsLoadingOutcome(false);
+    }
+    setConversationOutcome(null);
+  }, []);
+
+  const handlePromoteSignalToEscalation = useCallback(async () => {
+    if (!selectedFeedback) return;
+    setIsPromotingCase(true);
+    try {
+      const response = await makeAuthenticatedRequest(
+        `/admin/signals/${encodeURIComponent(selectedFeedback.message_id)}/promote-case`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            priority: 'normal',
+            reason: 'promoted_from_quality_signal',
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ detail: 'Failed to promote signal to escalation.' }));
+        setActionError(payload.detail || 'Failed to promote signal to escalation.');
+        return;
+      }
+
+      await fetchConversationOutcome(selectedFeedback.message_id);
+      await refreshData();
+      setActionError(null);
+    } catch (error) {
+      console.error('Error promoting signal to escalation:', error);
+      setActionError('Failed to promote signal to escalation.');
+    } finally {
+      setIsPromotingCase(false);
+    }
+  }, [fetchConversationOutcome, refreshData, selectedFeedback]);
 
   const closeFeedbackDetailDialog = () => {
     setShowFeedbackDetail(false);
-    setDetailPhase("review");
     setSelectedFeedback(null);
-    setIsEditingFaqAnswer(false);
+    setIsDetailLoading(false);
+    setConversationOutcome(null);
+    setIsLoadingOutcome(false);
   };
 
-  const openFeedbackDetail = async (feedback: FeedbackItem) => {
-    const fullFeedback = await fetchFullFeedbackDetails(feedback);
-    setSelectedFeedback(fullFeedback);
-    initializeFaqDraft(fullFeedback);
-    setDetailPhase("review");
+  const openFeedbackDetail = (feedback: FeedbackItem) => {
+    setSelectedFeedback(feedback);
     setShowFeedbackDetail(true);
-  };
+    setIsDetailLoading(true);
 
-  const openCreateFAQ = async (feedback: FeedbackItem) => {
-    const fullFeedback = await fetchFullFeedbackDetails(feedback);
-    setSelectedFeedback(fullFeedback);
-    initializeFaqDraft(fullFeedback);
-    setDetailPhase("faq");
-    setShowFeedbackDetail(true);
-  };
-
-  const handleCreateFAQ = async () => {
-    if (
-      !faqForm.suggested_question.trim() ||
-      !faqForm.suggested_answer.trim() ||
-      !faqForm.category.trim()
-    ) {
-      setError("Question, answer, category, and protocol are required to publish FAQ.");
-      return;
+    if (feedback.is_negative) {
+      void fetchConversationOutcome(feedback.message_id);
+    } else {
+      setConversationOutcome(null);
+      setIsLoadingOutcome(false);
     }
-    const normalized = inferFaqMetadata({
-      question: faqForm.suggested_question,
-      answer: faqForm.suggested_answer,
-      category: faqForm.category,
-      protocol: faqForm.protocol,
-    });
-    setIsSubmittingFAQ(true);
-    try {
-      const response = await makeAuthenticatedRequest('/admin/feedback/create-faq', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...faqForm,
-          category: normalized.category,
-          protocol: normalized.protocol,
-        }),
+
+    void fetchFullFeedbackDetails(feedback)
+      .then((fullFeedback) => {
+        setSelectedFeedback((current) => (current ? { ...current, ...fullFeedback } : fullFeedback));
+      })
+      .finally(() => {
+        setIsDetailLoading(false);
       });
-
-      if (response.ok) {
-        closeFeedbackDetailDialog();
-        setFaqForm({
-          message_id: '',
-          suggested_question: '',
-          suggested_answer: '',
-          category: '',
-          protocol: 'all',
-          additional_notes: ''
-        });
-        setIsCustomCategory(false);
-        setCustomCategory('');
-        // Refresh data to reflect changes
-        fetchData();
-        setError(null);
-      } else {
-        const errorText = `Failed to create FAQ. Status: ${response.status}`;
-        setError(errorText);
-      }
-    } catch {
-      const errorText = 'An unexpected error occurred while creating the FAQ.';
-      setError(errorText);
-    } finally {
-      setIsSubmittingFAQ(false);
-    }
   };
 
   const handleFeedbackDetailOpenChange = (open: boolean) => {
@@ -652,6 +625,78 @@ export default function ManageFeedbackPage() {
     return badges[channel || 'web'] || { label: channel || 'web', className: 'bg-muted text-muted-foreground border border-border' };
   };
 
+  const getSignalTags = (feedback: FeedbackItem) => {
+    const tags: { label: string; className: string }[] = [];
+
+    if (shouldShowReactionTag(feedback)) {
+      tags.push({
+        label: getReactionDisplayLabel(feedback.reaction_emoji),
+        className: "bg-purple-500/15 text-purple-400 border border-purple-500/20",
+      });
+    }
+    if (feedback.has_no_source_response) {
+      tags.push({
+        label: "No source",
+        className: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
+      });
+    }
+    if (feedback.needs_faq) {
+      tags.push({
+        label: "Coverage gap",
+        className: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
+      });
+    }
+    if (feedback.is_processed && feedback.faq_id) {
+      tags.push({
+        label: "FAQ linked",
+        className: "bg-primary/15 text-primary border border-primary/25",
+      });
+    }
+    for (const issue of feedback.issues || []) {
+      tags.push({
+        label: issue.replace('_', ' '),
+        className: getIssueColor(issue),
+      });
+    }
+
+    return tags;
+  };
+
+  const activeFilterPills = useMemo(() => {
+    const pills: string[] = [];
+    if (filters.search_text.trim()) pills.push(`Search: ${filters.search_text.trim()}`);
+    if (filters.channel !== "all") pills.push(`Channel: ${filters.channel}`);
+    if (filters.feedback_method !== "all") pills.push(`Method: ${filters.feedback_method}`);
+    if (filters.date_from) pills.push(`From: ${format(filters.date_from, "yyyy-MM-dd")}`);
+    if (filters.date_to) pills.push(`To: ${format(filters.date_to, "yyyy-MM-dd")}`);
+    return pills;
+  }, [filters.channel, filters.date_from, filters.date_to, filters.feedback_method, filters.search_text]);
+  const shortcutHints = useMemo(
+    () => [
+      { keyCombo: "/", label: "Search" },
+      { keyCombo: "J / K", label: "Navigate signals" },
+      { keyCombo: "O", label: "Open selected signal" },
+      { keyCombo: "E", label: "Open selected negative signal" },
+      { keyCombo: "R", label: "Refresh queue" },
+    ],
+    [],
+  );
+
+  const statusTabs = [
+    {
+      key: "all" as const,
+      label: "All",
+      count: stats?.total_feedback ?? 0,
+      icon: MessageCircle,
+    },
+    {
+      key: "negative" as const,
+      label: "Negative",
+      count: stats?.negative_count ?? 0,
+      icon: ThumbsDown,
+    },
+  ];
+
   const toChatSource = useCallback((source: FeedbackSource): Source => ({
     title: source.title || "Untitled source",
     type: (source.type || "").toLowerCase() === "wiki" ? "wiki" : "faq",
@@ -675,333 +720,276 @@ export default function ManageFeedbackPage() {
     [selectedFeedback, toChatSource],
   );
 
-  const faqDraftSource = useMemo(() => {
-    const sources = selectedFeedback?.sources_used || selectedFeedback?.sources || [];
-    if (sources.length === 0) return [] as Source[];
-    return sources.map(toChatSource);
-  }, [selectedFeedback, toChatSource]);
+  const selectedAnswerBody = useMemo(
+    () => stripGeneratedAnswerFooter(selectedFeedback?.answer),
+    [selectedFeedback?.answer],
+  );
+  const shouldShowCaseCoverage = useMemo(() => {
+    if (!selectedFeedback?.is_negative) return false;
+    if (isLoadingOutcome) return true;
+    if (!conversationOutcome) return false;
+
+    const hasEscalationLink = Boolean(conversationOutcome.escalation?.id);
+    const hasActionableState = conversationOutcome.recommended_action !== "none";
+    return hasEscalationLink || hasActionableState;
+  }, [selectedFeedback?.is_negative, isLoadingOutcome, conversationOutcome]);
+
+  const feedbackItems = feedbackData?.feedback_items ?? [];
+
+  useEffect(() => {
+    if (feedbackItems.length === 0) {
+      setSelectedSignalIndex(-1);
+      return;
+    }
+    if (selectedSignalIndex >= feedbackItems.length) {
+      setSelectedSignalIndex(feedbackItems.length - 1);
+    }
+  }, [feedbackItems.length, selectedSignalIndex]);
+
+  useHotkeys(
+    "/",
+    (event) => {
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    },
+    { enableOnFormTags: false },
+    [],
+  );
+
+  useHotkeys(
+    "j",
+    (event) => {
+      event.preventDefault();
+      if (!feedbackItems.length || showFeedbackDetail) return;
+      setSelectedSignalIndex((prev) => {
+        if (prev < 0) return 0;
+        return Math.min(prev + 1, feedbackItems.length - 1);
+      });
+    },
+    { enableOnFormTags: false },
+    [feedbackItems, showFeedbackDetail],
+  );
+
+  useHotkeys(
+    "k",
+    (event) => {
+      event.preventDefault();
+      if (!feedbackItems.length || showFeedbackDetail) return;
+      setSelectedSignalIndex((prev) => Math.max(prev - 1, 0));
+    },
+    { enableOnFormTags: false },
+    [feedbackItems, showFeedbackDetail],
+  );
+
+  useHotkeys(
+    "o",
+    (event) => {
+      event.preventDefault();
+      if (showFeedbackDetail) return;
+      const selected = selectedSignalIndex >= 0 ? feedbackItems[selectedSignalIndex] : feedbackItems[0];
+      if (!selected) return;
+      void openFeedbackDetail(selected);
+    },
+    { enableOnFormTags: false },
+    [showFeedbackDetail, selectedSignalIndex, feedbackItems, openFeedbackDetail],
+  );
+
+  useHotkeys(
+    "r",
+    (event) => {
+      event.preventDefault();
+      void refreshData();
+    },
+    { enableOnFormTags: false },
+    [refreshData],
+  );
+
+  useHotkeys(
+    "e",
+    (event) => {
+      event.preventDefault();
+      if (showFeedbackDetail) return;
+      const selected = selectedSignalIndex >= 0 ? feedbackItems[selectedSignalIndex] : feedbackItems[0];
+      if (!selected?.is_negative) return;
+      setSelectedFeedback(selected);
+      void fetchConversationOutcome(selected.message_id);
+      setShowFeedbackDetail(true);
+    },
+    { enableOnFormTags: false },
+    [showFeedbackDetail, selectedSignalIndex, feedbackItems, fetchConversationOutcome],
+  );
 
   // Authentication is handled by SecureAuth wrapper in layout
 
   return (
-    <div className="p-4 md:p-8 space-y-6 pt-16 lg:pt-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Feedback Management</h1>
-            <p className="text-sm text-muted-foreground mt-1">Monitor and analyze user feedback for the support assistant</p>
-          </div>
-          <div className="flex gap-2">
-              <Button onClick={() => setShowFilters(!showFilters)} variant="outline" size="sm" className={`border-border transition-colors ${showFilters ? 'bg-accent border-primary' : 'hover:border-primary'}`}>
-                <Filter className="mr-2 h-4 w-4" />
-                Filters
-                {hasActiveFilters && (
-                  <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs rounded-full">
-                    {activeFilterCount}
-                  </Badge>
-                )}
-              </Button>
-              <Button onClick={exportFeedback} variant="outline" size="sm" className="border-border hover:border-primary" disabled={!feedbackData || feedbackData.feedback_items.length === 0}>
-                <Download className="mr-2 h-4 w-4" />
-                Export
-              </Button>
-            </div>
-        </div>
-
-        {/* Error Display */}
-        {error && (
-          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg" role="alert">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span className="text-sm">{error}</span>
-            <button onClick={() => setError(null)} className="ml-auto text-red-400/60 hover:text-red-400 transition-colors">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-
-        {/* Escalation Rate Card */}
-        {escalationMetrics && escalationMetrics.total_routing_decisions > 0 && (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Escalation Rate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between mb-3">
-                <div className={cn(
-                  "text-3xl font-semibold tracking-tight tabular-nums",
-                  escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
-                    ? "text-emerald-400"
-                    : "text-amber-400"
-                )}>
-                  {escalationMetrics.escalation_rate.toFixed(1)}%
-                </div>
-                <span className={cn(
-                  "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium",
-                  escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
-                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
-                    : "bg-amber-500/15 text-amber-400 border border-amber-500/25"
-                )}>
-                  {escalationMetrics.escalation_rate >= 5 && escalationMetrics.escalation_rate <= 15
-                    ? "On target (5-15%)"
-                    : escalationMetrics.escalation_rate < 5
-                      ? "Below target"
-                      : "Above target"}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div className="space-y-1">
-                  <p className="text-muted-foreground">Auto-send</p>
-                  <p className="font-medium tabular-nums">{escalationMetrics.auto_send_count.toLocaleString()}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-muted-foreground">Queued</p>
-                  <p className="font-medium tabular-nums">{escalationMetrics.queue_medium_count.toLocaleString()}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-muted-foreground">Needs human</p>
-                  <p className="font-medium tabular-nums">{escalationMetrics.needs_human_count.toLocaleString()}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Channel Breakdown Stats */}
-        {stats && stats.feedback_by_channel && Object.keys(stats.feedback_by_channel).length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Feedback by Channel</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {Object.entries(stats.feedback_by_channel).map(([channel, data]) => {
-                    const badge = getChannelBadge(channel);
-                    const rateNum = data.total > 0 ? (data.positive / data.total) * 100 : 0;
-                    const rate = rateNum.toFixed(0);
-                    return (
-                      <div key={channel} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
-                            {badge.label}
-                          </span>
-                          <div className="flex items-center gap-3 text-xs">
-                            <span className="text-muted-foreground">{data.total}</span>
-                            <span className="text-emerald-400 inline-flex items-center gap-0.5"><ThumbsUp className="h-3 w-3" />{data.positive}</span>
-                            <span className="text-red-400 inline-flex items-center gap-0.5"><ThumbsDown className="h-3 w-3" />{data.negative}</span>
-                            <span className="font-semibold text-card-foreground tabular-nums">{rate}%</span>
-                          </div>
-                        </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary/60 rounded-full transition-all duration-500"
-                            style={{ width: `${rateNum}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Feedback by Method</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {stats.feedback_by_method && Object.entries(stats.feedback_by_method).map(([method, data]) => {
-                    const label = method === 'web_dialog' ? 'Web Dialog' : method === 'reaction' ? 'Reaction' : method;
-                    const rateNum = data.total > 0 ? (data.positive / data.total) * 100 : 0;
-                    const rate = rateNum.toFixed(0);
-                    return (
-                      <div key={method} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
-                            {label}
-                          </span>
-                          <div className="flex items-center gap-3 text-xs">
-                            <span className="text-muted-foreground">{data.total}</span>
-                            <span className="text-emerald-400 inline-flex items-center gap-0.5"><ThumbsUp className="h-3 w-3" />{data.positive}</span>
-                            <span className="text-red-400 inline-flex items-center gap-0.5"><ThumbsDown className="h-3 w-3" />{data.negative}</span>
-                            <span className="font-semibold text-card-foreground tabular-nums">{rate}%</span>
-                          </div>
-                        </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary/60 rounded-full transition-all duration-500"
-                            style={{ width: `${rateNum}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Status Picker */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {([
-            {
-              key: "all" as const,
-              label: "All Feedback",
-              description: "Every rating and channel",
-              count: stats?.total_feedback ?? 0,
-              icon: MessageCircle,
-            },
-            {
-              key: "negative" as const,
-              label: "Negative",
-              description: "Needs review and improvement",
-              count: stats?.negative_count ?? 0,
-              icon: ThumbsDown,
-            },
-            {
-              key: "needs_faq" as const,
-              label: "Needs FAQ",
-              description: "High-value knowledge gaps",
-              count: stats?.needs_faq_count ?? 0,
-              icon: PlusCircle,
-            },
-          ]).map((item) => {
-            const isSelected = activeTab === item.key;
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => handleTabChange(item.key)}
-                className={`touch-manipulation text-left rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                  isSelected ? "ring-2 ring-primary ring-offset-2" : ""
-                }`}
-                aria-pressed={isSelected}
+    <AdminQueueShell shortcutHints={shortcutHints}>
+      <QueuePageHeader
+        title="Quality Signals"
+        description="Review user feedback signals, prioritize risks, and promote unresolved cases to Escalations."
+        lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatDate(lastUpdatedAt.toISOString())}` : null}
+        isRefreshing={isRefreshing}
+        onRefresh={() => { void refreshData(); }}
+        rightSlot={(
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="hidden md:inline-flex text-xs text-muted-foreground">
+              Coverage gaps: {(stats?.needs_faq_count ?? 0).toLocaleString()}
+            </Badge>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground">
+                  <Info className="h-3.5 w-3.5 mr-1.5" />
+                  Signal definitions
+                  <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                sideOffset={8}
+                className="w-[min(420px,calc(100vw-2rem))] rounded-lg border border-border/60 bg-card/95 p-3 text-xs text-muted-foreground shadow-lg backdrop-blur supports-[backdrop-filter]:bg-card/80"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="p-2 rounded-lg bg-muted">
-                      <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{item.label}</p>
-                      <p className="text-xs text-muted-foreground truncate">{item.description}</p>
-                    </div>
-                  </div>
-                  <span
-                    className={`text-lg font-bold tabular-nums ${item.count > 0 ? "text-foreground" : "text-muted-foreground"}`}
-                    aria-label={`${item.label} count ${item.count}`}
-                  >
-                    {item.count}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                <p className="mb-2">
+                  <span className="font-medium text-foreground">Negative:</span> user-reported quality issue on an answer.
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">Coverage gap:</span> a negative signal where documentation coverage appears insufficient and should be handled in Escalations.
+                </p>
+              </PopoverContent>
+            </Popover>
+          </div>
+        )}
+      />
 
-        {/* Filters Panel */}
-      <div className={`grid transition-all duration-300 ease-in-out ${showFilters ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-        <div className="overflow-hidden">
-          <Card className="border-primary/20">
-            <CardContent className="pt-5 pb-4 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="space-y-1.5 lg:col-span-2">
-                  <Label className="text-xs text-muted-foreground">Search</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search questions, answers, feedback text..."
-                      value={filters.search_text}
-                      onChange={(e) => handleFilterChange('search_text', e.target.value)}
-                      className="pl-9"
+      <QueueTabs
+        tabs={statusTabs}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        gridClassName="grid-cols-2"
+      />
+
+      {visibleError && (
+        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg" role="alert">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span className="text-sm">{visibleError}</span>
+          <button onClick={() => setDismissedError(visibleError)} className="ml-auto text-red-400/60 hover:text-red-400 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <QueueCommandBar
+        activeFilterPills={activeFilterPills}
+        advancedContent={(
+          <div className={cn("grid transition-all duration-200 ease-out", showFilters ? "grid-rows-[1fr] opacity-100 mt-3" : "grid-rows-[0fr] opacity-0")}>
+            <div className="overflow-hidden">
+              <div className="rounded-lg border border-border/60 bg-card/40 p-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Date From</Label>
+                    <DatePicker
+                      value={filters.date_from}
+                      onChange={(date) => handleFilterChange('date_from', date)}
+                      placeholder="Start date"
                     />
-                    {filters.search_text && (
-                      <button
-                        onClick={() => handleFilterChange('search_text', '')}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
                   </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Channel</Label>
-                  <Select
-                    value={filters.channel}
-                    onValueChange={(value) => handleFilterChange('channel', value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="All channels" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Channels</SelectItem>
-                      <SelectItem value="web">Web</SelectItem>
-                      <SelectItem value="matrix">Matrix</SelectItem>
-                      <SelectItem value="bisq2">Bisq2</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Feedback Method</Label>
-                  <Select
-                    value={filters.feedback_method}
-                    onValueChange={(value) => handleFilterChange('feedback_method', value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="All methods" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Methods</SelectItem>
-                      <SelectItem value="web_dialog">Web Dialog</SelectItem>
-                      <SelectItem value="reaction">Reaction</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Date From</Label>
-                  <DatePicker
-                    value={filters.date_from}
-                    onChange={(date) => handleFilterChange('date_from', date)}
-                    placeholder="Select start date"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Date To</Label>
-                  <DatePicker
-                    value={filters.date_to}
-                    onChange={(date) => handleFilterChange('date_to', date)}
-                    placeholder="Select end date"
-                  />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Date To</Label>
+                    <DatePicker
+                      value={filters.date_to}
+                      onChange={(date) => handleFilterChange('date_to', date)}
+                      placeholder="End date"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={resetFilters} variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                      <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                      Reset filters
+                    </Button>
+                  </div>
                 </div>
               </div>
-              {hasActiveFilters && (
-                <div className="flex items-center pt-1">
-                  <Button onClick={resetFilters} variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground h-7 text-xs">
-                    <RotateCcw className="mr-1.5 h-3 w-3" />
-                    Reset all filters
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder="Search questions and answers..."
+              value={filters.search_text}
+              onChange={(e) => handleFilterChange('search_text', e.target.value)}
+              className="pl-9 pr-8"
+            />
+            {filters.search_text && (
+              <button
+                onClick={() => handleFilterChange('search_text', '')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <Select value={filters.channel} onValueChange={(value) => handleFilterChange('channel', value)}>
+            <SelectTrigger className="w-[130px]">
+              <SelectValue placeholder="Channel" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Channels</SelectItem>
+              <SelectItem value="web">Web</SelectItem>
+              <SelectItem value="matrix">Matrix</SelectItem>
+              <SelectItem value="bisq2">Bisq2</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filters.feedback_method} onValueChange={(value) => handleFilterChange('feedback_method', value)}>
+            <SelectTrigger className="w-[130px]">
+              <SelectValue placeholder="Method" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Methods</SelectItem>
+              <SelectItem value="web_dialog">Web Dialog</SelectItem>
+              <SelectItem value="reaction">Reaction</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            onClick={() => setShowFilters((prev) => !prev)}
+            variant="outline"
+            size="sm"
+            className={cn("border-border", showFilters && "bg-accent border-primary")}
+          >
+            <SlidersHorizontal className="mr-2 h-4 w-4" />
+            Advanced
+            {hasActiveFilters && (
+              <Badge variant="secondary" className="ml-2 h-5 min-w-5 px-1.5 text-[10px] tabular-nums">
+                {activeFilterCount}
+              </Badge>
+            )}
+          </Button>
+          <Button
+            onClick={exportFeedback}
+            variant="outline"
+            size="sm"
+            className="border-border"
+            disabled={!feedbackData || feedbackData.feedback_items.length === 0}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
         </div>
-      </div>
+      </QueueCommandBar>
 
-      {/* Feedback List */}
+      {/* Signal List */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-base">
-                Feedback List
+                Signal List
               </CardTitle>
               <CardDescription className="mt-0.5">
-                {activeTab === 'all' && 'All user feedback'}
-                {activeTab === 'negative' && 'Negative feedback requiring attention'}
-                {activeTab === 'needs_faq' && 'Feedback that would benefit from FAQ creation'}
+                {activeTab === 'all' && 'All user quality signals'}
+                {activeTab === 'negative' && 'Negative user signals requiring quality review.'}
                 {feedbackData && (
                   <span className="ml-1 tabular-nums">
                     · {feedbackData.total_count} {feedbackData.total_count === 1 ? 'item' : 'items'}
@@ -1039,15 +1027,13 @@ export default function ManageFeedbackPage() {
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-muted mb-4">
                 <MessageCircle className="h-6 w-6 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-semibold mb-1">No feedback found</h3>
+              <h3 className="text-base font-semibold mb-1">No signals found</h3>
               <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
                 {hasActiveFilters
-                  ? 'No feedback matches your current filters. Try adjusting or resetting them.'
+                  ? 'No signals match your current filters. Try adjusting or resetting them.'
                   : activeTab === 'negative'
-                    ? 'No negative feedback recorded. That is a good sign.'
-                    : activeTab === 'needs_faq'
-                      ? 'No feedback currently needs FAQ creation.'
-                      : 'No feedback has been submitted yet.'}
+                    ? 'No negative signals recorded. That is a good sign.'
+                    : 'No signals have been submitted yet.'}
               </p>
               {hasActiveFilters && (
                 <Button onClick={resetFilters} variant="outline" size="sm">
@@ -1058,116 +1044,125 @@ export default function ManageFeedbackPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {feedbackData.feedback_items.map((feedback) => (
-                <div
-                  key={feedback.message_id}
-                  className={`group relative border rounded-lg transition-colors hover:bg-accent/30 cursor-pointer ${
-                    feedback.is_positive
-                      ? 'border-l-2 border-l-primary/50 border-t border-r border-b border-border'
-                      : 'border-l-2 border-l-red-500/50 border-t border-r border-b border-border'
-                  }`}
-                  onClick={() => openFeedbackDetail(feedback)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter') openFeedbackDetail(feedback); }}
-                >
-                  <div className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0 space-y-1.5">
-                        {/* Meta row */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {feedback.is_positive ? (
-                            <ThumbsUp className="h-3.5 w-3.5 text-primary shrink-0" />
-                          ) : (
-                            <ThumbsDown className="h-3.5 w-3.5 text-red-400 shrink-0" />
-                          )}
-                          <time
-                            suppressHydrationWarning
-                            dateTime={feedback.timestamp}
-                            className="text-xs text-muted-foreground tabular-nums"
-                          >
-                            {formatDate(feedback.timestamp)}
-                          </time>
-                          {(() => {
-                            const badge = getChannelBadge(feedback.channel);
-                            return (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
-                                {badge.label}
-                              </span>
-                            );
-                          })()}
-                          {feedback.has_no_source_response && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/20">
-                              No Source
-                            </span>
-                          )}
-                        </div>
+              {feedbackData.feedback_items.map((feedback, index) => {
+                const channelBadge = getChannelBadge(feedback.channel);
+                const signalTags = getSignalTags(feedback);
+                const primaryTags = signalTags.slice(0, 1);
+                const overflowTags = signalTags.slice(1);
+                const isKeyboardSelected = index === selectedSignalIndex;
 
-                        {/* Question text */}
-                        <p className="text-sm leading-relaxed line-clamp-2">{feedback.question}</p>
-
-                        {/* User feedback text (if negative) */}
-                        {feedback.explanation && (
-                          <p className="text-xs text-red-400/80 line-clamp-1 mt-0.5">
-                            &ldquo;{feedback.explanation}&rdquo;
-                          </p>
-                        )}
-
-                        {/* Issue badges and action buttons row */}
-                        <div className="flex items-center gap-2 flex-wrap pt-0.5">
-                          {feedback.issues && feedback.issues.length > 0 && (
-                            feedback.issues.map((issue, idx) => (
-                              <span key={idx} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getIssueColor(issue)}`}>
-                                {issue.replace('_', ' ')}
-                              </span>
-                            ))
-                          )}
-
-                          {feedback.is_processed && feedback.faq_id && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/15 text-primary border border-primary/25">
-                              FAQ Created
-                            </span>
-                          )}
-
-                          {feedback.is_negative && !feedback.is_processed && (
-                            <Button
-                              onClick={(e) => { e.stopPropagation(); openCreateFAQ(feedback); }}
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                return (
+                  <div
+                    key={feedback.message_id}
+                    className={`relative border rounded-lg transition-colors hover:bg-accent/20 cursor-pointer ${
+                      feedback.is_positive
+                        ? 'border-l-2 border-l-primary/50 border-t border-r border-b border-border'
+                        : 'border-l-2 border-l-red-500/50 border-t border-r border-b border-border'
+                    } ${isKeyboardSelected ? 'ring-1 ring-primary/60 bg-accent/20' : ''}`}
+                    onClick={() => {
+                      setSelectedSignalIndex(index);
+                      void openFeedbackDetail(feedback);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onMouseEnter={() => setSelectedSignalIndex(index)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void openFeedbackDetail(feedback); }}
+                  >
+                    <div className="p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {feedback.is_positive ? (
+                              <ThumbsUp className="h-3.5 w-3.5 text-primary shrink-0" />
+                            ) : (
+                              <ThumbsDown className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                            )}
+                            <time
+                              suppressHydrationWarning
+                              dateTime={feedback.timestamp}
+                              className="text-xs text-muted-foreground tabular-nums"
                             >
-                              <PlusCircle className="h-3 w-3 mr-1" />
-                              Create FAQ
-                            </Button>
+                              {formatDate(feedback.timestamp)}
+                            </time>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${channelBadge.className}`}>
+                              {channelBadge.label}
+                            </span>
+
+                            {primaryTags.map((tag) => (
+                              <span key={tag.label} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${tag.className}`}>
+                                {tag.label}
+                              </span>
+                            ))}
+
+                            {overflowTags.length > 0 && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] text-muted-foreground"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    +{overflowTags.length} more
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="start"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="min-w-[180px]"
+                                >
+                                  {overflowTags.map((tag) => (
+                                    <div key={tag.label} className="px-2 py-1.5 text-xs text-muted-foreground">
+                                      {tag.label}
+                                    </div>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          </div>
+
+                          <p className="text-sm leading-relaxed line-clamp-2 font-medium">
+                            {feedback.question}
+                          </p>
+
+                          {feedback.explanation && (
+                            <p className="text-xs text-red-400/80 line-clamp-1">
+                              &ldquo;{feedback.explanation}&rdquo;
+                            </p>
                           )}
                         </div>
-                      </div>
 
-                      {/* Action buttons - visible on hover only */}
-                      <div className="flex items-center gap-0.5 ml-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 shrink-0">
-                        <Button
-                          onClick={(e) => { e.stopPropagation(); openFeedbackDetail(feedback); }}
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          aria-label="View feedback details"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          onClick={(e) => { e.stopPropagation(); openDeleteConfirmation(feedback); }}
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-red-400"
-                          aria-label="Delete feedback"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
+                              aria-label="Signal actions"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void openFeedbackDetail(feedback); }}>
+                              <Eye className="h-3.5 w-3.5 mr-2" />
+                              View details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-400 focus:text-red-300"
+                              onSelect={(e) => { e.preventDefault(); openDeleteConfirmation(feedback); }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" />
+                              Delete signal
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {/* Pagination */}
               {feedbackData && feedbackData.total_pages > 1 && (
@@ -1235,7 +1230,7 @@ export default function ManageFeedbackPage() {
                 </Button>
               </DialogClose>
               <DialogTitle className="flex items-center gap-2">
-                {detailPhase === "review" ? "Feedback Review" : "Create FAQ"}
+                Signal Review
                 {selectedFeedback && (
                   selectedFeedback.is_positive ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary">
@@ -1249,9 +1244,7 @@ export default function ManageFeedbackPage() {
                 )}
               </DialogTitle>
               <DialogDescription>
-                {detailPhase === "review"
-                  ? "Review full feedback context and decide the next action."
-                  : "Draft and publish an FAQ from this feedback record."}
+                Review full signal context and decide the next action.
               </DialogDescription>
               {selectedFeedback && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1270,9 +1263,9 @@ export default function ManageFeedbackPage() {
                   >
                     <Clock className="h-3.5 w-3.5" aria-hidden="true" />
                   </span>
-                  {selectedFeedback.feedback_method === 'reaction' && (
+                  {shouldShowReactionTag(selectedFeedback) && (
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20">
-                      {selectedFeedback.reaction_emoji || 'Reaction'}
+                      {getReactionDisplayLabel(selectedFeedback.reaction_emoji)}
                     </span>
                   )}
                   {selectedFeedback.has_no_source_response && (
@@ -1290,6 +1283,16 @@ export default function ManageFeedbackPage() {
                       FAQ Created
                     </span>
                   )}
+                  {selectedFeedback.is_negative && conversationOutcome?.signal?.coverage_state === 'linked_escalation' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                      Covered by Escalation
+                    </span>
+                  )}
+                  {selectedFeedback.is_negative && conversationOutcome?.signal?.coverage_state === 'not_linked' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                      Not Linked to Escalation
+                    </span>
+                  )}
                 </div>
               )}
             </DialogHeader>
@@ -1299,6 +1302,13 @@ export default function ManageFeedbackPage() {
             <>
               <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 pb-6">
                 <div className="space-y-5 pt-1">
+                  {isDetailLoading && (
+                    <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading full signal context...
+                    </div>
+                  )}
+
                   <Card>
                     <CardHeader className="pb-3">
                       <div className="flex items-center gap-2">
@@ -1319,7 +1329,7 @@ export default function ManageFeedbackPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="pt-0 space-y-3">
-                      <MarkdownContent content={selectedFeedback.answer} className="text-sm" />
+                      <MarkdownContent content={selectedAnswerBody} className="text-sm" />
                       {selectedFeedback.metadata?.response_time && (
                         <div className="pt-3 border-t border-border/50 text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -1365,6 +1375,60 @@ export default function ManageFeedbackPage() {
                     </CardContent>
                   </Card>
 
+                  {shouldShowCaseCoverage && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center gap-2">
+                          <Link2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                          <CardTitle className="text-sm">Case Coverage</CardTitle>
+                        </div>
+                        <CardDescription>Signal-to-escalation relationship for this conversation.</CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0 space-y-3">
+                        {isLoadingOutcome ? (
+                          <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading coverage status...
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-sm text-muted-foreground">
+                              {conversationOutcome?.recommended_action === 'promote_case' && 'Negative asker signal is not covered yet.'}
+                              {conversationOutcome?.recommended_action === 'review_case' && 'Escalation is open and waiting for review.'}
+                              {conversationOutcome?.recommended_action === 'await_feedback' && 'Escalation response was sent. Waiting for feedback.'}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {conversationOutcome?.escalation?.id && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => window.open(`/admin/escalations?search=${encodeURIComponent(selectedFeedback.message_id)}`, "_blank", "noopener,noreferrer")}
+                                >
+                                  <ArrowUpRight className="h-3.5 w-3.5 mr-1.5" />
+                                  Open Escalation
+                                </Button>
+                              )}
+
+                              {conversationOutcome?.recommended_action === 'promote_case' && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={handlePromoteSignalToEscalation}
+                                  disabled={isPromotingCase}
+                                >
+                                  {isPromotingCase && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                  Promote to Escalation
+                                </Button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
                   {selectedFeedback.explanation && (
                     <Card>
                       <CardHeader className="pb-3">
@@ -1385,227 +1449,6 @@ export default function ManageFeedbackPage() {
                   {selectedFeedback.conversation_history && selectedFeedback.conversation_history.length > 1 && (
                     <ConversationHistory messages={selectedFeedback.conversation_history} />
                   )}
-
-                  {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
-                    <div className="rounded-lg border border-border bg-card p-4 space-y-4">
-                      <div className="text-sm p-3 bg-emerald-500/10 rounded-lg border-l-2 border-emerald-500/40 text-emerald-400 leading-relaxed">
-                        Edit the FAQ draft and publish when ready.
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label htmlFor="feedback-faq-question" className="text-xs text-muted-foreground uppercase tracking-wider">Question</Label>
-                        <Input
-                          id="feedback-faq-question"
-                          value={faqForm.suggested_question}
-                          onChange={(e) => setFaqForm({ ...faqForm, suggested_question: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Bot className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                          <span className="font-medium text-sm">
-                            Suggested Answer
-                            {isEditingFaqAnswer && (
-                              <span className="ml-1 text-muted-foreground">(Editing)</span>
-                            )}
-                          </span>
-                          <div className="ml-auto flex items-center gap-2">
-                            {selectedFeedback.answer && faqForm.suggested_answer.trim() !== selectedFeedback.answer.trim() && (
-                              <Button
-                                type="button"
-                                variant="link"
-                                size="sm"
-                                className="h-7 px-0 text-xs text-muted-foreground hover:text-foreground"
-                                onClick={() => setFaqForm({ ...faqForm, suggested_answer: selectedFeedback.answer || '' })}
-                              >
-                                Reset to original answer
-                              </Button>
-                            )}
-                            {isEditingFaqAnswer ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => setIsEditingFaqAnswer(false)}
-                              >
-                                <Check className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                                Preview
-                              </Button>
-                            ) : (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => setIsEditingFaqAnswer(true)}
-                              >
-                                <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                                Edit
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div
-                          className={cn(
-                            "p-4 rounded-lg border min-h-[160px] transition-all",
-                            isEditingFaqAnswer
-                              ? "bg-background border-primary ring-1 ring-primary"
-                              : "bg-muted/30 border-border"
-                          )}
-                        >
-                          {isEditingFaqAnswer ? (
-                            <Textarea
-                              ref={faqAnswerTextareaRef}
-                              rows={10}
-                              placeholder="Provide an improved, accurate answer..."
-                              value={faqForm.suggested_answer}
-                              onChange={(e) => {
-                                setFaqForm({ ...faqForm, suggested_answer: e.target.value });
-                                e.target.style.height = "auto";
-                                e.target.style.height = `${e.target.scrollHeight}px`;
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Escape") {
-                                  e.preventDefault();
-                                  setIsEditingFaqAnswer(false);
-                                }
-                              }}
-                              className="min-h-[150px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
-                            />
-                          ) : (
-                            <div className="text-sm">
-                              {faqForm.suggested_answer.trim() ? (
-                                <MarkdownContent content={faqForm.suggested_answer} className="text-sm" />
-                              ) : (
-                                <p className="text-muted-foreground">No answer drafted yet.</p>
-                              )}
-                            </div>
-                          )}
-                          {(faqDraftSource.length > 0 || isEditingFaqAnswer) && (
-                            <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
-                              {faqDraftSource.length > 0 && <SourceBadges sources={faqDraftSource} />}
-                              {isEditingFaqAnswer && (
-                                <span className="text-[11px] text-muted-foreground">
-                                  Tip: press Escape to switch back to preview.
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="feedback-faq-category" className="text-xs text-muted-foreground uppercase tracking-wider">Category</Label>
-                          <Select
-                            value={isCustomCategory ? 'custom' : faqForm.category}
-                            onValueChange={(value) => {
-                              if (value === 'custom') {
-                                setIsCustomCategory(true);
-                                setFaqForm({ ...faqForm, category: customCategory });
-                              } else {
-                                setIsCustomCategory(false);
-                                setFaqForm({ ...faqForm, category: value });
-                              }
-                            }}
-                          >
-                            <SelectTrigger id="feedback-faq-category">
-                              <SelectValue placeholder="Select a category" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {FAQ_CATEGORIES.map((cat) => (
-                                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                              ))}
-                              <SelectItem value="custom">+ Add Custom Category</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          {isCustomCategory && (
-                            <Input
-                              className="mt-2"
-                              placeholder="Enter custom category..."
-                              value={customCategory}
-                              onChange={(e) => {
-                                setCustomCategory(e.target.value);
-                                setFaqForm({ ...faqForm, category: e.target.value });
-                              }}
-                            />
-                          )}
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="feedback-faq-protocol" className="text-xs text-muted-foreground uppercase tracking-wider">Protocol</Label>
-                          <Select
-                            value={faqForm.protocol}
-                            onValueChange={(value) => setFaqForm({ ...faqForm, protocol: value as FAQProtocol })}
-                          >
-                            <SelectTrigger id="feedback-faq-protocol">
-                              <SelectValue placeholder="Select protocol" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {FAQ_PROTOCOL_OPTIONS.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="border-t border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6 py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {detailPhase === "review" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setDetailPhase("faq");
-                          setIsEditingFaqAnswer(true);
-                        }}
-                      >
-                        <PlusCircle className="h-3.5 w-3.5 mr-1.5" />
-                        Create FAQ Draft
-                      </Button>
-                    )}
-                    {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
-                      <Button
-                        size="sm"
-                        onClick={handleCreateFAQ}
-                        disabled={
-                          isSubmittingFAQ ||
-                          !faqForm.suggested_question.trim() ||
-                          !faqForm.suggested_answer.trim() ||
-                          !faqForm.category.trim()
-                        }
-                      >
-                        {isSubmittingFAQ && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Publish FAQ
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {detailPhase === "faq" && selectedFeedback.is_negative && !selectedFeedback.is_processed && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setDetailPhase("review");
-                          setIsEditingFaqAnswer(false);
-                        }}
-                        disabled={isSubmittingFAQ}
-                      >
-                        Back to Review
-                      </Button>
-                    )}
-                  </div>
                 </div>
               </div>
             </>
@@ -1653,6 +1496,6 @@ export default function ManageFeedbackPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </AdminQueueShell>
   );
 }

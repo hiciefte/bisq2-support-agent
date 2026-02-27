@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, GraduationCap, AlertTriangle } from "lucide-react"
-import { makeAuthenticatedRequest } from '@/lib/auth'
+import { useAdminActionCounts } from "@/hooks/useAdminActionCounts"
 
 const navigation = [
   {
@@ -16,10 +16,10 @@ const navigation = [
     description: "Dashboard and analytics"
   },
   {
-    name: "Feedback",
+    name: "Quality Signals",
     href: "/admin/manage-feedback",
     icon: MessageSquare,
-    description: "Manage user feedback"
+    description: "Learning and quality review"
   },
   {
     name: "Escalations",
@@ -43,43 +43,8 @@ const navigation = [
 
 export function AdminSidebar() {
   const [isMobileOpen, setIsMobileOpen] = useState(false)
-  const [pendingEscalations, setPendingEscalations] = useState(0)
-  const [feedbackNeedsFaqCount, setFeedbackNeedsFaqCount] = useState(0)
+  const { counts } = useAdminActionCounts(60000)
   const pathname = usePathname()
-
-  // Fetch sidebar badges (escalations + feedback needing FAQ)
-  useEffect(() => {
-    let isCancelled = false
-
-    const fetchCounts = async () => {
-      try {
-        const [escalationsResponse, feedbackStatsResponse] = await Promise.all([
-          makeAuthenticatedRequest("/admin/escalations/counts"),
-          makeAuthenticatedRequest("/admin/feedback/stats"),
-        ])
-
-        if (escalationsResponse.ok && !isCancelled) {
-          const data = await escalationsResponse.json()
-          setPendingEscalations(data.pending || 0)
-        }
-
-        if (feedbackStatsResponse.ok && !isCancelled) {
-          const data = await feedbackStatsResponse.json()
-          setFeedbackNeedsFaqCount(data.needs_faq_count || 0)
-        }
-      } catch {
-        // Silently ignore - counts are non-critical
-      }
-    }
-
-    fetchCounts()
-    const intervalId = setInterval(fetchCounts, 60000) // Refresh every 60s
-
-    return () => {
-      isCancelled = true
-      clearInterval(intervalId)
-    }
-  }, [])
 
   useEffect(() => {
     const handleEscapeKey = (event: KeyboardEvent) => {
@@ -149,14 +114,14 @@ export function AdminSidebar() {
               <div className="flex flex-col flex-1">
                 <div className="flex items-center gap-2">
                   <span>{item.name}</span>
-                  {item.name === "Feedback" && feedbackNeedsFaqCount > 0 && (
+                  {item.name === "Quality Signals" && counts.actionable_signals > 0 && (
                     <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-amber-500 text-black">
-                      {feedbackNeedsFaqCount}
+                      {counts.actionable_signals}
                     </span>
                   )}
-                  {item.name === "Escalations" && pendingEscalations > 0 && (
+                  {item.name === "Escalations" && counts.pending_escalations > 0 && (
                     <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-red-500 text-white">
-                      {pendingEscalations}
+                      {counts.pending_escalations}
                     </span>
                   )}
                 </div>

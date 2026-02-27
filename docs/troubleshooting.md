@@ -175,10 +175,10 @@ Failed to export chat messages: Cannot connect to host bisq2-api:8090
 **Verification:**
 ```bash
 # Test API connectivity from host machine
-curl http://localhost:8090/api/v1/support/export/csv
+curl http://localhost:8090/api/v1/support/export
 
 # Or test from within the API container (using Docker network hostname)
-docker compose -f docker/docker-compose.yml exec api curl http://bisq2-api:8090/api/v1/support/export/csv
+docker compose -f docker/docker-compose.yml exec api curl http://bisq2-api:8090/api/v1/support/export
 
 # Run FAQ extraction manually to see final result
 docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
@@ -190,7 +190,7 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 1. Check if there are new support conversations in the Bisq API:
    ```bash
-   curl http://localhost:8090/api/v1/support/export/csv | wc -l
+   curl -sS http://localhost:8090/api/v1/support/export | jq '.exportMetadata.messageCount'
    ```
 
 2. Check the FAQ extractor logs:
@@ -206,9 +206,19 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 4. Ensure BISQ_API_URL is correctly set:
    ```bash
-   # Should be http://bisq2-api:8090 for Docker
+   # Dockerized Bisq API: http://bisq2-api:8090
+   # Host-run Bisq API (GUI/headless started manually): http://host.docker.internal:8090
+   # Note: host-run Bisq API must bind to 0.0.0.0 to be reachable from Docker.
    grep BISQ_API_URL docker/.env
    ```
+
+5. If Bisq2 API has `authorizationRequired=true`, ensure support-agent auth is configured:
+   ```bash
+   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_CLIENT_ID|BISQ_API_CLIENT_SECRET|BISQ_API_SESSION_ID|BISQ_API_PAIRING_CODE_ID|BISQ_API_PAIRING_QR_FILE)=' docker/.env
+   ```
+   - Use either `BISQ_API_CLIENT_ID` + `BISQ_API_CLIENT_SECRET` (recommended), or pairing bootstrap (`BISQ_API_PAIRING_CODE_ID` / `BISQ_API_PAIRING_QR_FILE`).
+   - For credential flow, ensure both `BISQ_API_CLIENT_SECRET` and `BISQ_API_SESSION_ID` are present in runtime config.
+   - If logs still show `Required permissions not granted` for `/api/v1/support/*`, verify secret/session presence and update Bisq2 REST permission mapping to allow support endpoints for your client.
 
 ## Monitoring Issues
 
