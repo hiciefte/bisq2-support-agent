@@ -264,6 +264,46 @@ class TestEscalationRepositoryList:
         assert results[0].channel == "matrix"
 
     @pytest.mark.asyncio
+    async def test_list_filter_by_search_question(self, escalation_repository):
+        """Search filter matches question text."""
+        await escalation_repository.initialize()
+        await escalation_repository.create(
+            _make_create(
+                message_id="msg-001",
+                question="What is Bisq Easy?",
+            )
+        )
+        await escalation_repository.create(
+            _make_create(
+                message_id="msg-002",
+                question="How do I back up my seed?",
+            )
+        )
+
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search="Bisq Easy")
+        )
+        assert total == 1
+        assert results[0].message_id == "msg-001"
+
+    @pytest.mark.asyncio
+    async def test_list_filter_by_search_staff_answer(self, escalation_repository):
+        """Search filter matches staff_answer text."""
+        await escalation_repository.initialize()
+        esc1 = await escalation_repository.create(_make_create(message_id="msg-001"))
+        await escalation_repository.create(_make_create(message_id="msg-002"))
+        await escalation_repository.update(
+            esc1.id,
+            EscalationUpdate(staff_answer="Bisq Easy support answer"),
+        )
+
+        results, total = await escalation_repository.list_escalations(
+            EscalationFilters(search="support answer")
+        )
+        assert total == 1
+        assert results[0].message_id == "msg-001"
+
+    @pytest.mark.asyncio
     async def test_list_pagination(self, escalation_repository):
         """Limit and offset work correctly."""
         await escalation_repository.initialize()

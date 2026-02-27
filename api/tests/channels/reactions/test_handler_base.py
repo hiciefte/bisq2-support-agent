@@ -51,6 +51,20 @@ class TestReactionHandlerBaseEmojiMapping:
         assert handler.map_emoji_to_rating("\U0001f44d") == ReactionRating.POSITIVE
         assert handler.map_emoji_to_rating("\U0001f44e") == ReactionRating.NEGATIVE
         assert handler.map_emoji_to_rating("\u2764\ufe0f") == ReactionRating.POSITIVE
+        assert handler.map_emoji_to_rating("\U0001f604") == ReactionRating.POSITIVE
+        assert handler.map_emoji_to_rating("\U0001f389") == ReactionRating.POSITIVE
+        assert handler.map_emoji_to_rating("\U0001f680") == ReactionRating.POSITIVE
+
+    def test_normalizes_skin_tone_and_variation_selectors(self):
+        handler = ConcreteHandler(
+            runtime=MagicMock(),
+            processor=MagicMock(),
+        )
+        assert (
+            handler.map_emoji_to_rating("\U0001f44d\U0001f3fb")
+            == ReactionRating.POSITIVE
+        )
+        assert handler.map_emoji_to_rating("\u2764") == ReactionRating.POSITIVE
 
     def test_custom_emoji_map(self):
         handler = ConcreteHandler(

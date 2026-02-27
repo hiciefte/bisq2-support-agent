@@ -249,3 +249,27 @@ class TestExplicitVersionProtocol:
         )
         assert protocol == "bisq_easy"
         assert confidence >= 0.95
+
+
+class TestSourceAwareDefaults:
+    """Test source-aware default protocol detection for ambiguous questions."""
+
+    def test_bisq2_source_defaults_to_bisq_easy(self, detector):
+        """Ambiguous text from bisq2 source should default to bisq_easy."""
+        protocol, confidence = detector.detect_protocol_with_source_default(
+            "WTF?!",
+            source="bisq2",
+            return_confidence=True,
+        )
+        assert protocol == "bisq_easy"
+        assert confidence >= 0.6
+
+    def test_matrix_source_stays_ambiguous_without_content_signals(self, detector):
+        """Matrix has no source default and should remain ambiguous."""
+        protocol, confidence = detector.detect_protocol_with_source_default(
+            "WTF?!",
+            source="matrix",
+            return_confidence=True,
+        )
+        assert protocol is None
+        assert confidence == 0.0

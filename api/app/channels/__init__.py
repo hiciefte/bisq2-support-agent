@@ -34,6 +34,7 @@ from app.channels.config import (
     WebChannelConfig,
 )
 from app.channels.dependencies import get_gateway
+from app.channels.feedback_followup import FeedbackFollowupCoordinator, PendingFollowup
 from app.channels.gateway import ChannelGateway
 from app.channels.hooks import (
     BasePostProcessingHook,
@@ -56,6 +57,11 @@ from app.channels.models import (
     OutgoingMessage,
     ResponseMetadata,
     UserContext,
+)
+from app.channels.question_prefilter import (
+    QuestionPrefilter,
+    QuestionPrefilterDecision,
+    QuestionPrefilterProtocol,
 )
 from app.channels.reactions import (
     ReactionEvent,
@@ -115,6 +121,7 @@ __all__ = [
     "EnvironmentSecretStore",
     "ErrorCode",
     "ErrorFactory",
+    "FeedbackFollowupCoordinator",
     "GatewayError",
     "HealthStatus",
     "HookPriority",
@@ -127,6 +134,10 @@ __all__ = [
     "PIIType",
     "PostProcessingHook",
     "PreProcessingHook",
+    "PendingFollowup",
+    "QuestionPrefilter",
+    "QuestionPrefilterDecision",
+    "QuestionPrefilterProtocol",
     "RateLimitConfig",
     "ReactionEvent",
     "ReactionHandlerBase",

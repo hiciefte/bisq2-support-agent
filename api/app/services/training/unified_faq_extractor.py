@@ -33,8 +33,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import aisuite as ai  # type: ignore[import-untyped]
 from app.core.config import Settings
+
+try:
+    import aisuite as ai  # type: ignore[import-untyped]
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
+
+    class _AiSuiteFallback:
+        class Client:
+            is_fallback = True
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+    ai = _AiSuiteFallback()  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -558,7 +570,11 @@ class UnifiedFAQExtractor:
         Returns:
             Parsed JSON response from LLM
         """
-        if not self.aisuite_client:
+        if (
+            not self.aisuite_client
+            or getattr(self.aisuite_client, "is_fallback", False)
+            or not hasattr(self.aisuite_client, "chat")
+        ):
             logger.error("AISuite client not initialized")
             return {"faq_pairs": []}
 

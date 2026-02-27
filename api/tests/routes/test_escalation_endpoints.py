@@ -47,6 +47,7 @@ from app.models.escalation import (
     EscalationPriority,
     EscalationStatus,
 )
+from app.services.faq.duplicate_guard import DuplicateFAQError
 
 # Mark tests to skip if routers don't exist yet (RED phase)
 admin_router_tests = pytest.mark.skipif(
@@ -283,6 +284,14 @@ class TestListEscalationsEndpoint:
         call_kwargs = mock_escalation_service.list_escalations.call_args[1]
         assert call_kwargs["channel"] == "matrix"
 
+    def test_list_filter_by_search(self, admin_client, mock_escalation_service):
+        """Test filtering escalations by free-text search."""
+        response = admin_client.get("/admin/escalations?search=Bisq+Easy")
+        assert response.status_code == 200
+
+        call_kwargs = mock_escalation_service.list_escalations.call_args[1]
+        assert call_kwargs["search"] == "Bisq Easy"
+
 
 @admin_router_tests
 class TestGetEscalationCountsEndpoint:
@@ -437,6 +446,8 @@ class TestGenerateFAQEndpoint:
 
         # Verify service was called
         mock_escalation_service.generate_faq_from_escalation.assert_called_once()
+        args = mock_escalation_service.generate_faq_from_escalation.call_args.args
+        assert args[-1] is False
 
     def test_generate_faq_not_responded_returns_400(
         self, admin_client, mock_escalation_service
@@ -456,6 +467,59 @@ class TestGenerateFAQEndpoint:
             "/admin/escalations/1/generate-faq", json=faq_request
         )
         assert response.status_code == 400
+
+    def test_generate_faq_duplicate_returns_409(
+        self, admin_client, mock_escalation_service
+    ):
+        mock_escalation_service.generate_faq_from_escalation.side_effect = (
+            DuplicateFAQError(
+                "Cannot create FAQ: 1 similar FAQ(s) already exist",
+                similar_faqs=[
+                    {
+                        "id": 77,
+                        "question": "How do I set up Bisq?",
+                        "answer": "Install and run.",
+                        "similarity": 0.92,
+                        "category": "General",
+                        "protocol": "bisq_easy",
+                    }
+                ],
+            )
+        )
+
+        faq_request = {
+            "question": "How do I set up Bisq?",
+            "answer": "Here is how...",
+            "category": "General",
+        }
+
+        response = admin_client.post(
+            "/admin/escalations/1/generate-faq", json=faq_request
+        )
+
+        assert response.status_code == 409
+        data = response.json()
+        assert data["detail"]["error"] == "duplicate_faq"
+        assert data["detail"]["escalation_id"] == 1
+        assert data["detail"]["similar_faqs"][0]["id"] == 77
+
+    def test_generate_faq_force_override_passed_to_service(
+        self, admin_client, mock_escalation_service
+    ):
+        faq_request = {
+            "question": "How do I set up Bisq?",
+            "answer": "Here is how...",
+            "category": "General",
+            "force": True,
+        }
+
+        response = admin_client.post(
+            "/admin/escalations/1/generate-faq", json=faq_request
+        )
+
+        assert response.status_code == 200
+        args = mock_escalation_service.generate_faq_from_escalation.call_args.args
+        assert args[-1] is True
 
 
 @admin_router_tests

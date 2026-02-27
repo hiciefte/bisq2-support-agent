@@ -19,6 +19,10 @@ from app.models.escalation import (
     GenerateFAQRequest,
     RespondRequest,
 )
+from app.services.faq.duplicate_guard import (
+    DuplicateFAQError,
+    build_duplicate_faq_detail,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 # Setup logging
@@ -52,6 +56,7 @@ async def list_escalations(
     status_filter: Optional[EscalationStatus] = Query(None, alias="status"),
     channel: Optional[str] = None,
     priority: Optional[EscalationPriority] = None,
+    search: Optional[str] = Query(None, alias="search"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     service=Depends(get_escalation_service),
@@ -62,6 +67,7 @@ async def list_escalations(
         status_filter: Filter by escalation status
         channel: Filter by channel identifier
         priority: Filter by priority level
+        search: Full-text search across escalation text fields
         limit: Maximum number of results (1-100)
         offset: Number of results to skip
         service: Escalation service dependency
@@ -70,9 +76,10 @@ async def list_escalations(
         EscalationListResponse with paginated results
     """
     logger.info(
-        "Admin request to list escalations: status=%s, channel=%s, limit=%s, offset=%s",
+        "Admin request to list escalations: status=%s, channel=%s, search=%s, limit=%s, offset=%s",
         status_filter,
         channel,
+        search,
         limit,
         offset,
     )
@@ -82,6 +89,7 @@ async def list_escalations(
             status=status_filter,
             channel=channel,
             priority=priority,
+            search=search,
             limit=limit,
             offset=offset,
         )
@@ -273,6 +281,7 @@ async def generate_faq(
             request.answer,
             request.category,
             request.protocol,
+            request.force,
         )
         logger.info(f"FAQ generated from escalation {escalation_id}: {result}")
         return result
@@ -286,6 +295,15 @@ async def generate_faq(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Escalation {escalation_id} has not been responded to yet",
         )
+    except DuplicateFAQError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=build_duplicate_faq_detail(
+                message=str(e),
+                similar_faqs=e.similar_faqs,
+                context={"escalation_id": escalation_id},
+            ),
+        ) from e
     except Exception as e:
         logger.error(
             f"Failed to generate FAQ from escalation {escalation_id}: {e}",

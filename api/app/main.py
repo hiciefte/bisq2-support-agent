@@ -10,8 +10,10 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 
-import aisuite  # type: ignore[import-untyped]
+from app.channels.bootstrapper import ChannelBootstrapper
 from app.channels.lifecycle import create_channel_gateway
+from app.channels.models import ChannelCapability
+from app.channels.services.live_polling_service import LivePollingService
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
 from app.core.exceptions import BaseAppException
@@ -34,6 +36,9 @@ from app.routes import (
 )
 from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
+from app.services.channel_autoresponse_policy_service import (
+    ChannelAutoResponsePolicyService,
+)
 from app.services.faq_service import FAQService
 from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
@@ -53,6 +58,17 @@ from fastapi.openapi.utils import get_openapi
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
+
+try:
+    import aisuite  # type: ignore[import-untyped]
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
+
+    class _AisuiteFallback:
+        class Client:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+    aisuite = _AisuiteFallback()  # type: ignore[assignment]
 
 # Configure logging
 logging.basicConfig(
@@ -88,6 +104,9 @@ async def lifespan(app: FastAPI):
     db_path = os.path.join(settings.DATA_DIR, "feedback.db")
     run_migrations(db_path)
     logger.info("Database migrations completed")
+    app.state.bisq2_live_chat_service = None
+    app.state.matrix_channel = None
+    app.state.channel_autoresponse_policy_service = None
 
     # Initialize task metrics persistence and restore values
     logger.info("Initializing task metrics persistence...")
@@ -103,6 +122,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing FeedbackService...")
     feedback_service = FeedbackService(settings=settings)
+
+    app.state.channel_autoresponse_policy_service = ChannelAutoResponsePolicyService(
+        db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
+    )
 
     logger.info("Initializing FAQService...")
     faq_service = FAQService(settings=settings)
@@ -179,12 +202,13 @@ async def lifespan(app: FastAPI):
 
         escalation_service = EscalationService(
             repository=esc_repo,
-            response_delivery=None,  # Not wired yet (push delivery)
+            response_delivery=None,  # Wired after channel adapters are initialized.
             faq_service=faq_service,  # Required for /generate-faq
             learning_engine=learning_engine,
             settings=settings,
             feedback_orchestrator=feedback_orchestrator,
             embeddings=embeddings_model,
+            rag_service=rag_service,
         )
         app.state.escalation_service = escalation_service
         logger.info("EscalationService initialized (singleton)")
@@ -200,6 +224,33 @@ async def lifespan(app: FastAPI):
         rag_service=rag_service,
         register_default_hooks=True,
     )
+    from app.channels.hooks.channel_autoresponse_hook import (
+        ChannelAIGenerationPolicyHook,
+        ChannelAutoResponsePolicyHook,
+    )
+
+    channel_gateway.register_pre_hook(
+        ChannelAIGenerationPolicyHook(
+            policy_service=getattr(
+                app.state,
+                "channel_autoresponse_policy_service",
+                None,
+            )
+        )
+    )
+    logger.info("Registered ChannelAIGenerationPolicyHook")
+
+    channel_gateway.register_post_hook(
+        ChannelAutoResponsePolicyHook(
+            policy_service=getattr(
+                app.state,
+                "channel_autoresponse_policy_service",
+                None,
+            )
+        )
+    )
+    logger.info("Registered ChannelAutoResponsePolicyHook")
+
     # Register EscalationPostHook (only affects chat flow; admin/polling still work without it).
     if getattr(settings, "ESCALATION_ENABLED", False):
         service = getattr(app.state, "escalation_service", None)
@@ -221,24 +272,79 @@ async def lifespan(app: FastAPI):
         f"Channel Gateway initialized with hooks: {channel_gateway.get_hook_info()}"
     )
 
-    # Web-layer reaction services (separate from ChannelRuntime's pair in bootstrapper.py).
-    # This separation is intentional: HTTP layer (app.state) vs channel layer (ChannelRuntime)
-    # each manage their own tracker/processor lifecycle. New HTTP-based channels reuse
-    # this pair; new push-based channels get theirs via ChannelBootstrapper automatically.
-    from app.channels.reactions import ReactionProcessor, SentMessageTracker
-
-    sent_message_tracker = SentMessageTracker()
-    app.state.sent_message_tracker = sent_message_tracker
-
-    reactor_salt = getattr(settings, "REACTOR_IDENTITY_SALT", "")
-    reaction_processor = ReactionProcessor(
-        tracker=sent_message_tracker,
-        feedback_service=feedback_service,
-        reactor_identity_salt=reactor_salt,
-        escalation_service=getattr(app.state, "escalation_service", None),
+    # Bootstrap all enabled channels via plugin architecture.
+    bootstrapper = ChannelBootstrapper(
+        settings=settings,
+        rag_service=rag_service,
+        shared_services={
+            "feedback_service": feedback_service,
+            "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
+            "escalation_service": getattr(app.state, "escalation_service", None),
+        },
     )
-    app.state.reaction_processor = reaction_processor
-    logger.info("Registered SentMessageTracker and ReactionProcessor on app.state")
+    bootstrap_result = bootstrapper.bootstrap()
+    app.state.channel_runtime = bootstrap_result.runtime
+    app.state.channel_registry = bootstrap_result.registry
+    for hook in getattr(channel_gateway, "_post_hooks", []):
+        if hasattr(hook, "channel_registry"):
+            hook.channel_registry = bootstrap_result.registry
+    if bootstrap_result.errors:
+        for channel_id, error in bootstrap_result.errors:
+            logger.exception("Failed to bootstrap channel '%s': %s", channel_id, error)
+
+    start_errors = await bootstrap_result.registry.start_all(continue_on_error=True)
+    if start_errors:
+        for error in start_errors:
+            logger.error("Channel startup error: %s", error)
+
+    # Mirror shared reaction services onto app.state for web route handlers.
+    app.state.sent_message_tracker = bootstrap_result.runtime.resolve_optional(
+        "sent_message_tracker"
+    )
+    app.state.reaction_processor = bootstrap_result.runtime.resolve_optional(
+        "reaction_processor"
+    )
+    app.state.feedback_followup_coordinator = bootstrap_result.runtime.resolve_optional(
+        "feedback_followup_coordinator"
+    )
+
+    # Wire escalation response delivery directly to active channel registry.
+    escalation_service = getattr(app.state, "escalation_service", None)
+    if escalation_service is not None:
+        try:
+            from app.services.escalation.response_delivery import ResponseDelivery
+
+            escalation_service.response_delivery = ResponseDelivery(
+                bootstrap_result.registry
+            )
+            app.state.escalation_delivery_registry = bootstrap_result.registry
+            logger.info(
+                "Escalation response delivery wired for channels: %s",
+                bootstrap_result.registry.list_channel_ids(),
+            )
+        except Exception:
+            logger.exception("Failed to initialize escalation response delivery")
+
+    # Start generic polling loops for channels that require polling ingestion.
+    app.state.channel_polling_services = {}
+    for channel_id in bootstrap_result.registry.list_channel_ids():
+        channel = bootstrap_result.registry.get(channel_id)
+        if channel is None:
+            continue
+        if ChannelCapability.POLL_CONVERSATIONS not in channel.capabilities:
+            continue
+        polling_service = LivePollingService(
+            channel=channel,
+            autoresponse_policy_service=app.state.channel_autoresponse_policy_service,
+            escalation_service=getattr(app.state, "escalation_service", None),
+            channel_id=channel_id,
+        )
+        await polling_service.start()
+        app.state.channel_polling_services[channel_id] = polling_service
+
+    # Backward-compatible app.state aliases consumed by existing routes/tests.
+    app.state.bisq2_live_chat_service = app.state.channel_polling_services.get("bisq2")
+    app.state.matrix_channel = bootstrap_result.registry.get("matrix")
 
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
@@ -333,6 +439,25 @@ async def lifespan(app: FastAPI):
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
         await app.state.tor_monitoring_service.stop()
+
+    # Stop channel polling services.
+    polling_services = getattr(app.state, "channel_polling_services", {}) or {}
+    for channel_id, polling_service in list(polling_services.items()):
+        try:
+            logger.info("Stopping polling service for channel '%s'...", channel_id)
+            await polling_service.stop()
+        except Exception:
+            logger.exception(
+                "Failed to stop polling service for channel '%s'",
+                channel_id,
+            )
+
+    # Stop all started channels via registry.
+    channel_registry = getattr(app.state, "channel_registry", None)
+    if channel_registry is not None:
+        stop_errors = await channel_registry.stop_all()
+        for error in stop_errors:
+            logger.error("Channel shutdown error: %s", error)
 
     # Close Matrix alert service
     if hasattr(app.state, "matrix_alert_service") and app.state.matrix_alert_service:

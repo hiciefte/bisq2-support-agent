@@ -331,6 +331,20 @@ class EscalationRepository:
         if filters.staff_id:
             where_clauses.append("staff_id = ?")
             params.append(filters.staff_id)
+        if filters.search:
+            search_pattern = f"%{filters.search}%"
+            where_clauses.append(
+                "(question LIKE ? OR ai_draft_answer LIKE ? OR "
+                "COALESCE(staff_answer, '') LIKE ? OR COALESCE(routing_reason, '') LIKE ?)"
+            )
+            params.extend(
+                [
+                    search_pattern,
+                    search_pattern,
+                    search_pattern,
+                    search_pattern,
+                ]
+            )
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 

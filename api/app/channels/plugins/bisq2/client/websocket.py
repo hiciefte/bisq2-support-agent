@@ -4,6 +4,7 @@ Provides async WebSocket connectivity to the Bisq2 API for receiving
 support chat reactions and messages in real-time.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Coroutine, Dict, List, Optional
@@ -23,6 +24,16 @@ except ImportError:
     async def websockets_connect(url: str, **kwargs: Any) -> Any:
         """Stub when websockets is not installed."""
         raise ImportError("websockets package is required")
+
+
+try:
+    from websockets.exceptions import ConnectionClosed
+except ImportError:  # pragma: no cover - tested via monkeypatch fallback
+
+    class ConnectionClosed(Exception):
+        """Fallback when websockets package is unavailable."""
+
+        pass
 
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
@@ -51,6 +62,7 @@ class Bisq2WebSocketClient:
         self._sequence: int = 0
         self._event_callbacks: List[EventCallback] = []
         self._subscriptions: List[str] = []
+        self._listening = False
 
     @property
     def is_connected(self) -> bool:
@@ -70,6 +82,7 @@ class Bisq2WebSocketClient:
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
+        self._listening = False
         if self._ws:
             try:
                 await self._ws.close()
@@ -118,7 +131,8 @@ class Bisq2WebSocketClient:
             raw = await self._ws.recv()
             response = json.loads(raw)
             if response.get("requestId") == expected_id:
-                self._subscriptions.append(topic)
+                if topic not in self._subscriptions:
+                    self._subscriptions.append(topic)
                 return response
             # Non-matching message — dispatch as event
             await self._dispatch_event(response)
@@ -129,7 +143,15 @@ class Bisq2WebSocketClient:
         Args:
             callback: Async callable receiving parsed event dicts.
         """
-        self._event_callbacks.append(callback)
+        if callback not in self._event_callbacks:
+            self._event_callbacks.append(callback)
+
+    def off_event(self, callback: EventCallback) -> None:
+        """Unregister an event callback if present."""
+        try:
+            self._event_callbacks.remove(callback)
+        except ValueError:
+            return
 
     async def _dispatch_event(self, event: Dict[str, Any]) -> None:
         """Dispatch an event to all registered callbacks."""
@@ -147,11 +169,63 @@ class Bisq2WebSocketClient:
             logger.warning("Received invalid JSON from Bisq2 WebSocket")
             return
 
-        response_type = data.get("responseType", "")
+        # Bisq2 currently uses "type"; keep "responseType" for compatibility.
+        response_type = data.get("responseType") or data.get("type", "")
 
         # Subscription responses are handled inline by subscribe()
         if response_type == "SubscriptionResponse":
             return
 
+        payload = data.get("payload")
+        if isinstance(payload, str):
+            try:
+                decoded_payload = json.loads(payload)
+                if isinstance(decoded_payload, (dict, list)):
+                    data["payload"] = decoded_payload
+            except json.JSONDecodeError:
+                logger.debug("Received non-JSON payload string from Bisq2 WebSocket")
+
         # Everything else is dispatched as an event
         await self._dispatch_event(data)
+
+    async def _resubscribe_existing_topics(self) -> None:
+        """Re-subscribe to topics after reconnect."""
+        topics = list(self._subscriptions)
+        for topic in topics:
+            await self.subscribe(topic)
+
+    async def listen_forever(self, reconnect_delay_seconds: float = 5.0) -> None:
+        """Run persistent receive loop with reconnect on connection close."""
+        self._listening = True
+
+        while self._listening:
+            try:
+                if not self._connected or self._ws is None:
+                    await self.connect()
+                    await self._resubscribe_existing_topics()
+
+                raw = await self._ws.recv()
+                await self._handle_message(raw)
+
+            except asyncio.CancelledError:
+                self._listening = False
+                raise
+            except ConnectionClosed:
+                if not self._listening:
+                    break
+                logger.warning("Bisq2 WebSocket closed, reconnecting")
+                self._connected = False
+                self._ws = None
+                await asyncio.sleep(reconnect_delay_seconds)
+            except Exception:
+                if not self._listening:
+                    break
+                logger.exception("Bisq2 listen loop error, reconnecting")
+                self._connected = False
+                self._ws = None
+                await asyncio.sleep(reconnect_delay_seconds)
+
+    async def stop_listening(self) -> None:
+        """Stop persistent receive loop and close socket."""
+        self._listening = False
+        await self.close()

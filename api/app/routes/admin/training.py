@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import BaseAppException
 from app.core.security import verify_admin_access
+from app.services.faq.duplicate_guard import build_duplicate_faq_detail
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -517,29 +518,13 @@ async def approve_candidate(
 
         return ApproveResponse(success=True, faq_id=faq_id)
     except DuplicateFAQError as e:
-        # Return 409 Conflict with detailed duplicate information
-        # similar_faqs are plain dicts from search_faq_similarity()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "duplicate_faq",
-                "message": str(e),
-                "candidate_id": candidate_id,
-                "similar_faqs": [
-                    {
-                        "id": faq["id"],
-                        "question": faq["question"],
-                        "answer": (
-                            faq["answer"][:200] + "..."
-                            if len(faq["answer"]) > 200
-                            else faq["answer"]
-                        ),
-                        "similarity": faq["similarity"],
-                        "category": faq.get("category"),
-                    }
-                    for faq in e.similar_faqs
-                ],
-            },
+            detail=build_duplicate_faq_detail(
+                message=str(e),
+                similar_faqs=e.similar_faqs,
+                context={"candidate_id": candidate_id},
+            ),
         ) from e
     except Exception as e:
         logger.exception(f"Failed to approve candidate {candidate_id}")
@@ -1065,7 +1050,7 @@ async def trigger_matrix_sync(
             from app.channels.plugins.matrix.client.polling_state import (
                 PollingStateManager,
             )
-            from app.channels.plugins.matrix.services.sync_service import (
+            from app.services.training.ingest.matrix_sync_service import (
                 MatrixSyncService,
             )
 

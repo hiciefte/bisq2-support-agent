@@ -17,6 +17,7 @@ from app.channels.models import (
     OutgoingMessage,
     ResponseMetadata,
 )
+from app.channels.rag_query import query_with_channel_context
 from app.channels.response_builder import build_metadata, build_sources
 
 if TYPE_CHECKING:
@@ -76,7 +77,7 @@ class ChannelBase(ABC):
             @classmethod
             def setup_dependencies(cls, runtime, settings):
                 from nio import AsyncClient
-                client = AsyncClient(settings.MATRIX_HOMESERVER_URL, settings.MATRIX_USER)
+                client = AsyncClient(settings.MATRIX_HOMESERVER_URL, settings.MATRIX_SYNC_USER)
                 runtime.register("matrix_client", client)
 
             @property
@@ -99,6 +100,8 @@ class ChannelBase(ABC):
 
     # Immutable tuple of required pip packages for this channel
     REQUIRED_PACKAGES: ClassVar[tuple[str, ...]] = ()
+    ENABLED_FLAG: ClassVar[str | None] = None
+    ENABLED_DEFAULT: ClassVar[bool] = False
 
     @classmethod
     def check_dependencies(cls) -> tuple[bool, list[str]]:
@@ -309,9 +312,11 @@ class ChannelBase(ABC):
             chat_history = self._format_chat_history(message)
 
             # Query RAG service
-            rag_response = await self.runtime.rag_service.query(
+            rag_response = await query_with_channel_context(
+                rag_service=self.runtime.rag_service,
                 question=message.question,
                 chat_history=chat_history,
+                detection_source=self.channel_id,
             )
 
             # Build response components

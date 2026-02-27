@@ -1,5 +1,6 @@
 """Matrix connection lifecycle management."""
 
+import asyncio
 import logging
 
 try:
@@ -45,6 +46,7 @@ class ConnectionManager:
         self.client = client
         self.session_manager = session_manager
         self.connected = False
+        self._sync_running = False
 
     async def connect(self) -> None:
         """Establish Matrix connection with authentication.
@@ -76,6 +78,7 @@ class ConnectionManager:
         Closes Matrix client connection gracefully. Does NOT delete
         session file - allows automatic reconnection on next startup.
         """
+        self._sync_running = False
         if self.client:
             await self.client.close()
         self.connected = False
@@ -84,6 +87,56 @@ class ConnectionManager:
             f"Matrix connection closed for {self.client.user_id} "
             "(session file preserved for automatic reconnection)"
         )
+
+    def stop_sync(self) -> None:
+        """Signal sync loop shutdown."""
+        self._sync_running = False
+
+    async def sync_forever(
+        self,
+        timeout: int = 30000,
+        initial_backoff_seconds: int = 5,
+        max_backoff_seconds: int = 60,
+    ) -> None:
+        """Run Matrix sync loop with reconnect and exponential backoff."""
+        backoff = max(1, initial_backoff_seconds)
+        backoff_max = max(backoff, max_backoff_seconds)
+        self._sync_running = True
+
+        while self._sync_running:
+            try:
+                if not self.connected:
+                    await self.connect()
+                    backoff = max(1, initial_backoff_seconds)
+
+                await self.client.sync_forever(timeout=timeout)
+
+                if not self._sync_running:
+                    break
+
+                self.connected = False
+                matrix_connection_status.set(0)
+                logger.warning(
+                    "Matrix sync loop exited unexpectedly; reconnecting in %ss",
+                    backoff,
+                )
+
+            except asyncio.CancelledError:
+                self._sync_running = False
+                raise
+            except Exception as e:
+                self.connected = False
+                matrix_connection_status.set(0)
+                if not self._sync_running:
+                    break
+                logger.warning(
+                    "Matrix sync loop error; reconnecting in %ss: %s",
+                    backoff,
+                    e,
+                )
+
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, backoff_max)
 
     def health_check(self) -> bool:
         """Check if connection is healthy.

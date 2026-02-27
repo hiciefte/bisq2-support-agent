@@ -41,12 +41,58 @@ class Settings(BaseSettings):
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
     MCP_HTTP_URL: str = "http://localhost:8000/mcp"  # MCP HTTP server URL for AISuite
 
+    # Bisq2 API Authorization (for production-grade support API access)
+    BISQ_API_AUTH_ENABLED: bool = False
+    BISQ_API_CLIENT_ID: str = ""
+    BISQ_API_CLIENT_SECRET: str = ""
+    BISQ_API_SESSION_ID: str = ""
+    BISQ_API_PAIRING_CODE_ID: str = ""
+    BISQ_API_PAIRING_QR_FILE: str = ""
+    BISQ_API_PAIRING_CLIENT_NAME: str = "bisq-support-agent"
+    BISQ_API_AUTH_STATE_FILE: str = "bisq_api_auth.json"
+
     # Bisq 2 MCP Integration Settings
     BISQ_API_TIMEOUT: int = Field(
         default=5,
         ge=1,
         le=30,
         description="Timeout in seconds for Bisq API requests",
+    )
+    BISQ_WS_REST_FALLBACK_INTERVAL_SECONDS: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=3600.0,
+        description=(
+            "REST export fallback interval in seconds when support-message websocket "
+            "stream is configured"
+        ),
+    )
+    BISQ_WS_STARTUP_TIMEOUT_SECONDS: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=120.0,
+        description=(
+            "Timeout for Bisq support websocket connect/subscribe startup handshake "
+            "before degrading to REST polling"
+        ),
+    )
+    REACTION_NEGATIVE_STABILIZATION_SECONDS: float = Field(
+        default=20.0,
+        ge=0.0,
+        le=300.0,
+        description=(
+            "Stabilization window before auto-escalating negative reactions to avoid "
+            "false positives from quick reaction changes"
+        ),
+    )
+    REACTION_FEEDBACK_FOLLOWUP_TTL_SECONDS: float = Field(
+        default=900.0,
+        ge=30.0,
+        le=7200.0,
+        description=(
+            "How long a channel waits for user clarification after a negative reaction "
+            "before expiring the follow-up"
+        ),
     )
     BISQ_CACHE_TTL_PRICES: int = Field(
         default=120,
@@ -72,19 +118,23 @@ class Settings(BaseSettings):
     )
 
     # Matrix integration settings
-    # Shared auth (used by Matrix sync and alerts)
     MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
-    MATRIX_USER: str = ""  # Bot user ID, e.g., "@bisq-bot:matrix.org"
-    MATRIX_PASSWORD: str = (
-        ""  # Bot password for automatic session management (recommended)
-    )
+
+    # Channel plugin enablement flags
+    WEB_CHANNEL_ENABLED: bool = True
+    BISQ2_CHANNEL_ENABLED: bool = False
 
     # Matrix sync lane (training ingestion)
     MATRIX_SYNC_ENABLED: bool = False
+    MATRIX_SYNC_USER: str = ""  # Required when MATRIX_SYNC_ENABLED=true
+    MATRIX_SYNC_PASSWORD: str = ""  # Required when MATRIX_SYNC_ENABLED=true
     MATRIX_SYNC_ROOMS: str | list[str] = ""  # Room IDs to monitor
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
+    MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
 
     # Matrix alert lane (Alertmanager notifications)
+    MATRIX_ALERT_USER: str = ""  # Required when MATRIX_ALERT_ROOM is set
+    MATRIX_ALERT_PASSWORD: str = ""  # Required when MATRIX_ALERT_ROOM is set
     MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
     MATRIX_ALERT_SESSION_FILE: str = "matrix_alert_session.json"
 
@@ -419,6 +469,42 @@ class Settings(BaseSettings):
         if os.path.isabs(self.MATRIX_ALERT_SESSION_FILE):
             return self.MATRIX_ALERT_SESSION_FILE
         return os.path.join(self.DATA_DIR, self.MATRIX_ALERT_SESSION_FILE)
+
+    @property
+    def MATRIX_SYNC_USER_RESOLVED(self) -> str:
+        """Matrix sync/support user (strict lane-specific setting)."""
+        return (self.MATRIX_SYNC_USER or "").strip()
+
+    @property
+    def MATRIX_SYNC_PASSWORD_RESOLVED(self) -> str:
+        """Matrix sync/support password (strict lane-specific setting)."""
+        return (self.MATRIX_SYNC_PASSWORD or "").strip()
+
+    @property
+    def MATRIX_ALERT_USER_RESOLVED(self) -> str:
+        """Matrix alert user (strict lane-specific setting)."""
+        return (self.MATRIX_ALERT_USER or "").strip()
+
+    @property
+    def MATRIX_ALERT_PASSWORD_RESOLVED(self) -> str:
+        """Matrix alert password (strict lane-specific setting)."""
+        return (self.MATRIX_ALERT_PASSWORD or "").strip()
+
+    @property
+    def BISQ_API_PAIRING_QR_PATH(self) -> str:
+        """Complete path to optional Bisq pairing QR payload file."""
+        if not self.BISQ_API_PAIRING_QR_FILE:
+            return ""
+        if os.path.isabs(self.BISQ_API_PAIRING_QR_FILE):
+            return self.BISQ_API_PAIRING_QR_FILE
+        return os.path.join(self.DATA_DIR, self.BISQ_API_PAIRING_QR_FILE)
+
+    @property
+    def BISQ_API_AUTH_STATE_PATH(self) -> str:
+        """Complete path to persisted Bisq API auth credentials."""
+        if os.path.isabs(self.BISQ_API_AUTH_STATE_FILE):
+            return self.BISQ_API_AUTH_STATE_FILE
+        return os.path.join(self.DATA_DIR, self.BISQ_API_AUTH_STATE_FILE)
 
     @property
     def ACTIVE_LLM_CREDENTIAL(self) -> str:
@@ -902,7 +988,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_matrix_auth_in_production(self) -> "Settings":
-        """Ensure Matrix password auth is configured when Matrix is enabled.
+        """Ensure Matrix lanes have explicit passwords when enabled.
 
         This is a model validator (mode='after') to ensure all fields are loaded
         before validation.
@@ -911,18 +997,23 @@ class Settings(BaseSettings):
             The validated Settings instance
 
         Raises:
-            ValueError: If Matrix homeserver is configured but MATRIX_PASSWORD is empty
+            ValueError: If Matrix homeserver is configured but no Matrix password is set
         """
         # Only validate if Matrix integration is enabled
         homeserver = (self.MATRIX_HOMESERVER_URL or "").strip()
         if not homeserver:
             return self  # Matrix not enabled, skip validation
 
-        # Password-based auth is required for automatic session management
-        password = (self.MATRIX_PASSWORD or "").strip()
-        if not password:
+        if self.MATRIX_SYNC_ENABLED and not self.MATRIX_SYNC_PASSWORD_RESOLVED:
             raise ValueError(
-                "MATRIX_PASSWORD is required when MATRIX_HOMESERVER_URL is set."
+                "MATRIX_SYNC_PASSWORD is required when MATRIX_SYNC_ENABLED is true."
+            )
+
+        if (
+            self.MATRIX_ALERT_ROOM or ""
+        ).strip() and not self.MATRIX_ALERT_PASSWORD_RESOLVED:
+            raise ValueError(
+                "MATRIX_ALERT_PASSWORD is required when MATRIX_ALERT_ROOM is set."
             )
 
         return self
@@ -936,8 +1027,10 @@ class Settings(BaseSettings):
         missing = []
         if not (self.MATRIX_HOMESERVER_URL or "").strip():
             missing.append("MATRIX_HOMESERVER_URL")
-        if not (self.MATRIX_USER or "").strip():
-            missing.append("MATRIX_USER")
+        if not self.MATRIX_SYNC_USER_RESOLVED:
+            missing.append("MATRIX_SYNC_USER")
+        if not self.MATRIX_SYNC_PASSWORD_RESOLVED:
+            missing.append("MATRIX_SYNC_PASSWORD")
         if not self.MATRIX_SYNC_ROOMS:
             missing.append("MATRIX_SYNC_ROOMS")
 
@@ -947,6 +1040,26 @@ class Settings(BaseSettings):
                 + ", ".join(missing)
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_matrix_alert_config(self) -> "Settings":
+        """Require core alert fields when MATRIX_ALERT_ROOM is configured."""
+        if not (self.MATRIX_ALERT_ROOM or "").strip():
+            return self
+
+        missing = []
+        if not (self.MATRIX_HOMESERVER_URL or "").strip():
+            missing.append("MATRIX_HOMESERVER_URL")
+        if not self.MATRIX_ALERT_USER_RESOLVED:
+            missing.append("MATRIX_ALERT_USER")
+        if not self.MATRIX_ALERT_PASSWORD_RESOLVED:
+            missing.append("MATRIX_ALERT_PASSWORD")
+        if missing:
+            raise ValueError(
+                "MATRIX_ALERT_ROOM is set but missing required settings: "
+                + ", ".join(missing)
+            )
         return self
 
     def __init__(self, **kwargs):

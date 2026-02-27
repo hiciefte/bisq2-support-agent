@@ -6,7 +6,7 @@ Provides ChannelBootstrapper for automated channel loading based on configuratio
 import importlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.channels.registry import ChannelRegistry, get_registered_channel_types
 from app.channels.runtime import ChannelRuntime
@@ -57,7 +57,12 @@ class ChannelBootstrapper:
         rag_service: RAG service for query processing.
     """
 
-    def __init__(self, settings: Any, rag_service: Any) -> None:
+    def __init__(
+        self,
+        settings: Any,
+        rag_service: Any,
+        shared_services: Dict[str, Any] | None = None,
+    ) -> None:
         """Initialize bootstrapper.
 
         Args:
@@ -66,6 +71,7 @@ class ChannelBootstrapper:
         """
         self.settings = settings
         self.rag_service = rag_service
+        self.shared_services = dict(shared_services or {})
 
     def bootstrap(self) -> BootstrapResult:
         """Initialize all enabled channels.
@@ -87,6 +93,7 @@ class ChannelBootstrapper:
             runtime=self._create_runtime(),
             registry=ChannelRegistry(),
         )
+        self._wire_feedback_followup_coordinator(result.runtime, result.registry)
 
         # Import channel modules from config
         self._import_channel_modules()
@@ -121,6 +128,11 @@ class ChannelBootstrapper:
                 # Create and register instance
                 channel = channel_class(result.runtime)
                 result.registry.register(channel)
+                result.runtime.register(
+                    f"{channel_id}_channel",
+                    channel,
+                    allow_override=True,
+                )
                 result.loaded.append(channel_id)
 
                 logger.info(f"Channel '{channel_id}' loaded successfully")
@@ -149,9 +161,14 @@ class ChannelBootstrapper:
             settings=self.settings,
             rag_service=self.rag_service,
         )
+        for name, service in self.shared_services.items():
+            if service is None:
+                continue
+            runtime.register(name, service, allow_override=True)
 
         # Register shared reaction services
         self._register_reaction_services(runtime)
+        self._register_question_prefilter(runtime)
 
         return runtime
 
@@ -178,10 +195,54 @@ class ChannelBootstrapper:
             tracker=tracker,
             feedback_service=runtime.feedback_service,
             reactor_identity_salt=salt,
+            auto_escalation_delay_seconds=getattr(
+                self.settings,
+                "REACTION_NEGATIVE_STABILIZATION_SECONDS",
+                20.0,
+            ),
         )
         runtime.register("reaction_processor", processor)
 
         logger.debug("Registered reaction services (tracker + processor)")
+
+    def _wire_feedback_followup_coordinator(
+        self,
+        runtime: ChannelRuntime,
+        registry: ChannelRegistry,
+    ) -> None:
+        """Wire shared reaction-followup coordinator against channel registry."""
+        try:
+            from app.channels.feedback_followup import FeedbackFollowupCoordinator
+        except ImportError:
+            logger.debug("FeedbackFollowupCoordinator unavailable", exc_info=True)
+            return
+
+        coordinator = FeedbackFollowupCoordinator(
+            feedback_service=runtime.feedback_service,
+            channel_registry=registry,
+            ttl_seconds=getattr(
+                self.settings,
+                "REACTION_FEEDBACK_FOLLOWUP_TTL_SECONDS",
+                900.0,
+            ),
+        )
+        runtime.register(
+            "feedback_followup_coordinator",
+            coordinator,
+            allow_override=True,
+        )
+        processor = runtime.resolve_optional("reaction_processor")
+        if processor is not None:
+            processor.followup_coordinator = coordinator
+        logger.debug("Wired feedback follow-up coordinator")
+
+    @staticmethod
+    def _register_question_prefilter(runtime: ChannelRuntime) -> None:
+        """Register shared question prefilter for channel-side RAG gating."""
+        from app.channels.question_prefilter import QuestionPrefilter
+
+        runtime.register("question_prefilter", QuestionPrefilter())
+        logger.debug("Registered question prefilter service")
 
     def _import_channel_modules(self) -> None:
         """Import channel modules to trigger @register_channel decorators.
@@ -229,27 +290,36 @@ class ChannelBootstrapper:
         Returns:
             List of channel ID strings that should be loaded.
         """
-        enabled = []
+        channel_types = get_registered_channel_types()
+        if not channel_types:
+            enabled = []
+            if self._as_bool(
+                getattr(self.settings, "WEB_CHANNEL_ENABLED", True),
+                default=True,
+            ):
+                enabled.append("web")
+            if self._as_bool(
+                getattr(self.settings, "MATRIX_SYNC_ENABLED", False),
+                default=False,
+            ):
+                enabled.append("matrix")
+            if self._as_bool(
+                getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False),
+                default=False,
+            ):
+                enabled.append("bisq2")
+            return enabled
 
-        web_enabled = self._as_bool(
-            getattr(self.settings, "WEB_CHANNEL_ENABLED", True),
-            default=True,
-        )
-        if web_enabled:
-            enabled.append("web")
-
-        matrix_sync_enabled = self._as_bool(
-            getattr(self.settings, "MATRIX_SYNC_ENABLED", False),
-            default=False,
-        )
-        if matrix_sync_enabled:
-            enabled.append("matrix")
-
-        bisq2_enabled = self._as_bool(
-            getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False),
-            default=False,
-        )
-        if bisq2_enabled:
-            enabled.append("bisq2")
-
+        enabled: List[str] = []
+        for channel_id, channel_class in sorted(channel_types.items()):
+            enabled_flag = getattr(channel_class, "ENABLED_FLAG", None)
+            default_enabled = bool(getattr(channel_class, "ENABLED_DEFAULT", False))
+            if not isinstance(enabled_flag, str) or not enabled_flag.strip():
+                enabled_flag = f"{channel_id.upper()}_CHANNEL_ENABLED"
+            is_enabled = self._as_bool(
+                getattr(self.settings, enabled_flag, default_enabled),
+                default=default_enabled,
+            )
+            if is_enabled:
+                enabled.append(channel_id)
         return enabled

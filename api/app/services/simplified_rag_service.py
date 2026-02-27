@@ -506,11 +506,48 @@ class SimplifiedRAGService:
                 "context_fallback_failed": True,
             }
 
+    def _resolve_source_default_version(
+        self, question: str, detection_source: Optional[str]
+    ) -> Optional[tuple[str, float]]:
+        """Resolve a version fallback from channel source when text is ambiguous."""
+        source = str(detection_source or "").strip().lower()
+        if not source:
+            return None
+
+        detect_with_default = getattr(
+            self.version_detector, "detect_protocol_with_source_default", None
+        )
+        if not callable(detect_with_default):
+            return None
+
+        try:
+            protocol, confidence = detect_with_default(
+                question,
+                source=source,
+                return_confidence=True,
+            )
+        except Exception:
+            logger.debug(
+                "Source-default protocol detection failed for source=%s",
+                source,
+                exc_info=True,
+            )
+            return None
+
+        if protocol is None:
+            return None
+
+        display_name = self.version_detector.protocol_to_display_name(protocol)
+        if display_name == "Unknown":
+            return None
+        return display_name, float(confidence)
+
     async def query(
         self,
         question: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
         override_version: Optional[str] = None,
+        detection_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Process a query and return a response with metadata.
 
@@ -518,6 +555,7 @@ class SimplifiedRAGService:
             question: The query to process
             chat_history: Optional list of chat messages with 'role' and 'content' keys
             override_version: Optional version to use instead of auto-detection (for Shadow Mode)
+            detection_source: Optional channel/source hint (e.g. bisq2, matrix, web)
 
         Returns:
             Dict containing:
@@ -613,20 +651,34 @@ class SimplifiedRAGService:
 
                 # If clarifying question needed and confidence is low, return it immediately
                 if clarifying_question and version_confidence < 0.5:
-                    logger.info(
-                        f"Requesting clarification from user: {clarifying_question[:50]}..."
+                    source_default = self._resolve_source_default_version(
+                        preprocessed_question,
+                        detection_source,
                     )
-                    return {
-                        "answer": clarifying_question,
-                        "sources": [],
-                        "response_time": time.time() - start_time,
-                        "needs_clarification": True,
-                        "detected_version": detected_version,
-                        "version_confidence": version_confidence,
-                        "routing_action": "needs_clarification",
-                        "forwarded_to_human": False,
-                        "feedback_created": False,
-                    }
+                    if source_default is not None:
+                        detected_version, version_confidence = source_default
+                        clarifying_question = None
+                        logger.info(
+                            "Using source-based default version: %s (source=%s, confidence=%.2f)",
+                            detected_version,
+                            str(detection_source or "").strip().lower() or "unknown",
+                            version_confidence,
+                        )
+                    else:
+                        logger.info(
+                            f"Requesting clarification from user: {clarifying_question[:50]}..."
+                        )
+                        return {
+                            "answer": clarifying_question,
+                            "sources": [],
+                            "response_time": time.time() - start_time,
+                            "needs_clarification": True,
+                            "detected_version": detected_version,
+                            "version_confidence": version_confidence,
+                            "routing_action": "needs_clarification",
+                            "forwarded_to_human": False,
+                            "feedback_created": False,
+                        }
 
             # Update conversation state
             conv_id = self.conversation_state_manager.generate_conversation_id(
@@ -925,7 +977,8 @@ class SimplifiedRAGService:
             routing_reason = self.routing_reason_generator.generate(
                 confidence=confidence,
                 action=routing_action.action,
-                num_sources=len(docs),
+                # Keep routing explanation aligned with user-visible source badges.
+                num_sources=len(sources),
                 detected_version=detected_version,
                 version_confidence=version_confidence,
             )
