@@ -420,6 +420,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_lid_backend(cls, v: str) -> str:
         """Validate MULTILINGUAL_LID_BACKEND is a supported value."""
+        v = (v or "").strip().lower()
         allowed = {"langdetect", "none"}
         if v not in allowed:
             raise ValueError(

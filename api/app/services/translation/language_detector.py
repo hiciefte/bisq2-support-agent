@@ -282,11 +282,11 @@ Language code:"""
         (re.compile(r"[\u3040-\u30ff]"), "ja", 0.98),  # Hiragana/Katakana
         (re.compile(r"[\uac00-\ud7af]"), "ko", 0.98),  # Hangul
         (re.compile(r"[\u4e00-\u9fff]"), "zh", 0.94),  # Han ideographs
-        (re.compile(r"[\u0600-\u06ff]"), "ar", 0.88),  # Arabic script family
-        (re.compile(r"[\u0400-\u04ff]"), "ru", 0.88),  # Cyrillic script family
+        (re.compile(r"[\u0600-\u06ff]"), "ar", 0.60),  # Arabic script family
+        (re.compile(r"[\u0400-\u04ff]"), "ru", 0.60),  # Cyrillic script family
         (re.compile(r"[\u0370-\u03ff]"), "el", 0.96),  # Greek
         (re.compile(r"[\u0590-\u05ff]"), "he", 0.96),  # Hebrew
-        (re.compile(r"[\u0900-\u097f]"), "hi", 0.88),  # Devanagari script family
+        (re.compile(r"[\u0900-\u097f]"), "hi", 0.60),  # Devanagari script family
     ]
 
     def __init__(

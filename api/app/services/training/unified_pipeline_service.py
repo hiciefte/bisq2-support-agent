@@ -1384,6 +1384,15 @@ class UnifiedPipelineService:
         if candidate is None:
             return None
 
+        def normalize_blank(value: Optional[str]) -> Optional[str]:
+            if value is None:
+                return None
+            normalized = value.strip()
+            return normalized if normalized else None
+
+        normalized_edited_staff_answer = normalize_blank(edited_staff_answer)
+        normalized_edited_question_text = normalize_blank(edited_question_text)
+
         # Resolve effective values after applying this update payload.
         # These are used for comparison and optional regeneration.
         previous_effective_answer = (
@@ -1393,12 +1402,12 @@ class UnifiedPipelineService:
             candidate.edited_question_text or candidate.question_text
         ).strip() or candidate.question_text
         effective_edited_answer = (
-            edited_staff_answer
+            normalized_edited_staff_answer
             if edited_staff_answer is not None
             else candidate.edited_staff_answer
         )
         effective_edited_question = (
-            edited_question_text
+            normalized_edited_question_text
             if edited_question_text is not None
             else candidate.edited_question_text
         )
@@ -1459,8 +1468,8 @@ class UnifiedPipelineService:
 
             update_kwargs: Dict[str, Any] = {
                 "candidate_id": candidate_id,
-                "edited_staff_answer": edited_staff_answer,
-                "edited_question_text": edited_question_text,
+                "edited_staff_answer": normalized_edited_staff_answer,
+                "edited_question_text": normalized_edited_question_text,
                 "embedding_similarity": comparison.embedding_similarity,
                 "factual_alignment": comparison.factual_alignment,
                 "contradiction_score": comparison.contradiction_score,
@@ -1481,8 +1490,8 @@ class UnifiedPipelineService:
         # Simple update without score recalculation
         return self.repository.update_candidate(
             candidate_id=candidate_id,
-            edited_staff_answer=edited_staff_answer,
-            edited_question_text=edited_question_text,
+            edited_staff_answer=normalized_edited_staff_answer,
+            edited_question_text=normalized_edited_question_text,
             category=category,
         )
 
