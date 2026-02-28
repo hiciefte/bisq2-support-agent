@@ -1386,6 +1386,12 @@ class UnifiedPipelineService:
 
         # Resolve effective values after applying this update payload.
         # These are used for comparison and optional regeneration.
+        previous_effective_answer = (
+            candidate.edited_staff_answer or candidate.staff_answer
+        )
+        previous_effective_question = (
+            candidate.edited_question_text or candidate.question_text
+        ).strip() or candidate.question_text
         effective_edited_answer = (
             edited_staff_answer
             if edited_staff_answer is not None
@@ -1400,17 +1406,22 @@ class UnifiedPipelineService:
         effective_question = (
             effective_edited_question or candidate.question_text
         ).strip() or candidate.question_text
+        staff_answer_changed = (
+            edited_staff_answer is not None
+            and effective_staff_answer != previous_effective_answer
+        )
+        question_changed = (
+            edited_question_text is not None
+            and effective_question != previous_effective_question
+        )
+        content_changed = staff_answer_changed or question_changed
 
-        # If question text is edited and we already have a generated answer,
-        # regenerate the suggested answer so it stays aligned with the edited FAQ question.
+        # If the effective question changed, regenerate the suggested answer so
+        # it stays aligned with the edited FAQ question.
         regenerated_answer: Optional[str] = None
         regenerated_sources_json: Optional[str] = None
         regenerated_confidence: Optional[float] = None
-        if (
-            self.rag_service is not None
-            and candidate.generated_answer is not None
-            and edited_question_text is not None
-        ):
+        if self.rag_service is not None and question_changed:
             bisq_version = self.protocol_detector._protocol_to_version(
                 candidate.protocol
             )
@@ -1432,9 +1443,10 @@ class UnifiedPipelineService:
             else candidate.generated_answer
         )
 
-        # If editable content changed and we have a generated answer available,
+        # Re-score only when effective question/answer content changed and a
+        # generated comparison answer is available.
         # recalculate comparison scores against effective values.
-        if generated_for_compare is not None:
+        if content_changed and generated_for_compare is not None:
             comparison = await self._compare_answers(
                 candidate.source_event_id,
                 effective_question,

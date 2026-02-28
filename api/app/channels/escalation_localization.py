@@ -6,51 +6,32 @@ from typing import Optional
 
 _FALLBACK_LANGUAGE = "en"
 
+_GENERIC_ESCALATION_TEMPLATES = {
+    "en": (
+        "Your question has been forwarded to our support team. "
+        "A staff member will review and respond shortly. "
+        "(Reference: #{escalation_id})"
+    ),
+    "de": (
+        "Ihre Frage wurde an unser Support-Team weitergeleitet. "
+        "Ein Teammitglied wird sie prüfen und bald antworten. "
+        "(Referenz: #{escalation_id})"
+    ),
+    "es": (
+        "Tu pregunta ha sido enviada a nuestro equipo de soporte. "
+        "Un miembro del equipo la revisará y responderá en breve. "
+        "(Referencia: #{escalation_id})"
+    ),
+    "fr": (
+        "Votre question a été transmise à notre équipe de support. "
+        "Un membre de l'équipe va l'examiner et répondre sous peu. "
+        "(Référence: #{escalation_id})"
+    ),
+}
+
 _ESCALATION_TEMPLATES = {
-    "generic": {
-        "en": (
-            "Your question has been forwarded to our support team. "
-            "A staff member will review and respond shortly. "
-            "(Reference: #{escalation_id})"
-        ),
-        "de": (
-            "Ihre Frage wurde an unser Support-Team weitergeleitet. "
-            "Ein Teammitglied wird sie prüfen und bald antworten. "
-            "(Referenz: #{escalation_id})"
-        ),
-        "es": (
-            "Tu pregunta ha sido enviada a nuestro equipo de soporte. "
-            "Un miembro del equipo la revisará y responderá en breve. "
-            "(Referencia: #{escalation_id})"
-        ),
-        "fr": (
-            "Votre question a été transmise à notre équipe de support. "
-            "Un membre de l'équipe va l'examiner et répondre sous peu. "
-            "(Référence: #{escalation_id})"
-        ),
-    },
-    "web": {
-        "en": (
-            "Your question has been forwarded to our support team. "
-            "A staff member will review and respond shortly. "
-            "(Reference: #{escalation_id})"
-        ),
-        "de": (
-            "Ihre Frage wurde an unser Support-Team weitergeleitet. "
-            "Ein Teammitglied wird sie prüfen und bald antworten. "
-            "(Referenz: #{escalation_id})"
-        ),
-        "es": (
-            "Tu pregunta ha sido enviada a nuestro equipo de soporte. "
-            "Un miembro del equipo la revisará y responderá en breve. "
-            "(Referencia: #{escalation_id})"
-        ),
-        "fr": (
-            "Votre question a été transmise à notre équipe de support. "
-            "Un membre de l'équipe va l'examiner et répondre sous peu. "
-            "(Référence: #{escalation_id})"
-        ),
-    },
+    "generic": _GENERIC_ESCALATION_TEMPLATES,
+    "web": _GENERIC_ESCALATION_TEMPLATES,
     "matrix": {
         "en": (
             "Your question has been escalated to {support_handle} for review. "

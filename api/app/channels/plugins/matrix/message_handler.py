@@ -16,8 +16,13 @@ from app.channels.policy import (
 )
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 
-RoomMessageTextType: Any = object
-MegolmEventType: Any = object
+
+class _MissingNioEvent:
+    """Sentinel event type used when nio is not installed."""
+
+
+RoomMessageTextType: Any = _MissingNioEvent
+MegolmEventType: Any = _MissingNioEvent
 
 try:
     from nio import MegolmEvent as _NioMegolmEvent

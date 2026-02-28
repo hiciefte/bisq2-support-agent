@@ -278,15 +278,15 @@ Language code:"""
         "pt": {"como", "comprar", "vender", "ajuda", "problema", "com", "obrigado"},
     }
 
-    SCRIPT_HINTS: ClassVar[list[tuple[re.Pattern[str], str]]] = [
-        (re.compile(r"[\u3040-\u30ff]"), "ja"),
-        (re.compile(r"[\uac00-\ud7af]"), "ko"),
-        (re.compile(r"[\u4e00-\u9fff]"), "zh"),
-        (re.compile(r"[\u0600-\u06ff]"), "ar"),
-        (re.compile(r"[\u0400-\u04ff]"), "ru"),
-        (re.compile(r"[\u0370-\u03ff]"), "el"),
-        (re.compile(r"[\u0590-\u05ff]"), "he"),
-        (re.compile(r"[\u0900-\u097f]"), "hi"),
+    SCRIPT_HINTS: ClassVar[list[tuple[re.Pattern[str], str, float]]] = [
+        (re.compile(r"[\u3040-\u30ff]"), "ja", 0.98),  # Hiragana/Katakana
+        (re.compile(r"[\uac00-\ud7af]"), "ko", 0.98),  # Hangul
+        (re.compile(r"[\u4e00-\u9fff]"), "zh", 0.94),  # Han ideographs
+        (re.compile(r"[\u0600-\u06ff]"), "ar", 0.88),  # Arabic script family
+        (re.compile(r"[\u0400-\u04ff]"), "ru", 0.88),  # Cyrillic script family
+        (re.compile(r"[\u0370-\u03ff]"), "el", 0.96),  # Greek
+        (re.compile(r"[\u0590-\u05ff]"), "he", 0.96),  # Hebrew
+        (re.compile(r"[\u0900-\u097f]"), "hi", 0.88),  # Devanagari script family
     ]
 
     def __init__(
@@ -350,9 +350,9 @@ Language code:"""
         return matches >= 2
 
     def _detect_non_english_hint(self, text: str) -> Optional[Tuple[str, float]]:
-        for pattern, language in self.SCRIPT_HINTS:
+        for pattern, language, confidence in self.SCRIPT_HINTS:
             if pattern.search(text):
-                return (language, 0.98)
+                return (language, confidence)
 
         if "¿" in text or "¡" in text:
             return ("es", 0.96)
@@ -501,7 +501,7 @@ Language code:"""
         text_len = len(text)
         non_english_hint = self._detect_non_english_hint(text)
 
-        # Trust script hints immediately for non-Latin scripts.
+        # Trust only highest-confidence script hints immediately.
         if non_english_hint is not None and non_english_hint[1] >= 0.97:
             details = LanguageDetectionDetails(
                 language_code=non_english_hint[0],

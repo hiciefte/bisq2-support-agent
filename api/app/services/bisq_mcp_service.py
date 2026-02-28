@@ -32,13 +32,20 @@ from tenacity import (
     wait_exponential,
 )
 
+logger = logging.getLogger(__name__)
+
 CircuitBreakerClass: Any
 CircuitBreakerErrorClass: Any
 
 try:
     from pybreaker import CircuitBreaker as _PyBreakerCircuitBreaker
     from pybreaker import CircuitBreakerError as _PyBreakerCircuitBreakerError
-except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised in minimal test envs
+    if exc.name != "pybreaker":
+        raise
+    logger.warning(
+        "pybreaker is unavailable; using no-op circuit breaker fallback for Bisq MCP service"
+    )
 
     class _FallbackCircuitBreakerError(Exception):
         """Fallback circuit breaker error when pybreaker is unavailable."""
@@ -60,8 +67,6 @@ else:
 
 CircuitBreaker = CircuitBreakerClass
 CircuitBreakerError = CircuitBreakerErrorClass
-
-logger = logging.getLogger(__name__)
 
 
 # =============================================================================
