@@ -56,14 +56,6 @@ class InboundMessageOrchestrator:
 
         canonical = CanonicalInboundEvent.from_incoming(self.channel_id, incoming)
 
-        if not await self._reserve_dedup(canonical):
-            logger.debug(
-                "Skipping duplicate inbound event channel=%s event=%s",
-                self.channel_id,
-                canonical.event_id,
-            )
-            return False
-
         lock_key = thread_lock_key(canonical.channel_id, canonical.thread_id)
         lock_token = await self._acquire_lock(lock_key)
         if self.coordination_store is not None and lock_token is None:
@@ -76,6 +68,13 @@ class InboundMessageOrchestrator:
             return False
 
         try:
+            if not await self._reserve_dedup(canonical):
+                logger.debug(
+                    "Skipping duplicate inbound event channel=%s event=%s",
+                    self.channel_id,
+                    canonical.event_id,
+                )
+                return False
             response = await self.channel.handle_incoming(incoming)
             autosend_enabled = is_autosend_enabled(
                 self.autoresponse_policy_service,
@@ -100,7 +99,18 @@ class InboundMessageOrchestrator:
         if runtime is None:
             return False
 
-        coordinator = runtime.resolve_optional("feedback_followup_coordinator")
+        resolve_optional = getattr(runtime, "resolve_optional", None)
+        if not callable(resolve_optional):
+            return False
+        try:
+            coordinator = resolve_optional("feedback_followup_coordinator")
+        except Exception:
+            logger.debug(
+                "Failed to resolve feedback_followup_coordinator for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return False
         if coordinator is None:
             return False
 

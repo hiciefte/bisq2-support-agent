@@ -173,7 +173,20 @@ class ChannelResponseDispatcher:
                     response=response,
                 )
                 if plan.mode == DeliveryMode.STREAM_NATIVE:
-                    return await deliver_native_stream(self.channel, target, response)
+                    try:
+                        if await deliver_native_stream(self.channel, target, response):
+                            return True
+                    except Exception:
+                        logger.debug(
+                            (
+                                "Native stream failed for %s message_id=%s; "
+                                "falling back to buffered stream"
+                            ),
+                            self.channel_id,
+                            getattr(incoming, "message_id", "<unknown>"),
+                            exc_info=True,
+                        )
+                    return await deliver_buffered_stream(self.channel, target, response)
                 if plan.mode == DeliveryMode.STREAM_BUFFERED:
                     return await deliver_buffered_stream(self.channel, target, response)
                 return bool(await self.channel.send_message(target, response))
