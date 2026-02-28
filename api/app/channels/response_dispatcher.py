@@ -9,7 +9,9 @@ import inspect
 import logging
 from typing import Any
 
+from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
 from app.channels.escalation_localization import render_escalation_notice
+from app.channels.streaming import deliver_buffered_stream, deliver_native_stream
 from app.models.escalation import EscalationCreate
 
 logger = logging.getLogger(__name__)
@@ -133,10 +135,12 @@ class ChannelResponseDispatcher:
         channel: Any,
         channel_id: str,
         escalation_service: Any | None = None,
+        delivery_planner: DeliveryPlanner | None = None,
     ) -> None:
         self.channel = channel
         self.channel_id = channel_id
         self.escalation_service = escalation_service
+        self.delivery_planner = delivery_planner or DeliveryPlanner()
 
     async def dispatch(self, incoming: Any, response: Any) -> bool:
         """Dispatch one response.
@@ -164,6 +168,14 @@ class ChannelResponseDispatcher:
                 )
                 return False
             try:
+                plan = self.delivery_planner.plan(
+                    channel=self.channel,
+                    response=response,
+                )
+                if plan.mode == DeliveryMode.STREAM_NATIVE:
+                    return await deliver_native_stream(self.channel, target, response)
+                if plan.mode == DeliveryMode.STREAM_BUFFERED:
+                    return await deliver_buffered_stream(self.channel, target, response)
                 return bool(await self.channel.send_message(target, response))
             except Exception:
                 logger.exception(

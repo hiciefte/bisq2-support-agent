@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import suppress
 from typing import Any
 
+from app.channels.inbound_orchestrator import InboundMessageOrchestrator
 from app.channels.models import ChannelType, IncomingMessage, UserContext
 from app.channels.plugins.matrix.room_filter import normalize_room_ids
-from app.channels.policy import (
-    apply_autosend_policy,
-    is_autosend_enabled,
-    is_generation_enabled,
-)
+from app.channels.policy import is_generation_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 
 
@@ -39,6 +37,7 @@ MegolmEvent = MegolmEventType
 
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 
 class MatrixMessageHandler:
@@ -64,6 +63,7 @@ class MatrixMessageHandler:
         self._sync_task: asyncio.Task[Any] | None = None
         self._callback_registered = False
         self._dispatcher: ChannelResponseDispatcher | None = None
+        self._orchestrator: InboundMessageOrchestrator | None = None
 
     async def start(self) -> None:
         """Register message callback and start sync loop."""
@@ -124,23 +124,11 @@ class MatrixMessageHandler:
         if self._should_ignore_sender(incoming.user.user_id):
             return
 
-        if await self._consume_feedback_followup(incoming):
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
             return
 
-        response = await channel.handle_incoming(incoming)
-        response = apply_autosend_policy(
-            response=response,
-            autosend_enabled=is_autosend_enabled(
-                self.autoresponse_policy_service,
-                self.channel_id,
-            ),
-        )
-        dispatcher = self._get_dispatcher()
-        if dispatcher is None:
-            logger.debug("Dispatcher unavailable for Matrix message handling")
-            return
-
-        await dispatcher.dispatch(incoming, response)
+        await orchestrator.process_incoming(incoming)
 
     async def _resolve_event(self, event: Any) -> Any | None:
         if not self._is_encrypted_event(event):
@@ -203,28 +191,50 @@ class MatrixMessageHandler:
             )
         return self._dispatcher
 
-    async def _consume_feedback_followup(self, incoming: IncomingMessage) -> bool:
+    def _get_orchestrator(self) -> InboundMessageOrchestrator | None:
         channel = self.channel
-        if channel is None:
-            return False
+        dispatcher = self._get_dispatcher()
+        if channel is None or dispatcher is None:
+            return None
+        if self._orchestrator is None or self._orchestrator.channel is not channel:
+            self._orchestrator = InboundMessageOrchestrator(
+                channel=channel,
+                channel_id=self.channel_id,
+                dispatcher=dispatcher,
+                autoresponse_policy_service=self.autoresponse_policy_service,
+                coordination_store=self._resolve_coordination_store(channel),
+            )
+        return self._orchestrator
+
+    @staticmethod
+    def _resolve_coordination_store(channel: Any) -> Any | None:
         runtime = getattr(channel, "runtime", None)
         if runtime is None:
-            return False
-        coordinator = runtime.resolve_optional("feedback_followup_coordinator")
-        if coordinator is None:
-            return False
-        consume = getattr(coordinator, "consume_if_pending", None)
-        if not callable(consume):
-            return False
-
+            return None
+        resolve_optional = getattr(runtime, "resolve_optional", None)
+        if not callable(resolve_optional):
+            return None
         try:
-            return bool(await consume(incoming=incoming, channel=channel))
+            candidate = resolve_optional("channel_coordination_store")
         except Exception:
-            logger.exception(
-                "Failed consuming Matrix feedback follow-up for event=%s",
-                incoming.message_id,
+            logger.debug(
+                "Failed to resolve channel_coordination_store from runtime",
+                exc_info=True,
             )
-            return False
+            return None
+        if candidate is None:
+            return None
+        required = (
+            "reserve_dedup",
+            "acquire_lock",
+            "release_lock",
+            "get_thread_state",
+            "set_thread_state",
+        )
+        for attr in required:
+            if inspect.getattr_static(candidate, attr, _MISSING) is _MISSING:
+                return None
+        return candidate
 
     def _should_ignore_sender(self, sender_id: str) -> bool:
         normalized = str(sender_id or "").strip()
