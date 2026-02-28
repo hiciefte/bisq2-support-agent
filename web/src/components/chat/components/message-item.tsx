@@ -130,7 +130,10 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                     <HumanReviewBadge />
                 )}
                 {isAssistant && message.escalation_resolution === "closed" && (
-                    <HumanClosedSection resolvedAt={message.escalation_resolved_at} />
+                    <HumanClosedSection
+                        resolvedAt={message.escalation_resolved_at}
+                        language={message.escalation_user_language}
+                    />
                 )}
                 {isAssistant && message.staff_response && (
                     <HumanResponseSection

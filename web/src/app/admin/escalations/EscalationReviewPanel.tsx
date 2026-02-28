@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import {
   Loader2,
@@ -102,6 +103,22 @@ function isMeaningfullyEditedAnswer(staffAnswer: string, aiDraftAnswer: string):
   return normalizedStaff !== normalizedDraft
 }
 
+function getCanonicalQuestion(escalation: EscalationItem): string {
+  return escalation.question?.trim() || escalation.question_original?.trim() || ""
+}
+
+function getLocalizedQuestion(escalation: EscalationItem): string {
+  return escalation.question_original?.trim() || escalation.question?.trim() || ""
+}
+
+function getCanonicalDraftAnswer(escalation: EscalationItem): string {
+  return escalation.ai_draft_answer?.trim() || escalation.ai_draft_answer_original?.trim() || ""
+}
+
+function getLocalizedDraftAnswer(escalation: EscalationItem): string {
+  return escalation.ai_draft_answer_original?.trim() || escalation.ai_draft_answer?.trim() || ""
+}
+
 export function EscalationReviewPanel({
   escalation,
   open,
@@ -113,14 +130,16 @@ export function EscalationReviewPanel({
   const suggestedTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const [phase, setPhase] = useState<'review' | 'faq'>('review')
+  const [questionView, setQuestionView] = useState<'canonical' | 'original'>('canonical')
+  const [suggestedAnswerView, setSuggestedAnswerView] = useState<'canonical' | 'localized'>('canonical')
 
-  const [staffAnswer, setStaffAnswer] = useState(escalation.ai_draft_answer || '')
+  const [staffAnswer, setStaffAnswer] = useState(getCanonicalDraftAnswer(escalation))
   const [isResponding, setIsResponding] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isEditingSuggestedAnswer, setIsEditingSuggestedAnswer] = useState(false)
 
-  const [faqQuestion, setFaqQuestion] = useState(escalation.question)
-  const [faqAnswer, setFaqAnswer] = useState(escalation.staff_answer || escalation.ai_draft_answer || '')
+  const [faqQuestion, setFaqQuestion] = useState(getCanonicalQuestion(escalation))
+  const [faqAnswer, setFaqAnswer] = useState(escalation.staff_answer || getCanonicalDraftAnswer(escalation))
   const [faqCategory, setFaqCategory] = useState('General')
   const [faqProtocol, setFaqProtocol] = useState<FAQProtocol>('all')
   const [isSubmittingFaq, setIsSubmittingFaq] = useState(false)
@@ -130,26 +149,28 @@ export function EscalationReviewPanel({
 
   // Reset form when escalation changes
   useEffect(() => {
-    aiDraftRef.current = escalation.ai_draft_answer || ""
-    setStaffAnswer(escalation.staff_answer || escalation.ai_draft_answer || '')
+    aiDraftRef.current = getCanonicalDraftAnswer(escalation)
+    setStaffAnswer(escalation.staff_answer || getCanonicalDraftAnswer(escalation))
     const hasExistingStaffResponse = Boolean((escalation.staff_answer || "").trim())
     const hasMeaningfulEdit = isMeaningfullyEditedAnswer(
       escalation.staff_answer || "",
-      escalation.ai_draft_answer || "",
+      getCanonicalDraftAnswer(escalation),
     )
     const shouldStartInFaq = hasExistingStaffResponse && (
       hasMeaningfulEdit &&
       (escalation.status === "responded" || escalation.status === "closed")
     )
     setPhase(shouldStartInFaq ? "faq" : "review")
+    setQuestionView("canonical")
+    setSuggestedAnswerView("canonical")
     setIsEditingSuggestedAnswer(false)
-    setFaqQuestion(escalation.question)
-    setFaqAnswer(escalation.staff_answer || escalation.ai_draft_answer || '')
+    setFaqQuestion(getCanonicalQuestion(escalation))
+    setFaqAnswer(escalation.staff_answer || getCanonicalDraftAnswer(escalation))
     setSimilarFaqs([])
     setRequiresForceOverride(false)
     const inferred = inferFaqMetadata({
-      question: escalation.question,
-      answer: escalation.staff_answer || escalation.ai_draft_answer,
+      question: getCanonicalQuestion(escalation),
+      answer: escalation.staff_answer || getCanonicalDraftAnswer(escalation),
     })
     setFaqCategory(inferred.category)
     setFaqProtocol(inferred.protocol)
@@ -227,8 +248,8 @@ export function EscalationReviewPanel({
         setPhase('faq')
         setFaqAnswer(trimmedAnswer)
         const inferred = inferFaqMetadata({
-          question: faqQuestion || escalation.question,
-          answer: trimmedAnswer || escalation.staff_answer || escalation.ai_draft_answer,
+          question: faqQuestion || getCanonicalQuestion(escalation),
+          answer: trimmedAnswer || escalation.staff_answer || getCanonicalDraftAnswer(escalation),
         })
         setFaqCategory(inferred.category)
         setFaqProtocol(inferred.protocol)
@@ -441,6 +462,14 @@ export function EscalationReviewPanel({
       .filter(Boolean) as Source[]
   }, [escalation.sources])
 
+  const canonicalQuestion = getCanonicalQuestion(escalation)
+  const localizedQuestion = getLocalizedQuestion(escalation)
+  const hasQuestionVariants = localizedQuestion !== canonicalQuestion
+  const canonicalDraftAnswer = getCanonicalDraftAnswer(escalation)
+  const localizedDraftAnswer = getLocalizedDraftAnswer(escalation)
+  const hasDraftVariants = localizedDraftAnswer !== canonicalDraftAnswer
+  const originalLanguageLabel = (escalation.user_language || "orig").toUpperCase()
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -608,136 +637,209 @@ export function EscalationReviewPanel({
 
           <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 pb-6">
             <div className="space-y-5 pt-1">
-              <Card>
-                <CardHeader className="pb-3">
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    <CardTitle className="text-sm">Question</CardTitle>
+                    <h3 className="text-sm font-medium">Question</h3>
+                    {escalation.user_language && escalation.user_language !== "en" && (
+                      <Badge variant="secondary" className="ml-1 text-[10px] uppercase tracking-wide">
+                        User language: {escalation.user_language}
+                      </Badge>
+                    )}
                   </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <MarkdownContent content={escalation.question} className="text-sm" />
-                </CardContent>
-              </Card>
+                  {hasQuestionVariants && (
+                    <ToggleGroup
+                      type="single"
+                      value={questionView}
+                      onValueChange={(value) => {
+                        if (value === 'canonical' || value === 'original') {
+                          setQuestionView(value)
+                        }
+                      }}
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg border border-border bg-muted/20 p-1"
+                      aria-label="Switch question view"
+                    >
+                      <ToggleGroupItem value="canonical" className="h-7 px-2 text-xs">
+                        Canonical (EN)
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="original" className="h-7 px-2 text-xs">
+                        Original ({originalLanguageLabel})
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  )}
+                </div>
+                <div className="rounded-lg border border-border/70 bg-muted/25 p-4 min-h-[96px]">
+                  <MarkdownContent
+                    content={questionView === "canonical" ? canonicalQuestion : localizedQuestion}
+                    className="text-sm"
+                  />
+                </div>
+              </section>
 
               {phase === 'review' && canRespond && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Bot className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    <span className="font-medium text-sm">
-                      Suggested Answer
-                      {isEditingSuggestedAnswer && (
-                        <span className="text-muted-foreground ml-1">(Editing)</span>
+                <section className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex items-center gap-2">
+                      <Bot className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
+                      <h3 className="text-sm font-medium truncate">
+                        Suggested answer {suggestedAnswerView === "canonical" ? "(English canonical)" : `(Localized ${originalLanguageLabel})`}
+                        {suggestedAnswerView === "canonical" && isEditingSuggestedAnswer && (
+                          <span className="text-muted-foreground ml-1">(Editing)</span>
+                        )}
+                      </h3>
+                      {typeof escalation.confidence_score === "number" && (
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                          {Math.round(escalation.confidence_score * 100)}% confidence
+                        </span>
                       )}
-                    </span>
-                    {typeof escalation.confidence_score === "number" && (
-                      <span className="text-xs text-muted-foreground tabular-nums">
-                        {Math.round(escalation.confidence_score * 100)}% confidence
-                      </span>
-                    )}
-                    <div className="ml-auto flex items-center gap-2">
-                      {aiDraftRef.current && staffAnswer.trim() !== aiDraftRef.current.trim() && (
-                        <Button
-                          type="button"
-                          variant="link"
-                          size="sm"
-                          className="h-7 px-0 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => setStaffAnswer(aiDraftRef.current)}
-                          disabled={isActionInProgress}
-                        >
-                          Reset to AI draft
-                        </Button>
-                      )}
-                      {isEditingSuggestedAnswer ? (
-                        <Button
-                          type="button"
+                    </div>
+                    <div className="ml-auto flex items-center gap-2 shrink-0">
+                      <div className="min-w-[104px] flex items-center justify-end">
+                        {suggestedAnswerView === "canonical" && aiDraftRef.current && staffAnswer.trim() !== aiDraftRef.current.trim() ? (
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-7 px-0 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => setStaffAnswer(aiDraftRef.current)}
+                            disabled={isActionInProgress}
+                          >
+                            Reset to AI draft
+                          </Button>
+                        ) : (
+                          <span className="h-7 px-0 text-xs invisible inline-flex items-center">Reset</span>
+                        )}
+                      </div>
+                      <div className="w-[88px] flex items-center justify-end">
+                        {suggestedAnswerView === "canonical" && isEditingSuggestedAnswer ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setIsEditingSuggestedAnswer(false)}
+                            disabled={isActionInProgress}
+                          >
+                            <Check className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                            Preview
+                          </Button>
+                        ) : suggestedAnswerView === "canonical" ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setIsEditingSuggestedAnswer(true)}
+                            disabled={isActionInProgress}
+                          >
+                            <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                            Edit
+                          </Button>
+                        ) : (
+                          <span className="h-7 px-2 text-xs invisible inline-flex items-center">Edit</span>
+                        )}
+                      </div>
+                      {hasDraftVariants && (
+                        <ToggleGroup
+                          type="single"
+                          value={suggestedAnswerView}
+                          onValueChange={(value) => {
+                            if (value === 'canonical' || value === 'localized') {
+                              setSuggestedAnswerView(value)
+                              if (value === 'localized') {
+                                setIsEditingSuggestedAnswer(false)
+                              }
+                            }
+                          }}
                           variant="outline"
                           size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setIsEditingSuggestedAnswer(false)}
-                          disabled={isActionInProgress}
+                          className="rounded-lg border border-border bg-muted/20 p-1"
+                          aria-label="Switch suggested answer view"
                         >
-                          <Check className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                          Preview
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setIsEditingSuggestedAnswer(true)}
-                          disabled={isActionInProgress}
-                        >
-                          <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                          Edit
-                        </Button>
+                          <ToggleGroupItem value="canonical" className="h-7 px-2 text-xs">
+                            Canonical (EN)
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="localized" className="h-7 px-2 text-xs">
+                            Localized ({originalLanguageLabel})
+                          </ToggleGroupItem>
+                        </ToggleGroup>
                       )}
                     </div>
                   </div>
                   <div
                     className={cn(
                       "p-4 rounded-lg border min-h-[140px] transition-all",
-                      isEditingSuggestedAnswer
+                      suggestedAnswerView === "canonical" && isEditingSuggestedAnswer
                         ? "bg-background border-primary ring-1 ring-primary"
-                        : "bg-muted/30 border-border"
+                        : "bg-muted/30 border-border/70"
                     )}
                   >
-                    {isEditingSuggestedAnswer ? (
-                      <>
-                        <Label htmlFor="escalation-staff-answer" className="sr-only">Suggested answer (editable)</Label>
-                        <Textarea
-                          ref={suggestedTextareaRef}
-                          id="escalation-staff-answer"
-                          name="staff_answer"
-                          rows={10}
-                          placeholder="Edit the AI draft or write your own response…"
-                          value={staffAnswer}
-                          onChange={(e) => {
-                            setStaffAnswer(e.target.value)
-                            e.target.style.height = "auto"
-                            e.target.style.height = `${e.target.scrollHeight}px`
-                          }}
-                          autoComplete="off"
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                              e.preventDefault()
-                              setIsEditingSuggestedAnswer(false)
-                              return
-                            }
-                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                              e.preventDefault()
-                              handleRespond()
-                            }
-                          }}
-                          className="min-h-[140px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
-                        />
-                      </>
-                    ) : (
-                      <div className="text-sm">
-                        {staffAnswer.trim() ? (
-                          <MarkdownContent content={staffAnswer} className="text-sm" />
-                        ) : (
-                          <p className="text-muted-foreground">No suggested answer available.</p>
-                        )}
-                      </div>
-                    )}
+                      {suggestedAnswerView === "localized" ? (
+                        <div className="text-sm">
+                          {localizedDraftAnswer.trim() ? (
+                            <MarkdownContent content={localizedDraftAnswer} className="text-sm" />
+                          ) : (
+                            <p className="text-muted-foreground">No localized draft available.</p>
+                          )}
+                        </div>
+                      ) : isEditingSuggestedAnswer ? (
+                        <>
+                          <Label htmlFor="escalation-staff-answer" className="sr-only">Suggested answer (editable)</Label>
+                          <Textarea
+                            ref={suggestedTextareaRef}
+                            id="escalation-staff-answer"
+                            name="staff_answer"
+                            rows={10}
+                            placeholder="Edit the AI draft or write your own response…"
+                            value={staffAnswer}
+                            onChange={(e) => {
+                              setStaffAnswer(e.target.value)
+                              e.target.style.height = "auto"
+                              e.target.style.height = `${e.target.scrollHeight}px`
+                            }}
+                            autoComplete="off"
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.preventDefault()
+                                setIsEditingSuggestedAnswer(false)
+                                return
+                              }
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                e.preventDefault()
+                                handleRespond()
+                              }
+                            }}
+                            className="min-h-[140px] resize-none border-0 p-0 focus-visible:ring-0 bg-transparent"
+                          />
+                        </>
+                      ) : (
+                        <div className="text-sm">
+                          {staffAnswer.trim() ? (
+                            <MarkdownContent content={staffAnswer} className="text-sm" />
+                          ) : (
+                            <p className="text-muted-foreground">No suggested answer available.</p>
+                          )}
+                        </div>
+                      )}
 
-                    {(chatSources.length > 0 || typeof escalation.confidence_score === "number" || isEditingSuggestedAnswer) && (
-                      <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
-                        {chatSources.length > 0 && <SourceBadges sources={chatSources} />}
-                        {typeof escalation.confidence_score === "number" && (
-                          <ConfidenceBadge confidence={escalation.confidence_score} />
-                        )}
-                        {isEditingSuggestedAnswer && (
-                          <span className="text-[11px] text-muted-foreground">
-                            Tip: Press Cmd/Ctrl+Enter to send. Escape to preview.
-                          </span>
-                        )}
-                      </div>
-                    )}
+                      {(chatSources.length > 0 || typeof escalation.confidence_score === "number" || (suggestedAnswerView === "canonical" && isEditingSuggestedAnswer)) && (
+                        <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
+                          {chatSources.length > 0 && <SourceBadges sources={chatSources} />}
+                          {typeof escalation.confidence_score === "number" && (
+                            <ConfidenceBadge confidence={escalation.confidence_score} />
+                          )}
+                          {suggestedAnswerView === "canonical" && isEditingSuggestedAnswer && (
+                            <span className="text-[11px] text-muted-foreground">
+                              Tip: Press Cmd/Ctrl+Enter to send. Escape to preview.
+                            </span>
+                          )}
+                        </div>
+                      )}
                   </div>
-                </div>
+                </section>
               )}
 
               {escalation.staff_answer && (escalation.status === 'responded' || escalation.status === 'closed') && (

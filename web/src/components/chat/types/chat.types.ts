@@ -51,6 +51,7 @@ export interface Message {
     /** Escalation resolution set client-side after polling completes */
     escalation_resolution?: "responded" | "closed"
     escalation_resolved_at?: string
+    escalation_user_language?: string
 }
 
 /**
