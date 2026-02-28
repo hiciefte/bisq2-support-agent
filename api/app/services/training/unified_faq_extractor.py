@@ -46,7 +46,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-    ai = _AiSuiteFallback()  # type: ignore[assignment]
+    ai = _AiSuiteFallback()
 
 logger = logging.getLogger(__name__)
 

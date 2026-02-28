@@ -16,15 +16,26 @@ from app.channels.policy import (
 )
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 
+
+class _MissingNioEvent:
+    """Sentinel event type used when nio is not installed."""
+
+
+RoomMessageTextType: Any = _MissingNioEvent
+MegolmEventType: Any = _MissingNioEvent
+
 try:
-    from nio import MegolmEvent, RoomMessageText
+    from nio import MegolmEvent as _NioMegolmEvent
+    from nio import RoomMessageText as _NioRoomMessageText
 except ImportError:  # pragma: no cover - exercised in environments without nio
+    pass
+else:
+    RoomMessageTextType = _NioRoomMessageText
+    MegolmEventType = _NioMegolmEvent
 
-    class RoomMessageText:  # type: ignore[too-many-ancestors]
-        """Fallback event type placeholder when matrix-nio is unavailable."""
-
-    class MegolmEvent:  # type: ignore[too-many-ancestors]
-        """Fallback encrypted event placeholder when matrix-nio is unavailable."""
+# Backward-compatible exported symbols used by tests and callers.
+RoomMessageText = RoomMessageTextType
+MegolmEvent = MegolmEventType
 
 
 logger = logging.getLogger(__name__)
@@ -279,7 +290,12 @@ class MatrixMessageHandler:
             message_id=message_id.strip(),
             channel=ChannelType.MATRIX,
             question=text,
-            user=UserContext(user_id=sender.strip(), channel_user_id=sender.strip()),
+            user=UserContext(
+                user_id=sender.strip(),
+                session_id=None,
+                channel_user_id=sender.strip(),
+                auth_token=None,
+            ),
             channel_metadata={"room_id": room_id.strip()},
             channel_signature=None,
         )

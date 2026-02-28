@@ -43,8 +43,16 @@ class EscalationCreate(BaseModel):
     user_id: str = Field(..., max_length=128)
     username: Optional[str] = Field(None, max_length=256)
     channel_metadata: Optional[Dict[str, Any]] = None
+    question_original: Optional[str] = Field(
+        default=None, min_length=1, max_length=4000
+    )
     question: str = Field(..., min_length=1, max_length=4000)
+    ai_draft_answer_original: Optional[str] = Field(
+        default=None, min_length=1, max_length=10000
+    )
     ai_draft_answer: str = Field(..., min_length=1, max_length=10000)
+    user_language: Optional[str] = Field(default=None, max_length=8)
+    translation_applied: bool = Field(default=False)
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     routing_action: str = Field(..., description="e.g. needs_human")
     routing_reason: Optional[str] = None
@@ -64,6 +72,22 @@ class EscalationCreate(BaseModel):
     def strip_question(cls, v: str) -> str:
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator("question_original", "ai_draft_answer_original", mode="before")
+    @classmethod
+    def strip_optional_text(cls, v: Optional[str]) -> Optional[str]:
+        if not isinstance(v, str):
+            return v
+        stripped = v.strip()
+        return stripped or None
+
+    @field_validator("user_language", mode="before")
+    @classmethod
+    def normalize_user_language(cls, v: Optional[str]) -> Optional[str]:
+        if not isinstance(v, str):
+            return v
+        normalized = v.strip().lower()
+        return normalized or None
+
 
 class Escalation(BaseModel):
     """Full escalation record (database row)."""
@@ -74,8 +98,12 @@ class Escalation(BaseModel):
     user_id: str
     username: Optional[str] = None
     channel_metadata: Optional[Dict[str, Any]] = None
+    question_original: Optional[str] = None
     question: str
+    ai_draft_answer_original: Optional[str] = None
     ai_draft_answer: str
+    user_language: Optional[str] = None
+    translation_applied: bool = False
     confidence_score: float
     routing_action: str
     routing_reason: Optional[str] = None
@@ -226,6 +254,7 @@ class UserPollResponse(BaseModel):
     closed_at: Optional[datetime] = None
     staff_answer_rating: Optional[int] = None
     rate_token: Optional[str] = None
+    user_language: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

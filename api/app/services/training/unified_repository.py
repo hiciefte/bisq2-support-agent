@@ -911,6 +911,8 @@ class UnifiedFAQCandidateRepository:
         protocol: Optional[str] = None,
         edited_staff_answer: Optional[str] = None,
         edited_question_text: Optional[str] = None,
+        clear_edited_staff_answer: bool = False,
+        clear_edited_question_text: bool = False,
         generated_answer: Optional[str] = None,
         embedding_similarity: Optional[float] = None,
         factual_alignment: Optional[float] = None,
@@ -936,6 +938,8 @@ class UnifiedFAQCandidateRepository:
             protocol: Protocol type (bisq_easy, multisig_v1, musig, all)
             edited_staff_answer: User-edited version of the staff answer
             edited_question_text: User-edited version of the question
+            clear_edited_staff_answer: Explicitly clear edited staff answer (set NULL)
+            clear_edited_question_text: Explicitly clear edited question text (set NULL)
             generated_answer: Regenerated RAG answer
             embedding_similarity: Updated embedding similarity score
             factual_alignment: Updated factual alignment score
@@ -962,11 +966,15 @@ class UnifiedFAQCandidateRepository:
             updates.append("protocol = ?")
             params.append(protocol)
 
-        if edited_staff_answer is not None:
+        if clear_edited_staff_answer:
+            updates.append("edited_staff_answer = NULL")
+        elif edited_staff_answer is not None:
             updates.append("edited_staff_answer = ?")
             params.append(edited_staff_answer)
 
-        if edited_question_text is not None:
+        if clear_edited_question_text:
+            updates.append("edited_question_text = NULL")
+        elif edited_question_text is not None:
             updates.append("edited_question_text = ?")
             params.append(edited_question_text)
 

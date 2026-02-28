@@ -292,23 +292,23 @@ class ChannelBootstrapper:
         """
         channel_types = get_registered_channel_types()
         if not channel_types:
-            enabled = []
+            default_enabled_channels = []
             if self._as_bool(
                 getattr(self.settings, "WEB_CHANNEL_ENABLED", True),
                 default=True,
             ):
-                enabled.append("web")
+                default_enabled_channels.append("web")
             if self._as_bool(
                 getattr(self.settings, "MATRIX_SYNC_ENABLED", False),
                 default=False,
             ):
-                enabled.append("matrix")
+                default_enabled_channels.append("matrix")
             if self._as_bool(
                 getattr(self.settings, "BISQ2_CHANNEL_ENABLED", False),
                 default=False,
             ):
-                enabled.append("bisq2")
-            return enabled
+                default_enabled_channels.append("bisq2")
+            return default_enabled_channels
 
         enabled: List[str] = []
         for channel_id, channel_class in sorted(channel_types.items()):

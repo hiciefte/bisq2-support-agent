@@ -46,8 +46,12 @@ export interface EscalationItem {
   user_id: string
   username?: string | null
   channel_metadata?: Record<string, unknown> | null
+  question_original?: string | null
   question: string
+  ai_draft_answer_original?: string | null
   ai_draft_answer: string
+  user_language?: string | null
+  translation_applied?: boolean
   confidence_score: number
   routing_action: string
   routing_reason?: string | null
@@ -136,6 +140,12 @@ function humanizeEnumValue(value: string): string {
     .toLowerCase()
   if (!cleaned) return ""
   return cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function getPrimaryQuestion(escalation: EscalationItem): string {
+  const canonical = escalation.question?.trim()
+  if (canonical) return canonical
+  return escalation.question_original?.trim() || "Question unavailable."
 }
 
 const PAGE_SIZE = 20
@@ -795,6 +805,11 @@ export default function EscalationsPage() {
                                 {tag.label}
                               </span>
                             ))}
+                            {escalation.user_language && escalation.user_language !== "en" && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-500/15 text-slate-300 border border-slate-500/25">
+                                User: {escalation.user_language.toUpperCase()}
+                              </span>
+                            )}
                             {overflowTags.length > 0 && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -819,8 +834,14 @@ export default function EscalationsPage() {
                           </div>
 
                           <p className="text-sm leading-relaxed line-clamp-2">
-                            {escalation.question}
+                            {getPrimaryQuestion(escalation)}
                           </p>
+
+                          {escalation.question_original && escalation.question_original.trim() && escalation.question_original.trim() !== getPrimaryQuestion(escalation) && (
+                            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                              Original: {escalation.question_original.trim()}
+                            </p>
+                          )}
 
                           {shouldShowRouting && (
                             <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">

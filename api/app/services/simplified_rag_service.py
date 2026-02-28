@@ -586,8 +586,9 @@ class SimplifiedRAGService:
             # Log the question with privacy protection
             logger.info(f"Processing question: {redact_for_logs(question)}")
 
-            # Preprocess the question
-            preprocessed_question = question.strip()
+            # Preserve both user-localized input and canonical English question.
+            localized_question = question.strip()
+            preprocessed_question = localized_question
 
             # Handle multilingual translation if service is available
             original_language = "en"
@@ -607,6 +608,7 @@ class SimplifiedRAGService:
                 except Exception as e:
                     logger.warning(f"Translation failed, using original: {e}")
                     # Continue with original question on translation failure
+            canonical_question_en = preprocessed_question
 
             # --- Query Rewrite (feature-flagged) ---
             rewrite_metadata = {"rewritten": False}
@@ -665,11 +667,34 @@ class SimplifiedRAGService:
                             version_confidence,
                         )
                     else:
+                        final_clarification = clarifying_question
+                        if self.translation_service and original_language != "en":
+                            try:
+                                clarification_translation = (
+                                    await self.translation_service.translate_response(
+                                        clarifying_question,
+                                        target_lang=original_language,
+                                    )
+                                )
+                                if not clarification_translation.get("error"):
+                                    final_clarification = clarification_translation[
+                                        "translated_text"
+                                    ]
+                                    logger.info(
+                                        "Translated clarification to %s",
+                                        original_language,
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    "Clarification translation failed, using English: %s",
+                                    e,
+                                )
+
                         logger.info(
                             f"Requesting clarification from user: {clarifying_question[:50]}..."
                         )
                         return {
-                            "answer": clarifying_question,
+                            "answer": final_clarification,
                             "sources": [],
                             "response_time": time.time() - start_time,
                             "needs_clarification": True,
@@ -678,6 +703,10 @@ class SimplifiedRAGService:
                             "routing_action": "needs_clarification",
                             "forwarded_to_human": False,
                             "feedback_created": False,
+                            "canonical_question_en": canonical_question_en,
+                            "localized_question": localized_question,
+                            "original_language": original_language,
+                            "translated": was_translated,
                         }
 
             # Update conversation state
@@ -1060,6 +1089,10 @@ class SimplifiedRAGService:
                 "mcp_tools_used": mcp_tools_used,
                 "original_language": original_language,
                 "translated": was_translated,
+                "canonical_question_en": canonical_question_en,
+                "canonical_answer_en": response_text,
+                "localized_question": localized_question,
+                "localized_answer": final_response,
                 "query_rewrite": rewrite_metadata,
             }
 

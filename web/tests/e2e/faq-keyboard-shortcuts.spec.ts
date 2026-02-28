@@ -114,6 +114,12 @@ test.describe("FAQ Keyboard Shortcuts", () => {
         return null;
     };
 
+    const getSelectedFaqQuestion = async (page: Page): Promise<string> => {
+        const selectedCard = page.locator(SELECTED_FAQ_CARD_SELECTOR).first();
+        await expect(selectedCard).toBeVisible({ timeout: 5000 });
+        return (await selectedCard.locator("h3").first().innerText()).trim();
+    };
+
     test.afterEach(async ({ request }) => {
         // Clean up created FAQs
         for (const question of createdFaqQuestions) {
@@ -225,7 +231,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await textarea.fill("First FAQ answer - edited");
 
             // Save
-            const saveButton = page.locator('button:has-text("Save")');
+            const saveButton = page.getByRole("button", { name: "Save", exact: true });
             await saveButton.click();
 
             // Wait for save to complete
@@ -264,12 +270,11 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.locator('h1:has-text("FAQ Management")').click();
             await page.waitForTimeout(200);
 
-            // Select first FAQ (unverified)
-            await page.keyboard.press("j");
-
-            // Check initial selection is on first FAQ
-            const faq1Selected = page.locator(`${SELECTED_FAQ_CARD_SELECTOR}:has-text("${faq1Question}")`);
-            await expect(faq1Selected).toBeVisible({ timeout: 5000 });
+            // Select FAQ 1 explicitly (ordering can vary in search results)
+            const faq1Card = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${faq1Question}")`).first();
+            await faq1Card.click();
+            const selectedBefore = await getSelectedFaqQuestion(page);
+            expect(selectedBefore).toBe(faq1Question);
 
             // Press V to verify
             await page.keyboard.press("v");
@@ -284,10 +289,10 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             }
 
             // After verify, selection should jump to the next unverified FAQ (FAQ 3)
-            // FAQ 2 is verified, so it should skip to FAQ 3
-            await page.waitForTimeout(500); // Wait for state update
-            const faq3Selected = page.locator(`${SELECTED_FAQ_CARD_SELECTOR}:has-text("${faq3Question}")`);
-            await expect(faq3Selected).toBeVisible({ timeout: 5000 });
+            // FAQ 2 is already verified, so it should be skipped.
+            await expect
+                .poll(async () => getSelectedFaqQuestion(page), { timeout: 5000 })
+                .toBe(faq3Question);
         });
 
         test("should stay on current FAQ if no more unverified FAQs", async ({ page, request }) => {
@@ -561,15 +566,42 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await expect(textarea).toBeVisible({ timeout: 5000 });
 
             // Click on Protocol dropdown to open it
-            const protocolDropdown = page.locator('button[role="combobox"]:has-text("Bisq Easy")');
+            const protocolDropdown = page
+                .locator('button[role="combobox"]')
+                .filter({ hasText: /Bisq Easy/i })
+                .first();
+            await protocolDropdown.scrollIntoViewIfNeeded();
             await protocolDropdown.click();
 
-            // Select "Bisq 1 (Multisig)" option
-            const multisigOption = page.locator('[role="option"]:has-text("Bisq 1 (Multisig)")');
-            await multisigOption.click();
+            // Select via DOM click on the currently visible Radix option.
+            // This avoids viewport instability when Playwright clicks portal options.
+            await page.evaluate(() => {
+                const options = Array.from(
+                    document.querySelectorAll<HTMLElement>('[role="option"]')
+                );
+                const inViewport = (el: HTMLElement) => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+                };
+                const target =
+                    options.find((el) => el.textContent?.includes("Bisq 1 (Multisig)") && inViewport(el)) ??
+                    options.find((el) => el.textContent?.includes("Bisq 1 (Multisig)"));
+
+                if (!target) {
+                    throw new Error("Could not find Bisq 1 (Multisig) option in protocol dropdown");
+                }
+                target.click();
+            });
+
+            await expect(
+                page
+                    .locator('button[role="combobox"]')
+                    .filter({ hasText: /Bisq 1|Multisig/i })
+                    .first()
+            ).toBeVisible({ timeout: 5000 });
 
             // Save the changes
-            const saveButton = page.locator('button:has-text("Save")');
+            const saveButton = page.getByRole("button", { name: "Save", exact: true });
             await saveButton.click();
 
             // Wait for save to complete

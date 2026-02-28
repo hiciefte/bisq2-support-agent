@@ -681,6 +681,10 @@ export function TrainingReviewItem({
               )}
             </div>
             <div className="mb-3 rounded-lg border border-border bg-muted/20 p-3">
+              <p className="mb-2 text-xs text-muted-foreground">
+                Suggested Answer is generated from the FAQ question and selected protocol.
+                Regenerate after editing the FAQ question.
+              </p>
               <ProtocolSelector
                 currentProtocol={currentProtocol}
                 onProtocolChange={handleProtocolChange}

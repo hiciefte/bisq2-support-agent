@@ -11,9 +11,10 @@ import re
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, List, Optional, Set
+from typing import Any, Deque, Dict, List, Literal, Optional, Set, cast
 
 from app.channels.base import ChannelBase
+from app.channels.escalation_localization import render_escalation_notice
 from app.channels.history_builder import (
     ConversationMessage,
     build_channel_chat_history,
@@ -277,6 +278,7 @@ class Bisq2Channel(ChannelBase):
                         requires_human=getattr(message, "requires_human", None),
                         in_reply_to=getattr(message, "in_reply_to", None),
                         delivery_target=target,
+                        user_language=getattr(_meta, "original_language", None),
                     )
                 except Exception:
                     self._logger.warning(
@@ -308,13 +310,19 @@ class Bisq2Channel(ChannelBase):
         return str(metadata.get("channel_id", "") or "").strip()
 
     def format_escalation_message(
-        self, username: str, escalation_id: int, support_handle: str
+        self,
+        username: str,
+        escalation_id: int,
+        support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         """Format escalation message for Bisq2 chat."""
-        return (
-            f"Your question has been escalated to {support_handle} for review. "
-            f"A support team member will respond in this conversation. "
-            f"(Reference: #{escalation_id})"
+        _ = username
+        return render_escalation_notice(
+            channel_id=self.channel_id,
+            escalation_id=escalation_id,
+            support_handle=support_handle,
+            language_code=language_code,
         )
 
     # handle_incoming() inherited from ChannelBase
@@ -858,7 +866,12 @@ class Bisq2Channel(ChannelBase):
             if role not in {"user", "assistant", "system"} or not content:
                 continue
             try:
-                history.append(ChatMessage(role=role, content=content))
+                history.append(
+                    ChatMessage(
+                        role=cast(Literal["user", "assistant", "system"], role),
+                        content=content,
+                    )
+                )
             except Exception:
                 continue
         return history or None

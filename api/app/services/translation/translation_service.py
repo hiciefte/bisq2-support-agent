@@ -4,14 +4,23 @@ Orchestrates language detection, term protection, translation, and caching.
 Supports 100+ languages with a single English knowledge base.
 """
 
+import asyncio
 import hashlib
+import inspect
 import logging
+import time
 from typing import Any, Dict, Optional
 
+from app.metrics.translation_metrics import (
+    translation_errors_total,
+    translation_operation_duration_seconds,
+    translation_query_decisions_total,
+)
 from app.services.translation.cache import TieredCache
 from app.services.translation.glossary_manager import GlossaryManager
 from app.services.translation.language_detector import (
     SUPPORTED_LANGUAGES,
+    LanguageDetectionDetails,
     LanguageDetector,
 )
 
@@ -52,6 +61,13 @@ Translation:"""
         cache_l1_size: int = 1000,
         cache_db_path: str = "/data/translation_cache.db",
         additional_glossary_terms: Optional[Dict[str, str]] = None,
+        translation_skip_en_confidence: float = 0.85,
+        lid_backend: str = "langdetect",
+        lid_confidence_threshold: float = 0.80,
+        lid_short_text_chars: int = 24,
+        lid_mixed_margin_threshold: float = 0.20,
+        lid_mixed_secondary_min: float = 0.25,
+        lid_enable_llm_tiebreaker: bool = True,
     ):
         """Initialize the TranslationService.
 
@@ -63,14 +79,33 @@ Translation:"""
             cache_l1_size: Size of L1 LRU cache (if cache_backend not provided).
             cache_db_path: Path to L3 SQLite cache database (if cache_backend not provided).
             additional_glossary_terms: Extra terms to protect from translation.
+            translation_skip_en_confidence: Skip query translation if detected English
+                confidence is at or above this threshold.
+            lid_backend: Local language ID backend to use.
+            lid_confidence_threshold: Confidence threshold for local LID acceptance.
+            lid_short_text_chars: Short-text threshold for LID tie-break policy.
+            lid_mixed_margin_threshold: Margin threshold for mixed-language detection.
+            lid_mixed_secondary_min: Secondary confidence threshold for mixed-language detection.
+            lid_enable_llm_tiebreaker: Enable LLM tie-break for uncertain LID results.
         """
         self.llm = llm_provider
+        self.translation_skip_en_confidence = max(
+            0.0, min(1.0, float(translation_skip_en_confidence))
+        )
 
         # Use injected dependencies or create new instances
         self.glossary = glossary_manager or GlossaryManager(
             additional_terms=additional_glossary_terms
         )
-        self.detector = language_detector or LanguageDetector(llm_provider=llm_provider)
+        self.detector = language_detector or LanguageDetector(
+            llm_provider=llm_provider,
+            local_backend=lid_backend,
+            local_confidence_threshold=lid_confidence_threshold,
+            short_text_chars=lid_short_text_chars,
+            mixed_margin_threshold=lid_mixed_margin_threshold,
+            mixed_secondary_min=lid_mixed_secondary_min,
+            enable_llm_tiebreaker=lid_enable_llm_tiebreaker,
+        )
         self.cache = cache_backend or TieredCache(
             l1_size=cache_l1_size, db_path=cache_db_path
         )
@@ -100,6 +135,27 @@ Translation:"""
         content = f"{source_lang}:{target_lang}:{text}"
         return hashlib.md5(content.encode()).hexdigest()
 
+    async def _llm_text(self, prompt: str) -> str:
+        """Call configured LLM and normalize response text.
+
+        Supports both async `generate(prompt)` and sync `invoke(prompt)` interfaces.
+        """
+        if self.llm is None:
+            raise ValueError("No LLM provider configured for translation")
+
+        if hasattr(self.llm, "generate"):
+            result = self.llm.generate(prompt)
+            if inspect.isawaitable(result):
+                result = await result
+        elif hasattr(self.llm, "invoke"):
+            result = await asyncio.to_thread(self.llm.invoke, prompt)
+        else:
+            raise AttributeError("LLM provider must expose generate() or invoke()")
+
+        if hasattr(result, "content"):
+            return str(result.content).strip()
+        return str(result).strip()
+
     async def _translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Perform the actual translation using LLM.
 
@@ -117,7 +173,11 @@ Translation:"""
         if self.llm is None:
             raise ValueError("No LLM provider configured for translation")
 
-        source_name = SUPPORTED_LANGUAGES.get(source_lang, source_lang)
+        source_name = (
+            "auto-detected language"
+            if source_lang == "auto"
+            else SUPPORTED_LANGUAGES.get(source_lang, source_lang)
+        )
         target_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
 
         prompt = self.TRANSLATION_PROMPT.format(
@@ -126,9 +186,16 @@ Translation:"""
             text=text,
         )
 
-        response = await self.llm.generate(prompt)
+        response = await self._llm_text(prompt)
         self.stats["translations_performed"] += 1
         return response.strip()
+
+    @staticmethod
+    def _record_query_decision(decision: str, source_lang: str) -> None:
+        translation_query_decisions_total.labels(
+            decision=decision,
+            source_lang=(source_lang or "unknown"),
+        ).inc()
 
     async def translate_query(
         self,
@@ -153,36 +220,79 @@ Translation:"""
             - skipped: Whether translation was skipped (already English)
             - confidence: Detection confidence (if auto-detected)
         """
+        start_time = time.perf_counter()
         self.stats["queries_processed"] += 1
 
         # Detect language if not provided
+        detection_details: Optional[LanguageDetectionDetails] = None
         confidence = 1.0
         if source_lang is None:
-            source_lang, confidence = await self.detector.detect(query)
+            detection_details = await self.detector.detect_with_metadata(query)
+            source_lang = detection_details.language_code
+            confidence = detection_details.confidence
+        source_lang = (source_lang or "en").strip().lower() or "en"
 
-        # Skip if already English
-        if source_lang == "en":
+        if source_lang == "en" and confidence >= self.translation_skip_en_confidence:
             self.stats["english_passthrough"] += 1
-            return {
+            self._record_query_decision("skip_english", source_lang)
+            result = {
                 "translated_text": query,
                 "source_lang": "en",
                 "skipped": True,
                 "cached": False,
                 "confidence": confidence,
+                "detection_backend": (
+                    detection_details.backend if detection_details else "provided"
+                ),
+                "is_mixed_language": (
+                    detection_details.is_mixed if detection_details else False
+                ),
+                "llm_tiebreak_used": (
+                    detection_details.llm_tiebreak_used if detection_details else False
+                ),
             }
+            translation_operation_duration_seconds.labels(direction="query").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
+
+        # For low-confidence English detections, ask translation LLM to auto-detect source.
+        source_lang_for_translation = (
+            "auto"
+            if source_lang == "en"
+            and confidence < self.translation_skip_en_confidence
+            and source_lang is not None
+            else source_lang
+        )
 
         # Check cache
-        cache_key = self._make_cache_key(query, source_lang, target_lang)
+        cache_key = self._make_cache_key(
+            query, source_lang_for_translation, target_lang
+        )
         cached_result = await self.cache.get(cache_key)
         if cached_result is not None:
             self.stats["cache_hits"] += 1
-            return {
+            self._record_query_decision("translate_cache_hit", source_lang)
+            result = {
                 "translated_text": cached_result,
                 "source_lang": source_lang,
                 "skipped": False,
                 "cached": True,
                 "confidence": confidence,
+                "detection_backend": (
+                    detection_details.backend if detection_details else "provided"
+                ),
+                "is_mixed_language": (
+                    detection_details.is_mixed if detection_details else False
+                ),
+                "llm_tiebreak_used": (
+                    detection_details.llm_tiebreak_used if detection_details else False
+                ),
             }
+            translation_operation_duration_seconds.labels(direction="query").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
         self.stats["cache_misses"] += 1
 
@@ -192,7 +302,7 @@ Translation:"""
         try:
             # Translate
             translated = await self._translate(
-                protected_query, source_lang, target_lang
+                protected_query, source_lang_for_translation, target_lang
             )
 
             # Restore Bisq terms
@@ -200,6 +310,12 @@ Translation:"""
 
             # Cache the result
             await self.cache.set(cache_key, final_text)
+            decision = (
+                "translate_low_confidence_en"
+                if source_lang_for_translation == "auto"
+                else "translate_performed"
+            )
+            self._record_query_decision(decision, source_lang)
 
             return {
                 "translated_text": final_text,
@@ -207,11 +323,22 @@ Translation:"""
                 "skipped": False,
                 "cached": False,
                 "confidence": confidence,
+                "detection_backend": (
+                    detection_details.backend if detection_details else "provided"
+                ),
+                "is_mixed_language": (
+                    detection_details.is_mixed if detection_details else False
+                ),
+                "llm_tiebreak_used": (
+                    detection_details.llm_tiebreak_used if detection_details else False
+                ),
             }
 
         except Exception as e:
             logger.error(f"Translation failed: {e}")
             self.stats["translation_errors"] += 1
+            self._record_query_decision("translate_error", source_lang)
+            translation_errors_total.labels(direction="query").inc()
             # Graceful degradation: return original query
             return {
                 "translated_text": query,
@@ -221,6 +348,10 @@ Translation:"""
                 "confidence": 0.0,
                 "error": str(e),
             }
+        finally:
+            translation_operation_duration_seconds.labels(direction="query").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
 
     async def translate_response(
         self,
@@ -243,27 +374,36 @@ Translation:"""
             - skipped: Whether translation was skipped
             - cached: Whether result came from cache
         """
+        start_time = time.perf_counter()
         self.stats["responses_processed"] += 1
 
         # Skip if target is English
         if target_lang == "en":
             self.stats["english_passthrough"] += 1
-            return {
+            result = {
                 "translated_text": response,
                 "skipped": True,
                 "cached": False,
             }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
         # Check cache
         cache_key = self._make_cache_key(response, source_lang, target_lang)
         cached_result = await self.cache.get(cache_key)
         if cached_result is not None:
             self.stats["cache_hits"] += 1
-            return {
+            result = {
                 "translated_text": cached_result,
                 "skipped": False,
                 "cached": True,
             }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
         self.stats["cache_misses"] += 1
 
@@ -282,22 +422,31 @@ Translation:"""
             # Cache the result
             await self.cache.set(cache_key, final_text)
 
-            return {
+            result = {
                 "translated_text": final_text,
                 "skipped": False,
                 "cached": False,
             }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
         except Exception as e:
             logger.error(f"Response translation failed: {e}")
             self.stats["translation_errors"] += 1
+            translation_errors_total.labels(direction="response").inc()
             # Graceful degradation: return original response
-            return {
+            result = {
                 "translated_text": response,
                 "skipped": False,
                 "cached": False,
                 "error": str(e),
             }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
     def get_stats(self) -> Dict[str, Any]:
         """Get translation service statistics.

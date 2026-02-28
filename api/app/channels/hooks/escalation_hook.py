@@ -98,11 +98,19 @@ class EscalationPostHook(BasePostProcessingHook):
     def _replace_answer(self, incoming, outgoing, escalation_id: int):
         """Replace outgoing.answer with channel-specific escalation message."""
         username = incoming.user.channel_user_id or incoming.user.user_id
+        metadata = getattr(outgoing, "metadata", None)
+        raw_language = getattr(metadata, "original_language", None)
+        original_language = (
+            raw_language.strip().lower() if isinstance(raw_language, str) else None
+        )
+        if isinstance(original_language, str) and len(original_language) > 8:
+            original_language = None
         outgoing.answer = format_escalation_notice(
             channel_id=incoming.channel.value,
             username=username,
             escalation_id=escalation_id,
             support_handle="support",
+            language_code=original_language,
             channel=None,
             channel_registry=self.channel_registry,
         )

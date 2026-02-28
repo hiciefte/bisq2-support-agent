@@ -376,6 +376,59 @@ class Settings(BaseSettings):
     ENABLE_PRIVACY_MODE: bool = True  # Enable privacy-preserving features
     PII_DETECTION_ENABLED: bool = True  # Enable PII detection in logs
 
+    # Multilingual detection/translation policy settings
+    MULTILINGUAL_LID_BACKEND: str = Field(
+        default="langdetect",
+        description="Primary local language ID backend (langdetect or none)",
+    )
+    MULTILINGUAL_LID_CONFIDENCE_THRESHOLD: float = Field(
+        default=0.80,
+        ge=0.0,
+        le=1.0,
+        description="Minimum local LID confidence to accept without LLM tie-break",
+    )
+    MULTILINGUAL_LID_SHORT_TEXT_CHARS: int = Field(
+        default=24,
+        ge=1,
+        le=500,
+        description="Text-length threshold below which LLM tie-break is allowed",
+    )
+    MULTILINGUAL_LID_MIXED_MARGIN_THRESHOLD: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description="Top1-top2 confidence gap below which text is treated as mixed",
+    )
+    MULTILINGUAL_LID_MIXED_SECONDARY_MIN: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description="Minimum secondary confidence to classify as mixed language",
+    )
+    MULTILINGUAL_LID_ENABLE_LLM_TIEBREAKER: bool = Field(
+        default=True,
+        description="Allow LLM to resolve low-confidence/mixed local language detections",
+    )
+    MULTILINGUAL_TRANSLATION_SKIP_EN_CONFIDENCE: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold to skip translation when detected language is English",
+    )
+
+    @field_validator("MULTILINGUAL_LID_BACKEND")
+    @classmethod
+    def validate_lid_backend(cls, v: str) -> str:
+        """Validate MULTILINGUAL_LID_BACKEND is a supported value."""
+        v = (v or "").strip().lower()
+        allowed = {"langdetect", "none"}
+        if v not in allowed:
+            raise ValueError(
+                "MULTILINGUAL_LID_BACKEND must be one of "
+                f"{', '.join(sorted(allowed))}, got '{v}'"
+            )
+        return v
+
     # Support agent configuration
     SUPPORT_AGENT_NICKNAMES: str | list[str] = ""  # Comma-separated or list (required)
     # Known support staff usernames for message filtering (Matrix localparts without @ or :server)

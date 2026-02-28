@@ -215,6 +215,12 @@ class ResponseMetadata(BaseModel):
     routing_reason: Optional[str] = None
     detected_version: Optional[str] = None
     version_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    original_language: Optional[str] = None
+    canonical_question_en: Optional[str] = None
+    canonical_answer_en: Optional[str] = None
+    localized_question: Optional[str] = None
+    localized_answer: Optional[str] = None
+    translation_applied: Optional[bool] = None
     hooks_executed: List[str] = Field(default_factory=list)
 
 

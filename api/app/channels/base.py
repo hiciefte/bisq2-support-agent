@@ -241,7 +241,11 @@ class ChannelBase(ABC):
 
     @abstractmethod
     def format_escalation_message(
-        self, username: str, escalation_id: int, support_handle: str
+        self,
+        username: str,
+        escalation_id: int,
+        support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         """Format channel-specific escalation message shown to user.
 
@@ -249,6 +253,7 @@ class ChannelBase(ABC):
             username: User's display name or channel_user_id.
             escalation_id: Database ID of the created escalation.
             support_handle: Channel-appropriate support contact.
+            language_code: Optional detected user language code (e.g. "de", "es").
 
         Returns:
             Human-readable escalation message string.

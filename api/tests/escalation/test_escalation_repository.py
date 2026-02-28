@@ -104,6 +104,29 @@ class TestEscalationRepositoryCreate:
         )
         assert result.channel_metadata == metadata
 
+    @pytest.mark.asyncio
+    async def test_create_persists_multilingual_context(self, escalation_repository):
+        """Canonical and localized escalation fields are both persisted."""
+        await escalation_repository.initialize()
+        result = await escalation_repository.create(
+            _make_create(
+                question="How does Bisq Easy work?",
+                question_original="Wie funktioniert Bisq Easy?",
+                ai_draft_answer="Bisq Easy uses a reputation system.",
+                ai_draft_answer_original=("Bisq Easy nutzt ein Reputationssystem."),
+                user_language="de",
+                translation_applied=True,
+            )
+        )
+        assert result.question == "How does Bisq Easy work?"
+        assert result.question_original == "Wie funktioniert Bisq Easy?"
+        assert result.ai_draft_answer == "Bisq Easy uses a reputation system."
+        assert (
+            result.ai_draft_answer_original == "Bisq Easy nutzt ein Reputationssystem."
+        )
+        assert result.user_language == "de"
+        assert result.translation_applied is True
+
 
 # ---------------------------------------------------------------------------
 # Read

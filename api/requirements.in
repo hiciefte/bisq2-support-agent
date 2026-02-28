@@ -21,10 +21,10 @@ ragas>=0.1.21
 datasets>=2.21.0
 
 # NLI and ML models (for confidence scoring via DeBERTa)
-# NOTE: torch is installed separately as CPU-only in Dockerfile/CI
+# NOTE: torch is installed separately as pinned CPU-only in Dockerfile/CI
 # to avoid ~5GB of unnecessary NVIDIA CUDA libraries
 transformers>=4.35.0
-# torch - installed from https://download.pytorch.org/whl/cpu index
+# torch - installed as torch==2.10.0+cpu from https://download.pytorch.org/whl/cpu
 
 # Matrix integration
 matrix-nio[e2e]>=0.21.0
@@ -61,6 +61,7 @@ aiohttp
 websockets
 mwxml
 mwparserfromhell
+langdetect
 
 # Resilience and caching (for Bisq MCP integration)
 cachetools

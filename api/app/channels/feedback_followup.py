@@ -313,7 +313,9 @@ class FeedbackFollowupCoordinator:
             sources=[],
             user=UserContext(
                 user_id=user_id,
+                session_id=None,
                 channel_user_id=user_id,
+                auth_token=None,
             ),
             metadata=ResponseMetadata(
                 processing_time_ms=0.0,

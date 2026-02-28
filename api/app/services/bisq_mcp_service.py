@@ -17,6 +17,7 @@ Features:
 
 import asyncio
 import logging
+import os
 import re
 import unicodedata
 from datetime import UTC, datetime
@@ -25,24 +26,6 @@ from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple
 import httpx
 from app.core.config import Settings
 from cachetools import TTLCache  # type: ignore[import-untyped]
-
-try:
-    from pybreaker import CircuitBreaker, CircuitBreakerError
-except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
-
-    class CircuitBreakerError(Exception):
-        """Fallback circuit breaker error when pybreaker is unavailable."""
-
-    class CircuitBreaker:  # type: ignore[override]
-        """No-op fallback circuit breaker used in test environments."""
-
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            self.current_state = "closed"
-
-        def call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-            return func(*args, **kwargs)
-
-
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -51,6 +34,63 @@ from tenacity import (
 )
 
 logger = logging.getLogger(__name__)
+
+CircuitBreakerClass: Any
+CircuitBreakerErrorClass: Any
+
+
+def _is_production_environment() -> bool:
+    """Return True when runtime env variables indicate production."""
+    env_values = (
+        os.getenv("ENVIRONMENT", ""),
+        os.getenv("PYTHON_ENV", ""),
+        os.getenv("APP_ENV", ""),
+    )
+    return any(
+        str(value).strip().lower() in {"production", "prod", "live"}
+        for value in env_values
+        if value
+    )
+
+
+try:
+    from pybreaker import CircuitBreaker as _PyBreakerCircuitBreaker
+    from pybreaker import CircuitBreakerError as _PyBreakerCircuitBreakerError
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised in minimal test envs
+    if exc.name != "pybreaker":
+        raise
+    allow_noop_fallback = os.getenv(
+        "ALLOW_NOOP_CIRCUIT_BREAKER", ""
+    ).strip().lower() in {"1", "true", "yes"}
+    if _is_production_environment() and not allow_noop_fallback:
+        logger.error(
+            "pybreaker is unavailable in production environment; refusing no-op fallback"
+        )
+        raise
+    logger.warning(
+        "pybreaker is unavailable; using no-op circuit breaker fallback for Bisq MCP service"
+    )
+
+    class _FallbackCircuitBreakerError(Exception):
+        """Fallback circuit breaker error when pybreaker is unavailable."""
+
+    class _FallbackCircuitBreaker:
+        """No-op fallback circuit breaker used in test environments."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.current_state = "closed"
+
+        def call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+            return func(*args, **kwargs)
+
+    CircuitBreakerClass = _FallbackCircuitBreaker
+    CircuitBreakerErrorClass = _FallbackCircuitBreakerError
+else:
+    CircuitBreakerClass = _PyBreakerCircuitBreaker
+    CircuitBreakerErrorClass = _PyBreakerCircuitBreakerError
+
+CircuitBreaker = CircuitBreakerClass
+CircuitBreakerError = CircuitBreakerErrorClass
 
 
 # =============================================================================

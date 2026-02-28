@@ -10,7 +10,7 @@ Tests cover:
 - Error handling and fallback mechanisms
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.prompts import error_messages
@@ -252,6 +252,42 @@ class TestSourceAwareVersionFallback:
         """Matrix source has no default and should remain unresolved."""
         resolved = rag_service._resolve_source_default_version("WTF?!", "matrix")
         assert resolved is None
+
+
+class TestMultilingualClarification:
+    """Test multilingual clarification handling in the RAG query path."""
+
+    @pytest.mark.asyncio
+    async def test_non_english_clarification_is_translated(self, rag_service):
+        """Low-confidence clarification should be translated back to source language."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "How do I buy BTC?",
+                "source_lang": "de",
+                "skipped": False,
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={
+                "translated_text": "Meinst du Bisq 1 oder Bisq 2?",
+                "target_lang": "de",
+            }
+        )
+
+        result = await rag_service.query("Wie kann ich BTC kaufen?", chat_history=[])
+
+        assert result["needs_clarification"] is True
+        assert result["routing_action"] == "needs_clarification"
+        assert result["answer"] == "Meinst du Bisq 1 oder Bisq 2?"
+        rag_service.translation_service.translate_response.assert_awaited_once_with(
+            "Do you mean Bisq 1 or Bisq 2?",
+            target_lang="de",
+        )
 
 
 class TestPromptManagement:

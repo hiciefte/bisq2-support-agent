@@ -17,16 +17,21 @@ from app.channels.reactions import (
     ReactionRating,
 )
 
+NioReactionEventType: Any = object
+NioRedactionEventType: Any = object
+
 try:
-    from nio import ReactionEvent as NioReactionEvent
-    from nio import RedactionEvent as NioRedactionEvent
+    from nio import ReactionEvent as _NioReactionEvent
+    from nio import RedactionEvent as _NioRedactionEvent
 except ImportError:  # pragma: no cover - exercised in environments without nio
+    pass
+else:
+    NioReactionEventType = _NioReactionEvent
+    NioRedactionEventType = _NioRedactionEvent
 
-    class NioReactionEvent:  # type: ignore[too-many-ancestors]
-        """Fallback event type placeholder when matrix-nio is unavailable."""
-
-    class NioRedactionEvent:  # type: ignore[too-many-ancestors]
-        """Fallback event type placeholder when matrix-nio is unavailable."""
+# Backward-compatible exported symbols used by tests and callers.
+NioReactionEvent = NioReactionEventType
+NioRedactionEvent = NioRedactionEventType
 
 
 logger = logging.getLogger(__name__)

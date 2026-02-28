@@ -178,6 +178,19 @@ const parseStoredMessage = (value: unknown): Message | null => {
             typeof value.escalation_message_id === "string"
                 ? value.escalation_message_id
                 : undefined,
+        escalation_resolution:
+            value.escalation_resolution === "responded" ||
+            value.escalation_resolution === "closed"
+                ? value.escalation_resolution
+                : undefined,
+        escalation_resolved_at:
+            typeof value.escalation_resolved_at === "string"
+                ? value.escalation_resolved_at
+                : undefined,
+        escalation_user_language:
+            typeof value.escalation_user_language === "string"
+                ? value.escalation_user_language
+                : undefined,
         staff_response: parseStaffResponse(value.staff_response),
     };
 };

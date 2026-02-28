@@ -73,7 +73,9 @@ const ChatInterface = () => {
         if (escalationPoll.status !== "resolved" || !pendingEscalation) return
 
         // Staff responded: attach staff response and mark escalation as resolved.
-        if (escalationPoll.resolution === "responded" && escalationPoll.staffAnswer) {
+        // Prefer presence of staff answer over resolution flag to handle
+        // "closed-after-responded" lifecycle transitions.
+        if (escalationPoll.staffAnswer) {
             setMessages(prev =>
                 prev.map(msg =>
                     msg.id === pendingEscalation.msgId
@@ -81,6 +83,7 @@ const ChatInterface = () => {
                               ...msg,
                               escalation_resolution: "responded",
                               escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
+                              escalation_user_language: escalationPoll.userLanguage ?? msg.escalation_user_language,
                               staff_response: {
                                   ...msg.staff_response,
                                   answer: escalationPoll.staffAnswer!,
@@ -105,6 +108,7 @@ const ChatInterface = () => {
                               requires_human: false,
                               escalation_resolution: "closed",
                               escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
+                              escalation_user_language: escalationPoll.userLanguage ?? msg.escalation_user_language,
                           }
                         : msg
                 )
@@ -117,6 +121,7 @@ const ChatInterface = () => {
         escalationPoll.resolution,
         escalationPoll.staffAnswerRating,
         escalationPoll.rateToken,
+        escalationPoll.userLanguage,
         pendingEscalation,
         setMessages,
     ])
