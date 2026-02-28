@@ -293,9 +293,28 @@ class TestLanguageDetector:
 
         details = await detector.detect_with_metadata("Qwrt?!")
 
-        assert details.language_code == "en"
-        assert details.backend == "default_fallback"
-        assert details.confidence <= 0.5
+        assert details.language_code == "und"
+        assert details.backend == "short_text_ambiguous"
+        assert details.confidence <= 0.2
+
+    @pytest.mark.asyncio
+    async def test_short_text_uses_context_prior_when_available(self):
+        """Short ambiguous text should use a known prior language from conversation context."""
+        from app.services.translation.language_detector import LanguageDetector
+
+        detector = LanguageDetector(llm_provider=None, local_backend="langdetect")
+
+        class _LocalResult:
+            lang = "it"
+            prob = 0.99999
+
+        detector._local_detect_langs = lambda _: [_LocalResult()]  # type: ignore[assignment]
+
+        details = await detector.detect_with_metadata("Danke!", prior_language="de")
+
+        assert details.language_code == "de"
+        assert details.backend == "context_prior_short_text"
+        assert details.confidence >= 0.8
 
 
 # =============================================================================
@@ -481,6 +500,29 @@ class TestTranslationService:
         assert result["translated_text"] == sample_english_query
         assert result["source_lang"] == "en"
         assert result.get("skipped") is True
+
+    @pytest.mark.asyncio
+    async def test_translate_query_uses_auto_when_source_undetermined(
+        self, translation_service, mock_llm_provider
+    ):
+        """Undetermined language should route translation through auto source detection."""
+        from app.services.translation.language_detector import LanguageDetectionDetails
+
+        mock_llm_provider.generate = AsyncMock(return_value="Hello there?")
+        translation_service.detector.detect_with_metadata = AsyncMock(
+            return_value=LanguageDetectionDetails(
+                language_code="und",
+                confidence=0.2,
+                backend="short_text_ambiguous",
+            )
+        )
+
+        result = await translation_service.translate_query("Hallo?!")
+
+        assert result["source_lang"] == "und"
+        assert result["skipped"] is False
+        prompt = mock_llm_provider.generate.await_args.args[0]
+        assert "auto-detected language" in prompt
 
     @pytest.mark.asyncio
     async def test_translate_query_german_to_english(

@@ -289,6 +289,40 @@ class TestMultilingualClarification:
             target_lang="de",
         )
 
+    @pytest.mark.asyncio
+    async def test_translate_query_receives_prior_language_from_history(
+        self, rag_service
+    ):
+        """Translation query should receive prior language context from chat history metadata."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "How can I buy BTC?",
+                "source_lang": "de",
+                "skipped": False,
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={"translated_text": "Meinst du Bisq 1 oder Bisq 2?"}
+        )
+
+        chat_history = [
+            {"role": "user", "content": "Hallo", "original_language": "de"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+
+        result = await rag_service.query("Hallo?!", chat_history=chat_history)
+
+        assert result["needs_clarification"] is True
+        rag_service.translation_service.translate_query.assert_awaited_once_with(
+            "Hallo?!",
+            prior_language="de",
+        )
+
 
 class TestPromptManagement:
     """Test prompt creation and management."""

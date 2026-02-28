@@ -52,6 +52,8 @@ Text to translate:
 
 Translation:"""
 
+    UNKNOWN_LANGUAGE_CODES = {"und", "unknown"}
+
     def __init__(
         self,
         llm_provider: Optional[Any] = None,
@@ -201,6 +203,7 @@ Translation:"""
         self,
         query: str,
         source_lang: Optional[str] = None,
+        prior_language: Optional[str] = None,
         target_lang: str = "en",
     ) -> Dict[str, Any]:
         """Translate a user query to English for RAG processing.
@@ -223,14 +226,32 @@ Translation:"""
         start_time = time.perf_counter()
         self.stats["queries_processed"] += 1
 
+        if not (query or "").strip():
+            result = {
+                "translated_text": query,
+                "source_lang": "und",
+                "skipped": True,
+                "cached": False,
+                "confidence": 0.0,
+                "detection_backend": "empty_input",
+            }
+            translation_operation_duration_seconds.labels(direction="query").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
+
         # Detect language if not provided
         detection_details: Optional[LanguageDetectionDetails] = None
         confidence = 1.0
         if source_lang is None:
-            detection_details = await self.detector.detect_with_metadata(query)
+            detection_details = await self.detector.detect_with_metadata(
+                query, prior_language=prior_language
+            )
             source_lang = detection_details.language_code
             confidence = detection_details.confidence
         source_lang = (source_lang or "en").strip().lower() or "en"
+        if source_lang in self.UNKNOWN_LANGUAGE_CODES:
+            source_lang = "und"
 
         if source_lang == "en" and confidence >= self.translation_skip_en_confidence:
             self.stats["english_passthrough"] += 1
@@ -257,13 +278,11 @@ Translation:"""
             return result
 
         # For low-confidence English detections, ask translation LLM to auto-detect source.
-        source_lang_for_translation = (
-            "auto"
-            if source_lang == "en"
-            and confidence < self.translation_skip_en_confidence
-            and source_lang is not None
-            else source_lang
-        )
+        source_lang_for_translation = source_lang
+        if source_lang == "en" and confidence < self.translation_skip_en_confidence:
+            source_lang_for_translation = "auto"
+        elif source_lang == "und":
+            source_lang_for_translation = "auto"
 
         # Check cache
         cache_key = self._make_cache_key(
@@ -272,7 +291,12 @@ Translation:"""
         cached_result = await self.cache.get(cache_key)
         if cached_result is not None:
             self.stats["cache_hits"] += 1
-            self._record_query_decision("translate_cache_hit", source_lang)
+            cache_decision = (
+                "translate_cache_hit_auto"
+                if source_lang_for_translation == "auto"
+                else "translate_cache_hit"
+            )
+            self._record_query_decision(cache_decision, source_lang)
             result = {
                 "translated_text": cached_result,
                 "source_lang": source_lang,
@@ -310,11 +334,14 @@ Translation:"""
 
             # Cache the result
             await self.cache.set(cache_key, final_text)
-            decision = (
-                "translate_low_confidence_en"
-                if source_lang_for_translation == "auto"
-                else "translate_performed"
-            )
+            if source_lang_for_translation == "auto":
+                decision = (
+                    "translate_unknown_source"
+                    if source_lang == "und"
+                    else "translate_low_confidence_en"
+                )
+            else:
+                decision = "translate_performed"
             self._record_query_decision(decision, source_lang)
 
             return {
@@ -377,11 +404,14 @@ Translation:"""
         start_time = time.perf_counter()
         self.stats["responses_processed"] += 1
 
+        normalized_target_lang = (target_lang or "").strip().lower() or "en"
+
         # Skip if target is English
-        if target_lang == "en":
+        if normalized_target_lang == "en" or normalized_target_lang == source_lang:
             self.stats["english_passthrough"] += 1
             result = {
                 "translated_text": response,
+                "target_lang": normalized_target_lang,
                 "skipped": True,
                 "cached": False,
             }
@@ -390,13 +420,27 @@ Translation:"""
             )
             return result
 
+        if normalized_target_lang in self.UNKNOWN_LANGUAGE_CODES:
+            result = {
+                "translated_text": response,
+                "target_lang": normalized_target_lang,
+                "skipped": True,
+                "cached": False,
+                "reason": "unknown_target_language",
+            }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
+
         # Check cache
-        cache_key = self._make_cache_key(response, source_lang, target_lang)
+        cache_key = self._make_cache_key(response, source_lang, normalized_target_lang)
         cached_result = await self.cache.get(cache_key)
         if cached_result is not None:
             self.stats["cache_hits"] += 1
             result = {
                 "translated_text": cached_result,
+                "target_lang": normalized_target_lang,
                 "skipped": False,
                 "cached": True,
             }
@@ -413,7 +457,7 @@ Translation:"""
         try:
             # Translate
             translated = await self._translate(
-                protected_response, source_lang, target_lang
+                protected_response, source_lang, normalized_target_lang
             )
 
             # Restore Bisq terms
@@ -424,6 +468,7 @@ Translation:"""
 
             result = {
                 "translated_text": final_text,
+                "target_lang": normalized_target_lang,
                 "skipped": False,
                 "cached": False,
             }
@@ -439,6 +484,7 @@ Translation:"""
             # Graceful degradation: return original response
             result = {
                 "translated_text": response,
+                "target_lang": normalized_target_lang,
                 "skipped": False,
                 "cached": False,
                 "error": str(e),
