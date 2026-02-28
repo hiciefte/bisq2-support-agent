@@ -259,6 +259,44 @@ class TestLanguageDetector:
         assert lang_code == "de"
         assert confidence >= 0.85
 
+    @pytest.mark.asyncio
+    async def test_short_german_greeting_uses_short_text_hint(self):
+        """Short greetings like 'Hallo?!' should not rely on unstable local LID."""
+        from app.services.translation.language_detector import LanguageDetector
+
+        detector = LanguageDetector(llm_provider=None, local_backend="langdetect")
+
+        class _LocalResult:
+            lang = "it"
+            prob = 0.99999
+
+        detector._local_detect_langs = lambda _: [_LocalResult()]  # type: ignore[assignment]
+
+        details = await detector.detect_with_metadata("Hallo?!")
+
+        assert details.language_code == "de"
+        assert details.backend == "short_text_hint"
+        assert details.confidence >= 0.9
+
+    @pytest.mark.asyncio
+    async def test_short_unhinted_text_does_not_trust_local_model(self):
+        """Short text without corroboration should avoid confident local-model misroutes."""
+        from app.services.translation.language_detector import LanguageDetector
+
+        detector = LanguageDetector(llm_provider=None, local_backend="langdetect")
+
+        class _LocalResult:
+            lang = "it"
+            prob = 0.99999
+
+        detector._local_detect_langs = lambda _: [_LocalResult()]  # type: ignore[assignment]
+
+        details = await detector.detect_with_metadata("Qwrt?!")
+
+        assert details.language_code == "en"
+        assert details.backend == "default_fallback"
+        assert details.confidence <= 0.5
+
 
 # =============================================================================
 # TASK 10.4: TRANSLATION CACHE TESTS
