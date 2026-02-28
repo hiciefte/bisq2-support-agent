@@ -36,6 +36,7 @@ from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.rag.qdrant_index_manager import QdrantIndexManager
 from app.services.rag.routing_reason_generator import RoutingReasonGenerator
 from app.services.translation import TranslationService
+from app.services.translation.language_detector import SUPPORTED_LANGUAGES
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -295,6 +296,65 @@ class SimplifiedRAGService:
             Formatted string with version context
         """
         return self.document_retriever.format_documents(docs)
+
+    @staticmethod
+    def _normalize_language_code(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if "-" in normalized:
+            normalized = normalized.split("-", 1)[0]
+        if normalized in SUPPORTED_LANGUAGES and normalized != "und":
+            return normalized
+        return None
+
+    def _extract_prior_language_from_history(
+        self, chat_history: list[Any]
+    ) -> Optional[str]:
+        for item in reversed(chat_history):
+            candidates: list[Any] = []
+            if isinstance(item, dict):
+                candidates.extend(
+                    [
+                        item.get("original_language"),
+                        item.get("user_language"),
+                        item.get("language"),
+                    ]
+                )
+                metadata = item.get("metadata")
+                if isinstance(metadata, dict):
+                    candidates.extend(
+                        [
+                            metadata.get("original_language"),
+                            metadata.get("user_language"),
+                            metadata.get("language"),
+                        ]
+                    )
+            else:
+                candidates.extend(
+                    [
+                        getattr(item, "original_language", None),
+                        getattr(item, "user_language", None),
+                        getattr(item, "language", None),
+                    ]
+                )
+                metadata = getattr(item, "metadata", None)
+                if isinstance(metadata, dict):
+                    candidates.extend(
+                        [
+                            metadata.get("original_language"),
+                            metadata.get("user_language"),
+                            metadata.get("language"),
+                        ]
+                    )
+
+            for candidate in candidates:
+                normalized = self._normalize_language_code(candidate)
+                if normalized is not None:
+                    return normalized
+        return None
 
     async def setup(self, force_rebuild: bool = False):
         """Set up the complete system.
@@ -595,8 +655,12 @@ class SimplifiedRAGService:
             was_translated = False
             if self.translation_service:
                 try:
+                    prior_language = self._extract_prior_language_from_history(
+                        chat_history
+                    )
                     translation_result = await self.translation_service.translate_query(
-                        preprocessed_question
+                        preprocessed_question,
+                        prior_language=prior_language,
                     )
                     original_language = translation_result.get("source_lang", "en")
                     was_translated = not translation_result.get("skipped", True)

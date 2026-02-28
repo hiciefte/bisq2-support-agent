@@ -116,6 +116,7 @@ SUPPORTED_LANGUAGES = {
     "gd": "Scottish Gaelic",
     "lb": "Luxembourgish",
     "yi": "Yiddish",
+    "und": "Undetermined",
 }
 
 
@@ -289,6 +290,26 @@ Language code:"""
         (re.compile(r"[\u0900-\u097f]"), "hi", 0.60),  # Devanagari script family
     ]
 
+    # High-precision, short-text lexical hints for common support-channel greetings.
+    # These are only used for short inputs where local LID models are often overconfident.
+    SHORT_TEXT_HINTS: ClassVar[dict[str, str]] = {
+        "hallo": "de",
+        "moin": "de",
+        "servus": "de",
+        "guten tag": "de",
+        "ciao": "it",
+        "buongiorno": "it",
+        "buonasera": "it",
+        "hola": "es",
+        "buenas": "es",
+        "bonjour": "fr",
+        "salut": "fr",
+        "ola": "pt",
+        "olá": "pt",
+    }
+
+    UNKNOWN_LANGUAGE_CODE: ClassVar[str] = "und"
+
     def __init__(
         self,
         llm_provider: Optional[Any] = None,
@@ -378,6 +399,40 @@ Language code:"""
             confidence = 0.9 if best_score >= 3 else 0.85
             return (best_lang, confidence)
         return None
+
+    @staticmethod
+    def _normalize_short_text_key(text: str) -> str:
+        lowered = text.lower().strip()
+        return re.sub(r"[^a-zA-ZÀ-ÿ\s]+", " ", lowered).strip()
+
+    def _detect_short_text_hint(self, text: str) -> Optional[Tuple[str, float]]:
+        normalized = self._normalize_short_text_key(text)
+        if not normalized:
+            return None
+        language = self.SHORT_TEXT_HINTS.get(normalized)
+        if language is None:
+            return None
+        return (language, 0.94)
+
+    @staticmethod
+    def _hint_matches_language(
+        hint: Optional[Tuple[str, float]],
+        language_code: str,
+        min_confidence: float = 0.85,
+    ) -> bool:
+        if hint is None:
+            return False
+        return hint[0] == language_code and hint[1] >= min_confidence
+
+    def _normalize_prior_language(self, prior_language: Optional[str]) -> Optional[str]:
+        if prior_language is None:
+            return None
+        normalized = self._normalize_lang_code(prior_language)
+        if normalized is None:
+            return None
+        if normalized == self.UNKNOWN_LANGUAGE_CODE:
+            return None
+        return normalized
 
     async def _llm_text(self, prompt: str) -> str:
         if self.llm is None:
@@ -487,12 +542,14 @@ Language code:"""
             logger.debug("LLM language tie-break failed", exc_info=True)
             return None
 
-    async def detect_with_metadata(self, text: str) -> LanguageDetectionDetails:
+    async def detect_with_metadata(
+        self, text: str, prior_language: Optional[str] = None
+    ) -> LanguageDetectionDetails:
         text = (text or "").strip()
         if not text:
             details = LanguageDetectionDetails(
-                language_code="en",
-                confidence=1.0,
+                language_code=self.UNKNOWN_LANGUAGE_CODE,
+                confidence=0.0,
                 backend="empty_input",
             )
             self._emit_metrics(details)
@@ -500,6 +557,20 @@ Language code:"""
 
         text_len = len(text)
         non_english_hint = self._detect_non_english_hint(text)
+        short_text_hint: Optional[Tuple[str, float]] = None
+        normalized_prior = self._normalize_prior_language(prior_language)
+        is_short_text = text_len <= self.short_text_chars
+        if is_short_text:
+            short_text_hint = self._detect_short_text_hint(text)
+
+        if short_text_hint is not None:
+            details = LanguageDetectionDetails(
+                language_code=short_text_hint[0],
+                confidence=short_text_hint[1],
+                backend="short_text_hint",
+            )
+            self._emit_metrics(details)
+            return details
 
         # Trust only highest-confidence script hints immediately.
         if non_english_hint is not None and non_english_hint[1] >= 0.97:
@@ -510,6 +581,21 @@ Language code:"""
             )
             self._emit_metrics(details)
             return details
+
+        # For short ambiguous turns, use prior context language when available.
+        if is_short_text and normalized_prior is not None:
+            if (
+                non_english_hint is None
+                or non_english_hint[0] == normalized_prior
+                or non_english_hint[1] < 0.9
+            ):
+                details = LanguageDetectionDetails(
+                    language_code=normalized_prior,
+                    confidence=0.82,
+                    backend="context_prior_short_text",
+                )
+                self._emit_metrics(details)
+                return details
 
         # Keep a cheap English bypass to avoid unnecessary model/LLM work.
         if (
@@ -526,11 +612,22 @@ Language code:"""
             return details
 
         local = await self._detect_with_local_model(text)
+        short_text_needs_tiebreak = False
         if (
             local is not None
             and local.confidence >= self.local_confidence_threshold
             and not local.is_mixed
         ):
+            if is_short_text:
+                corroborated = self._hint_matches_language(
+                    non_english_hint, local.language_code
+                ) or self._hint_matches_language(short_text_hint, local.language_code)
+                if not corroborated:
+                    short_text_needs_tiebreak = True
+                else:
+                    self._emit_metrics(local)
+                    return local
+
             if (
                 local.language_code == "en"
                 and non_english_hint is not None
@@ -545,8 +642,9 @@ Language code:"""
                 )
                 self._emit_metrics(details)
                 return details
-            self._emit_metrics(local)
-            return local
+            if not short_text_needs_tiebreak:
+                self._emit_metrics(local)
+                return local
 
         llm_reason: Optional[str] = None
         if self.enable_llm_tiebreaker and self.llm is not None:
@@ -579,9 +677,20 @@ Language code:"""
                 self._emit_metrics(llm_result)
                 return llm_result
 
-        if local is not None:
+        if local is not None and not short_text_needs_tiebreak:
             self._emit_metrics(local)
             return local
+
+        if short_text_needs_tiebreak:
+            details = LanguageDetectionDetails(
+                language_code=self.UNKNOWN_LANGUAGE_CODE,
+                confidence=0.2,
+                backend="short_text_ambiguous",
+                alternatives=local.alternatives if local is not None else [],
+                local_model_used=local is not None,
+            )
+            self._emit_metrics(details)
+            return details
 
         if non_english_hint is not None:
             details = LanguageDetectionDetails(
