@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from app.channels.response_dispatcher import (
     ChannelResponseDispatcher,
+    DeliveryMode,
     format_escalation_notice,
 )
 
@@ -106,3 +107,39 @@ async def test_create_escalation_prefers_canonical_english_and_keeps_localized_c
     assert payload.ai_draft_answer_original == "Bisq Easy nutzt ein Reputationssystem."
     assert payload.user_language == "de"
     assert payload.translation_applied is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_buffered_when_native_stream_fails(monkeypatch):
+    incoming = SimpleNamespace(message_id="m-1", channel_metadata={})
+    response = SimpleNamespace(
+        requires_human=False,
+        metadata=SimpleNamespace(routing_action="auto_send"),
+    )
+    channel = MagicMock()
+    channel.get_delivery_target.return_value = "target-1"
+
+    native = AsyncMock(return_value=False)
+    buffered = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.channels.response_dispatcher.deliver_native_stream", native
+    )
+    monkeypatch.setattr(
+        "app.channels.response_dispatcher.deliver_buffered_stream",
+        buffered,
+    )
+
+    planner = MagicMock()
+    planner.plan.return_value = SimpleNamespace(mode=DeliveryMode.STREAM_NATIVE)
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        delivery_planner=planner,
+    )
+
+    sent = await dispatcher.dispatch(incoming, response)
+
+    assert sent is True
+    native.assert_awaited_once_with(channel, "target-1", response)
+    buffered.assert_awaited_once_with(channel, "target-1", response)

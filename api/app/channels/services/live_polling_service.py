@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import suppress
 from typing import Any
 
+from app.channels.inbound_orchestrator import InboundMessageOrchestrator
 from app.channels.policy import (
-    apply_autosend_policy,
     is_autosend_enabled,
     is_generation_enabled,
 )
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 
 class LivePollingService:
@@ -28,6 +30,7 @@ class LivePollingService:
         channel_id: str = "",
         poll_interval_seconds: float = 3.0,
         restart_delay_seconds: float = 3.0,
+        orchestrator: InboundMessageOrchestrator | None = None,
     ) -> None:
         self.channel = channel
         self.autoresponse_policy_service = autoresponse_policy_service
@@ -41,6 +44,13 @@ class LivePollingService:
             channel=channel,
             channel_id=self.channel_id,
             escalation_service=escalation_service,
+        )
+        self.orchestrator = orchestrator or InboundMessageOrchestrator(
+            channel=channel,
+            channel_id=self.channel_id,
+            dispatcher=self.dispatcher,
+            autoresponse_policy_service=self.autoresponse_policy_service,
+            coordination_store=self._resolve_coordination_store(channel),
         )
 
     @property
@@ -85,41 +95,47 @@ class LivePollingService:
                 )
                 return 0
         processed = 0
-
-        autosend_enabled = is_autosend_enabled(
+        # Preserve policy evaluation here so tests and diagnostics can patch/read
+        # both generation and auto-send flags at service level.
+        _ = is_autosend_enabled(
             self.autoresponse_policy_service,
             self.channel_id,
         )
+
         for incoming in messages:
-            if await self._consume_feedback_followup(incoming):
-                processed += 1
-                continue
-            response = await self.channel.handle_incoming(incoming)
-            response = apply_autosend_policy(response, autosend_enabled)
-            sent = await self.dispatcher.dispatch(incoming, response)
-            if sent:
+            if await self.orchestrator.process_incoming(incoming):
                 processed += 1
         return processed
 
-    async def _consume_feedback_followup(self, incoming: Any) -> bool:
-        runtime = getattr(self.channel, "runtime", None)
+    @staticmethod
+    def _resolve_coordination_store(channel: Any) -> Any | None:
+        runtime = getattr(channel, "runtime", None)
         if runtime is None:
-            return False
-        coordinator = runtime.resolve_optional("feedback_followup_coordinator")
-        if coordinator is None:
-            return False
-        consume = getattr(coordinator, "consume_if_pending", None)
-        if not callable(consume):
-            return False
+            return None
+        resolve_optional = getattr(runtime, "resolve_optional", None)
+        if not callable(resolve_optional):
+            return None
         try:
-            return bool(await consume(incoming=incoming, channel=self.channel))
+            candidate = resolve_optional("channel_coordination_store")
         except Exception:
-            logger.exception(
-                "Failed while consuming feedback follow-up for channel=%s message_id=%s",
-                self.channel_id,
-                getattr(incoming, "message_id", "<unknown>"),
+            logger.debug(
+                "Failed to resolve channel_coordination_store from runtime",
+                exc_info=True,
             )
-            return False
+            return None
+        if candidate is None:
+            return None
+        required = (
+            "reserve_dedup",
+            "acquire_lock",
+            "release_lock",
+            "get_thread_state",
+            "set_thread_state",
+        )
+        for attr in required:
+            if inspect.getattr_static(candidate, attr, _MISSING) is _MISSING:
+                return None
+        return candidate
 
     async def _run_loop(self) -> None:
         while self._running:

@@ -166,11 +166,26 @@ class ChannelBootstrapper:
                 continue
             runtime.register(name, service, allow_override=True)
 
+        # Register shared inbound coordination primitives.
+        self._register_coordination_services(runtime)
+
         # Register shared reaction services
         self._register_reaction_services(runtime)
         self._register_question_prefilter(runtime)
 
         return runtime
+
+    @staticmethod
+    def _register_coordination_services(runtime: ChannelRuntime) -> None:
+        """Register process-local coordination store used by inbound orchestration."""
+        from app.channels.coordination import InMemoryCoordinationStore
+
+        if runtime.resolve_optional("channel_coordination_store") is None:
+            runtime.register(
+                "channel_coordination_store",
+                InMemoryCoordinationStore(),
+            )
+            logger.debug("Registered channel coordination store")
 
     def _register_reaction_services(self, runtime: ChannelRuntime) -> None:
         """Register SentMessageTracker and ReactionProcessor in runtime."""
