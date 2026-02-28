@@ -1392,6 +1392,12 @@ class UnifiedPipelineService:
 
         normalized_edited_staff_answer = normalize_blank(edited_staff_answer)
         normalized_edited_question_text = normalize_blank(edited_question_text)
+        clear_edited_staff_answer = (
+            edited_staff_answer is not None and normalized_edited_staff_answer is None
+        )
+        clear_edited_question_text = (
+            edited_question_text is not None and normalized_edited_question_text is None
+        )
 
         # Resolve effective values after applying this update payload.
         # These are used for comparison and optional regeneration.
@@ -1470,6 +1476,8 @@ class UnifiedPipelineService:
                 "candidate_id": candidate_id,
                 "edited_staff_answer": normalized_edited_staff_answer,
                 "edited_question_text": normalized_edited_question_text,
+                "clear_edited_staff_answer": clear_edited_staff_answer,
+                "clear_edited_question_text": clear_edited_question_text,
                 "embedding_similarity": comparison.embedding_similarity,
                 "factual_alignment": comparison.factual_alignment,
                 "contradiction_score": comparison.contradiction_score,
@@ -1492,6 +1500,8 @@ class UnifiedPipelineService:
             candidate_id=candidate_id,
             edited_staff_answer=normalized_edited_staff_answer,
             edited_question_text=normalized_edited_question_text,
+            clear_edited_staff_answer=clear_edited_staff_answer,
+            clear_edited_question_text=clear_edited_question_text,
             category=category,
         )
 

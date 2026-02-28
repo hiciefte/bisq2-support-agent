@@ -202,6 +202,42 @@ class TestEditedQuestionTextRepository:
         assert retrieved is not None
         assert retrieved.edited_question_text == "Edited version of the question"
 
+    def test_update_candidate_can_clear_edited_question_text(
+        self, repo, sample_candidate
+    ):
+        """Explicit clear flag should persist edited_question_text as NULL."""
+        repo.update_candidate(
+            candidate_id=sample_candidate.id,
+            edited_question_text="Temporary edited question",
+        )
+
+        updated = repo.update_candidate(
+            candidate_id=sample_candidate.id,
+            edited_question_text=None,
+            clear_edited_question_text=True,
+        )
+
+        assert updated is not None
+        assert updated.edited_question_text is None
+
+    def test_update_candidate_can_clear_edited_staff_answer(
+        self, repo, sample_candidate
+    ):
+        """Explicit clear flag should persist edited_staff_answer as NULL."""
+        repo.update_candidate(
+            candidate_id=sample_candidate.id,
+            edited_staff_answer="Temporary edited answer",
+        )
+
+        updated = repo.update_candidate(
+            candidate_id=sample_candidate.id,
+            edited_staff_answer=None,
+            clear_edited_staff_answer=True,
+        )
+
+        assert updated is not None
+        assert updated.edited_staff_answer is None
+
     def test_edited_question_text_defaults_to_none(self, repo, sample_candidate):
         """RED: New candidates should have edited_question_text = None."""
         # Act
