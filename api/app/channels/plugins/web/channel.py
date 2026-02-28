@@ -92,6 +92,7 @@ class WebChannel(ChannelBase):
         language_code: str | None = None,
     ) -> str:
         """Format escalation message for web chat UI."""
+        _ = username
         return render_escalation_notice(
             channel_id=self.channel_id,
             escalation_id=escalation_id,

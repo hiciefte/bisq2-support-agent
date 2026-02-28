@@ -218,6 +218,7 @@ class TestLanguageDetector:
                 self.invoke_calls = 0
 
             def invoke(self, prompt: str):
+                _ = prompt
                 self.invoke_calls += 1
                 return MagicMock(content="de")
 
@@ -573,6 +574,7 @@ class TestTranslationService:
                 self.invoke_calls = 0
 
             def invoke(self, prompt: str):
+                _ = prompt
                 self.invoke_calls += 1
                 return MagicMock(content="How do I buy BTC with Bisq Easy?")
 

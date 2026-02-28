@@ -75,6 +75,7 @@ class SentMessageRecord:
     routing_action: Optional[str] = None
     in_reply_to: Optional[str] = None
     delivery_target: Optional[str] = None
+    user_language: Optional[str] = None
 
 
 @dataclass
@@ -167,6 +168,7 @@ class SentMessageTracker:
         routing_action: Optional[str] = None,
         in_reply_to: Optional[str] = None,
         delivery_target: Optional[str] = None,
+        user_language: Optional[str] = None,
     ) -> None:
         """Track a sent message for future reaction correlation."""
         if len(self._records) >= self._max_size:
@@ -188,6 +190,7 @@ class SentMessageTracker:
             routing_action=routing_action,
             in_reply_to=in_reply_to,
             delivery_target=delivery_target,
+            user_language=user_language,
         )
         self._track_count += 1
         if self._track_count % self._purge_interval == 0:
@@ -599,7 +602,7 @@ class ReactionProcessor:
                 question=record.question,
                 ai_draft_answer_original=record.answer,
                 ai_draft_answer=record.answer,
-                user_language="en",
+                user_language=record.user_language or "en",
                 translation_applied=False,
                 confidence_score=conf,
                 routing_action=record.routing_action or "auto_send",

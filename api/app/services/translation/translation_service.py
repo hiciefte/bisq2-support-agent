@@ -380,11 +380,15 @@ Translation:"""
         # Skip if target is English
         if target_lang == "en":
             self.stats["english_passthrough"] += 1
-            return {
+            result = {
                 "translated_text": response,
                 "skipped": True,
                 "cached": False,
             }
+            translation_operation_duration_seconds.labels(direction="response").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
 
         # Check cache
         cache_key = self._make_cache_key(response, source_lang, target_lang)

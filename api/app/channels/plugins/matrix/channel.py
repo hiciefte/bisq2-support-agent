@@ -57,14 +57,14 @@ class MatrixChannel(ChannelBase):
     def setup_dependencies(cls, runtime: Any, settings: Any) -> None:
         """Register Matrix channel dependencies in shared runtime."""
         try:
-            from nio import (  # type: ignore[import-untyped]
+            from nio import (
                 AsyncClient,
                 AsyncClientConfig,
             )
         except ImportError:
             return
         try:
-            from nio.crypto import ENCRYPTION_ENABLED  # type: ignore[import-untyped]
+            from nio.crypto import ENCRYPTION_ENABLED
         except Exception:
             ENCRYPTION_ENABLED = False
 
@@ -354,6 +354,7 @@ class MatrixChannel(ChannelBase):
                             requires_human=getattr(message, "requires_human", None),
                             in_reply_to=getattr(message, "in_reply_to", None),
                             delivery_target=target,
+                            user_language=getattr(_meta, "original_language", None),
                         )
                     except Exception as e:
                         self._logger.warning(f"Failed to track sent message: {e}")

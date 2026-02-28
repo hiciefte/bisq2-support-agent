@@ -228,6 +228,18 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("MULTILINGUAL_LID_BACKEND")
+    @classmethod
+    def validate_lid_backend(cls, v: str) -> str:
+        """Validate MULTILINGUAL_LID_BACKEND is a supported value."""
+        allowed = {"langdetect", "none"}
+        if v not in allowed:
+            raise ValueError(
+                "MULTILINGUAL_LID_BACKEND must be one of "
+                f"{', '.join(sorted(allowed))}, got '{v}'"
+            )
+        return v
+
     @model_validator(mode="after")
     def validate_hybrid_weights_sum(self) -> "Settings":
         """Ensure HYBRID_SEMANTIC_WEIGHT + HYBRID_KEYWORD_WEIGHT == 1.0."""

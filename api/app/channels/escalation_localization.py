@@ -15,18 +15,18 @@ _ESCALATION_TEMPLATES = {
         ),
         "de": (
             "Ihre Frage wurde an unser Support-Team weitergeleitet. "
-            "Ein Teammitglied wird sie pruefen und bald antworten. "
+            "Ein Teammitglied wird sie prüfen und bald antworten. "
             "(Referenz: #{escalation_id})"
         ),
         "es": (
             "Tu pregunta ha sido enviada a nuestro equipo de soporte. "
-            "Un miembro del equipo la revisara y respondera en breve. "
+            "Un miembro del equipo la revisará y responderá en breve. "
             "(Referencia: #{escalation_id})"
         ),
         "fr": (
-            "Votre question a ete transmise a notre equipe de support. "
-            "Un membre de l'equipe va l'examiner et repondre sous peu. "
-            "(Reference: #{escalation_id})"
+            "Votre question a été transmise à notre équipe de support. "
+            "Un membre de l'équipe va l'examiner et répondre sous peu. "
+            "(Référence: #{escalation_id})"
         ),
     },
     "web": {
@@ -37,18 +37,18 @@ _ESCALATION_TEMPLATES = {
         ),
         "de": (
             "Ihre Frage wurde an unser Support-Team weitergeleitet. "
-            "Ein Teammitglied wird sie pruefen und bald antworten. "
+            "Ein Teammitglied wird sie prüfen und bald antworten. "
             "(Referenz: #{escalation_id})"
         ),
         "es": (
             "Tu pregunta ha sido enviada a nuestro equipo de soporte. "
-            "Un miembro del equipo la revisara y respondera en breve. "
+            "Un miembro del equipo la revisará y responderá en breve. "
             "(Referencia: #{escalation_id})"
         ),
         "fr": (
-            "Votre question a ete transmise a notre equipe de support. "
-            "Un membre de l'equipe va l'examiner et repondre sous peu. "
-            "(Reference: #{escalation_id})"
+            "Votre question a été transmise à notre équipe de support. "
+            "Un membre de l'équipe va l'examiner et répondre sous peu. "
+            "(Référence: #{escalation_id})"
         ),
     },
     "matrix": {
@@ -58,19 +58,19 @@ _ESCALATION_TEMPLATES = {
             "(Reference: #{escalation_id})"
         ),
         "de": (
-            "Ihre Frage wurde zur Pruefung an {support_handle} eskaliert. "
+            "Ihre Frage wurde zur Prüfung an {support_handle} eskaliert. "
             "Ein Mitglied des Support-Teams wird in diesem Raum antworten. "
             "(Referenz: #{escalation_id})"
         ),
         "es": (
-            "Tu pregunta fue escalada a {support_handle} para revision. "
-            "Un miembro del equipo de soporte respondera en esta sala. "
+            "Tu pregunta fue escalada a {support_handle} para revisión. "
+            "Un miembro del equipo de soporte responderá en esta sala. "
             "(Referencia: #{escalation_id})"
         ),
         "fr": (
-            "Votre question a ete transmise a {support_handle} pour examen. "
-            "Un membre de l'equipe support repondra dans cette salle. "
-            "(Reference: #{escalation_id})"
+            "Votre question a été transmise à {support_handle} pour examen. "
+            "Un membre de l'équipe support répondra dans cette salle. "
+            "(Référence: #{escalation_id})"
         ),
     },
     "bisq2": {
@@ -80,19 +80,19 @@ _ESCALATION_TEMPLATES = {
             "(Reference: #{escalation_id})"
         ),
         "de": (
-            "Ihre Frage wurde zur Pruefung an {support_handle} eskaliert. "
+            "Ihre Frage wurde zur Prüfung an {support_handle} eskaliert. "
             "Ein Mitglied des Support-Teams wird in dieser Unterhaltung antworten. "
             "(Referenz: #{escalation_id})"
         ),
         "es": (
-            "Tu pregunta fue escalada a {support_handle} para revision. "
-            "Un miembro del equipo de soporte respondera en esta conversacion. "
+            "Tu pregunta fue escalada a {support_handle} para revisión. "
+            "Un miembro del equipo de soporte responderá en esta conversación. "
             "(Referencia: #{escalation_id})"
         ),
         "fr": (
-            "Votre question a ete transmise a {support_handle} pour examen. "
-            "Un membre de l'equipe support repondra dans cette conversation. "
-            "(Reference: #{escalation_id})"
+            "Votre question a été transmise à {support_handle} pour examen. "
+            "Un membre de l'équipe support répondra dans cette conversation. "
+            "(Référence: #{escalation_id})"
         ),
     },
 }

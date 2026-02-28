@@ -113,7 +113,7 @@ test.describe('Endpoint Security', () => {
     });
 
     test('Direct port 8000 access should be blocked', async ({ request }) => {
-      // Extract hostname from BASE_URL and attempt direct port 8000 access
+      // Extract hostname from WEB_URL and attempt direct port 8000 access
       const hostname = new URL(WEB_URL).hostname;
 
       // Local/dev setups may expose :8000 directly; production should not.

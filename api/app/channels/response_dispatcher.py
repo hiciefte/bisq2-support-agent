@@ -5,6 +5,7 @@ Handles auto-send vs review-queue escalation in a channel-agnostic way.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -15,6 +16,43 @@ logger = logging.getLogger(__name__)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
 _REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
+
+
+def _formatter_accepts_kwarg(formatter: Any, name: str) -> bool:
+    """Return True when formatter can accept the named keyword argument."""
+    try:
+        signature = inspect.signature(formatter)
+    except (TypeError, ValueError):
+        return False
+
+    params = signature.parameters
+    if name in params:
+        return True
+
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values()
+    )
+
+
+def _call_escalation_formatter(
+    formatter: Any,
+    *,
+    username: str,
+    escalation_id: int,
+    support_handle: str,
+    language_code: str | None,
+) -> Any:
+    """Invoke channel formatter with supported kwargs only."""
+    kwargs: dict[str, Any] = {
+        "username": username,
+        "escalation_id": escalation_id,
+        "support_handle": support_handle,
+    }
+    if language_code is not None and _formatter_accepts_kwarg(
+        formatter, "language_code"
+    ):
+        kwargs["language_code"] = language_code
+    return formatter(**kwargs)
 
 
 def format_escalation_notice(
@@ -31,19 +69,13 @@ def format_escalation_notice(
     formatter = getattr(channel, "format_escalation_message", None) if channel else None
     if callable(formatter):
         try:
-            try:
-                rendered = formatter(
-                    username=username,
-                    escalation_id=escalation_id,
-                    support_handle=support_handle,
-                    language_code=language_code,
-                )
-            except TypeError:
-                rendered = formatter(
-                    username=username,
-                    escalation_id=escalation_id,
-                    support_handle=support_handle,
-                )
+            rendered = _call_escalation_formatter(
+                formatter,
+                username=username,
+                escalation_id=escalation_id,
+                support_handle=support_handle,
+                language_code=language_code,
+            )
             if isinstance(rendered, str) and rendered.strip():
                 return rendered
         except Exception:
@@ -69,19 +101,13 @@ def format_escalation_notice(
         )
         if callable(registry_formatter):
             try:
-                try:
-                    rendered = registry_formatter(
-                        username=username,
-                        escalation_id=escalation_id,
-                        support_handle=support_handle,
-                        language_code=language_code,
-                    )
-                except TypeError:
-                    rendered = registry_formatter(
-                        username=username,
-                        escalation_id=escalation_id,
-                        support_handle=support_handle,
-                    )
+                rendered = _call_escalation_formatter(
+                    registry_formatter,
+                    username=username,
+                    escalation_id=escalation_id,
+                    support_handle=support_handle,
+                    language_code=language_code,
+                )
                 if isinstance(rendered, str) and rendered.strip():
                     return rendered
             except Exception:

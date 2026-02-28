@@ -103,11 +103,13 @@ async def _localize_staff_answer(
             target_lang=target_lang,
             source_lang="en",
         )
-        translated_text = str(
-            translated.get("translated_text") if isinstance(translated, dict) else ""
-        ).strip()
-        if translated_text:
-            return translated_text
+        raw_translated_text = (
+            translated.get("translated_text") if isinstance(translated, dict) else None
+        )
+        if isinstance(raw_translated_text, str):
+            translated_text = raw_translated_text.strip()
+            if translated_text:
+                return translated_text
     except Exception:
         logger.warning(
             "Failed to localize polled staff answer for message_id=%s (lang=%s)",

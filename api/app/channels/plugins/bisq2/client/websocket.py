@@ -26,14 +26,17 @@ except ImportError:
         raise ImportError("websockets package is required")
 
 
+class ConnectionClosed(Exception):
+    """Fallback exception and monkeypatch target for websocket disconnects."""
+
+
+_WS_CONNECTION_CLOSED: type[BaseException] = ConnectionClosed
 try:
-    from websockets.exceptions import ConnectionClosed
+    from websockets.exceptions import ConnectionClosed as _WebSocketConnectionClosed
+
+    _WS_CONNECTION_CLOSED = _WebSocketConnectionClosed
 except ImportError:  # pragma: no cover - tested via monkeypatch fallback
-
-    class ConnectionClosed(Exception):
-        """Fallback when websockets package is unavailable."""
-
-        pass
+    pass
 
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
@@ -210,7 +213,7 @@ class Bisq2WebSocketClient:
             except asyncio.CancelledError:
                 self._listening = False
                 raise
-            except ConnectionClosed:
+            except (ConnectionClosed, _WS_CONNECTION_CLOSED):
                 if not self._listening:
                     break
                 logger.warning("Bisq2 WebSocket closed, reconnecting")

@@ -152,13 +152,15 @@ class ResponseDelivery:
                 target_lang=target_lang,
                 source_lang="en",
             )
-            translated_text = str(
+            raw_translated_text = (
                 translated.get("translated_text")
                 if isinstance(translated, dict)
-                else ""
-            ).strip()
-            if translated_text:
-                return translated_text
+                else None
+            )
+            if isinstance(raw_translated_text, str):
+                translated_text = raw_translated_text.strip()
+                if translated_text:
+                    return translated_text
         except Exception:
             logger.warning(
                 "Escalation %s: Failed to localize staff answer to %s; using canonical answer",

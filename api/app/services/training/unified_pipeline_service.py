@@ -1406,7 +1406,11 @@ class UnifiedPipelineService:
         regenerated_answer: Optional[str] = None
         regenerated_sources_json: Optional[str] = None
         regenerated_confidence: Optional[float] = None
-        if candidate.generated_answer is not None and edited_question_text is not None:
+        if (
+            self.rag_service is not None
+            and candidate.generated_answer is not None
+            and edited_question_text is not None
+        ):
             bisq_version = self.protocol_detector._protocol_to_version(
                 candidate.protocol
             )
@@ -1430,7 +1434,7 @@ class UnifiedPipelineService:
 
         # If editable content changed and we have a generated answer available,
         # recalculate comparison scores against effective values.
-        if generated_for_compare:
+        if generated_for_compare is not None:
             comparison = await self._compare_answers(
                 candidate.source_event_id,
                 effective_question,

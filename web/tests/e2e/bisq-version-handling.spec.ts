@@ -19,12 +19,13 @@ import {
 const TEST_BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
 const isEscalationNotice = (text: string): boolean => {
-    const normalized = (text || "").toLowerCase();
-    return (
-        normalized.includes("forwarded to our support team") ||
-        normalized.includes("support team notified") ||
-        normalized.includes("reference: #")
-    );
+    if (!text) {
+        return false;
+    }
+    const normalized = text.toLowerCase();
+    const referencePattern =
+        /(?:\b(?:reference|referenz|referencia|référence|ref)\b\s*[:：]?\s*)?#\s*[a-z0-9][a-z0-9-]*/i;
+    return referencePattern.test(normalized);
 };
 
 const askQuestionAndGetResponse = async (page: Page, question: string): Promise<string> => {
@@ -57,8 +58,7 @@ test.describe("Bisq Version Handling", () => {
         );
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            // Human-first routing is valid for low-confidence version-specific asks.
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         expect(responseLower).not.toContain(
@@ -80,7 +80,7 @@ test.describe("Bisq Version Handling", () => {
         const responseText = await askQuestionAndGetResponse(page, "How do I trade?");
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         const mentionsBisq2 = /bisq 2|bisq2|bisq easy/.test(responseLower);
@@ -100,7 +100,7 @@ test.describe("Bisq Version Handling", () => {
         const responseText = await askQuestionAndGetResponse(page, "What is Bisq 2?");
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         expect(responseLower).toMatch(/bisq 2|bisq2/);
@@ -113,7 +113,7 @@ test.describe("Bisq Version Handling", () => {
         const secondResponse = await askQuestionAndGetResponse(page, "How about in Bisq 1?");
         const responseLower = secondResponse.toLowerCase();
         if (isEscalationNotice(secondResponse)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         const handlesBisq1Context =
@@ -133,7 +133,7 @@ test.describe("Bisq Version Handling", () => {
         );
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         expect(responseLower).toMatch(/bisq 1|bisq1/);
@@ -158,7 +158,7 @@ test.describe("Bisq Version Handling", () => {
         const responseText = await askQuestionAndGetResponse(page, "How do I use Bisq1?");
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         const handlesBisq1 =
@@ -188,7 +188,7 @@ test.describe("Bisq Version Handling", () => {
         );
         const responseLower = responseText.toLowerCase();
         if (isEscalationNotice(responseText)) {
-            return;
+            test.skip("Escalated: not applicable for low-confidence version-specific asks");
         }
 
         expect(responseLower).not.toContain(

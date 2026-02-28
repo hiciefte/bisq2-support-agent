@@ -11,7 +11,7 @@ def normalize_room_ids(room_ids: Iterable[str] | str | None) -> frozenset[str]:
         return frozenset()
 
     if isinstance(room_ids, str):
-        candidates = room_ids.split(",")
+        candidates: Iterable[str] = room_ids.split(",")
     else:
         candidates = room_ids
 

@@ -6,6 +6,7 @@ Stores channel_metadata and sources as JSON text columns.
 
 import json
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional, Tuple
@@ -115,6 +116,46 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     return Escalation(**d)
 
 
+async def _column_exists(
+    db: aiosqlite.Connection,
+    *,
+    table_name: str,
+    column_name: str,
+) -> bool:
+    """Check whether a SQLite table already has the given column."""
+    cursor = await db.execute(f"PRAGMA table_info({table_name})")
+    rows = await cursor.fetchall()
+    return any(
+        len(row) > 1 and str(row[1]) == column_name for row in rows  # pragma: no branch
+    )
+
+
+async def _ensure_escalations_column(
+    db: aiosqlite.Connection,
+    *,
+    column_name: str,
+    alter_sql: str,
+    success_log: str,
+) -> None:
+    """Add an escalations column if missing; raise on non-duplicate failures."""
+    if await _column_exists(db, table_name="escalations", column_name=column_name):
+        return
+
+    try:
+        await db.execute(alter_sql)
+        logger.info(success_log)
+    except sqlite3.OperationalError as exc:
+        error_text = str(exc).lower()
+        if "duplicate column name" in error_text or "already exists" in error_text:
+            logger.info("Escalations column %s already exists", column_name)
+            return
+        logger.exception(
+            "Failed adding escalations column %s via migration",
+            column_name,
+        )
+        raise
+
+
 class EscalationRepository:
     """Async repository for escalation CRUD."""
 
@@ -130,55 +171,57 @@ class EscalationRepository:
                 await db.execute(idx_sql)
             await db.execute(CREATE_RATING_TOKEN_TABLE_SQL)
             # Self-migration: add staff_answer_rating for existing databases
-            try:
-                await db.execute(
-                    "ALTER TABLE escalations ADD COLUMN staff_answer_rating INTEGER"
-                    " CHECK(staff_answer_rating IS NULL OR staff_answer_rating IN (0, 1))"
-                )
-                logger.info("Added staff_answer_rating column to escalations table")
-            except Exception:
-                pass  # Column already exists
+            await _ensure_escalations_column(
+                db,
+                column_name="staff_answer_rating",
+                alter_sql=(
+                    "ALTER TABLE escalations ADD COLUMN staff_answer_rating INTEGER "
+                    "CHECK(staff_answer_rating IS NULL OR staff_answer_rating IN (0, 1))"
+                ),
+                success_log="Added staff_answer_rating column to escalations table",
+            )
             # Self-migration: add edit_distance for existing databases
-            try:
-                await db.execute(
+            await _ensure_escalations_column(
+                db,
+                column_name="edit_distance",
+                alter_sql=(
                     "ALTER TABLE escalations ADD COLUMN edit_distance REAL "
                     "CHECK(edit_distance IS NULL OR (edit_distance >= 0.0 AND edit_distance <= 1.0))"
-                )
-                logger.info("Added edit_distance column to escalations table")
-            except Exception:
-                pass  # Column already exists
+                ),
+                success_log="Added edit_distance column to escalations table",
+            )
             # Self-migration: add multilingual escalation context columns
-            try:
-                await db.execute(
-                    "ALTER TABLE escalations ADD COLUMN question_original TEXT"
-                )
-                logger.info("Added question_original column to escalations table")
-            except Exception:
-                pass  # Column already exists
-            try:
-                await db.execute(
+            await _ensure_escalations_column(
+                db,
+                column_name="question_original",
+                alter_sql="ALTER TABLE escalations ADD COLUMN question_original TEXT",
+                success_log="Added question_original column to escalations table",
+            )
+            await _ensure_escalations_column(
+                db,
+                column_name="ai_draft_answer_original",
+                alter_sql=(
                     "ALTER TABLE escalations ADD COLUMN ai_draft_answer_original TEXT"
-                )
-                logger.info(
+                ),
+                success_log=(
                     "Added ai_draft_answer_original column to escalations table"
-                )
-            except Exception:
-                pass  # Column already exists
-            try:
-                await db.execute(
-                    "ALTER TABLE escalations ADD COLUMN user_language TEXT"
-                )
-                logger.info("Added user_language column to escalations table")
-            except Exception:
-                pass  # Column already exists
-            try:
-                await db.execute(
+                ),
+            )
+            await _ensure_escalations_column(
+                db,
+                column_name="user_language",
+                alter_sql="ALTER TABLE escalations ADD COLUMN user_language TEXT",
+                success_log="Added user_language column to escalations table",
+            )
+            await _ensure_escalations_column(
+                db,
+                column_name="translation_applied",
+                alter_sql=(
                     "ALTER TABLE escalations ADD COLUMN translation_applied INTEGER NOT NULL DEFAULT 0 "
                     "CHECK(translation_applied IN (0, 1))"
-                )
-                logger.info("Added translation_applied column to escalations table")
-            except Exception:
-                pass  # Column already exists
+                ),
+                success_log="Added translation_applied column to escalations table",
+            )
             await db.commit()
         self._initialized = True
         logger.info("EscalationRepository initialized at %s", self.db_path)

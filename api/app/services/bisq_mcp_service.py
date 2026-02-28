@@ -25,15 +25,25 @@ from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple
 import httpx
 from app.core.config import Settings
 from cachetools import TTLCache  # type: ignore[import-untyped]
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+CircuitBreakerClass: Any
+CircuitBreakerErrorClass: Any
 
 try:
-    from pybreaker import CircuitBreaker, CircuitBreakerError
+    from pybreaker import CircuitBreaker as _PyBreakerCircuitBreaker
+    from pybreaker import CircuitBreakerError as _PyBreakerCircuitBreakerError
 except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 
-    class CircuitBreakerError(Exception):
+    class _FallbackCircuitBreakerError(Exception):
         """Fallback circuit breaker error when pybreaker is unavailable."""
 
-    class CircuitBreaker:  # type: ignore[override]
+    class _FallbackCircuitBreaker:
         """No-op fallback circuit breaker used in test environments."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -42,13 +52,14 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
         def call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
             return func(*args, **kwargs)
 
+    CircuitBreakerClass = _FallbackCircuitBreaker
+    CircuitBreakerErrorClass = _FallbackCircuitBreakerError
+else:
+    CircuitBreakerClass = _PyBreakerCircuitBreaker
+    CircuitBreakerErrorClass = _PyBreakerCircuitBreakerError
 
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+CircuitBreaker = CircuitBreakerClass
+CircuitBreakerError = CircuitBreakerErrorClass
 
 logger = logging.getLogger(__name__)
 

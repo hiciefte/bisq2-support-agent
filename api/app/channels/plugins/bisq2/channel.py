@@ -11,7 +11,7 @@ import re
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, List, Optional, Set
+from typing import Any, Deque, Dict, List, Literal, Optional, Set, cast
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
@@ -278,6 +278,7 @@ class Bisq2Channel(ChannelBase):
                         requires_human=getattr(message, "requires_human", None),
                         in_reply_to=getattr(message, "in_reply_to", None),
                         delivery_target=target,
+                        user_language=getattr(_meta, "original_language", None),
                     )
                 except Exception:
                     self._logger.warning(
@@ -316,6 +317,7 @@ class Bisq2Channel(ChannelBase):
         language_code: str | None = None,
     ) -> str:
         """Format escalation message for Bisq2 chat."""
+        _ = username
         return render_escalation_notice(
             channel_id=self.channel_id,
             escalation_id=escalation_id,
@@ -864,7 +866,12 @@ class Bisq2Channel(ChannelBase):
             if role not in {"user", "assistant", "system"} or not content:
                 continue
             try:
-                history.append(ChatMessage(role=role, content=content))
+                history.append(
+                    ChatMessage(
+                        role=cast(Literal["user", "assistant", "system"], role),
+                        content=content,
+                    )
+                )
             except Exception:
                 continue
         return history or None

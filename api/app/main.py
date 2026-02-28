@@ -8,11 +8,12 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from app.channels.bootstrapper import ChannelBootstrapper
 from app.channels.lifecycle import create_channel_gateway
 from app.channels.models import ChannelCapability
+from app.channels.runtime import RAGServiceProtocol
 from app.channels.services.live_polling_service import LivePollingService
 from app.core.config import Settings, get_settings
 from app.core.error_handlers import base_exception_handler, unhandled_exception_handler
@@ -69,7 +70,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-    aisuite = _AisuiteFallback()  # type: ignore[assignment]
+    aisuite = _AisuiteFallback()
 
 # Configure logging
 logging.basicConfig(
@@ -250,7 +251,7 @@ async def lifespan(app: FastAPI):
     # Initialize Channel Gateway with default middleware hooks
     logger.info("Initializing Channel Gateway...")
     channel_gateway = create_channel_gateway(
-        rag_service=rag_service,
+        rag_service=cast(RAGServiceProtocol, rag_service),
         register_default_hooks=True,
     )
     from app.channels.hooks.channel_autoresponse_hook import (
