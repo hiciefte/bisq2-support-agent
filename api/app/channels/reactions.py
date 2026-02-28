@@ -595,8 +595,12 @@ class ReactionProcessor:
                 channel=record.channel_id,
                 user_id=record.user_id,
                 username=record.user_id,
+                question_original=record.question,
                 question=record.question,
+                ai_draft_answer_original=record.answer,
                 ai_draft_answer=record.answer,
+                user_language="en",
+                translation_applied=False,
                 confidence_score=conf,
                 routing_action=record.routing_action or "auto_send",
                 routing_reason=(

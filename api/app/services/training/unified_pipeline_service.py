@@ -1384,33 +1384,83 @@ class UnifiedPipelineService:
         if candidate is None:
             return None
 
-        # If staff answer is being edited and we have a generated answer,
-        # recalculate comparison scores
-        if edited_staff_answer and candidate.generated_answer:
+        # Resolve effective values after applying this update payload.
+        # These are used for comparison and optional regeneration.
+        effective_edited_answer = (
+            edited_staff_answer
+            if edited_staff_answer is not None
+            else candidate.edited_staff_answer
+        )
+        effective_edited_question = (
+            edited_question_text
+            if edited_question_text is not None
+            else candidate.edited_question_text
+        )
+        effective_staff_answer = effective_edited_answer or candidate.staff_answer
+        effective_question = (
+            effective_edited_question or candidate.question_text
+        ).strip() or candidate.question_text
+
+        # If question text is edited and we already have a generated answer,
+        # regenerate the suggested answer so it stays aligned with the edited FAQ question.
+        regenerated_answer: Optional[str] = None
+        regenerated_sources_json: Optional[str] = None
+        regenerated_confidence: Optional[float] = None
+        if candidate.generated_answer is not None and edited_question_text is not None:
+            bisq_version = self.protocol_detector._protocol_to_version(
+                candidate.protocol
+            )
+            rag_response = await self.rag_service.query(
+                effective_question,
+                chat_history=[],
+                override_version=bisq_version,
+            )
+            regenerated_answer = rag_response.get("answer", "")
+            regenerated_sources = rag_response.get("sources", [])
+            regenerated_sources_json = (
+                json.dumps(regenerated_sources) if regenerated_sources else None
+            )
+            regenerated_confidence = rag_response.get("confidence")
+
+        generated_for_compare = (
+            regenerated_answer
+            if regenerated_answer is not None
+            else candidate.generated_answer
+        )
+
+        # If editable content changed and we have a generated answer available,
+        # recalculate comparison scores against effective values.
+        if generated_for_compare:
             comparison = await self._compare_answers(
                 candidate.source_event_id,
-                candidate.question_text,
-                edited_staff_answer,  # Use the edited answer for comparison
-                candidate.generated_answer,
+                effective_question,
+                effective_staff_answer,
+                generated_for_compare,
             )
 
             # Determine new routing based on updated score
             routing, _ = self._determine_routing(comparison.final_score)
 
-            return self.repository.update_candidate(
-                candidate_id=candidate_id,
-                edited_staff_answer=edited_staff_answer,
-                edited_question_text=edited_question_text,
-                embedding_similarity=comparison.embedding_similarity,
-                factual_alignment=comparison.factual_alignment,
-                contradiction_score=comparison.contradiction_score,
-                completeness=comparison.completeness,
-                hallucination_risk=comparison.hallucination_risk,
-                final_score=comparison.final_score,
-                llm_reasoning=comparison.llm_reasoning,
-                routing=routing,
-                category=category,
-            )
+            update_kwargs: Dict[str, Any] = {
+                "candidate_id": candidate_id,
+                "edited_staff_answer": edited_staff_answer,
+                "edited_question_text": edited_question_text,
+                "embedding_similarity": comparison.embedding_similarity,
+                "factual_alignment": comparison.factual_alignment,
+                "contradiction_score": comparison.contradiction_score,
+                "completeness": comparison.completeness,
+                "hallucination_risk": comparison.hallucination_risk,
+                "final_score": comparison.final_score,
+                "llm_reasoning": comparison.llm_reasoning,
+                "routing": routing,
+                "category": category,
+            }
+            if regenerated_answer is not None:
+                update_kwargs["generated_answer"] = regenerated_answer
+                update_kwargs["generated_answer_sources"] = regenerated_sources_json
+                update_kwargs["generation_confidence"] = regenerated_confidence
+
+            return self.repository.update_candidate(**update_kwargs)
 
         # Simple update without score recalculation
         return self.repository.update_candidate(
@@ -1443,19 +1493,17 @@ class UnifiedPipelineService:
         if candidate is None:
             return None
 
-        # Map protocol to bisq_version for RAG filtering
-        # bisq_easy → Bisq 2, multisig_v1 → Bisq 1, musig → Bisq 2, all → no filter
-        protocol_to_version = {
-            "bisq_easy": "Bisq 2",
-            "multisig_v1": "Bisq 1",
-            "musig": "Bisq 2",
-            "all": None,  # No filter - search all versions
-        }
-        bisq_version = protocol_to_version.get(protocol)
+        # Convert protocol to version string for RAG filtering
+        # (all/None => no filter).
+        bisq_version = self.protocol_detector._protocol_to_version(protocol)
+        effective_question = (
+            candidate.edited_question_text or candidate.question_text
+        ).strip() or candidate.question_text
+        effective_staff_answer = candidate.edited_staff_answer or candidate.staff_answer
 
         # Generate new RAG answer with protocol-specific filtering
         rag_response = await self.rag_service.query(
-            candidate.question_text,
+            effective_question,
             chat_history=[],
             override_version=bisq_version,
         )
@@ -1467,8 +1515,8 @@ class UnifiedPipelineService:
         # Recalculate comparison scores
         comparison = await self._compare_answers(
             candidate.source_event_id,
-            candidate.question_text,
-            candidate.staff_answer,
+            effective_question,
+            effective_staff_answer,
             generated_answer,
         )
 

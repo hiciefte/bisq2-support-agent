@@ -29,8 +29,13 @@ CREATE TABLE IF NOT EXISTS escalations (
     user_id TEXT NOT NULL,
     username TEXT,
     channel_metadata TEXT,
+    question_original TEXT,
     question TEXT NOT NULL,
+    ai_draft_answer_original TEXT,
     ai_draft_answer TEXT NOT NULL,
+    user_language TEXT,
+    translation_applied INTEGER NOT NULL DEFAULT 0
+        CHECK(translation_applied IN (0, 1)),
     confidence_score REAL NOT NULL,
     routing_action TEXT NOT NULL,
     routing_reason TEXT,
@@ -56,7 +61,9 @@ CREATE TABLE IF NOT EXISTS escalations (
     responded_at TEXT,
     closed_at TEXT,
     CHECK(LENGTH(question) <= 4000),
+    CHECK(LENGTH(question_original) <= 4000),
     CHECK(LENGTH(ai_draft_answer) <= 10000),
+    CHECK(LENGTH(ai_draft_answer_original) <= 10000),
     CHECK(LENGTH(staff_answer) <= 10000)
 );
 """
@@ -104,6 +111,7 @@ def _row_to_escalation(row: aiosqlite.Row) -> Escalation:
     d["last_delivery_at"] = _parse_datetime(d.get("last_delivery_at"))
     d["edit_distance"] = d.get("edit_distance")
     d["staff_answer_rating"] = d.get("staff_answer_rating")
+    d["translation_applied"] = bool(d.get("translation_applied"))
     return Escalation(**d)
 
 
@@ -139,6 +147,38 @@ class EscalationRepository:
                 logger.info("Added edit_distance column to escalations table")
             except Exception:
                 pass  # Column already exists
+            # Self-migration: add multilingual escalation context columns
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN question_original TEXT"
+                )
+                logger.info("Added question_original column to escalations table")
+            except Exception:
+                pass  # Column already exists
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN ai_draft_answer_original TEXT"
+                )
+                logger.info(
+                    "Added ai_draft_answer_original column to escalations table"
+                )
+            except Exception:
+                pass  # Column already exists
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN user_language TEXT"
+                )
+                logger.info("Added user_language column to escalations table")
+            except Exception:
+                pass  # Column already exists
+            try:
+                await db.execute(
+                    "ALTER TABLE escalations ADD COLUMN translation_applied INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(translation_applied IN (0, 1))"
+                )
+                logger.info("Added translation_applied column to escalations table")
+            except Exception:
+                pass  # Column already exists
             await db.commit()
         self._initialized = True
         logger.info("EscalationRepository initialized at %s", self.db_path)
@@ -164,10 +204,12 @@ class EscalationRepository:
                     """
                     INSERT INTO escalations (
                         message_id, channel, user_id, username,
-                        channel_metadata, question, ai_draft_answer,
+                        channel_metadata, question_original, question,
+                        ai_draft_answer_original, ai_draft_answer,
+                        user_language, translation_applied,
                         confidence_score, routing_action, routing_reason,
                         sources, priority, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         data.message_id,
@@ -179,8 +221,12 @@ class EscalationRepository:
                             if data.channel_metadata
                             else None
                         ),
+                        data.question_original,
                         data.question,
+                        data.ai_draft_answer_original,
                         data.ai_draft_answer,
+                        data.user_language,
+                        int(bool(data.translation_applied)),
                         data.confidence_score,
                         data.routing_action,
                         data.routing_reason,
@@ -334,11 +380,14 @@ class EscalationRepository:
         if filters.search:
             search_pattern = f"%{filters.search}%"
             where_clauses.append(
-                "(question LIKE ? OR ai_draft_answer LIKE ? OR "
+                "(question LIKE ? OR COALESCE(question_original, '') LIKE ? OR "
+                "ai_draft_answer LIKE ? OR COALESCE(ai_draft_answer_original, '') LIKE ? OR "
                 "COALESCE(staff_answer, '') LIKE ? OR COALESCE(routing_reason, '') LIKE ?)"
             )
             params.extend(
                 [
+                    search_pattern,
+                    search_pattern,
                     search_pattern,
                     search_pattern,
                     search_pattern,

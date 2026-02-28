@@ -12,10 +12,16 @@ WORKDIR /app
 # Copy dependency files
 COPY api/requirements.in api/requirements.txt /app/
 
-# Install CPU-only PyTorch (avoids ~5GB of CUDA libraries) then remaining deps
-# This is a CPU-only server (DigitalOcean droplet), no GPU available
+ARG TORCH_CPU_VERSION=2.10.0+cpu
+
+# Install pinned CPU-only PyTorch from the CPU index.
+# Use PyPI as fallback for transitive deps that may not be mirrored on the torch index.
+# Then install remaining deps.
 # hadolint ignore=DL3013
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    "torch==${TORCH_CPU_VERSION}" \
     && pip install --no-cache-dir -r requirements.txt
 
 
@@ -39,9 +45,16 @@ RUN pip install --no-cache-dir pip-tools==7.5.1
 COPY api/requirements.in /app/api/
 COPY api/requirements.txt /app/api/
 
-# Install CPU-only PyTorch (avoids ~5GB of CUDA libraries) then remaining deps
+ARG TORCH_CPU_VERSION=2.10.0+cpu
+
+# Install pinned CPU-only PyTorch from the CPU index.
+# Use PyPI as fallback for transitive deps that may not be mirrored on the torch index.
+# Then install remaining deps.
 # hadolint ignore=DL3013
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    "torch==${TORCH_CPU_VERSION}" \
     && pip install --no-cache-dir -r api/requirements.txt
 
 # Set environment variables

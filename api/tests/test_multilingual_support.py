@@ -173,7 +173,7 @@ class TestLanguageDetector:
         """Test that English is detected via fast heuristic."""
         from app.services.translation.language_detector import LanguageDetector
 
-        detector = LanguageDetector(mock_llm_provider)
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
         lang_code, confidence = await detector.detect(sample_english_query)
 
         assert lang_code == "en"
@@ -187,7 +187,7 @@ class TestLanguageDetector:
         from app.services.translation.language_detector import LanguageDetector
 
         mock_llm_provider.generate = AsyncMock(return_value="de")
-        detector = LanguageDetector(mock_llm_provider)
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
 
         lang_code, confidence = await detector.detect(sample_german_query)
 
@@ -201,7 +201,7 @@ class TestLanguageDetector:
         from app.services.translation.language_detector import LanguageDetector
 
         mock_llm_provider.generate = AsyncMock(return_value="es")
-        detector = LanguageDetector(mock_llm_provider)
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
 
         lang_code, confidence = await detector.detect(sample_spanish_query)
 
@@ -209,17 +209,54 @@ class TestLanguageDetector:
         assert confidence >= 0.8
 
     @pytest.mark.asyncio
+    async def test_detects_language_with_invoke_fallback(self, sample_german_query):
+        """Detector should support LLM wrappers that expose invoke()."""
+        from app.services.translation.language_detector import LanguageDetector
+
+        class InvokeOnlyLLM:
+            def __init__(self):
+                self.invoke_calls = 0
+
+            def invoke(self, prompt: str):
+                self.invoke_calls += 1
+                return MagicMock(content="de")
+
+        invoke_llm = InvokeOnlyLLM()
+        detector = LanguageDetector(invoke_llm, local_backend="none")
+
+        lang_code, confidence = await detector.detect(sample_german_query)
+
+        assert lang_code == "de"
+        assert confidence >= 0.8
+        assert invoke_llm.invoke_calls == 1
+
+    @pytest.mark.asyncio
     async def test_fallback_to_english_on_unknown(self, mock_llm_provider):
         """Test fallback to English for unknown language codes."""
         from app.services.translation.language_detector import LanguageDetector
 
         mock_llm_provider.generate = AsyncMock(return_value="xyz")  # Invalid code
-        detector = LanguageDetector(mock_llm_provider)
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
 
         lang_code, confidence = await detector.detect("Some random text")
 
         assert lang_code == "en"
         assert confidence < 0.6  # Low confidence for fallback
+
+    @pytest.mark.asyncio
+    async def test_overrides_llm_english_when_non_english_hint_strong(
+        self, sample_german_query, mock_llm_provider
+    ):
+        """Strong lexical hints should override a false English LLM classification."""
+        from app.services.translation.language_detector import LanguageDetector
+
+        mock_llm_provider.generate = AsyncMock(return_value="en")
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
+
+        lang_code, confidence = await detector.detect(sample_german_query)
+
+        assert lang_code == "de"
+        assert confidence >= 0.85
 
 
 # =============================================================================
@@ -385,7 +422,7 @@ class TestTranslationService:
         from app.services.translation.translation_service import TranslationService
 
         glossary = GlossaryManager()
-        detector = LanguageDetector(mock_llm_provider)
+        detector = LanguageDetector(mock_llm_provider, local_backend="none")
         cache = TieredCache(l1_size=100, db_path=str(tmp_path / "cache.db"))
 
         return TranslationService(
@@ -526,6 +563,36 @@ class TestTranslationService:
         assert stats["cache_misses"] >= 1
         assert "cache_hit_ratio" in stats
 
+    @pytest.mark.asyncio
+    async def test_translate_query_with_invoke_fallback(self, tmp_path):
+        """Translation should work with LLM wrappers that expose invoke()."""
+        from app.services.translation.translation_service import TranslationService
+
+        class InvokeOnlyLLM:
+            def __init__(self):
+                self.invoke_calls = 0
+
+            def invoke(self, prompt: str):
+                self.invoke_calls += 1
+                return MagicMock(content="How do I buy BTC with Bisq Easy?")
+
+        invoke_llm = InvokeOnlyLLM()
+        service = TranslationService(
+            llm_provider=invoke_llm,
+            cache_db_path=str(tmp_path / "invoke_cache.db"),
+        )
+
+        result = await service.translate_query(
+            "Wie kann ich BTC mit Bisq Easy kaufen?",
+            source_lang="de",
+        )
+
+        assert result["translated_text"] == "How do I buy BTC with Bisq Easy?"
+        assert result["source_lang"] == "de"
+        assert result["skipped"] is False
+        assert "error" not in result
+        assert invoke_llm.invoke_calls == 1
+
 
 # =============================================================================
 # TASK 10.6: BGE-M3 EMBEDDINGS TESTS
@@ -587,7 +654,7 @@ class TestRAGMultilingualIntegration:
         # Create translation service
         with tempfile.TemporaryDirectory() as tmp_dir:
             glossary = GlossaryManager()
-            detector = LanguageDetector(mock_llm_provider)
+            detector = LanguageDetector(mock_llm_provider, local_backend="none")
             cache = TieredCache(l1_size=100, db_path=f"{tmp_dir}/cache.db")
 
             translation = TranslationService(
@@ -665,7 +732,10 @@ class TestGracefulDegradation:
         )
 
         glossary = GlossaryManager()
-        detector = LanguageDetector(detection_mock)  # Detection succeeds
+        detector = LanguageDetector(
+            detection_mock,
+            local_backend="none",
+        )  # Detection succeeds
         cache = TieredCache(l1_size=100, db_path=str(tmp_path / "cache.db"))
 
         return TranslationService(

@@ -8,15 +8,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.channels.escalation_localization import render_escalation_notice
 from app.models.escalation import EscalationCreate
 
 logger = logging.getLogger(__name__)
-
-_GENERIC_ESCALATION_MSG = (
-    "Your question has been forwarded to our support team. "
-    "A staff member will review and respond shortly. "
-    "(Reference: #{escalation_id})"
-)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
 _REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
@@ -28,6 +23,7 @@ def format_escalation_notice(
     username: str,
     escalation_id: int,
     support_handle: str = "support",
+    language_code: str | None = None,
     channel: Any | None = None,
     channel_registry: Any | None = None,
 ) -> str:
@@ -35,11 +31,19 @@ def format_escalation_notice(
     formatter = getattr(channel, "format_escalation_message", None) if channel else None
     if callable(formatter):
         try:
-            rendered = formatter(
-                username=username,
-                escalation_id=escalation_id,
-                support_handle=support_handle,
-            )
+            try:
+                rendered = formatter(
+                    username=username,
+                    escalation_id=escalation_id,
+                    support_handle=support_handle,
+                    language_code=language_code,
+                )
+            except TypeError:
+                rendered = formatter(
+                    username=username,
+                    escalation_id=escalation_id,
+                    support_handle=support_handle,
+                )
             if isinstance(rendered, str) and rendered.strip():
                 return rendered
         except Exception:
@@ -65,11 +69,19 @@ def format_escalation_notice(
         )
         if callable(registry_formatter):
             try:
-                rendered = registry_formatter(
-                    username=username,
-                    escalation_id=escalation_id,
-                    support_handle=support_handle,
-                )
+                try:
+                    rendered = registry_formatter(
+                        username=username,
+                        escalation_id=escalation_id,
+                        support_handle=support_handle,
+                        language_code=language_code,
+                    )
+                except TypeError:
+                    rendered = registry_formatter(
+                        username=username,
+                        escalation_id=escalation_id,
+                        support_handle=support_handle,
+                    )
                 if isinstance(rendered, str) and rendered.strip():
                     return rendered
             except Exception:
@@ -79,7 +91,12 @@ def format_escalation_notice(
                     exc_info=True,
                 )
 
-    return _GENERIC_ESCALATION_MSG.format(escalation_id=escalation_id)
+    return render_escalation_notice(
+        channel_id=channel_id,
+        escalation_id=escalation_id,
+        support_handle=support_handle,
+        language_code=language_code,
+    )
 
 
 class ChannelResponseDispatcher:
@@ -224,9 +241,18 @@ class ChannelResponseDispatcher:
             confidence_score = 0.0
 
         message_id = str(getattr(incoming, "message_id", "") or "").strip()
-        question = str(getattr(incoming, "question", "") or "").strip()
-        if not question:
-            question = str(getattr(response, "original_question", "") or "").strip()
+        localized_question = str(getattr(incoming, "question", "") or "").strip()
+        raw_canonical_question = getattr(metadata, "canonical_question_en", None)
+        canonical_question = (
+            raw_canonical_question.strip()
+            if isinstance(raw_canonical_question, str)
+            else ""
+        )
+        question = (
+            canonical_question
+            or str(getattr(response, "original_question", "") or "").strip()
+            or localized_question
+        )
         if not message_id or not question:
             logger.warning(
                 "Skipping %s escalation creation due to missing message_id/question (message_id=%s)",
@@ -239,9 +265,25 @@ class ChannelResponseDispatcher:
         user_id = str(getattr(user, "user_id", "") or "").strip() or "unknown"
         username = str(getattr(user, "channel_user_id", "") or "").strip() or user_id
         routing_reason = getattr(metadata, "routing_reason", None)
-        ai_draft_answer = str(getattr(response, "answer", "") or "").strip()
+        localized_answer = str(getattr(response, "answer", "") or "").strip()
+        raw_canonical_answer = getattr(metadata, "canonical_answer_en", None)
+        canonical_answer = (
+            raw_canonical_answer.strip()
+            if isinstance(raw_canonical_answer, str)
+            else ""
+        )
+        ai_draft_answer = canonical_answer or localized_answer
         if not ai_draft_answer:
             ai_draft_answer = "Escalated for staff review."
+        raw_language_code = getattr(metadata, "original_language", None)
+        language_code = (
+            raw_language_code.strip().lower()
+            if isinstance(raw_language_code, str)
+            else ""
+        )
+        if len(language_code) > 8:
+            language_code = ""
+        translation_applied = bool(getattr(metadata, "translation_applied", False))
 
         source_docs = []
         for source in list(getattr(response, "sources", []) or []):
@@ -259,8 +301,12 @@ class ChannelResponseDispatcher:
                     username=username,
                     channel_metadata=getattr(incoming, "channel_metadata", None)
                     or None,
+                    question_original=localized_question or None,
                     question=question,
+                    ai_draft_answer_original=localized_answer or None,
                     ai_draft_answer=ai_draft_answer,
+                    user_language=language_code or None,
+                    translation_applied=translation_applied,
                     confidence_score=confidence_score,
                     routing_action=routing_action,
                     routing_reason=routing_reason,
@@ -339,10 +385,18 @@ class ChannelResponseDispatcher:
             ).strip()
             or "user"
         )
+        metadata = getattr(response, "metadata", None)
+        raw_language = getattr(metadata, "original_language", None)
+        original_language = (
+            raw_language.strip().lower() if isinstance(raw_language, str) else None
+        )
+        if isinstance(original_language, str) and len(original_language) > 8:
+            original_language = None
         notice_text = self._format_escalation_notice(
             username=username,
             escalation_id=escalation_id,
             support_handle="support",
+            language_code=original_language,
         )
 
         notice = (
@@ -373,12 +427,14 @@ class ChannelResponseDispatcher:
         username: str,
         escalation_id: int,
         support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         return format_escalation_notice(
             channel_id=self.channel_id,
             username=username,
             escalation_id=escalation_id,
             support_handle=support_handle,
+            language_code=language_code,
             channel=self.channel,
             channel_registry=None,
         )

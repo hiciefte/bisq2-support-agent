@@ -234,6 +234,8 @@ langchain-text-splitters==1.1.1
     # via
     #   -r api/requirements.in
     #   langchain-classic
+langdetect==1.0.9
+    # via -r api/requirements.in
 langgraph==1.0.9
     # via langchain
 langgraph-checkpoint==4.0.0

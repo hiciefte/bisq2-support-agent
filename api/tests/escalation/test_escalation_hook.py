@@ -182,6 +182,25 @@ class TestEscalationPostHookExecution:
         adapter.format_escalation_message.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_passes_original_language_to_adapter_formatter(
+        self, hook, mock_channel_registry
+    ):
+        """Detected user language is forwarded for localized escalation notices."""
+        incoming = _make_incoming()
+        outgoing = _make_outgoing(requires_human=True)
+        outgoing.metadata.original_language = "de"
+
+        await hook.execute(incoming, outgoing)
+
+        adapter = mock_channel_registry.get.return_value
+        adapter.format_escalation_message.assert_called_once_with(
+            username="user_123",
+            escalation_id=42,
+            support_handle="support",
+            language_code="de",
+        )
+
+    @pytest.mark.asyncio
     async def test_web_channel_message_format(self, hook):
         """Web channel gets polling-appropriate message."""
         incoming = _make_incoming(channel=ChannelType.WEB)

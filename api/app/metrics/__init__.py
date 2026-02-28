@@ -23,12 +23,14 @@ from app.metrics import (
     task_metrics,
     tor_metrics,
     training_metrics,
+    translation_metrics,
 )
 
 __all__ = [
     "tor_metrics",
     "matrix_metrics",
     "training_metrics",
+    "translation_metrics",
     "task_metrics",
     "llm_extraction_metrics",
 ]

@@ -6,6 +6,7 @@ Wraps existing web chat functionality into channel plugin architecture.
 from typing import Any, Set
 
 from app.channels.base import ChannelBase
+from app.channels.escalation_localization import render_escalation_notice
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
 from app.channels.registry import register_channel
 
@@ -84,13 +85,18 @@ class WebChannel(ChannelBase):
         return ""
 
     def format_escalation_message(
-        self, username: str, escalation_id: int, support_handle: str
+        self,
+        username: str,
+        escalation_id: int,
+        support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         """Format escalation message for web chat UI."""
-        return (
-            f"Your question has been forwarded to our support team. "
-            f"A staff member will review and respond shortly. "
-            f"(Reference: #{escalation_id})"
+        return render_escalation_notice(
+            channel_id=self.channel_id,
+            escalation_id=escalation_id,
+            support_handle=support_handle,
+            language_code=language_code,
         )
 
     # handle_incoming() inherited from ChannelBase

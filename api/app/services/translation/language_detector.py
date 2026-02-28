@@ -1,11 +1,22 @@
-"""Language Detector for identifying input language.
+"""Language detector with local-model first, then LLM tie-break fallback."""
 
-Uses fast heuristics for English detection and LLM fallback for other languages.
-"""
+from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import re
-from typing import Any, ClassVar, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, ClassVar, Optional, Tuple
+
+from app.metrics.translation_metrics import (
+    language_detection_confidence,
+    language_detection_llm_tiebreak_total,
+    language_detection_total,
+    mixed_language_detection_total,
+)
+
+logger = logging.getLogger(__name__)
 
 # Supported languages (ISO 639-1 two-letter and ISO 639-2/3 three-letter codes)
 SUPPORTED_LANGUAGES = {
@@ -108,12 +119,21 @@ SUPPORTED_LANGUAGES = {
 }
 
 
-class LanguageDetector:
-    """Detects language of input text using heuristics and LLM fallback.
+@dataclass
+class LanguageDetectionDetails:
+    """Detailed language detection result."""
 
-    Fast path: Check for common English patterns first (high accuracy for English).
-    Slow path: Use LLM for non-English language detection.
-    """
+    language_code: str
+    confidence: float
+    backend: str
+    alternatives: list[tuple[str, float]] = field(default_factory=list)
+    is_mixed: bool = False
+    llm_tiebreak_used: bool = False
+    local_model_used: bool = False
+
+
+class LanguageDetector:
+    """Detect language via local LID model, with optional LLM tie-break."""
 
     DETECTION_PROMPT = """Detect the language of the following text. Return ONLY the ISO 639-1 or ISO 639-2/3 language code (2-3 letters, e.g., "en" for English, "de" for German, "es" for Spanish, "ceb" for Cebuano).
 
@@ -121,7 +141,6 @@ Text: {text}
 
 Language code:"""
 
-    # Common English words/patterns for fast detection
     ENGLISH_MARKERS: ClassVar[list[str]] = [
         "the ",
         "is ",
@@ -163,7 +182,6 @@ Language code:"""
         " at ",
     ]
 
-    # ISO 639-3 to ISO 639-1 mapping (3-letter to 2-letter codes)
     ISO_639_3_TO_1: ClassVar[dict[str, str]] = {
         "eng": "en",
         "deu": "de",
@@ -218,92 +236,379 @@ Language code:"""
         "mar": "mr",
     }
 
-    def __init__(self, llm_provider: Optional[Any] = None):
-        """Initialize the LanguageDetector.
+    LANGUAGE_HINTS: ClassVar[dict[str, set[str]]] = {
+        "de": {
+            "wie",
+            "ich",
+            "kann",
+            "kaufen",
+            "verkaufen",
+            "hilfe",
+            "problem",
+            "handel",
+            "mit",
+            "und",
+            "nicht",
+            "bitte",
+        },
+        "es": {
+            "como",
+            "cómo",
+            "puedo",
+            "comprar",
+            "vender",
+            "ayuda",
+            "problema",
+            "tengo",
+            "quiero",
+            "con",
+            "gracias",
+        },
+        "fr": {
+            "comment",
+            "acheter",
+            "vendre",
+            "aide",
+            "probleme",
+            "problème",
+            "avec",
+            "bonjour",
+        },
+        "it": {"come", "comprare", "vendere", "aiuto", "problema", "con", "ciao"},
+        "pt": {"como", "comprar", "vender", "ajuda", "problema", "com", "obrigado"},
+    }
 
-        Args:
-            llm_provider: Optional LLM provider for non-English detection.
-                         Should have an async generate(prompt) method.
-        """
+    SCRIPT_HINTS: ClassVar[list[tuple[re.Pattern[str], str]]] = [
+        (re.compile(r"[\u3040-\u30ff]"), "ja"),
+        (re.compile(r"[\uac00-\ud7af]"), "ko"),
+        (re.compile(r"[\u4e00-\u9fff]"), "zh"),
+        (re.compile(r"[\u0600-\u06ff]"), "ar"),
+        (re.compile(r"[\u0400-\u04ff]"), "ru"),
+        (re.compile(r"[\u0370-\u03ff]"), "el"),
+        (re.compile(r"[\u0590-\u05ff]"), "he"),
+        (re.compile(r"[\u0900-\u097f]"), "hi"),
+    ]
+
+    def __init__(
+        self,
+        llm_provider: Optional[Any] = None,
+        local_backend: str = "langdetect",
+        local_confidence_threshold: float = 0.80,
+        short_text_chars: int = 24,
+        mixed_margin_threshold: float = 0.20,
+        mixed_secondary_min: float = 0.25,
+        enable_llm_tiebreaker: bool = True,
+    ):
         self.llm = llm_provider
+        self.local_backend = (local_backend or "none").strip().lower()
+        self.local_confidence_threshold = max(0.0, min(1.0, local_confidence_threshold))
+        self.short_text_chars = max(1, short_text_chars)
+        self.mixed_margin_threshold = max(0.0, min(1.0, mixed_margin_threshold))
+        self.mixed_secondary_min = max(0.0, min(1.0, mixed_secondary_min))
+        self.enable_llm_tiebreaker = bool(enable_llm_tiebreaker)
+
+        self._local_detect_langs: Optional[Callable[[str], list[Any]]] = None
+        self._init_local_backend()
+
+    def _init_local_backend(self) -> None:
+        if self.local_backend != "langdetect":
+            return
+        try:
+            from langdetect import (  # type: ignore[import-not-found]
+                DetectorFactory,
+                detect_langs,
+            )
+
+            DetectorFactory.seed = 0
+            self._local_detect_langs = detect_langs
+            logger.info("Language detector local backend initialized: langdetect")
+        except Exception:
+            self._local_detect_langs = None
+            logger.warning(
+                "Local language detector backend 'langdetect' unavailable; falling back to heuristics/LLM",
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _normalize_lang_code(code: str) -> Optional[str]:
+        normalized = (code or "").strip().lower()
+        if not normalized:
+            return None
+        if "-" in normalized:
+            normalized = normalized.split("-", 1)[0]
+        if normalized in SUPPORTED_LANGUAGES:
+            return normalized
+        if normalized in LanguageDetector.ISO_639_3_TO_1:
+            return LanguageDetector.ISO_639_3_TO_1[normalized]
+        if len(normalized) >= 2 and normalized[:2] in SUPPORTED_LANGUAGES:
+            return normalized[:2]
+        return None
 
     def _is_likely_english(self, text: str) -> bool:
-        """Quick heuristic check for English text.
-
-        Returns True if text appears to be English based on common word patterns.
-        This is a fast-path optimization to avoid LLM calls for English input.
-        """
         text_lower = text.lower()
         matches = sum(1 for marker in self.ENGLISH_MARKERS if marker in text_lower)
-        # Require at least 2 matches for confidence
         return matches >= 2
 
-    async def detect(self, text: str) -> Tuple[str, float]:
-        """Detect the language of the given text.
+    def _detect_non_english_hint(self, text: str) -> Optional[Tuple[str, float]]:
+        for pattern, language in self.SCRIPT_HINTS:
+            if pattern.search(text):
+                return (language, 0.98)
 
-        Args:
-            text: Input text to analyze.
+        if "¿" in text or "¡" in text:
+            return ("es", 0.96)
 
-        Returns:
-            Tuple of (language_code, confidence) where:
-            - language_code: ISO 639-1 (2-letter) or ISO 639-2/3 (3-letter) code
-            - confidence: Float between 0 and 1
-        """
-        # Fast path: check for English
-        if self._is_likely_english(text):
-            return ("en", 0.95)
+        text_lower = text.lower()
+        tokens = set(re.findall(r"[a-zA-ZÀ-ÿ']+", text_lower))
+        if not tokens:
+            return None
 
-        # If no LLM provider, default to English with low confidence
+        best_lang: Optional[str] = None
+        best_score = 0
+        second_score = 0
+        for language, hints in self.LANGUAGE_HINTS.items():
+            score = sum(1 for token in tokens if token in hints)
+            if score > best_score:
+                second_score = best_score
+                best_score = score
+                best_lang = language
+            elif score > second_score:
+                second_score = score
+
+        if best_lang and best_score >= 2 and best_score >= (second_score + 1):
+            confidence = 0.9 if best_score >= 3 else 0.85
+            return (best_lang, confidence)
+        return None
+
+    async def _llm_text(self, prompt: str) -> str:
         if self.llm is None:
-            return ("en", 0.5)
+            raise ValueError("No LLM provider configured")
 
-        # Use LLM for non-English detection
+        if hasattr(self.llm, "generate"):
+            result = self.llm.generate(prompt)
+            if inspect.isawaitable(result):
+                result = await result
+        elif hasattr(self.llm, "invoke"):
+            result = await asyncio.to_thread(self.llm.invoke, prompt)
+        else:
+            raise AttributeError("LLM provider must expose generate() or invoke()")
+
+        if hasattr(result, "content"):
+            return str(result.content).strip()
+        return str(result).strip()
+
+    def _emit_metrics(self, details: LanguageDetectionDetails) -> None:
+        language_detection_total.labels(
+            backend=details.backend,
+            result=details.language_code,
+        ).inc()
+        language_detection_confidence.labels(backend=details.backend).observe(
+            max(0.0, min(1.0, float(details.confidence)))
+        )
+        if details.is_mixed and details.alternatives:
+            secondary = details.alternatives[0][0]
+            mixed_language_detection_total.labels(
+                primary=details.language_code,
+                secondary=secondary,
+            ).inc()
+
+    async def _detect_with_local_model(
+        self, text: str
+    ) -> Optional[LanguageDetectionDetails]:
+        if self._local_detect_langs is None:
+            return None
+        try:
+            raw = await asyncio.to_thread(self._local_detect_langs, text[:2000])
+        except Exception:
+            logger.debug("Local LID model failed", exc_info=True)
+            return None
+
+        if not raw:
+            return None
+
+        parsed: list[tuple[str, float]] = []
+        for item in raw:
+            lang = self._normalize_lang_code(getattr(item, "lang", ""))
+            prob = float(getattr(item, "prob", 0.0))
+            if lang is None:
+                continue
+            parsed.append((lang, max(0.0, min(1.0, prob))))
+
+        if not parsed:
+            return None
+
+        primary, primary_prob = parsed[0]
+        alternatives = parsed[1:3]
+        is_mixed = False
+        if alternatives:
+            secondary_prob = alternatives[0][1]
+            gap = primary_prob - secondary_prob
+            is_mixed = (
+                secondary_prob >= self.mixed_secondary_min
+                and gap <= self.mixed_margin_threshold
+            )
+
+        return LanguageDetectionDetails(
+            language_code=primary,
+            confidence=primary_prob,
+            backend="local_model",
+            alternatives=alternatives,
+            is_mixed=is_mixed,
+            local_model_used=True,
+        )
+
+    async def _detect_with_llm(
+        self, text: str, reason: str
+    ) -> Optional[LanguageDetectionDetails]:
+        if self.llm is None:
+            return None
+        language_detection_llm_tiebreak_total.labels(reason=reason).inc()
         try:
             prompt = self.DETECTION_PROMPT.format(text=text[:500])
-            response = await self.llm.generate(prompt)
-
-            # Extract language code token from response
-            # Handles formats like "en", "Language: en", "The language is: en"
+            response = await self._llm_text(prompt)
             raw_response = response.strip().lower()
+            matches = re.findall(r"\b([a-z]{2,3}(?:-[a-z]{2,3})?)\b", raw_response)
+            candidate_codes = [raw_response]
+            if matches:
+                candidate_codes = list(reversed(matches))
 
-            # Find all 2-3 letter tokens from the response
-            # Use findall to get all matches, then prefer the LAST one in SUPPORTED_LANGUAGES
-            # (to avoid misclassifying "It is English (en)" as Italian "it")
-            code_matches = re.findall(r"\b([a-z]{2,3})\b", raw_response)
-
-            # Select the best match: prefer the LAST token in SUPPORTED_LANGUAGES,
-            # otherwise use the last token (most likely to be the actual answer)
-            lang_code = raw_response  # fallback if no tokens found
-            if code_matches:
-                # Check tokens in REVERSE order to prefer the last supported match
-                # This handles "It is English (en)" -> "en" not "it"
-                for token in reversed(code_matches):
-                    if token in SUPPORTED_LANGUAGES:
-                        lang_code = token
-                        break
-                else:
-                    # No match in supported languages, use the last token
-                    lang_code = code_matches[-1]
-
-            # First check exact match in SUPPORTED_LANGUAGES (handles both 2 and 3-letter codes)
-            if lang_code in SUPPORTED_LANGUAGES:
-                return (lang_code, 0.9)
-
-            # Try 3-letter code mapping to 2-letter using class constant
-            if lang_code in self.ISO_639_3_TO_1:
-                return (self.ISO_639_3_TO_1[lang_code], 0.85)
-
-            # Try first 2 characters as fallback (2-letter code)
-            if len(lang_code) >= 2:
-                two_letter = lang_code[:2]
-                if two_letter in SUPPORTED_LANGUAGES:
-                    return (two_letter, 0.85)
-
-            # Unknown language code, default to English
-            return ("en", 0.5)
+            for code in candidate_codes:
+                normalized = self._normalize_lang_code(code)
+                if normalized is not None:
+                    return LanguageDetectionDetails(
+                        language_code=normalized,
+                        confidence=0.86,
+                        backend="llm_tiebreak",
+                        llm_tiebreak_used=True,
+                    )
+            return None
         except asyncio.CancelledError:
-            # Re-raise cancellations to support cooperative cancellation
             raise
         except Exception:
-            # On error, default to English with low confidence
-            return ("en", 0.3)
+            logger.debug("LLM language tie-break failed", exc_info=True)
+            return None
+
+    async def detect_with_metadata(self, text: str) -> LanguageDetectionDetails:
+        text = (text or "").strip()
+        if not text:
+            details = LanguageDetectionDetails(
+                language_code="en",
+                confidence=1.0,
+                backend="empty_input",
+            )
+            self._emit_metrics(details)
+            return details
+
+        text_len = len(text)
+        non_english_hint = self._detect_non_english_hint(text)
+
+        # Trust script hints immediately for non-Latin scripts.
+        if non_english_hint is not None and non_english_hint[1] >= 0.97:
+            details = LanguageDetectionDetails(
+                language_code=non_english_hint[0],
+                confidence=non_english_hint[1],
+                backend="script_hint",
+            )
+            self._emit_metrics(details)
+            return details
+
+        # Keep a cheap English bypass to avoid unnecessary model/LLM work.
+        if (
+            non_english_hint is None
+            and text_len > self.short_text_chars
+            and self._is_likely_english(text)
+        ):
+            details = LanguageDetectionDetails(
+                language_code="en",
+                confidence=0.95,
+                backend="english_heuristic",
+            )
+            self._emit_metrics(details)
+            return details
+
+        local = await self._detect_with_local_model(text)
+        if (
+            local is not None
+            and local.confidence >= self.local_confidence_threshold
+            and not local.is_mixed
+        ):
+            if (
+                local.language_code == "en"
+                and non_english_hint is not None
+                and non_english_hint[1] >= 0.85
+            ):
+                details = LanguageDetectionDetails(
+                    language_code=non_english_hint[0],
+                    confidence=non_english_hint[1],
+                    backend="hint_override",
+                    alternatives=local.alternatives,
+                    local_model_used=True,
+                )
+                self._emit_metrics(details)
+                return details
+            self._emit_metrics(local)
+            return local
+
+        llm_reason: Optional[str] = None
+        if self.enable_llm_tiebreaker and self.llm is not None:
+            if local is None:
+                llm_reason = "no_local_signal"
+            elif local.is_mixed:
+                llm_reason = "mixed_language"
+            elif local.confidence < self.local_confidence_threshold:
+                llm_reason = "low_local_confidence"
+            elif text_len <= self.short_text_chars:
+                llm_reason = "short_text"
+
+        if llm_reason is not None:
+            llm_result = await self._detect_with_llm(text, llm_reason)
+            if llm_result is not None:
+                if (
+                    llm_result.language_code == "en"
+                    and non_english_hint is not None
+                    and non_english_hint[1] >= 0.85
+                ):
+                    details = LanguageDetectionDetails(
+                        language_code=non_english_hint[0],
+                        confidence=non_english_hint[1],
+                        backend="hint_override",
+                        llm_tiebreak_used=True,
+                        alternatives=llm_result.alternatives,
+                    )
+                    self._emit_metrics(details)
+                    return details
+                self._emit_metrics(llm_result)
+                return llm_result
+
+        if local is not None:
+            self._emit_metrics(local)
+            return local
+
+        if non_english_hint is not None:
+            details = LanguageDetectionDetails(
+                language_code=non_english_hint[0],
+                confidence=non_english_hint[1],
+                backend="lexical_hint",
+            )
+            self._emit_metrics(details)
+            return details
+
+        if self._is_likely_english(text):
+            details = LanguageDetectionDetails(
+                language_code="en",
+                confidence=0.8,
+                backend="english_heuristic",
+            )
+            self._emit_metrics(details)
+            return details
+
+        details = LanguageDetectionDetails(
+            language_code="en",
+            confidence=0.5,
+            backend="default_fallback",
+        )
+        self._emit_metrics(details)
+        return details
+
+    async def detect(self, text: str) -> Tuple[str, float]:
+        details = await self.detect_with_metadata(text)
+        return (details.language_code, details.confidence)

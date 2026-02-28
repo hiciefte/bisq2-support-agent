@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional, Set
 
 from app.channels.base import ChannelBase
+from app.channels.escalation_localization import render_escalation_notice
 from app.channels.history_builder import (
     ConversationMessage,
     build_channel_chat_history,
@@ -308,13 +309,18 @@ class Bisq2Channel(ChannelBase):
         return str(metadata.get("channel_id", "") or "").strip()
 
     def format_escalation_message(
-        self, username: str, escalation_id: int, support_handle: str
+        self,
+        username: str,
+        escalation_id: int,
+        support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         """Format escalation message for Bisq2 chat."""
-        return (
-            f"Your question has been escalated to {support_handle} for review. "
-            f"A support team member will respond in this conversation. "
-            f"(Reference: #{escalation_id})"
+        return render_escalation_notice(
+            channel_id=self.channel_id,
+            escalation_id=escalation_id,
+            support_handle=support_handle,
+            language_code=language_code,
         )
 
     # handle_incoming() inherited from ChannelBase

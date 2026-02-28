@@ -49,5 +49,11 @@ def build_metadata(
         routing_reason=rag_response.get("routing_reason"),
         detected_version=rag_response.get("detected_version"),
         version_confidence=rag_response.get("version_confidence"),
+        original_language=rag_response.get("original_language"),
+        canonical_question_en=rag_response.get("canonical_question_en"),
+        canonical_answer_en=rag_response.get("canonical_answer_en"),
+        localized_question=rag_response.get("localized_question"),
+        localized_answer=rag_response.get("localized_answer"),
+        translation_applied=rag_response.get("translated"),
         hooks_executed=hooks_executed if hooks_executed is not None else [],
     )

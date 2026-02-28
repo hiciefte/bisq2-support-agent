@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Set
 
 from app.channels.base import ChannelBase
+from app.channels.escalation_localization import render_escalation_notice
 from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
 from app.channels.plugins.matrix.room_filter import resolve_allowed_sync_rooms
 from app.channels.plugins.support_markdown import (
@@ -380,13 +381,18 @@ class MatrixChannel(ChannelBase):
         return metadata.get("room_id", "")
 
     def format_escalation_message(
-        self, username: str, escalation_id: int, support_handle: str
+        self,
+        username: str,
+        escalation_id: int,
+        support_handle: str,
+        language_code: str | None = None,
     ) -> str:
         """Format escalation message for Matrix room."""
-        return (
-            f"Your question has been escalated to {support_handle} for review. "
-            f"A support team member will respond in this room. "
-            f"(Reference: #{escalation_id})"
+        return render_escalation_notice(
+            channel_id=self.channel_id,
+            escalation_id=escalation_id,
+            support_handle=support_handle,
+            language_code=language_code,
         )
 
     # handle_incoming() inherited from ChannelBase

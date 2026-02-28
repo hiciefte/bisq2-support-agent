@@ -313,6 +313,137 @@ class TestEditedQuestionTextService:
         faq_item = mock_faq_service.add_faq.call_args[0][0]
         assert faq_item.question == "Original question text"
 
+    @pytest.mark.asyncio
+    async def test_regenerate_uses_edited_question_and_answer_when_present(
+        self, mock_dependencies
+    ):
+        """Regeneration should use edited FAQ content, not only original text."""
+        from app.services.training.unified_pipeline_service import (
+            ComparisonResult,
+            UnifiedPipelineService,
+        )
+
+        mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
+
+        mock_candidate = MagicMock()
+        mock_candidate.id = 7
+        mock_candidate.source_event_id = "evt_7"
+        mock_candidate.protocol = "bisq_easy"
+        mock_candidate.question_text = "Original question?"
+        mock_candidate.edited_question_text = "Edited question?"
+        mock_candidate.staff_answer = "Original answer."
+        mock_candidate.edited_staff_answer = "Edited answer."
+        mock_candidate.generated_answer = "Old generated answer."
+        mock_repo.get_by_id.return_value = mock_candidate
+
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "Fresh generated answer",
+                "sources": [{"title": "Doc"}],
+                "confidence": 0.81,
+            }
+        )
+        mock_repo.update_candidate.return_value = mock_candidate
+
+        service = UnifiedPipelineService(
+            repository=mock_repo,
+            rag_service=mock_rag_service,
+            faq_service=mock_faq_service,
+        )
+        service._compare_answers = AsyncMock(
+            return_value=ComparisonResult(
+                embedding_similarity=0.82,
+                factual_alignment=0.8,
+                contradiction_score=0.1,
+                completeness=0.78,
+                hallucination_risk=0.12,
+                final_score=0.79,
+                llm_reasoning="Looks aligned",
+            )
+        )
+        service._determine_routing = MagicMock(return_value=("SPOT_CHECK", False))
+
+        await service.regenerate_candidate_answer(candidate_id=7, protocol="bisq_easy")
+
+        mock_rag_service.query.assert_awaited_once_with(
+            "Edited question?",
+            chat_history=[],
+            override_version="Bisq 2",
+        )
+        service._compare_answers.assert_awaited_once_with(
+            "evt_7",
+            "Edited question?",
+            "Edited answer.",
+            "Fresh generated answer",
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_with_edited_question_regenerates_suggested_answer(
+        self, mock_dependencies
+    ):
+        """Editing FAQ question should refresh generated answer and re-score."""
+        from app.services.training.unified_pipeline_service import (
+            ComparisonResult,
+            UnifiedPipelineService,
+        )
+
+        mock_repo, mock_rag_service, mock_faq_service = mock_dependencies
+
+        mock_candidate = MagicMock()
+        mock_candidate.id = 11
+        mock_candidate.source_event_id = "evt_11"
+        mock_candidate.protocol = "multisig_v1"
+        mock_candidate.question_text = "Original question"
+        mock_candidate.edited_question_text = None
+        mock_candidate.staff_answer = "Original staff answer"
+        mock_candidate.edited_staff_answer = None
+        mock_candidate.generated_answer = "Previous generated"
+        mock_repo.get_by_id.return_value = mock_candidate
+        mock_repo.update_candidate.return_value = mock_candidate
+
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "Generated from edited question",
+                "sources": [{"title": "Doc"}],
+                "confidence": 0.74,
+            }
+        )
+
+        service = UnifiedPipelineService(
+            repository=mock_repo,
+            rag_service=mock_rag_service,
+            faq_service=mock_faq_service,
+        )
+        service._compare_answers = AsyncMock(
+            return_value=ComparisonResult(
+                embedding_similarity=0.7,
+                factual_alignment=0.72,
+                contradiction_score=0.2,
+                completeness=0.68,
+                hallucination_risk=0.21,
+                final_score=0.69,
+                llm_reasoning="Updated comparison",
+            )
+        )
+        service._determine_routing = MagicMock(return_value=("FULL_REVIEW", False))
+
+        await service.update_candidate(
+            candidate_id=11,
+            edited_question_text="Edited question",
+        )
+
+        mock_rag_service.query.assert_awaited_once_with(
+            "Edited question",
+            chat_history=[],
+            override_version="Bisq 1",
+        )
+        service._compare_answers.assert_awaited_once_with(
+            "evt_11",
+            "Edited question",
+            "Original staff answer",
+            "Generated from edited question",
+        )
+
 
 # =============================================================================
 # TASK 4: API Layer Tests
