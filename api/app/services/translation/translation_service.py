@@ -52,7 +52,7 @@ Text to translate:
 
 Translation:"""
 
-    UNKNOWN_LANGUAGE_CODES = {"und", "unknown"}
+    UNKNOWN_LANGUAGE_CODES: frozenset[str] = frozenset({"und", "unknown"})
 
     def __init__(
         self,
