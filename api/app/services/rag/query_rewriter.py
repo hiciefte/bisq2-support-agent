@@ -240,6 +240,16 @@ SELF-CONTAINED search query. Rules:
 4. Replace vague language with domain terms:
 {entity_examples}
 5. Keep it to 1-2 sentences. Do NOT answer the question.
+6. Do NOT change the user's intent, add advice, or infer a different product/version than the conversation supports.
+
+Good examples:
+- History about Bisq Easy + user says "What about the fees?" -> "What are the fees for Bisq 2 (Bisq Easy)?"
+- History about DAO voting + user says "How do I do that?" -> "How do I vote in the Bisq 1 DAO?"
+
+Bad examples:
+- Adding troubleshooting steps or explanations
+- Converting a question into an answer
+- Mixing Bisq 1 and Bisq 2 in the same rewrite unless the user explicitly asks for a comparison
 
 Respond with ONLY JSON:
 {{"rewritten_query": "...", "was_rewritten": true/false, "confidence": 0.0-1.0}}"""

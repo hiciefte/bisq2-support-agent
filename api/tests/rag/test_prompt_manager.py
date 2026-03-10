@@ -71,7 +71,7 @@ class TestPromptManagerSoulInjection:
         template = prompt.messages[0].prompt.template
         soul_text = load_soul()
         soul_end = template.find(soul_text) + len(soul_text)
-        protocol_start = template.find("PROTOCOL HANDLING INSTRUCTIONS")
+        protocol_start = template.find("PROTOCOL HANDLING:")
         assert (
             protocol_start > soul_end
         ), "Protocol instructions should come after soul text"
@@ -142,7 +142,62 @@ class TestPromptManagerResponseGuidelines:
         prompt = prompt_manager.create_rag_prompt()
         template = prompt.messages[0].prompt.template
         # Should have guidance about response length that's flexible
-        assert "RESPONSE LENGTH" in template or "response length" in template.lower()
+        assert "Keep answers compact" in template or "concise by default" in template.lower()
+
+    def test_prompt_contains_answer_contract(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+        assert "ANSWER CONTRACT" in template
+        assert "Lead with the answer." in template
+        assert "Never use headings." in template
+        assert "answer in 1-2 sentences and stop" in template
+        assert "keep the answer under roughly 70 words" in template
+
+    def test_prompt_contains_evidence_discipline(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+        assert "EVIDENCE DISCIPLINE:" in template
+        assert "Do not invent UI actions" in template
+        assert "hand off instead of guessing" in template
+        assert "SPV resync, DAO rebuild, failed-trades recovery" in template
+        assert "do not replace it with user-side cancel/delete/reject instructions" in template
+        assert "Do not recommend DAO rebuild" in template
+
+    def test_prompt_contains_bisq1_stuck_trade_guardrails(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+        assert "BISQ 1 WORKFLOW GUARDRAILS:" in template
+        assert "recommend SPV resync first" in template
+        assert "protocol state not progressing, Altcoin Instant" in template
+        assert "re-check the trade state" in template
+        assert "Do not turn a generic Bisq 1 protocol-stuck question into a DAO-state mismatch answer" in template
+        assert "Do not replace the documented stuck-trade/dispute workflow" in template
+
+    def test_prompt_contains_ambiguous_support_workflow_rules(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+        assert "AMBIGUOUS SUPPORT WORKFLOWS:" in template
+        assert "do not stop with a version clarification" in template
+        assert "answer at the highest safe level first" in template
+        assert "Do not assume Bisq Easy, Bisq 1, or a specific UI button/menu path" in template
+        assert "If version remains unknown after considering Context" in template
+        assert "do not name Bisq Easy, Bisq 1, MuSig" in template
+        assert "prefer neutral wording such as 'open the affected trade'" in template
+        assert "If the user is asking for a human, manager, or escalation" in template
+
+    def test_prompt_avoids_roleplay_style_instructions(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+        assert "corporate support drone" not in template.lower()
+        assert "fellow believer" not in template.lower()
+        assert "strong opinions" not in template.lower()
+
+    def test_context_only_prompt_reuses_short_answer_contract(self, prompt_manager):
+        result = prompt_manager.create_context_only_prompt(
+            question="What is Bisq Easy?",
+            chat_history_str="Human: What is Bisq Easy?",
+        )
+        assert "answer in 1-2 sentences and stop" in result
 
 
 class TestPromptManagerRegression:
@@ -151,12 +206,12 @@ class TestPromptManagerRegression:
     def test_prompt_contains_protocol_instructions(self, prompt_manager):
         prompt = prompt_manager.create_rag_prompt()
         template = prompt.messages[0].prompt.template
-        assert "PROTOCOL HANDLING INSTRUCTIONS" in template
+        assert "PROTOCOL HANDLING:" in template
 
     def test_prompt_contains_tool_usage_section(self, prompt_manager):
         prompt = prompt_manager.create_rag_prompt()
         template = prompt.messages[0].prompt.template
-        assert "TOOL USAGE" in template
+        assert "LIVE DATA POLICY:" in template
 
     def test_prompt_has_question_placeholder(self, prompt_manager):
         prompt = prompt_manager.create_rag_prompt()
