@@ -1,0 +1,7 @@
+{
+  "chat.ui.helpful_prompt": "Was this response helpful?",
+  "chat.ui.helpful_thank_you": "Thank you for your feedback!",
+  "chat.ui.staff_helpful_prompt": "Was the staff response helpful?",
+  "chat.ui.staff_response_label": "Staff Response",
+  "chat.ui.support_team_notified": "Support team notified"
+}

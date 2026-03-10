@@ -45,7 +45,9 @@ class TranslationService:
 
     TRANSLATION_PROMPT = """Translate the following text from {source_lang} to {target_lang}.
 Preserve any terms enclosed in __BISQ_TERM_X__ placeholders exactly as they are.
-Maintain the original tone and technical accuracy.
+Maintain the original tone, structure, and technical accuracy.
+Do not add explanations, headings, or extra detail.
+Preserve bullets, numbering, and compactness whenever possible.
 
 Text to translate:
 {text}
@@ -199,6 +201,28 @@ Translation:"""
             source_lang=(source_lang or "unknown"),
         ).inc()
 
+    @staticmethod
+    def _should_passthrough_short_bisq_query(
+        query: str,
+        source_lang: str,
+        target_lang: str,
+    ) -> bool:
+        """Return True for short Bisq entity follow-ups that should skip translation.
+
+        Example: "Bisq Easy" after a non-English turn. Translating these tiny
+        entity-only phrases is brittle and can pollute detection/rewrite steps.
+        """
+        if target_lang != "en" or source_lang in {"", "en"}:
+            return False
+        text = str(query or "").strip()
+        if not text:
+            return False
+        tokens = [t for t in text.split() if t.strip()]
+        if len(tokens) > 3:
+            return False
+        lowered = text.casefold()
+        return "bisq" in lowered
+
     async def translate_query(
         self,
         query: str,
@@ -260,6 +284,34 @@ Translation:"""
                 "translated_text": query,
                 "source_lang": "en",
                 "skipped": True,
+                "cached": False,
+                "confidence": confidence,
+                "detection_backend": (
+                    detection_details.backend if detection_details else "provided"
+                ),
+                "is_mixed_language": (
+                    detection_details.is_mixed if detection_details else False
+                ),
+                "llm_tiebreak_used": (
+                    detection_details.llm_tiebreak_used if detection_details else False
+                ),
+            }
+            translation_operation_duration_seconds.labels(direction="query").observe(
+                max(0.0, time.perf_counter() - start_time)
+            )
+            return result
+
+        if self._should_passthrough_short_bisq_query(
+            query=query,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        ):
+            self._record_query_decision("skip_short_bisq_entity", source_lang)
+            result = {
+                "translated_text": query,
+                "source_lang": source_lang,
+                # Keep skipped=False so downstream can still localize the final answer.
+                "skipped": False,
                 "cached": False,
                 "confidence": confidence,
                 "detection_backend": (

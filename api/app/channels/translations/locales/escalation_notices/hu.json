@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Ezt egy csapattagnak jelzem, aki át tudja nézni a részleteket. Hamarosan valaki követni fogja itt.",
+  "escalation.notice.web": "Ezt egy csapattagnak jelzem, aki át tudja nézni a részleteket. Hamarosan valaki követni fogja itt.",
+  "escalation.notice.matrix": "Ezt egy csapattag figyelmére van szükség. Valaki követni fogja ebben a szobában.",
+  "escalation.notice.bisq2": "Ezt egy csapattag figyelmére van szükség. Valaki követni fogja ebben a beszélgetésben."
+}

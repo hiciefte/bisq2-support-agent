@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Estic marcant això per a un membre de l'equip que pot revisar els detalls. Algú seguirà aquí aviat.",
+  "escalation.notice.web": "Estic marcant això per a un membre de l'equip que pot revisar els detalls. Algú seguirà aquí aviat.",
+  "escalation.notice.matrix": "Això necessita l'atenció d'un membre de l'equip. Algú seguirà en aquesta sala.",
+  "escalation.notice.bisq2": "Això necessita l'atenció d'un membre de l'equip. Algú seguirà en aquesta conversa."
+}

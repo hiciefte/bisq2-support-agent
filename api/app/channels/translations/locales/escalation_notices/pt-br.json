@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Estou sinalizando isso para um membro da equipe que pode revisar os detalhes. Alguém irá acompanhar aqui em breve.",
+  "escalation.notice.web": "Estou sinalizando isso para um membro da equipe que pode revisar os detalhes. Alguém irá acompanhar aqui em breve.",
+  "escalation.notice.matrix": "Isso precisa da atenção de um membro da equipe. Alguém irá acompanhar nesta sala.",
+  "escalation.notice.bisq2": "Isso precisa da atenção de um membro da equipe. Alguém irá acompanhar nesta conversa."
+}

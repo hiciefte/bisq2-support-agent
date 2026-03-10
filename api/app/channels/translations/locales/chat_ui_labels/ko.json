@@ -1,0 +1,7 @@
+{
+  "chat.ui.helpful_prompt": "이 응답이 도움이 되었나요?",
+  "chat.ui.helpful_thank_you": "피드백 감사합니다!",
+  "chat.ui.staff_helpful_prompt": "직원의 응답이 도움이 되었나요?",
+  "chat.ui.staff_response_label": "직원 응답",
+  "chat.ui.support_team_notified": "지원 팀에 통보되었습니다."
+}

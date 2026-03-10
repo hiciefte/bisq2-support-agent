@@ -244,6 +244,8 @@ Language code:"""
             "kann",
             "kaufen",
             "verkaufen",
+            "preis",
+            "aktuell",
             "hilfe",
             "problem",
             "handel",
@@ -366,9 +368,19 @@ Language code:"""
         return None
 
     def _is_likely_english(self, text: str) -> bool:
-        text_lower = text.lower()
-        matches = sum(1 for marker in self.ENGLISH_MARKERS if marker in text_lower)
-        return matches >= 2
+        tokens = re.findall(r"[a-zA-Z']+", text.lower())
+        if len(tokens) < 3:
+            return False
+
+        token_set = set(tokens)
+        marker_tokens = {
+            marker.strip()
+            for marker in self.ENGLISH_MARKERS
+            if marker.strip() and " " not in marker.strip()
+        }
+        marker_matches = sum(1 for token in token_set if token in marker_tokens)
+        match_ratio = marker_matches / max(1, len(token_set))
+        return marker_matches >= 2 and match_ratio >= 0.2
 
     def _detect_non_english_hint(self, text: str) -> Optional[Tuple[str, float]]:
         for pattern, language, confidence in self.SCRIPT_HINTS:

@@ -15,7 +15,11 @@ from app.channels.models import (
 )
 
 
-def _make_outgoing_message(message_id: str = "web_test-uuid") -> OutgoingMessage:
+def _make_outgoing_message(
+    message_id: str = "web_test-uuid",
+    *,
+    original_language: str = "de",
+) -> OutgoingMessage:
     """Create a minimal OutgoingMessage for mocking gateway responses."""
     return OutgoingMessage(
         message_id=message_id,
@@ -35,6 +39,7 @@ def _make_outgoing_message(message_id: str = "web_test-uuid") -> OutgoingMessage
             routing_action="auto_send",
             rag_strategy="retrieval",
             model_name="test-model",
+            original_language=original_language,
         ),
     )
 
@@ -57,6 +62,8 @@ class TestChatEndpointMessageId:
         data = response.json()
         assert "message_id" in data, "Response must include message_id field"
         assert data["message_id"] is not None
+        assert data["user_language"] == "de"
+        assert data["ui_labels"]["staff_response_label"]
 
     def test_message_id_starts_with_web_prefix(self, test_client):
         """message_id should start with 'web_' for web channel requests."""

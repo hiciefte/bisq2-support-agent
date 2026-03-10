@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Semnalizez acest lucru pentru un membru al echipei care poate revizui detaliile. Cineva va reveni aici în curând.",
+  "escalation.notice.web": "Semnalizez acest lucru pentru un membru al echipei care poate revizui detaliile. Cineva va reveni aici în curând.",
+  "escalation.notice.matrix": "Acest lucru necesită atenția unui membru al echipei. Cineva va reveni în această cameră.",
+  "escalation.notice.bisq2": "Acest lucru necesită atenția unui membru al echipei. Cineva va reveni în această conversație."
+}

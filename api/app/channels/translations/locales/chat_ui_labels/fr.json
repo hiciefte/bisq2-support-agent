@@ -1,0 +1,7 @@
+{
+  "chat.ui.helpful_prompt": "Cette réponse a-t-elle été utile ?",
+  "chat.ui.helpful_thank_you": "Merci pour votre retour !",
+  "chat.ui.staff_helpful_prompt": "La réponse du personnel a-t-elle été utile ?",
+  "chat.ui.staff_response_label": "Réponse du personnel",
+  "chat.ui.support_team_notified": "Équipe de support notifiée"
+}

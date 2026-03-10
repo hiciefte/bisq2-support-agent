@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "voy a marcar esto para un miembro del equipo que pueda revisar los detalles. alguien te responderá aquí en breve.",
+  "escalation.notice.web": "voy a marcar esto para un miembro del equipo que pueda revisar los detalles. alguien te responderá aquí en breve.",
+  "escalation.notice.matrix": "esto necesita la atención de un miembro del equipo. alguien responderá en esta sala.",
+  "escalation.notice.bisq2": "esto necesita la atención de un miembro del equipo. alguien responderá en esta conversación."
+}
