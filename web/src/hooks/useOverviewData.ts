@@ -18,6 +18,13 @@ interface UseOverviewDataOptions {
   refreshIntervalMs?: number;
 }
 
+function hasCompleteInitialSnapshot(
+  initialDashboardData: DashboardData | null,
+  initialActionCounts: AdminActionCounts | null,
+): boolean {
+  return initialDashboardData !== null && initialActionCounts !== null;
+}
+
 function buildDashboardPath(period: Period, dateRange?: { from: Date; to: Date }): string {
   const params = new URLSearchParams();
   params.set("period", period);
@@ -79,6 +86,10 @@ export function useOverviewData({
   const [error, setError] = useState<string | null>(null);
   const latestFetchIdRef = useRef(0);
   const hasLoadedOnceRef = useRef(initialDashboardData !== null);
+  const shouldFetchImmediately = !hasCompleteInitialSnapshot(
+    initialDashboardData,
+    initialActionCounts,
+  );
 
   const fetchSnapshot = useCallback(async (
     options: {
@@ -138,14 +149,16 @@ export function useOverviewData({
   useEffect(() => {
     if (!isInitialized) return;
 
-    void fetchSnapshot();
+    if (shouldFetchImmediately) {
+      void fetchSnapshot();
+    }
     const intervalId = window.setInterval(() => {
       void fetchSnapshot({ background: true });
     }, refreshIntervalMs);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [fetchSnapshot, isInitialized, refreshIntervalMs]);
+  }, [fetchSnapshot, isInitialized, refreshIntervalMs, shouldFetchImmediately]);
 
   const totalOpenActions = useMemo(
     () =>

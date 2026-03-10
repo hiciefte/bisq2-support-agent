@@ -71,6 +71,7 @@ describe("useOverviewData", () => {
 
   test("polls using configured interval", async () => {
     jest.useFakeTimers();
+    mockedMakeAuthenticatedRequest.mockClear();
     mockedMakeAuthenticatedRequest.mockImplementation(async (endpoint: string) => {
       if (endpoint.startsWith("/admin/dashboard/overview")) {
         return mockJsonResponse(DASHBOARD_SNAPSHOT);
@@ -86,6 +87,8 @@ describe("useOverviewData", () => {
       refreshIntervalMs: 1_000,
     }));
 
+    expect(mockedMakeAuthenticatedRequest).not.toHaveBeenCalled();
+
     await act(async () => {
       jest.advanceTimersByTime(1_100);
       await Promise.resolve();
@@ -97,7 +100,7 @@ describe("useOverviewData", () => {
     expect(mockedMakeAuthenticatedRequest).toHaveBeenCalledWith(
       expect.stringMatching(/^\/admin\/dashboard\/overview\?period=7d/),
     );
-    expect(mockedMakeAuthenticatedRequest.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(mockedMakeAuthenticatedRequest.mock.calls.length).toBe(2);
   });
 
   test("sets refresh error when both requests fail", async () => {
