@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "我會將此標記給可以審查細節的團隊成員。會有人很快在這裡跟進。",
+  "escalation.notice.web": "我會將此標記給可以審查細節的團隊成員。會有人很快在這裡跟進。",
+  "escalation.notice.matrix": "這需要團隊成員的注意。會有人在這個房間跟進。",
+  "escalation.notice.bisq2": "這需要團隊成員的注意。會有人在這個對話中跟進。"
+}

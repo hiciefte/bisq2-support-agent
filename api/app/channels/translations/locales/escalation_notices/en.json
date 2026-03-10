@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "I'm flagging this for a team member who can review the details. Someone will follow up here shortly.",
+  "escalation.notice.web": "I'm flagging this for a team member who can review the details. Someone will follow up here shortly.",
+  "escalation.notice.matrix": "This needs a team member's attention. Someone will follow up in this room.",
+  "escalation.notice.bisq2": "This needs a team member's attention. Someone will follow up in this conversation."
+}

@@ -52,6 +52,15 @@ export interface Message {
     escalation_resolution?: "responded" | "closed"
     escalation_resolved_at?: string
     escalation_user_language?: string
+    ui_labels?: ChatUiLabels
+}
+
+export interface ChatUiLabels {
+    helpful_prompt?: string
+    helpful_thank_you?: string
+    staff_helpful_prompt?: string
+    staff_response_label?: string
+    support_team_notified?: string
 }
 
 /**

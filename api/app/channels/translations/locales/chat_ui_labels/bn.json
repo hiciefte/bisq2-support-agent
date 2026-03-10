@@ -1,0 +1,7 @@
+{
+  "chat.ui.helpful_prompt": "এই উত্তরটি কি সহায়ক ছিল?",
+  "chat.ui.helpful_thank_you": "আপনার প্রতিক্রিয়ার জন্য ধন্যবাদ!",
+  "chat.ui.staff_helpful_prompt": "কর্মচারীর উত্তরটি কি সহায়ক ছিল?",
+  "chat.ui.staff_response_label": "কর্মচারীর উত্তর",
+  "chat.ui.support_team_notified": "সমর্থন দলকে জানানো হয়েছে"
+}

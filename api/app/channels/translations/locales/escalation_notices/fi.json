@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Merkitään tämä tiimin jäsenelle, joka voi tarkistaa tiedot. Joku seuraa tätä pian.",
+  "escalation.notice.web": "Merkitään tämä tiimin jäsenelle, joka voi tarkistaa tiedot. Joku seuraa tätä pian.",
+  "escalation.notice.matrix": "Tämä tarvitsee tiimin jäsenen huomiota. Joku seuraa tässä huoneessa.",
+  "escalation.notice.bisq2": "Tämä tarvitsee tiimin jäsenen huomiota. Joku seuraa tässä keskustelussa."
+}

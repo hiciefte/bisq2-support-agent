@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "我会将此标记给可以查看详细信息的团队成员。稍后会有人在这里跟进。",
+  "escalation.notice.web": "我会将此标记给可以查看详细信息的团队成员。稍后会有人在这里跟进。",
+  "escalation.notice.matrix": "这需要团队成员的关注。稍后会有人在这个房间跟进。",
+  "escalation.notice.bisq2": "这需要团队成员的关注。稍后会有人在这个对话中跟进。"
+}

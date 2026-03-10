@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Bu durumu inceleyebilecek bir ekip üyesine bildiriyorum. Burada kısa süre içinde biri sizinle iletişime geçecek.",
+  "escalation.notice.web": "Bu durumu inceleyebilecek bir ekip üyesine bildiriyorum. Burada kısa süre içinde biri sizinle iletişime geçecek.",
+  "escalation.notice.matrix": "Bu durum bir ekip üyesinin dikkatini gerektiriyor. Bu odada biri sizinle iletişime geçecek.",
+  "escalation.notice.bisq2": "Bu durum bir ekip üyesinin dikkatini gerektiriyor. Bu konuşmada biri sizinle iletişime geçecek."
+}

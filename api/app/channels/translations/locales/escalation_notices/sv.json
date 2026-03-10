@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Jag flaggar detta för en teammedlem som kan granska detaljerna. Någon kommer att följa upp här snart.",
+  "escalation.notice.web": "Jag flaggar detta för en teammedlem som kan granska detaljerna. Någon kommer att följa upp här snart.",
+  "escalation.notice.matrix": "Detta behöver en teammedlems uppmärksamhet. Någon kommer att följa upp i detta rum.",
+  "escalation.notice.bisq2": "Detta behöver en teammedlems uppmärksamhet. Någon kommer att följa upp i denna konversation."
+}

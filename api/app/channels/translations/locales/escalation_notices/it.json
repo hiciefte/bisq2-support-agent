@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Segnalo questo a un membro del team che può esaminare i dettagli. Qualcuno ti contatterà a breve.",
+  "escalation.notice.web": "Segnalo questo a un membro del team che può esaminare i dettagli. Qualcuno ti contatterà a breve.",
+  "escalation.notice.matrix": "Questo richiede l'attenzione di un membro del team. Qualcuno ti contatterà in questa stanza.",
+  "escalation.notice.bisq2": "Questo richiede l'attenzione di un membro del team. Qualcuno ti contatterà in questa conversazione."
+}

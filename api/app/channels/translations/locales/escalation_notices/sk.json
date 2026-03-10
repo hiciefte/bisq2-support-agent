@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Toto nahlasím členovi tímu, ktorý môže skontrolovať podrobnosti. Niekto sa tu čoskoro ozve.",
+  "escalation.notice.web": "Toto nahlasím členovi tímu, ktorý môže skontrolovať podrobnosti. Niekto sa tu čoskoro ozve.",
+  "escalation.notice.matrix": "Toto potrebuje pozornosť člena tímu. Niekto sa ozve v tejto miestnosti.",
+  "escalation.notice.bisq2": "Toto potrebuje pozornosť člena tímu. Niekto sa ozve v tejto konverzácii."
+}

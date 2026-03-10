@@ -5,10 +5,12 @@ import uuid
 from pathlib import Path
 from typing import List, Literal, Optional, cast
 
+from app.channels.escalation_localization import normalize_language_code
 from app.channels.gateway import ChannelGateway
 from app.channels.models import ChannelType
 from app.channels.models import ChatMessage as ChannelChatMessage
 from app.channels.models import GatewayError, IncomingMessage, UserContext
+from app.channels.translations import get_chat_ui_labels
 from app.channels.plugins.web.identity import derive_web_user_context
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
@@ -84,6 +86,8 @@ class QueryResponse(BaseModel):
     # Fields consumed by the web frontend for escalation polling
     requires_human: bool = False
     escalation_message_id: Optional[str] = None
+    user_language: Optional[str] = None
+    ui_labels: Optional[dict[str, str]] = None
     # MCP tools metadata - detailed info about tools used for live Bisq 2 data
     mcp_tools_used: Optional[List[McpToolUsage]] = None
 
@@ -261,6 +265,9 @@ async def query(
         ]
 
         metadata = result.metadata
+        user_language = normalize_language_code(
+            metadata.original_language if metadata else None
+        )
 
         response_data = QueryResponse(
             answer=result.answer,
@@ -281,6 +288,8 @@ async def query(
             escalation_message_id=(
                 incoming.message_id if result.requires_human else None
             ),
+            user_language=user_language,
+            ui_labels=get_chat_ui_labels(user_language),
             mcp_tools_used=None,
         )
 
