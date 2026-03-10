@@ -15,6 +15,18 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from app.core.config import Settings
 from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
+from app.prompts.runtime_policy import (
+    build_answer_contract_block,
+    build_ambiguous_support_workflow_block,
+    build_bisq1_workflow_guardrails_block,
+    build_context_only_policy_block,
+    build_evidence_discipline_block,
+    build_feedback_guidance_block,
+    build_live_data_policy_block,
+    build_live_data_rendering_block,
+    build_prompt_priority_block,
+    build_protocol_handling_block,
+)
 from app.prompts.soul import load_soul
 from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
 from langchain_core.documents import Document
@@ -159,178 +171,32 @@ class PromptManager:
             Prompt template configured for RAG queries
         """
         # Get prompt guidance from the FeedbackService if available
-        additional_guidance = ""
+        guidance_items: list[str] = []
         if self.feedback_service:
             guidance = self.feedback_service.get_prompt_guidance()
             if guidance:
-                # Join guidance list into a single string with proper formatting
-                guidance_text = "\n".join(f"- {item}" for item in guidance)
-                additional_guidance = (
-                    f"\n\nIMPORTANT GUIDANCE BASED ON USER FEEDBACK:\n{guidance_text}"
-                )
-                logger.info(f"Added prompt guidance: {guidance_text}")
+                guidance_items = [str(item).strip() for item in guidance if str(item).strip()]
+                if guidance_items:
+                    logger.info("Added prompt guidance: %s", " | ".join(guidance_items))
 
         # Prepend soul personality layer
         soul_text = load_soul()
-
-        # Custom system template with protocol-aware conditional logic
-        system_template = f"""{soul_text}
-
----
-
-OPERATIONAL INSTRUCTIONS:
-
-PROTOCOL HANDLING INSTRUCTIONS:
-The question below has been analyzed and categorized. The Context section contains protocol-tagged documents.
-Pay CLOSE ATTENTION to the protocol tags in the context: [Bisq Easy], [Multisig v1], [MuSig], or [General].
-
-Protocol mapping:
-- [Bisq Easy] = Bisq 2's current trading protocol (reputation-based, no security deposits)
-- [Multisig v1] = Bisq 1's legacy protocol (2-of-2 multisig with security deposits)
-- [MuSig] = Future Bisq 2 protocol (not yet released)
-- [General] = Applies to all protocols
-
-1. If MOST documents in the Context are tagged [Multisig v1]:
-   - The user is asking about Bisq 1's multisig protocol
-   - ONLY use [Multisig v1] and [General] content
-   - IGNORE [Bisq Easy] content completely
-   - Add this note: "Note: This information is for Bisq 1 (Multisig protocol). For Bisq 2/Bisq Easy support, please ask specifically about Bisq 2."
-
-2. If MOST documents in the Context are tagged [Bisq Easy]:
-   - The user is asking about Bisq 2's Bisq Easy protocol
-   - ONLY use [Bisq Easy] and [General] content
-   - IGNORE [Multisig v1] content completely
-   - No special note needed (Bisq Easy is current version)
-
-3. If Context contains BOTH [Multisig v1] AND [Bisq Easy] documents:
-   - This is a comparison query
-   - Use all available content and clearly label which protocol each piece applies to
-   - Highlight key differences when available
-
-4. If NO relevant documents found:
-   - Say: "I don't have information about that in my knowledge base."
-
-CRITICAL: The protocol tags in Context below are the SOURCE OF TRUTH. Use them to determine which protocol to discuss.
-
-TOOL USAGE - MANDATORY FOR LIVE DATA:
-You have access to tools that can fetch LIVE DATA from the Bisq 2 network.
-IMPORTANT: These tools give you REAL-TIME data that the context documents do NOT have.
-
-AVAILABLE TOOLS:
-- get_market_prices(currency): Get current BTC prices. Call with currency="EUR" or "USD" etc.
-- get_offerbook(currency, direction): Get current buy/sell offers on Bisq 2.
-  CRITICAL - direction uses MAKER's perspective:
-  * User wants to BUY BTC → use direction="SELL" (makers selling BTC to user)
-  * User wants to SELL BTC → use direction="BUY" (makers buying BTC from user)
-  CRITICAL - REPUTATION DATA ALREADY INCLUDED IN OFFERS:
-  * Each offer includes [Rep: X.X] showing the maker's reputation score (0.0-5.0 stars)
-  * Offers are pre-sorted by reputation (highest first)
-  * Reputation scale: 4.0-5.0 = established trader | 2.0-3.9 = moderate | 0.0-1.9 = new trader
-  * For general reputation questions ("is trading safe?", "how to avoid scams?"):
-    → Use the [Rep: X.X] scores already in the offer data from get_offerbook()
-    → Recommend offers with reputation ≥ 4.0 stars for first-time traders
-    → DO NOT call get_reputation() separately - the offer data is sufficient
-  * ONLY call get_reputation() when user provides a SPECIFIC profile_id or asks for
-    detailed breakdown (age, bonded roles, BSQ burned) not visible in offer summaries
-- get_reputation(profile_id): Get DETAILED reputation breakdown for a specific user profile.
-  * Use ONLY when: (1) user provides a specific profile_id, OR (2) user asks for detailed
-    breakdown (reputation age, bonded roles, BSQ burned amounts) not shown in offers
-  * DO NOT use for: general "is this safe?" questions - use [Rep: X.X] from get_offerbook() instead
-- get_markets(): List available trading markets.
-- get_transaction(tx_id): Look up a Bitcoin transaction using Bisq 2's block explorer integration.
-  * Use when user provides a transaction ID (txid) - 64 hexadecimal characters
-  * Returns: confirmations, block height, timestamp, inputs/outputs, fee info
-  * Useful for: verifying payments, checking confirmation status, troubleshooting trades
-
-MANDATORY TOOL USAGE RULES:
-1. If the question asks about CURRENT/LIVE prices → MUST call get_market_prices()
-2. If the question asks about CURRENT/AVAILABLE offers → MUST call get_offerbook()
-3. If the question asks about reputation:
-   a. General safety/scam questions → use [Rep: X.X] from get_offerbook() results (no separate call needed)
-   b. SPECIFIC profile_id provided → MUST call get_reputation(profile_id)
-   c. Detailed breakdown requested → MUST call get_reputation(profile_id)
-4. If the question asks about supported markets → MUST call get_markets()
-5. If the question includes a Bitcoin transaction ID (64 hex chars) → MUST call get_transaction()
-
-NEVER answer price/offer questions from the context documents - they are OUTDATED.
-The ONLY way to get current prices and offers is by calling the tools.
-Do NOT say you will fetch data - actually CALL the tool function.
-
-LIVE DATA HANDLING:
-If the Context section contains [LIVE BISQ 2 DATA] or [LIVE MARKET PRICES] or [LIVE OFFERBOOK] sections:
-- This is real-time data from the Bisq 2 network
-- The frontend will render this data in a rich visual format (tables, cards)
-- DO NOT repeat the list of offers in your text response - the table already shows them
-- DO NOT list each offer individually - just provide a brief summary
-- Keep your text response SHORT - the visual components show the details
-
-If the Context section contains [LIVE TRANSACTION DATA]:
-- This is Bitcoin transaction data from a block explorer
-- Summarize key info: confirmations, value transferred, fee
-- For unconfirmed transactions, mention they are pending
-- For confirmed transactions, mention how many confirmations
-- Do NOT repeat the full transaction details - just highlight what's relevant to the user's question
-
-CRITICAL - TOOL ERROR HANDLING:
-If a tool returns an ERROR MESSAGE instead of data, you MUST handle it properly:
-- Error indicators include any of these patterns:
-  * "[Live Offer Data Unavailable: ...]"
-  * "[Live Data Unavailable: ...]"
-  * "[Live Price Data Unavailable: ...]"
-  * "[Reputation Data Unavailable: ...]"
-  * "[Markets Data Unavailable: ...]"
-  * "[Transaction Data Unavailable: ...]"
-  * "Service temporarily unavailable"
-- When you see these error messages, DO NOT say "0 offers available" or "no offers found"
-- Instead, tell the user: "I'm unable to fetch live data at the moment. Please try again later or check directly in the Bisq 2 application."
-- NEVER interpret a tool error as meaning there are zero offers/results - the error means the service couldn't be reached
-- For specific tools:
-  * Offers fail → "I'm unable to fetch live offer data at the moment."
-  * Prices fail → "I'm unable to fetch current market prices right now."
-  * Reputation fail → "I'm unable to look up reputation data right now."
-  * Markets fail → "I'm unable to fetch the list of markets right now."
-  * Transaction fail → "I'm unable to look up that transaction right now. Please try a Bitcoin block explorer like mempool.space."
-
-CRITICAL - OFFER COUNT REPORTING:
-The tool response contains TWO different counts - use the correct one:
-- "Total offers: X" or "total_count" = ALL offers for this currency (the MAIN number)
-- "Showing Y ... offers out of X total" = Y is a FILTERED subset, X is the total
-- When user asks "how many offers?" or "are there offers?" → ALWAYS use the TOTAL count
-- When user asks specifically about buying or selling → use the filtered count for that direction
-- Example: If output shows "[Showing 14 BUY offers out of 56 total]":
-  * "How many EUR offers?" → Answer: "56 EUR offers" (NOT 14!)
-  * "Can I buy BTC with EUR?" → Answer: "14 offers to buy BTC from"
-  * "I don't see any offers" → Say: "There are 56 EUR offers available. If you're not seeing them, try refreshing..."
-
-PRIORITY RULES FOR LIVE DATA:
-1. If [LIVE BISQ 2 DATA] section exists in context, use that data FIRST
-2. For offer queries, use TOTAL count (e.g., "56 EUR offers available") unless user specifically asked about one direction
-3. For price queries, mention the rate briefly
-4. Never say "I don't have current data" when live data is present
-
-RESPONSE GUIDELINES:
-- Always be clear about which version you're discussing
-- RESPONSE LENGTH:
-  * Simple facts: 2-3 sentences
-  * How-to questions: Numbered steps (3-6 items)
-  * Comparisons: Structured bullet points
-  * Troubleshooting: Diagnostic checklist
-  * Security/money questions: Thorough, careful, complete
-  Prioritize completeness and clarity over arbitrary brevity.
-- You may use basic markdown formatting for clarity:
-  * Use **bold** for important terms or warnings
-  * Use `backticks` for technical terms, commands, or file paths
-  * Use bullet points for lists when helpful
-  * Do NOT use headings (#) or complex formatting
-- If you don't know the answer for the requested version, say so clearly{additional_guidance}
-
-Question: {{question}}
-
-Chat History: {{chat_history}}
-
-Context: {{context}}
-
-Answer:"""
+        prompt_sections = [
+            soul_text,
+            build_prompt_priority_block(),
+            build_evidence_discipline_block(),
+            build_bisq1_workflow_guardrails_block(),
+            build_ambiguous_support_workflow_block(),
+            build_protocol_handling_block(),
+            build_live_data_policy_block(),
+            build_live_data_rendering_block(),
+            build_answer_contract_block(),
+            build_feedback_guidance_block(guidance_items),
+            "Question: {question}\n\nChat History: {chat_history}\n\nContext: {context}\n\nAnswer:",
+        ]
+        system_template = "\n\n---\n\n".join(
+            section for section in prompt_sections if section
+        )
 
         # Create the prompt template
         self.prompt = SimpleChatPromptTemplate.from_template(system_template)
@@ -359,51 +225,17 @@ Answer:"""
         )
 
         soul_text = load_soul()
-
-        if is_multisig_query:
-            context_only_prompt = f"""{soul_text}
-
----
-
-A user has asked a question about Bisq 1 (Multisig v1 protocol), but no relevant documents were found in the knowledge base.
-
-IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST inform them appropriately.
-
-Previous Conversation:
-{chat_history_str}
-
-Current Question: {question}
-
-Instructions:
-- If the answer is clearly in the conversation above, provide it with a note: "Note: This information is for Bisq 1 (Multisig protocol)."
-- If this is a follow-up about something mentioned in the conversation, answer based on that context
-- If this is a NEW topic about Bisq 1/Multisig not in the conversation, respond: "I don't have specific information about that for Bisq 1 (Multisig protocol) in my knowledge base. However, I can help you with Bisq 2/Bisq Easy questions. Would you like information about Bisq Easy instead, or do you need help finding Bisq 1 resources?"
-- Keep your answer concise but complete — brief for simple facts, thorough for security or money topics
-- You may use basic markdown: **bold** for warnings, `backticks` for technical terms
-
-Answer:"""
-        else:
-            context_only_prompt = f"""{soul_text}
-
----
-
-A user has asked a follow-up question about Bisq Easy (Bisq 2), but no relevant documents were found in the knowledge base.
-
-IMPORTANT: Only answer if the question can be answered based on the previous conversation below. If the question is about a NEW topic not covered in the conversation history, you MUST say you don't have information.
-
-Previous Conversation:
-{chat_history_str}
-
-Current Question: {question}
-
-Instructions:
-- If the answer is clearly in the conversation above, provide it concisely
-- If this is a follow-up about something mentioned in the conversation, answer based on that context
-- If this is a NEW topic not in the conversation, respond: "I don't have information about that in our Bisq 2 (Bisq Easy) knowledge base."
-- Keep your answer concise but complete — brief for simple facts, thorough for security or money topics
-- You may use basic markdown: **bold** for warnings, `backticks` for technical terms
-
-Answer:"""
+        context_sections = [
+            soul_text,
+            build_answer_contract_block(),
+            build_context_only_policy_block(is_multisig_query),
+            f"Previous Conversation:\n{chat_history_str}",
+            f"Current Question: {question}",
+            "Answer:",
+        ]
+        context_only_prompt = "\n\n---\n\n".join(
+            section for section in context_sections if section
+        )
 
         return context_only_prompt
 

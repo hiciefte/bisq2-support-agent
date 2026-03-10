@@ -11,7 +11,8 @@ Legacy API uses version strings for backwards compatibility with RAG chatbot.
 """
 
 import logging
-from typing import Dict, List, Literal, Optional, Tuple, Union, overload
+import re
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
 
 from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
 
@@ -32,6 +33,7 @@ SOURCE_DEFAULT_PROTOCOLS: Dict[str, Protocol] = {
 
 # Confidence level for source-based defaults (moderate - can be overridden)
 SOURCE_DEFAULT_CONFIDENCE = 0.6
+OPERATIONAL_SUPPORT_CONFIDENCE = 0.45
 
 
 class ProtocolDetector:
@@ -45,6 +47,22 @@ class ProtocolDetector:
     BISQ1_KEYWORDS = BISQ1_STRONG_KEYWORDS
 
     BISQ2_KEYWORDS = BISQ2_STRONG_KEYWORDS
+    OPERATIONAL_SUPPORT_PATTERNS = (
+        r"\bopen(?:\s+(?:a|the))?\s+mediation\b",
+        r"\b(open|start|begin)\s+(?:a\s+)?dispute\b",
+        r"\bcancel(?:ling)?\b.*\btrade\b",
+        r"\btrade\b.*\bcancel(?:ling)?\b",
+        r"\b(delivery address|payment|fiat deposit)\b.*\b(invalid|failed|not confirmed|not received)\b",
+        r"\bbuyer\b.*\b(not sending|not paid|isn't sending|has not sent)\b",
+        r"\bwallet\b.*\brestore\b.*\bseed\b",
+        r"\brestore\b.*\bseed\b",
+        r"\binstall(?:ing)?\s+an?\s+update\b",
+        r"\bafter\s+install(?:ing)?\s+an?\s+update\b",
+        r"\btalk to (?:a|the)\s+manager\b",
+        r"\bneed\s+(?:a\s+)?human\b",
+        r"\btalk to (?:a\s+)?human\b",
+        r"\bspeak to (?:a\s+)?human\b",
+    )
 
     # =========================================================================
     # PRIMARY API (protocol-first)
@@ -273,7 +291,14 @@ class ProtocolDetector:
         if history_version:
             return (*history_version, None)  # No clarification needed
 
-        # 4. Low confidence - generate clarifying question
+        # 4. For operational support actions, proceed without blocking on version.
+        if self._is_operational_support_question(question_lower):
+            logger.debug(
+                "Operational support question detected; skipping version clarification"
+            )
+            return ("Unknown", OPERATIONAL_SUPPORT_CONFIDENCE, None)
+
+        # 5. Low confidence - generate clarifying question
         clarifying_q = self._generate_clarifying_question(question)
         logger.debug("Low version confidence, requesting clarification")
         return ("Unknown", 0.30, clarifying_q)
@@ -336,30 +361,65 @@ class ProtocolDetector:
         """Check recent chat history for version context."""
         if not chat_history:
             return None
-        for msg in reversed(chat_history[-5:]):  # Last 5 messages
-            # Handle both dict and Pydantic ChatMessage objects
-            if hasattr(msg, "content"):
-                # Pydantic ChatMessage object
-                content = msg.content.lower()
-            elif isinstance(msg, dict):
-                # Dict format
-                content = msg.get("content", "").lower()
+        recent = chat_history[-5:]
+        user_messages: List[str] = []
+        assistant_messages: List[str] = []
+        for msg in recent:
+            role, content = self._extract_history_message(msg)
+            if not content:
+                continue
+            if role == "user":
+                user_messages.append(content)
             else:
-                content = str(msg).lower()
+                assistant_messages.append(content)
 
-            if "bisq 1" in content or "bisq1" in content:
-                return ("Bisq 1", 0.80)
-            if "bisq 2" in content or "bisq2" in content:
-                return ("Bisq 2", 0.80)
+        # Prefer user signals over assistant prompts.
+        for content in reversed(user_messages):
+            detected = self._detect_version_in_history_content(content)
+            if detected is not None:
+                return detected
 
-            # Check for keyword patterns in history
-            bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])
-            bisq2_found = any(kw in content for kw in self.BISQ2_KEYWORDS[:5])
+        # Fallback to assistant context only if user signals are absent.
+        for content in reversed(assistant_messages):
+            detected = self._detect_version_in_history_content(content)
+            if detected is not None:
+                return detected
 
-            if bisq1_found and not bisq2_found:
-                return ("Bisq 1", 0.70)
-            if bisq2_found and not bisq1_found:
-                return ("Bisq 2", 0.70)
+        return None
+
+    def _extract_history_message(self, message: Any) -> Tuple[str, str]:
+        """Extract normalized role/content from history entry."""
+        if hasattr(message, "content"):
+            content = str(message.content or "").lower()
+            role = str(getattr(message, "role", "") or "").strip().lower()
+            return role, content
+        if isinstance(message, dict):
+            content = str(message.get("content", "") or "").lower()
+            role = str(message.get("role", "") or "").strip().lower()
+            return role, content
+        return "", str(message).lower()
+
+    def _detect_version_in_history_content(self, content: str) -> Optional[Tuple[str, float]]:
+        """Detect one-sided version hints from a single history message."""
+        has_bisq1 = "bisq 1" in content or "bisq1" in content
+        has_bisq2 = "bisq 2" in content or "bisq2" in content
+        if has_bisq1 and has_bisq2:
+            return None
+        if has_bisq1:
+            return ("Bisq 1", 0.80)
+        if has_bisq2:
+            return ("Bisq 2", 0.80)
+
+        # Check for keyword patterns in history
+        bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])
+        bisq2_found = any(kw in content for kw in self.BISQ2_KEYWORDS[:5])
+
+        if bisq1_found and bisq2_found:
+            return None
+        if bisq1_found:
+            return ("Bisq 1", 0.70)
+        if bisq2_found:
+            return ("Bisq 2", 0.70)
 
         return None
 
@@ -395,6 +455,14 @@ class ProtocolDetector:
             "- **Bisq 1**: Desktop app with DAO and altcoin trading\n"
             "- **Bisq 2**: Newer version with Bisq Easy for simple BTC purchases"
         )
+
+    def _is_operational_support_question(self, text: str) -> bool:
+        """Return True for actionable support workflow questions.
+
+        These should proceed to retrieval instead of blocking on a version
+        clarification unless a strong version signal is already present.
+        """
+        return any(re.search(pattern, text) for pattern in self.OPERATIONAL_SUPPORT_PATTERNS)
 
     def get_clarification_prompt(self, question: str) -> str:
         """Generate clarification prompt for ambiguous questions.
