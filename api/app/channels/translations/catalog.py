@@ -50,7 +50,9 @@ class JsonMessageCatalog:
     ) -> None:
         self.base_dir = Path(base_dir)
         self.default_locale = normalize_locale_tag(default_locale)
-        self.required_keys = frozenset(str(k).strip() for k in required_keys if str(k).strip())
+        self.required_keys = frozenset(
+            str(k).strip() for k in required_keys if str(k).strip()
+        )
         self.required_locales = frozenset(
             normalize_locale_tag(locale) for locale in required_locales
         )
@@ -113,7 +115,9 @@ class JsonMessageCatalog:
 
         for locale in sorted(self.required_locales):
             messages = self.translations[locale]
-            missing_keys = sorted(key for key in self.required_keys if key not in messages)
+            missing_keys = sorted(
+                key for key in self.required_keys if key not in messages
+            )
             if missing_keys:
                 raise ValueError(
                     f"Locale '{locale}' missing required keys: {', '.join(missing_keys)}"

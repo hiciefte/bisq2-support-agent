@@ -1,7 +1,6 @@
 """Tests for BISQ_API_LOCAL_ONLY safety guard."""
 
 import pytest
-
 from app.core.config import Settings
 
 

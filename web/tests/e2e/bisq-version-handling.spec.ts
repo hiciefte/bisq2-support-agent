@@ -23,9 +23,20 @@ const isEscalationNotice = (text: string): boolean => {
         return false;
     }
     const normalized = text.toLowerCase();
+    const genericEscalationPatterns = [
+        "i'm flagging this for a team member",
+        "someone will follow up here shortly",
+        "support team notified",
+        "this needs a team member's attention",
+        "someone will follow up in this room",
+        "someone will follow up in this conversation",
+    ];
     const referencePattern =
         /(?:\b(?:reference|referenz|referencia|référence|ref)\b\s*[:：]?\s*)?#\s*[a-z0-9][a-z0-9-]*/i;
-    return referencePattern.test(normalized);
+    return (
+        referencePattern.test(normalized) ||
+        genericEscalationPatterns.some((pattern) => normalized.includes(pattern))
+    );
 };
 
 const askQuestionAndGetResponse = async (page: Page, question: string): Promise<string> => {

@@ -146,7 +146,9 @@ class VersionDetector:
             return role, content
         return "", str(message).lower()
 
-    def _detect_version_in_history_content(self, content: str) -> Optional[Tuple[str, float]]:
+    def _detect_version_in_history_content(
+        self, content: str
+    ) -> Optional[Tuple[str, float]]:
         """Detect one-sided version hints from a single history message."""
         has_bisq1 = "bisq 1" in content or "bisq1" in content
         has_bisq2 = "bisq 2" in content or "bisq2" in content

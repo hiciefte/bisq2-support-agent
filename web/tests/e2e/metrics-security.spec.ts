@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
+import { WEB_BASE_URL } from "./utils";
 
 /**
  * Metrics Security Test Suite
@@ -9,10 +10,10 @@ import { test, expect } from '@playwright/test';
  * 3. Sensitive information is not exposed publicly
  */
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost';
+const BASE_URL = WEB_BASE_URL;
 
-test.describe('Metrics Endpoint Security', () => {
-  test('/api/metrics - Should be restricted to internal access only', async ({ request }) => {
+test.describe("Metrics Endpoint Security", () => {
+  test("/api/metrics - Should be restricted to internal access only", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     // Production (external IP): Should return 403 Forbidden
@@ -21,21 +22,21 @@ test.describe('Metrics Endpoint Security', () => {
 
     if (response.status() === 403) {
       // External access blocked - this is correct for production
-      console.log('✅ Metrics endpoint correctly blocked for external access');
+      console.log("✅ Metrics endpoint correctly blocked for external access");
     } else if (response.status() === 200) {
       // Internal access allowed - verify it's actually metrics
-      console.log('✅ Metrics endpoint accessible (internal/localhost access)');
-      const contentType = response.headers()['content-type'];
-      expect(contentType).toContain('text/plain');
+      console.log("✅ Metrics endpoint accessible (internal/localhost access)");
+      const contentType = response.headers()["content-type"];
+      expect(contentType).toContain("text/plain");
     }
   });
 
-  test('/api/metrics - When accessible, should contain valid Prometheus metrics', async ({ request }) => {
+  test("/api/metrics - When accessible, should contain valid Prometheus metrics", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     // Skip if blocked (external access)
     if (response.status() === 403) {
-      console.log('⏭️  Skipping metrics validation (external access blocked)');
+      console.log("⏭️  Skipping metrics validation (external access blocked)");
       return;
     }
 
@@ -44,15 +45,15 @@ test.describe('Metrics Endpoint Security', () => {
     const body = await response.text();
 
     // Validate Prometheus format
-    expect(body).toContain('# HELP');
-    expect(body).toContain('# TYPE');
+    expect(body).toContain("# HELP");
+    expect(body).toContain("# TYPE");
 
     // Validate required metric groups are present
     const requiredMetricGroups = [
-      'bisq_feedback',     // Feedback analytics
-      'tor_',              // Tor metrics
-      'python_',           // Python runtime metrics
-      'process_',          // Process metrics
+      "bisq_feedback", // Feedback analytics
+      "tor_", // Tor metrics
+      "python_", // Python runtime metrics
+      "process_", // Process metrics
     ];
 
     for (const metricGroup of requiredMetricGroups) {
@@ -60,11 +61,11 @@ test.describe('Metrics Endpoint Security', () => {
     }
   });
 
-  test('/api/metrics - Should contain feedback analytics metrics', async ({ request }) => {
+  test("/api/metrics - Should contain feedback analytics metrics", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     if (response.status() === 403) {
-      console.log('⏭️  Skipping feedback metrics validation (external access blocked)');
+      console.log("⏭️  Skipping feedback metrics validation (external access blocked)");
       return;
     }
 
@@ -73,14 +74,14 @@ test.describe('Metrics Endpoint Security', () => {
 
     // Critical feedback metrics that must be present
     const feedbackMetrics = [
-      'bisq_feedback_total',
-      'bisq_feedback_helpful',
-      'bisq_feedback_unhelpful',
-      'bisq_feedback_helpful_rate',
-      'bisq_source_total',
-      'bisq_source_helpful',
-      'bisq_source_helpful_rate',
-      'bisq_issue_count',
+      "bisq_feedback_total",
+      "bisq_feedback_helpful",
+      "bisq_feedback_unhelpful",
+      "bisq_feedback_helpful_rate",
+      "bisq_source_total",
+      "bisq_source_helpful",
+      "bisq_source_helpful_rate",
+      "bisq_issue_count",
     ];
 
     for (const metric of feedbackMetrics) {
@@ -88,11 +89,11 @@ test.describe('Metrics Endpoint Security', () => {
     }
   });
 
-  test('/api/metrics - Should contain Tor monitoring metrics', async ({ request }) => {
+  test("/api/metrics - Should contain Tor monitoring metrics", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     if (response.status() === 403) {
-      console.log('⏭️  Skipping Tor metrics validation (external access blocked)');
+      console.log("⏭️  Skipping Tor metrics validation (external access blocked)");
       return;
     }
 
@@ -101,12 +102,12 @@ test.describe('Metrics Endpoint Security', () => {
 
     // Tor-specific metrics
     const torMetrics = [
-      'tor_connection_status',
-      'tor_hidden_service_configured',
-      'tor_cookie_secure_mode',
-      'tor_requests_total',
-      'tor_request_duration_seconds',
-      'tor_verification_requests_total',
+      "tor_connection_status",
+      "tor_hidden_service_configured",
+      "tor_cookie_secure_mode",
+      "tor_requests_total",
+      "tor_request_duration_seconds",
+      "tor_verification_requests_total",
     ];
 
     for (const metric of torMetrics) {
@@ -114,11 +115,11 @@ test.describe('Metrics Endpoint Security', () => {
     }
   });
 
-  test('/api/metrics - Metrics values should be consistent', async ({ request }) => {
+  test("/api/metrics - Metrics values should be consistent", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     if (response.status() === 403) {
-      console.log('⏭️  Skipping metrics consistency validation (external access blocked)');
+      console.log("⏭️  Skipping metrics consistency validation (external access blocked)");
       return;
     }
 
@@ -127,11 +128,11 @@ test.describe('Metrics Endpoint Security', () => {
 
     // Parse metrics into a map
     const metrics: Record<string, number> = {};
-    const lines = body.split('\n');
+    const lines = body.split("\n");
 
     for (const line of lines) {
       // Skip comments and empty lines
-      if (line.startsWith('#') || line.trim() === '') {
+      if (line.startsWith("#") || line.trim() === "") {
         continue;
       }
 
@@ -139,31 +140,31 @@ test.describe('Metrics Endpoint Security', () => {
       // or: metric_name value
       const match = line.match(/^(\S+)\s+([\d.e+-]+)/);
       if (match) {
-        const metricName = match[1].split('{')[0]; // Remove labels
+        const metricName = match[1].split("{")[0]; // Remove labels
         const value = parseFloat(match[2]);
         metrics[metricName] = value;
       }
     }
 
     // Validate consistency: total = helpful + unhelpful
-    if (metrics['bisq_feedback_total'] !== undefined) {
-      const total = metrics['bisq_feedback_total'];
-      const helpful = metrics['bisq_feedback_helpful'] || 0;
-      const unhelpful = metrics['bisq_feedback_unhelpful'] || 0;
+    if (metrics["bisq_feedback_total"] !== undefined) {
+      const total = metrics["bisq_feedback_total"];
+      const helpful = metrics["bisq_feedback_helpful"] || 0;
+      const unhelpful = metrics["bisq_feedback_unhelpful"] || 0;
 
       expect(total).toBe(helpful + unhelpful);
     }
 
     // Validate Tor status values are binary (0 or 1)
-    if (metrics['tor_connection_status'] !== undefined) {
-      expect([0, 1]).toContain(metrics['tor_connection_status']);
+    if (metrics["tor_connection_status"] !== undefined) {
+      expect([0, 1]).toContain(metrics["tor_connection_status"]);
     }
-    if (metrics['tor_hidden_service_configured'] !== undefined) {
-      expect([0, 1]).toContain(metrics['tor_hidden_service_configured']);
+    if (metrics["tor_hidden_service_configured"] !== undefined) {
+      expect([0, 1]).toContain(metrics["tor_hidden_service_configured"]);
     }
   });
 
-  test('Web metrics endpoint should be removed', async ({ request }) => {
+  test("Web metrics endpoint should be removed", async ({ request }) => {
     // The old placeholder web metrics at /api/metrics in Next.js should be gone
     // This test ensures we don't have duplicate endpoints
 
@@ -184,28 +185,28 @@ test.describe('Metrics Endpoint Security', () => {
       // The real API metrics have: bisq_*, tor_*, python_*, process_*
 
       // Must contain API backend metrics
-      expect(body).toContain('bisq_feedback_total');
-      expect(body).toContain('tor_connection_status');
+      expect(body).toContain("bisq_feedback_total");
+      expect(body).toContain("tor_connection_status");
 
       // Should NOT be the old placeholder that only counted its own calls
       // The old endpoint had these specific metric names without the "bisq_" prefix
       const isOldPlaceholder =
-        body.includes('requests_total') &&
-        body.includes('errors_total') &&
-        body.includes('active_users') &&
-        !body.includes('bisq_feedback_total');
+        body.includes("requests_total") &&
+        body.includes("errors_total") &&
+        body.includes("active_users") &&
+        !body.includes("bisq_feedback_total");
 
       expect(isOldPlaceholder).toBe(false);
     }
   });
 });
 
-test.describe('Metrics Endpoint Regression Prevention', () => {
-  test('Critical feedback metrics must always be present', async ({ request }) => {
+test.describe("Metrics Endpoint Regression Prevention", () => {
+  test("Critical feedback metrics must always be present", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     if (response.status() === 403) {
-      console.log('⏭️  Skipping regression test (external access blocked)');
+      console.log("⏭️  Skipping regression test (external access blocked)");
       return;
     }
 
@@ -214,10 +215,10 @@ test.describe('Metrics Endpoint Regression Prevention', () => {
 
     // These metrics MUST ALWAYS be present - this prevents regression during refactoring
     const criticalMetrics = [
-      'bisq_feedback_total',
-      'bisq_feedback_helpful',
-      'bisq_feedback_unhelpful',
-      'bisq_feedback_helpful_rate',
+      "bisq_feedback_total",
+      "bisq_feedback_helpful",
+      "bisq_feedback_unhelpful",
+      "bisq_feedback_helpful_rate",
     ];
 
     for (const metric of criticalMetrics) {
@@ -225,17 +226,17 @@ test.describe('Metrics Endpoint Regression Prevention', () => {
       const metricPattern = `${metric} `;
       expect(body).toContain(metricPattern);
       // Additionally verify it has a numeric value on the same line
-      const lines = body.split('\n').filter(line => line.startsWith(metric + ' '));
+      const lines = body.split("\n").filter((line) => line.startsWith(metric + " "));
       expect(lines.length).toBeGreaterThan(0);
       expect(lines[0]).toMatch(/\s+[\d.e+-]+$/);
     }
   });
 
-  test('Feedback metrics must have numeric values', async ({ request }) => {
+  test("Feedback metrics must have numeric values", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/metrics`);
 
     if (response.status() === 403) {
-      console.log('⏭️  Skipping numeric validation (external access blocked)');
+      console.log("⏭️  Skipping numeric validation (external access blocked)");
       return;
     }
 
@@ -243,9 +244,9 @@ test.describe('Metrics Endpoint Regression Prevention', () => {
     const body = await response.text();
 
     // Extract all bisq_feedback metrics
-    const lines = body.split('\n');
-    const feedbackMetricLines = lines.filter(line =>
-      line.startsWith('bisq_feedback_') && !line.startsWith('#')
+    const lines = body.split("\n");
+    const feedbackMetricLines = lines.filter((line) =>
+      line.startsWith("bisq_feedback_") && !line.startsWith("#")
     );
 
     expect(feedbackMetricLines.length).toBeGreaterThan(0);

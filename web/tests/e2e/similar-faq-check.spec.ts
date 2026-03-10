@@ -315,7 +315,7 @@ test.describe("Similar FAQ Check", () => {
         await page.waitForTimeout(1000);
 
         // Check if there are any FAQ cards to edit
-        const faqCards = page.locator(".bg-card.border.border-border.rounded-lg");
+        const faqCards = page.locator(".bg-card.border.rounded-lg");
         const faqCount = await faqCards.count();
 
         if (faqCount === 0) {
@@ -338,8 +338,9 @@ test.describe("Similar FAQ Check", () => {
         const faqCard = faqCards.first();
         await expect(faqCard).toBeVisible({ timeout: 10000 });
 
-        // Click the edit button (pencil icon)
-        await faqCard.locator('button:has([class*="lucide-pencil"])').click();
+        // Current FAQ management UI enters edit mode from the selected card via keyboard.
+        await faqCard.click();
+        await page.keyboard.press("Enter");
 
         // Wait for edit mode to activate and the Question textbox to appear
         const questionTextbox = page.getByRole("textbox", { name: "Question" });

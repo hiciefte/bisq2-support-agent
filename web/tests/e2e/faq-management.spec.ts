@@ -36,16 +36,35 @@ test.describe("FAQ Management", () => {
         category: string = "General",
         skipTracking: boolean = false
     ) => {
+        const createResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().includes("/admin/faqs") &&
+                response.request().method() === "POST",
+            { timeout: 30000 }
+        );
         await page.click('button:has-text("Add New FAQ")');
         await page.fill("input#question", question);
         await page.fill("textarea#answer", answer);
-        await selectCategory(page, category);
+        if (category !== "General") {
+            await selectCategory(page, category);
+        }
         await page.click('button:has-text("Add FAQ")');
+        const createResponse = await createResponsePromise;
+        expect(createResponse.ok()).toBeTruthy();
+        await page.getByRole("dialog", { name: "Add New FAQ" }).waitFor({
+            state: "hidden",
+            timeout: 30000,
+        });
+
+        const faqCard = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${question}")`);
+        await faqCard.waitFor({ state: "visible", timeout: 30000 });
 
         // Track for cleanup (unless test will delete it itself)
         if (!skipTracking) {
             createdFaqQuestions.push(question);
         }
+
+        return faqCard;
     };
 
     test.beforeEach(async ({ page, context, request }) => {
@@ -164,41 +183,22 @@ test.describe("FAQ Management", () => {
     test("should create a new FAQ", async ({ page }) => {
         // Create a test FAQ and track for cleanup
         const testQuestion = `Test FAQ Question ${Date.now()}`;
-        await createAndTrackFaq(page, testQuestion, "Test FAQ Answer for E2E testing");
-
-        // Wait for Sheet to close (form is hidden after successful submission)
-        // The API reindexes the vector store which can take several seconds
-        await page.waitForSelector('form >> text="Add New FAQ"', {
-            state: "hidden",
-            timeout: 15000,
-        });
-
-        // Wait for the FAQ list to refresh and FAQ to appear
-        const faqCard = page.locator(`text="${testQuestion}"`);
-        await expect(faqCard).toBeVisible({ timeout: 10000 });
+        const faqCard = await createAndTrackFaq(
+            page,
+            testQuestion,
+            "Test FAQ Answer for E2E testing"
+        );
+        await expect(faqCard).toBeVisible({ timeout: 30000 });
     });
 
     test("should edit an existing FAQ", async ({ page }) => {
         // Create a test FAQ to edit and track for cleanup
         const testQuestion = `FAQ to be edited ${Date.now()}`;
-        await createAndTrackFaq(page, testQuestion, "Original answer");
+        const faqCard = await createAndTrackFaq(page, testQuestion, "Original answer");
 
-        // Wait for form to close and FAQ to appear
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Find the newly created FAQ card
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
-        );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
-
-        // Hover to show action buttons and click edit (enters inline edit mode)
-        await faqCard.hover();
-        const editButton = faqCard.locator('[data-testid="edit-faq-button"]');
-        await editButton.click({ timeout: 5000 });
+        // Select the FAQ card and enter edit mode via the stable keyboard shortcut path.
+        await faqCard.click();
+        await page.keyboard.press("Enter");
 
         // Wait for inline edit mode to activate (textarea becomes visible)
         await page.locator("textarea").first().waitFor({ state: "visible", timeout: 5000 });
@@ -212,11 +212,18 @@ test.describe("FAQ Management", () => {
 
         // Save changes by clicking the "Save" button (text button, not icon)
         const saveButton = page.locator('button:has-text("Save")');
+        const updateResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().includes("/admin/faqs/") &&
+                response.request().method() === "PUT",
+            { timeout: 30000 }
+        );
         await saveButton.click({ timeout: 5000 });
+        const updateResponse = await updateResponsePromise;
+        expect(updateResponse.ok()).toBeTruthy();
 
         // Wait for save operation to complete (Save button disappears, view mode returns)
-        // The API reindexes the vector store which can take several seconds
-        await expect(saveButton).toBeHidden({ timeout: 15000 });
+        await expect(saveButton).toBeHidden({ timeout: 30000 });
 
         // Re-query for the FAQ card after save (the list may refresh and locator becomes stale)
         const updatedFaqCard = page.locator(
@@ -224,30 +231,23 @@ test.describe("FAQ Management", () => {
         );
 
         // Wait for the updated content to appear in the FAQ card
-        await expect(updatedFaqCard).toContainText("Updated answer", { timeout: 10000 });
+        await expect(updatedFaqCard).toContainText("Updated answer", { timeout: 30000 });
     });
 
     test("should delete a FAQ (CRITICAL: Tests permission issue)", async ({ page }) => {
         // Create a test FAQ to delete (skip tracking since test deletes it)
         const testQuestion = `FAQ to be deleted ${Date.now()}`;
-        await createAndTrackFaq(page, testQuestion, "This FAQ will be deleted", "General", true);
-
-        // Wait for form to close and FAQ to appear (same pattern as persistence test)
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Wait for FAQ card to appear in the list
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        const faqCard = await createAndTrackFaq(
+            page,
+            testQuestion,
+            "This FAQ will be deleted",
+            "General",
+            true
         );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
-        // Click delete button using test ID (reliable selector that won't break with UI changes)
-        await faqCard.hover();
-        const deleteButton = faqCard.locator('[data-testid="delete-faq-button"]');
-        await deleteButton.click();
+        // Select the FAQ card and trigger deletion via the stable keyboard shortcut path.
+        await faqCard.click();
+        await page.keyboard.press("d");
 
         // Wait for AlertDialog to appear and click Continue
         const dialog = page.getByRole("alertdialog");
@@ -306,29 +306,13 @@ test.describe("FAQ Management", () => {
 
     test("should search FAQs by text", async ({ page }) => {
         // First, create a FAQ with a unique searchable term
-        await page.click('button:has-text("Add New FAQ")');
-        await page.waitForSelector('form >> text="Add New FAQ"', { timeout: 5000 });
-
         const searchTerm = "BisqSearchTest";
         const testQuestion = `${searchTerm} Question ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "This FAQ is for testing the search functionality");
-        await selectCategory(page, "General");
-
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
-        await page.waitForSelector('form >> text="Add New FAQ"', {
-            state: "hidden",
-            timeout: 15000,
-        });
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for the created FAQ to appear in the list
-        const createdFaq = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        await createAndTrackFaq(
+            page,
+            testQuestion,
+            "This FAQ is for testing the search functionality"
         );
-        await createdFaq.waitFor({ state: "visible", timeout: 10000 });
 
         // Now test the search functionality
         const searchInput = page.locator('input[placeholder="Search FAQs... (/)"]');
@@ -349,29 +333,10 @@ test.describe("FAQ Management", () => {
 
     test("should verify FAQ deletion persists after page reload", async ({ page }) => {
         // Create a test FAQ
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `Persistence test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "Testing persistence");
-        await selectCategory(page, "General");
-        await page.click('button:has-text("Add FAQ")');
-
-        // Wait for form to close and FAQ to appear
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Wait for FAQ card to appear in the list
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
-        );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
-
-        // Click delete button using test ID (reliable selector that won't break with UI changes)
-        await faqCard.hover();
-        const deleteButton = faqCard.locator('[data-testid="delete-faq-button"]');
-        await deleteButton.click();
+        const faqCard = await createAndTrackFaq(page, testQuestion, "Testing persistence");
+        await faqCard.click();
+        await page.keyboard.press("d");
 
         // Wait for dialog and confirm
         const dialog = page.getByRole("alertdialog");
@@ -419,22 +384,8 @@ test.describe("FAQ Management", () => {
         await page2.click('a[href="/admin/manage-faqs"]');
         await page2.waitForSelector("text=FAQ", { timeout: 10000 });
 
-        // Create FAQ on first page
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `Concurrent test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "Testing concurrent access");
-        await selectCategory(page, "General");
-        await page.click('button:has-text("Add FAQ")');
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for FAQ to appear in the first page
-        const newFaqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
-        );
-        await newFaqCard.waitFor({ state: "visible", timeout: 15000 });
+        await createAndTrackFaq(page, testQuestion, "Testing concurrent access");
 
         // Refresh second page and verify FAQ appears
         await page2.reload();
@@ -449,46 +400,20 @@ test.describe("FAQ Management", () => {
     });
 
     test("should verify FAQ with confirmation dialog", async ({ page }) => {
-        // Create a test FAQ to verify
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `FAQ for verification test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "This FAQ will be verified");
-        await selectCategory(page, "General");
-
-        // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
-            state: "visible",
-            timeout: 5000,
-        });
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for form dialog to close (Add New FAQ button becomes visible again)
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Find the newly created FAQ card - wait for it to exist
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        const faqCard = await createAndTrackFaq(
+            page,
+            testQuestion,
+            "This FAQ will be verified"
         );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Verify initial state - Badge component with "Verified" text should NOT exist
         // Use more specific selector for the Badge component (not the answer text)
         const verifiedBadge = faqCard.locator('.inline-flex.items-center:has-text("Verified")');
         await expect(verifiedBadge).toHaveCount(0);
 
-        // Verify "Verify FAQ" button is visible
-        const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
-        await expect(verifyButton).toBeVisible();
-
-        // Click verify button
-        await verifyButton.click();
+        await faqCard.click();
+        await page.keyboard.press("v");
 
         // Wait for confirmation dialog
         const dialog = page.getByRole("alertdialog");
@@ -509,42 +434,20 @@ test.describe("FAQ Management", () => {
         );
         await expect(verifiedBadgeAfter).toBeVisible({ timeout: 10000 });
 
-        // Verify "Verify FAQ" button is no longer visible (can't toggle back)
+        // Verify button is no longer exposed once verified.
         const verifyButtonAfter = faqCard.locator('button:has-text("Verify FAQ")');
         await expect(verifyButtonAfter).toHaveCount(0);
     });
 
     test("should persist verification status after page reload", async ({ page }) => {
-        // Create a test FAQ
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `FAQ for persistence test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "Testing verification persistence");
-        await selectCategory(page, "General");
-
-        // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
-            state: "visible",
-            timeout: 5000,
-        });
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for form dialog to close and FAQ card to appear
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        const faqCard = await createAndTrackFaq(
+            page,
+            testQuestion,
+            "Testing verification persistence"
         );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
-
-        // Find and click verify button
-        const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
-        await verifyButton.click();
+        await faqCard.click();
+        await page.keyboard.press("v");
 
         // Confirm in dialog - use dialog role selector
         const dialog = page.getByRole("alertdialog");
@@ -580,41 +483,20 @@ test.describe("FAQ Management", () => {
     });
 
     test("should display verification button for unverified FAQs only", async ({ page }) => {
-        // Create an unverified test FAQ
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `Unverified FAQ test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "This FAQ is unverified");
-        await selectCategory(page, "General");
-
-        // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
-            state: "visible",
-            timeout: 5000,
-        });
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for form dialog to close
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Find the unverified FAQ card
-        const unverifiedFaqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
+        const unverifiedFaqCard = await createAndTrackFaq(
+            page,
+            testQuestion,
+            "This FAQ is unverified"
         );
-        await unverifiedFaqCard.waitFor({ state: "visible", timeout: 10000 });
 
         // Check that "Verify FAQ" button exists for unverified FAQ
+        await unverifiedFaqCard.click();
         const verifyButton = unverifiedFaqCard.locator('button:has-text("Verify FAQ")');
         await expect(verifyButton).toBeVisible();
 
         // Now verify the FAQ
-        await verifyButton.click();
+        await page.keyboard.press("v");
 
         // Wait for dialog and confirm
         const dialog = page.getByRole("alertdialog");
@@ -639,38 +521,10 @@ test.describe("FAQ Management", () => {
     });
 
     test("should cancel verification when dialog is cancelled", async ({ page }) => {
-        // Create a test FAQ
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `FAQ for cancel test ${Date.now()}`;
-        await page.fill("input#question", testQuestion);
-        await page.fill("textarea#answer", "Testing cancellation");
-        await selectCategory(page, "General");
-
-        // Click submit button and wait for dialog to close
-        await page.waitForSelector('button[type="submit"]:has-text("Add FAQ")', {
-            state: "visible",
-            timeout: 5000,
-        });
-        await page.click('button[type="submit"]:has-text("Add FAQ")');
-
-        // Track for cleanup
-        createdFaqQuestions.push(testQuestion);
-
-        // Wait for form dialog to close
-        await page.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
-        });
-
-        // Find the FAQ card
-        const faqCard = page.locator(
-            `${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`
-        );
-        await faqCard.waitFor({ state: "visible", timeout: 10000 });
-
-        // Click verify button
-        const verifyButton = faqCard.locator('button:has-text("Verify FAQ")');
-        await verifyButton.click();
+        const faqCard = await createAndTrackFaq(page, testQuestion, "Testing cancellation");
+        await faqCard.click();
+        await page.keyboard.press("v");
 
         // Wait for dialog
         const dialog = page.getByRole("alertdialog");

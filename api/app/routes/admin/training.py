@@ -55,7 +55,7 @@ class UnifiedCandidateResponse(BaseModel):
     reviewed_by: Optional[str]
     reviewed_at: Optional[str]
     rejection_reason: Optional[str]
-    rejection_note: Optional[str]
+    rejection_note: Optional[str] = None
     faq_id: Optional[str]
     is_calibration_sample: bool
     created_at: str
