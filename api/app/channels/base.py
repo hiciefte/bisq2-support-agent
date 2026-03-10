@@ -16,6 +16,7 @@ from app.channels.models import (
     IncomingMessage,
     OutgoingMessage,
     ResponseMetadata,
+    SendResult,
 )
 from app.channels.rag_query import query_with_channel_context
 from app.channels.response_builder import build_metadata, build_sources
@@ -50,7 +51,9 @@ class ChannelProtocol(Protocol):
         """Cleanup channel resources."""
         ...
 
-    async def send_message(self, target: str, message: OutgoingMessage) -> bool:
+    async def send_message(
+        self, target: str, message: OutgoingMessage
+    ) -> bool | SendResult:
         """Send message to target."""
         ...
 
@@ -217,7 +220,9 @@ class ChannelBase(ABC):
         """
 
     @abstractmethod
-    async def send_message(self, target: str, message: OutgoingMessage) -> bool:
+    async def send_message(
+        self, target: str, message: OutgoingMessage
+    ) -> bool | SendResult:
         """Send message to target.
 
         Args:
@@ -225,7 +230,8 @@ class ChannelBase(ABC):
             message: OutgoingMessage to send.
 
         Returns:
-            True if sent successfully, False otherwise.
+            ``SendResult`` (or bool for backward compatibility). Truthiness indicates
+            delivery success.
         """
 
     @abstractmethod

@@ -3,6 +3,7 @@
 Standardized models for multi-channel message handling.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
@@ -254,6 +255,22 @@ class OutgoingMessage(BaseModel):
 
     # Tracking
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """Structured transport delivery result for channel sends.
+
+    ``__bool__`` keeps compatibility with legacy bool-based callers.
+    """
+
+    sent: bool
+    external_message_id: str | None = None
+    editable: bool = False
+    error: str | None = None
+
+    def __bool__(self) -> bool:
+        return bool(self.sent)
 
 
 class HealthStatus(BaseModel):
