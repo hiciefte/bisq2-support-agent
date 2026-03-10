@@ -132,7 +132,7 @@ class TestMatrixSendMessageTracking:
 
         result = await channel.send_message("!room:server", outgoing)
 
-        assert result is True
+        assert bool(result) is True
         mock_tracker.track.assert_called_once()
         call_kwargs = mock_tracker.track.call_args.kwargs
         assert call_kwargs["channel_id"] == "matrix"
@@ -165,7 +165,7 @@ class TestMatrixSendMessageTracking:
         outgoing.answer = "Test response"
 
         result = await channel.send_message("!room:server", outgoing)
-        assert result is True
+        assert bool(result) is True
 
     @pytest.mark.asyncio
     async def test_send_message_no_tracking_on_failure(self):
@@ -195,7 +195,7 @@ class TestMatrixSendMessageTracking:
         outgoing.answer = "Test response"
 
         result = await channel.send_message("!room:server", outgoing)
-        assert result is False
+        assert bool(result) is False
         mock_tracker.track.assert_not_called()
 
 
@@ -421,7 +421,7 @@ class TestBisq2SendMessage:
 
         result = await channel.send_message("conv-123", outgoing)
 
-        assert result is True
+        assert bool(result) is True
         mock_api.send_support_message.assert_called_once()
 
     @pytest.mark.asyncio
@@ -490,7 +490,7 @@ class TestBisq2SendMessage:
         outgoing.answer = "Answer"
 
         result = await channel.send_message("conv-1", outgoing)
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.asyncio
     async def test_send_message_returns_false_when_no_api(self):
@@ -507,7 +507,7 @@ class TestBisq2SendMessage:
         outgoing.answer = "Answer"
 
         result = await channel.send_message("conv-1", outgoing)
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.asyncio
     async def test_send_message_returns_false_on_empty_response(self):
@@ -533,7 +533,7 @@ class TestBisq2SendMessage:
         outgoing.answer = "Answer"
 
         result = await channel.send_message("conv-1", outgoing)
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.asyncio
     async def test_send_no_tracking_on_failure(self):

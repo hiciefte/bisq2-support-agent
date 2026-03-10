@@ -167,8 +167,9 @@ async def test_autoresponse_hook_runs_before_escalation_hook_and_creates_escalat
     result = await gateway.process_message(sample_incoming_message)
 
     assert result.requires_human is True
-    assert "forwarded to our support team" in result.answer.lower()
-    assert "#404" in result.answer
+    assert "team member" in result.answer.lower()
+    assert "follow up" in result.answer.lower()
+    assert "#404" not in result.answer
     assert mock_escalation_service.create_escalation.call_count == 1
     create_arg = mock_escalation_service.create_escalation.call_args.args[0]
     assert create_arg.routing_action == "queue_medium"

@@ -50,6 +50,7 @@ class MatrixMessageHandler:
         channel: Any | None = None,
         autoresponse_policy_service: Any | None = None,
         allowed_room_ids: Any | None = None,
+        staff_command_room_ids: Any | None = None,
         channel_id: str = "matrix",
         sync_timeout_ms: int = 30000,
     ) -> None:
@@ -59,6 +60,10 @@ class MatrixMessageHandler:
         self.autoresponse_policy_service = autoresponse_policy_service
         self.channel_id = str(channel_id or "matrix").strip().lower() or "matrix"
         self.allowed_room_ids = normalize_room_ids(allowed_room_ids)
+        if staff_command_room_ids is None:
+            self.staff_command_room_ids = self.allowed_room_ids
+        else:
+            self.staff_command_room_ids = normalize_room_ids(staff_command_room_ids)
         self.sync_timeout_ms = sync_timeout_ms
         self._sync_task: asyncio.Task[Any] | None = None
         self._callback_registered = False
@@ -106,9 +111,12 @@ class MatrixMessageHandler:
             return
 
         room_id = str(getattr(room, "room_id", "") or "").strip()
-        if not room_id or room_id not in self.allowed_room_ids:
+        allowed_staff_rooms = self.staff_command_room_ids
+        if not room_id or (
+            room_id not in self.allowed_room_ids and room_id not in allowed_staff_rooms
+        ):
             logger.debug(
-                "Ignoring Matrix message from non-sync room room_id=%s",
+                "Ignoring Matrix message from unsupported room room_id=%s",
                 room_id or "<empty>",
             )
             return
@@ -121,7 +129,18 @@ class MatrixMessageHandler:
         if incoming is None:
             return
 
-        if self._should_ignore_sender(incoming.user.user_id):
+        sender_id = str(getattr(getattr(incoming, "user", None), "user_id", "") or "").strip()
+        if self._is_self_sender(sender_id):
+            return
+        if self._is_staff_sender(sender_id):
+            await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
+            await self._maybe_handle_staff_command(
+                room_id=room_id,
+                event=effective_event,
+                sender_id=sender_id,
+            )
+            return
+        if room_id not in self.allowed_room_ids:
             return
 
         orchestrator = self._get_orchestrator()
@@ -236,14 +255,18 @@ class MatrixMessageHandler:
                 return None
         return candidate
 
-    def _should_ignore_sender(self, sender_id: str) -> bool:
+    def _is_self_sender(self, sender_id: str) -> bool:
         normalized = str(sender_id or "").strip()
         if not normalized:
             return True
 
         own_user_id = str(getattr(self.client, "user_id", "") or "").strip()
-        if own_user_id and normalized == own_user_id:
-            return True
+        return bool(own_user_id and normalized == own_user_id)
+
+    def _is_staff_sender(self, sender_id: str) -> bool:
+        normalized = str(sender_id or "").strip()
+        if not normalized:
+            return False
 
         channel = self.channel
         runtime = getattr(channel, "runtime", None) if channel is not None else None
@@ -266,6 +289,93 @@ class MatrixMessageHandler:
                 exc_info=True,
             )
             return False
+
+    async def _record_staff_activity(self, *, room_id: str, staff_id: str) -> None:
+        channel = self.channel
+        runtime = getattr(channel, "runtime", None) if channel is not None else None
+        resolve_optional = getattr(runtime, "resolve_optional", None) if runtime else None
+        if not callable(resolve_optional):
+            return
+        arbitration = resolve_optional("arbitration_service")
+        if arbitration is None:
+            return
+        record_staff_activity = getattr(arbitration, "record_staff_activity", None)
+        if not callable(record_staff_activity):
+            return
+        try:
+            maybe_result = record_staff_activity(
+                room_or_conversation_id=room_id,
+                staff_id=staff_id,
+            )
+            if inspect.isawaitable(maybe_result):
+                await maybe_result
+        except Exception:
+            logger.debug(
+                "Failed recording Matrix staff activity room_id=%s staff_id=%s",
+                room_id,
+                staff_id,
+                exc_info=True,
+            )
+
+    async def _maybe_handle_staff_command(
+        self,
+        *,
+        room_id: str,
+        event: Any,
+        sender_id: str,
+    ) -> bool:
+        if room_id not in self.staff_command_room_ids:
+            return False
+        runtime = getattr(self.channel, "runtime", None) if self.channel is not None else None
+        resolve_optional = getattr(runtime, "resolve_optional", None) if runtime else None
+        if not callable(resolve_optional):
+            return False
+        command_handler = resolve_optional("matrix_reaction_handler")
+        handle_staff_command = (
+            getattr(command_handler, "handle_staff_command", None)
+            if command_handler is not None
+            else None
+        )
+        if not callable(handle_staff_command):
+            return False
+        reply_to_event_id = self._extract_reply_to_event_id(event)
+        command_text = self._extract_event_text(event)
+        try:
+            return bool(
+                await handle_staff_command(
+                    room_id=room_id,
+                    reply_to_event_id=reply_to_event_id,
+                    command_text=command_text,
+                    sender=sender_id,
+                )
+            )
+        except Exception:
+            logger.debug(
+                "Failed processing Matrix staff command room_id=%s sender=%s",
+                room_id,
+                sender_id,
+                exc_info=True,
+            )
+            return False
+
+    @staticmethod
+    def _extract_reply_to_event_id(event: Any) -> str:
+        source = getattr(event, "source", None)
+        if not isinstance(source, dict):
+            return ""
+        content = source.get("content")
+        if not isinstance(content, dict):
+            return ""
+        relates_to = content.get("m.relates_to")
+        if not isinstance(relates_to, dict):
+            return ""
+        in_reply_to = relates_to.get("m.in_reply_to")
+        if isinstance(in_reply_to, dict):
+            event_id = str(in_reply_to.get("event_id", "") or "").strip()
+            if event_id:
+                return event_id
+        event_id = str(relates_to.get("event_id", "") or "").strip()
+        return event_id
 
     @staticmethod
     def _extract_event_text(event: Any) -> str:

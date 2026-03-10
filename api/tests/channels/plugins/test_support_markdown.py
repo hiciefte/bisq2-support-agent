@@ -105,6 +105,35 @@ def test_compose_support_answer_markdown_appends_structured_footer_and_typed_sou
     )
 
 
+def test_compose_support_answer_markdown_matrix_format_omits_confidence_footer():
+    rendered = compose_support_answer_markdown(
+        "try an SPV resync.",
+        _make_mixed_sources(),
+        confidence_score=0.86,
+        channel_format="matrix",
+    )
+
+    assert "**Answer quality**" not in rendered
+    assert "Likely accurate" not in rendered
+    assert "Verified" not in rendered
+    assert "sources:" in rendered.lower()
+    assert "[What is Bisq Easy?]" in rendered
+
+
+def test_compose_support_answer_markdown_bisq2_format_is_compact():
+    rendered = compose_support_answer_markdown(
+        "you can do an SPV resync.",
+        _make_faq_sources(),
+        confidence_score=0.72,
+        channel_format="bisq2",
+    )
+
+    assert "**Answer quality**" not in rendered
+    assert "source mix" not in rendered.lower()
+    assert rendered.count("[FAQ]") <= 1
+    assert "source:" in rendered.lower()
+
+
 def test_compose_support_answer_markdown_groups_faq_and_wiki_sources_in_mix():
     rendered = compose_support_answer_markdown(
         "Bisq uses a decentralized network and open-source tooling.",
@@ -193,6 +222,14 @@ def test_build_matrix_message_content_contains_html_and_plain_fallback():
     assert "Bisq Easy" in content["body"]
 
 
+def test_build_matrix_message_content_supports_notice_msgtype():
+    markdown = "Staff-only notice"
+    content = build_matrix_message_content(markdown, msgtype="m.notice")
+
+    assert content["msgtype"] == "m.notice"
+    assert content["body"] == "Staff-only notice"
+
+
 def test_markdown_renderers_produce_html_and_plain_text():
     markdown = "**Value** [Link](https://example.org)"
     html = render_markdown_for_matrix(markdown)
@@ -230,13 +267,13 @@ async def test_bisq2_channel_send_message_uses_rendered_markdown_and_cleans_visi
     )
     result = await channel.send_message("support.support", outgoing)
 
-    assert result is True
+    assert bool(result) is True
     sent_kwargs = mock_api.send_support_message.call_args.kwargs
     assert sent_kwargs["citation"] == "Current question: Who is behind Bisq?"
 
     sent_text = sent_kwargs["text"]
-    assert "**Answer quality**" in sent_text
-    assert "- Source mix: **2 FAQs**" in sent_text
+    assert "**Answer quality**" not in sent_text
+    assert "source:" in sent_text.lower()
 
 
 @pytest.mark.asyncio
@@ -259,15 +296,15 @@ async def test_matrix_channel_send_message_uses_rendered_markdown():
     outgoing = _make_outgoing(ChannelType.MATRIX)
     result = await channel.send_message("!room:matrix.org", outgoing)
 
-    assert result is True
+    assert bool(result) is True
     sent_content = mock_client.room_send.call_args.kwargs["content"]
     sent_body = sent_content["body"]
     assert sent_content["format"] == "org.matrix.custom.html"
     assert "formatted_body" in sent_content
     assert "m.relates_to" in sent_content
     assert sent_content["m.relates_to"]["m.in_reply_to"]["event_id"] == "in-001"
-    assert "**Likely accurate (72%)**" not in sent_body
-    assert "Likely accurate (72%)" in sent_body
+    assert "Likely accurate (72%)" not in sent_body
+    assert "**Answer quality**" not in sent_body
     assert "formatted_body" in sent_content
     assert (
         f"{BISQ2_FAQ_ONION_BASE_URL}/faq/how-to-back-up-wallet-9f8e7d6c"

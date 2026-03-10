@@ -60,8 +60,9 @@ async def test_escalation_hook_runs_after_pii_filter_and_creates_escalation(
     result = await gateway.process_message(sample_incoming_message)
 
     # Escalation message should replace the draft answer.
-    assert "forwarded to our support team" in result.answer.lower()
-    assert "#123" in result.answer
+    assert "team member" in result.answer.lower()
+    assert "follow up" in result.answer.lower()
+    assert "#" not in result.answer
 
     # Escalation should be created with a redacted draft answer.
     assert mock_escalation_service.create_escalation.call_count == 1
@@ -193,8 +194,9 @@ async def test_escalation_hook_creates_escalation_for_queue_medium(
 
     result = await gateway.process_message(sample_incoming_message)
 
-    assert "forwarded to our support team" in result.answer.lower()
-    assert "#321" in result.answer
+    assert "team member" in result.answer.lower()
+    assert "follow up" in result.answer.lower()
+    assert "#" not in result.answer
     assert result.requires_human is True
     assert mock_escalation_service.create_escalation.call_count == 1
     create_arg = mock_escalation_service.create_escalation.call_args.args[0]

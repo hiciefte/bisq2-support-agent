@@ -88,9 +88,8 @@ def mock_channel_registry():
     registry = MagicMock()
     adapter = MagicMock()
     adapter.format_escalation_message.return_value = (
-        "Your question has been forwarded to our support team. "
-        "A staff member will review and respond shortly. "
-        "(Reference: #42)"
+        "I'm flagging this for a team member who can review the details. "
+        "Someone will follow up here shortly."
     )
     registry.get.return_value = adapter
     return registry
@@ -166,7 +165,7 @@ class TestEscalationPostHookExecution:
         await hook.execute(incoming, outgoing)
 
         assert outgoing.answer != original_answer
-        assert "#42" in outgoing.answer
+        assert "#" not in outgoing.answer
 
     @pytest.mark.asyncio
     async def test_uses_channel_adapter_message_formatter(
@@ -208,7 +207,7 @@ class TestEscalationPostHookExecution:
 
         await hook.execute(incoming, outgoing)
 
-        assert "support team" in outgoing.answer.lower() or "#42" in outgoing.answer
+        assert "team member" in outgoing.answer.lower()
 
     @pytest.mark.asyncio
     async def test_matrix_channel_message_format(
@@ -318,4 +317,4 @@ class TestEscalationPostHookErrorHandling:
 
         assert result is None
         # Should have a generic fallback message
-        assert "support" in outgoing.answer.lower() or "#42" in outgoing.answer
+        assert "follow up" in outgoing.answer.lower()

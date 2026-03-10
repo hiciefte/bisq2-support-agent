@@ -7,8 +7,15 @@ from __future__ import annotations
 
 import inspect
 import logging
+from copy import deepcopy
 from typing import Any
 
+from app.channels.policy import (
+    get_escalation_notification_channel,
+    get_escalation_user_notice_mode,
+    get_escalation_user_notice_template,
+    is_public_escalation_notice_enabled,
+)
 from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
 from app.channels.escalation_localization import render_escalation_notice
 from app.channels.streaming import deliver_buffered_stream, deliver_native_stream
@@ -388,6 +395,49 @@ class ChannelResponseDispatcher:
         if self.channel is None:
             return False
 
+        notification_channel = self._notification_channel_mode()
+        sent_public = False
+        if (
+            notification_channel == "public_room"
+            and self._is_public_notice_enabled()
+        ):
+            sent_public = await self._send_public_escalation_notice(
+                incoming=incoming,
+                response=response,
+                escalation=escalation,
+            )
+            if notification_channel == "public_room":
+                return sent_public
+
+        # For non-public routing, user-room notice behavior is controlled by policy.
+        user_notice_sent = await self._send_user_escalation_notice(incoming, response)
+        if notification_channel == "staff_room":
+            await self._send_staff_room_escalation_notice(
+                incoming=incoming,
+                response=response,
+                escalation=escalation,
+            )
+        return sent_public or user_notice_sent
+
+    async def notify_review_queued(
+        self,
+        incoming: Any,
+        response: Any,
+        escalation: Any,
+    ) -> bool:
+        """Public wrapper for sending escalation notices after queueing."""
+        return await self._notify_review_queued(incoming, response, escalation)
+
+    async def _send_public_escalation_notice(
+        self,
+        *,
+        incoming: Any,
+        response: Any,
+        escalation: Any,
+    ) -> bool:
+        if self.channel is None:
+            return False
+
         target = self.channel.get_delivery_target(
             getattr(incoming, "channel_metadata", {})
         )
@@ -398,7 +448,6 @@ class ChannelResponseDispatcher:
                 getattr(incoming, "message_id", "<unknown>"),
             )
             return False
-
         notice = self._build_escalation_notice_response(incoming, response, escalation)
         try:
             sent = bool(await self.channel.send_message(target, notice))
@@ -413,6 +462,64 @@ class ChannelResponseDispatcher:
         except Exception:
             logger.exception(
                 "Failed to send queued-review notification for channel=%s message_id=%s",
+                self.channel_id,
+                getattr(incoming, "message_id", "<unknown>"),
+            )
+            return False
+
+    async def _send_staff_room_escalation_notice(
+        self,
+        *,
+        incoming: Any,
+        response: Any,
+        escalation: Any,
+    ) -> bool:
+        if self.channel is None:
+            return False
+        target = self._resolve_staff_notification_target(incoming)
+        if not target:
+            return False
+        notice = self._build_staff_room_escalation_notice_response(
+            incoming=incoming,
+            response=response,
+            escalation=escalation,
+        )
+        try:
+            sent = bool(await self.channel.send_message(target, notice))
+            if sent:
+                logger.info(
+                    "Sent staff-room escalation notice for channel=%s message_id=%s escalation_id=%s target=%s",
+                    self.channel_id,
+                    getattr(incoming, "message_id", "<unknown>"),
+                    getattr(escalation, "id", "<unknown>"),
+                    target,
+                )
+            return sent
+        except Exception:
+            logger.exception(
+                "Failed to send staff-room escalation notice for channel=%s message_id=%s",
+                self.channel_id,
+                getattr(incoming, "message_id", "<unknown>"),
+            )
+            return False
+
+    async def _send_user_escalation_notice(self, incoming: Any, response: Any) -> bool:
+        if self.channel is None:
+            return False
+        mode = self._user_notice_mode()
+        if mode == "none":
+            return False
+        target = self.channel.get_delivery_target(
+            getattr(incoming, "channel_metadata", {})
+        )
+        if not target:
+            return False
+        notice = self._build_user_escalation_notice_response(incoming, response)
+        try:
+            return bool(await self.channel.send_message(target, notice))
+        except Exception:
+            logger.exception(
+                "Failed to send user escalation notice for channel=%s message_id=%s",
                 self.channel_id,
                 getattr(incoming, "message_id", "<unknown>"),
             )
@@ -489,3 +596,205 @@ class ChannelResponseDispatcher:
             channel=self.channel,
             channel_registry=None,
         )
+
+    def _resolve_policy_service(self) -> Any | None:
+        runtime = getattr(self.channel, "runtime", None)
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime is not None else None
+        )
+        if not callable(resolve_optional):
+            return None
+        try:
+            return resolve_optional("channel_autoresponse_policy_service")
+        except Exception:
+            logger.debug(
+                "Failed resolving channel_autoresponse_policy_service for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return None
+
+    def _is_public_notice_enabled(self) -> bool:
+        return is_public_escalation_notice_enabled(
+            self._resolve_policy_service(),
+            self.channel_id,
+        )
+
+    def _notification_channel_mode(self) -> str:
+        return get_escalation_notification_channel(
+            self._resolve_policy_service(),
+            self.channel_id,
+        )
+
+    def _user_notice_mode(self) -> str:
+        return get_escalation_user_notice_mode(
+            self._resolve_policy_service(),
+            self.channel_id,
+        )
+
+    def _resolve_staff_notification_target(self, incoming: Any) -> str:
+        if self.channel is None:
+            return ""
+
+        metadata = getattr(incoming, "channel_metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        static_target = None
+        try:
+            static_target = inspect.getattr_static(
+                self.channel, "get_staff_notification_target"
+            )
+        except AttributeError:
+            static_target = None
+
+        get_target = getattr(self.channel, "get_staff_notification_target", None)
+        if static_target is not None and callable(get_target):
+            try:
+                target = str(get_target(metadata) or "").strip()
+                if target:
+                    return target
+            except Exception:
+                logger.debug(
+                    "Channel-specific staff notification target resolution failed for channel=%s",
+                    self.channel_id,
+                    exc_info=True,
+                )
+
+        target = str(metadata.get("staff_room_id", "") or "").strip()
+        return target
+
+    def _build_user_escalation_notice_response(self, incoming: Any, response: Any) -> Any:
+        notice = (
+            response.model_copy(deep=True)
+            if hasattr(response, "model_copy")
+            else deepcopy(response)
+        )
+        template = get_escalation_user_notice_template(
+            self._resolve_policy_service(),
+            self.channel_id,
+        )
+        try:
+            setattr(notice, "answer", template)
+            setattr(notice, "requires_human", True)
+            if hasattr(notice, "sources"):
+                setattr(notice, "sources", [])
+            metadata = getattr(notice, "metadata", None)
+            if metadata is not None and hasattr(metadata, "routing_action"):
+                setattr(metadata, "routing_action", "escalation_notice")
+        except Exception:
+            logger.debug("Failed shaping user escalation notice payload", exc_info=True)
+        return notice
+
+    def _build_staff_room_escalation_notice_response(
+        self,
+        *,
+        incoming: Any,
+        response: Any,
+        escalation: Any,
+    ) -> Any:
+        notice = (
+            response.model_copy(deep=True)
+            if hasattr(response, "model_copy")
+            else deepcopy(response)
+        )
+        user = getattr(incoming, "user", None)
+        username = (
+            str(getattr(user, "channel_user_id", "") or "").strip()
+            or str(getattr(user, "user_id", "") or "").strip()
+            or "unknown"
+        )
+        escalation_id = getattr(escalation, "id", None)
+        question = self._truncate_notice_text(
+            str(getattr(incoming, "question", "") or "").strip(),
+            limit=220,
+        )
+        ai_draft_answer = self._truncate_notice_text(
+            str(getattr(response, "answer", "") or "").strip(),
+            limit=3000,
+        )
+        response_metadata = getattr(response, "metadata", None)
+        routing_reason = str(
+            getattr(response_metadata, "routing_reason", "") or ""
+        ).strip()
+        confidence_value = getattr(response_metadata, "confidence_score", None)
+        confidence_text = ""
+        try:
+            if confidence_value is not None:
+                confidence_text = f"{int(round(float(confidence_value) * 100))}%"
+        except Exception:
+            confidence_text = ""
+
+        source_lines = self._build_staff_notice_source_lines(
+            getattr(response, "sources", None),
+            limit=3,
+        )
+        admin_link = (
+            f"/admin/escalations?search={escalation_id}"
+            if isinstance(escalation_id, int) and escalation_id > 0
+            else "/admin/escalations"
+        )
+        source_block = "\n".join(source_lines) if source_lines else "- No source links available."
+        routing_line = routing_reason or "n/a"
+        confidence_line = confidence_text or "n/a"
+        draft_block = ai_draft_answer or "_No AI draft answer available._"
+
+        text = (
+            f"Escalation #{escalation_id or '?'} for {self.channel_id}\n\n"
+            f"User: {username}\n"
+            f"Question: {question}\n\n"
+            "Reply to user (copy-ready):\n"
+            f"{draft_block}\n\n"
+            "Sources to copy:\n"
+            f"{source_block}\n\n"
+            "Review context:\n"
+            f"- Routing reason: {routing_line}\n"
+            f"- Confidence: {confidence_line}\n"
+            f"- Admin review: {admin_link}\n\n"
+            "How to review in this room:\n"
+            "- React `👍` to send the reply above to the user.\n"
+            "- React `👎` to dismiss with no reply.\n"
+            "- Reply in thread with `/send` to send the reply above unchanged.\n"
+            "- Reply in thread with `/send <edited reply>` to send an edited reply.\n"
+            "- Reply in thread with `/dismiss` to close without reply."
+        )
+        try:
+            setattr(notice, "answer", text)
+            if isinstance(escalation_id, int) and escalation_id > 0:
+                setattr(notice, "message_id", f"staff-escalation-{escalation_id}")
+            setattr(notice, "requires_human", True)
+            if hasattr(notice, "sources"):
+                setattr(notice, "sources", [])
+            metadata = getattr(notice, "metadata", None)
+            if metadata is not None and hasattr(metadata, "routing_action"):
+                setattr(metadata, "routing_action", "staff_escalation_notice")
+        except Exception:
+            logger.debug("Failed shaping staff-room escalation notice payload", exc_info=True)
+        return notice
+
+    @staticmethod
+    def _truncate_notice_text(text: str, *, limit: int) -> str:
+        value = str(text or "").strip()
+        if limit <= 3 or len(value) <= limit:
+            return value
+        return f"{value[: limit - 3].rstrip()}..."
+
+    @staticmethod
+    def _build_staff_notice_source_lines(
+        sources: Any,
+        *,
+        limit: int,
+    ) -> list[str]:
+        lines: list[str] = []
+        if not isinstance(limit, int) or limit <= 0:
+            return lines
+
+        iterable = sources if isinstance(sources, list) else []
+        for source in iterable[:limit]:
+            title = str(getattr(source, "title", "") or "").strip() or "Source"
+            url = str(getattr(source, "url", "") or "").strip()
+            if url:
+                lines.append(f"- {title}: {url}")
+            else:
+                lines.append(f"- {title}")
+        return lines
