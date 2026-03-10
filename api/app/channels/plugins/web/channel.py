@@ -7,7 +7,7 @@ from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
-from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
+from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage, SendResult
 from app.channels.registry import register_channel
 
 
@@ -62,7 +62,7 @@ class WebChannel(ChannelBase):
         self._is_connected = False
         self._logger.info("Web channel stopped")
 
-    async def send_message(self, target: str, message: OutgoingMessage) -> bool:
+    async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send message to target.
 
         For web channel, messages are returned synchronously via HTTP response,
@@ -78,7 +78,7 @@ class WebChannel(ChannelBase):
         """
         # Web channel doesn't push - responses are returned via HTTP
         self._logger.debug(f"Web channel send_message called for {target}")
-        return True
+        return SendResult(sent=True, external_message_id=None, editable=False)
 
     def get_delivery_target(self, metadata: dict[str, Any]) -> str:
         """Web has no push delivery — responses are polled from DB."""

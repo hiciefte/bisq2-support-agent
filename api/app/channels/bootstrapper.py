@@ -166,6 +166,8 @@ class ChannelBootstrapper:
                 continue
             runtime.register(name, service, allow_override=True)
 
+        self._register_arbitration_services(runtime)
+
         # Register shared inbound coordination primitives.
         self._register_coordination_services(runtime)
 
@@ -174,6 +176,37 @@ class ChannelBootstrapper:
         self._register_question_prefilter(runtime)
 
         return runtime
+
+    @staticmethod
+    def _register_arbitration_services(runtime: ChannelRuntime) -> None:
+        """Register shared arbitration + staff-assist services."""
+        from app.channels.arbitration import ArbitrationCoordinator
+        from app.channels.staff_assist import StaffAssistService
+
+        if runtime.resolve_optional("staff_assist_service") is None:
+            runtime.register(
+                "staff_assist_service",
+                StaffAssistService(
+                    policy_service=runtime.resolve_optional(
+                        "channel_autoresponse_policy_service"
+                    ),
+                ),
+                allow_override=True,
+            )
+
+        if runtime.resolve_optional("arbitration_service") is None:
+            runtime.register(
+                "arbitration_service",
+                ArbitrationCoordinator(
+                    policy_service=runtime.resolve_optional(
+                        "channel_autoresponse_policy_service"
+                    ),
+                    escalation_service=runtime.resolve_optional("escalation_service"),
+                    staff_assist_service=runtime.resolve_optional("staff_assist_service"),
+                ),
+                allow_override=True,
+            )
+            logger.debug("Registered arbitration + staff-assist services")
 
     @staticmethod
     def _register_coordination_services(runtime: ChannelRuntime) -> None:
@@ -336,5 +369,21 @@ class ChannelBootstrapper:
                 default=default_enabled,
             )
             if is_enabled:
+                enabled.append(channel_id)
+
+        # Preserve legacy env-flag behavior when a channel plugin has not been
+        # imported/registered yet (common in isolated unit tests).
+        fallback_flags = (
+            ("web", "WEB_CHANNEL_ENABLED", True),
+            ("matrix", "MATRIX_SYNC_ENABLED", False),
+            ("bisq2", "BISQ2_CHANNEL_ENABLED", False),
+        )
+        for channel_id, flag_name, default_enabled in fallback_flags:
+            if channel_id in enabled:
+                continue
+            if self._as_bool(
+                getattr(self.settings, flag_name, default_enabled),
+                default=default_enabled,
+            ):
                 enabled.append(channel_id)
         return enabled

@@ -278,6 +278,8 @@ class TestChannelBootstrapper:
         assert isinstance(result.loaded, list)
         assert isinstance(result.skipped, list)
         assert isinstance(result.errors, list)
+        assert result.runtime.resolve_optional("arbitration_service") is not None
+        assert result.runtime.resolve_optional("staff_assist_service") is not None
 
     @pytest.mark.unit
     def test_matrix_sync_enabled_flag_enables_matrix_channel(self):
