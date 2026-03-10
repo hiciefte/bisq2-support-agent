@@ -12,10 +12,19 @@ from pathlib import Path
 import pytest
 from app.core.config import Settings
 from app.metrics.task_metrics import (
+    BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_EXPORT_READINESS_STATUS,
+    BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_MARKET_PRICES_READINESS_STATUS,
+    BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_OFFERBOOK_READINESS_STATUS,
     FEEDBACK_PROCESSING_ENTRIES,
     FEEDBACK_PROCESSING_LAST_RUN_STATUS,
     WIKI_UPDATE_LAST_RUN_STATUS,
     WIKI_UPDATE_PAGES_PROCESSED,
+    get_bisq2_api_readiness_snapshot,
+    record_bisq2_api_probe,
+    restore_metrics_from_database,
 )
 from app.utils.task_metrics_persistence import (
     TaskMetricsPersistence,
@@ -75,6 +84,12 @@ def reset_metrics():
     WIKI_UPDATE_PAGES_PROCESSED.set(0)
     FEEDBACK_PROCESSING_LAST_RUN_STATUS.set(0)
     FEEDBACK_PROCESSING_ENTRIES.set(0)
+    BISQ2_API_EXPORT_READINESS_STATUS.set(0)
+    BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP.set(0)
+    BISQ2_API_MARKET_PRICES_READINESS_STATUS.set(0)
+    BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP.set(0)
+    BISQ2_API_OFFERBOOK_READINESS_STATUS.set(0)
+    BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP.set(0)
 
 
 class TestTableCreation:
@@ -425,3 +440,37 @@ class TestPrometheusIntegration:
 
         persistence.save_metric("task_status", 0.0)
         assert persistence.load_metric("task_status") == 0.0
+
+    def test_restores_split_bisq_readiness_metrics(self, test_settings):
+        """Split Bisq readiness metrics should survive restart restoration."""
+        init_persistence(test_settings)
+        record_bisq2_api_probe("export", is_healthy=True, response_time=0.25)
+        record_bisq2_api_probe("market_prices", is_healthy=False, response_time=0.5)
+        record_bisq2_api_probe("offerbook", is_healthy=True, response_time=0.75)
+
+        BISQ2_API_EXPORT_READINESS_STATUS.set(0)
+        BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP.set(0)
+        BISQ2_API_MARKET_PRICES_READINESS_STATUS.set(0)
+        BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP.set(0)
+        BISQ2_API_OFFERBOOK_READINESS_STATUS.set(0)
+        BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP.set(0)
+
+        restore_metrics_from_database()
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+
+        assert snapshot["status"] == "degraded"
+        assert snapshot["checks"]["export"]["healthy"] is True
+        assert snapshot["checks"]["market_prices"]["healthy"] is False
+        assert snapshot["checks"]["offerbook"]["healthy"] is True
+
+    def test_snapshot_uses_only_checked_probes_for_aggregate_status(self):
+        """Aggregate status should not be dragged down by probes that never ran."""
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+        assert snapshot["status"] == "unknown"
+
+        record_bisq2_api_probe("export", is_healthy=True, response_time=0.1)
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+
+        assert snapshot["status"] == "healthy"
+        assert snapshot["checks"]["export"]["status"] == "healthy"
+        assert snapshot["checks"]["market_prices"]["status"] == "not_checked"

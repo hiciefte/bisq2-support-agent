@@ -30,6 +30,16 @@ def _record_bisq2_api_health(is_healthy: bool, response_time: Optional[float] = 
         logger.debug(f"Could not record bisq2 API health metric: {e}")
 
 
+def _record_bisq2_api_auth_failure(reason: str) -> None:
+    """Record Bisq2 API auth failures lazily to avoid circular imports."""
+    try:
+        from app.metrics.task_metrics import record_bisq2_api_auth_failure
+
+        record_bisq2_api_auth_failure(reason)
+    except Exception as e:
+        logger.debug(f"Could not record bisq2 API auth failure metric: {e}")
+
+
 class Bisq2API:
     """Integration with Bisq2 API for support chat export functionality."""
 
@@ -191,9 +201,22 @@ class Bisq2API:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             client_id = str(payload.get("client_id", "")).strip()
-            if client_id:
+            client_secret = str(payload.get("client_secret", "")).strip()
+            session_id = str(payload.get("session_id", "")).strip()
+            if client_id and not client_secret:
+                logger.warning(
+                    "Ignoring incomplete Bisq API auth state in %s (client_secret missing)",
+                    path,
+                )
+                _record_bisq2_api_auth_failure("invalid_auth_state")
+                return
+            if client_id and not self._client_id:
                 self._client_id = client_id
-            if client_id:
+            if client_secret and not self._client_secret:
+                self._client_secret = client_secret
+            if session_id and not self._session_id:
+                self._session_id = session_id
+            if client_id or client_secret or session_id:
                 logger.info("Loaded Bisq API auth state from %s", path)
         except Exception:
             logger.exception("Failed to load Bisq API auth state from %s", path)
@@ -201,7 +224,7 @@ class Bisq2API:
     def _save_auth_state(self) -> None:
         if not self._auth_state_file:
             return
-        if not self._client_id:
+        if not self._client_id or not self._client_secret:
             return
 
         path = Path(self._auth_state_file)
@@ -210,6 +233,8 @@ class Bisq2API:
         try:
             payload = {
                 "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "session_id": self._session_id,
             }
             temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             temp_path.replace(path)
@@ -262,15 +287,19 @@ class Bisq2API:
     async def _create_session(self, base_url: str) -> None:
         if not self._client_id or not self._client_secret:
             return
-        payload = await self._request_access(
-            base_url,
-            "/api/v1/access/session",
-            json={
-                "clientId": self._client_id,
-                "clientSecret": self._client_secret,
-            },
-            headers={"Accept": "application/json"},
-        )
+        try:
+            payload = await self._request_access(
+                base_url,
+                "/api/v1/access/session",
+                json={
+                    "clientId": self._client_id,
+                    "clientSecret": self._client_secret,
+                },
+                headers={"Accept": "application/json"},
+            )
+        except Exception:
+            _record_bisq2_api_auth_failure("session_creation_failed")
+            raise
         session_id = str(payload.get("sessionId", "")).strip()
         if session_id:
             self._session_id = session_id
@@ -280,16 +309,20 @@ class Bisq2API:
     async def _pair_client(self, base_url: str) -> None:
         if not self._pairing_code_id:
             return
-        payload = await self._request_access(
-            base_url,
-            "/api/v1/access/pairing",
-            json={
-                "version": PAIRING_PROTOCOL_VERSION,
-                "pairingCodeId": self._pairing_code_id,
-                "clientName": self._pairing_client_name,
-            },
-            headers={"Accept": "application/json"},
-        )
+        try:
+            payload = await self._request_access(
+                base_url,
+                "/api/v1/access/pairing",
+                json={
+                    "version": PAIRING_PROTOCOL_VERSION,
+                    "pairingCodeId": self._pairing_code_id,
+                    "clientName": self._pairing_client_name,
+                },
+                headers={"Accept": "application/json"},
+            )
+        except Exception:
+            _record_bisq2_api_auth_failure("pairing_failed")
+            raise
         client_id = str(payload.get("clientId", "")).strip()
         client_secret = str(payload.get("clientSecret", "")).strip()
         session_id = str(payload.get("sessionId", "")).strip()
@@ -328,6 +361,7 @@ class Bisq2API:
                 await self._pair_client(base_url)
 
             if not self._client_id or not self._client_secret:
+                _record_bisq2_api_auth_failure("missing_credentials")
                 raise RuntimeError(
                     "Bisq API auth is enabled but client credentials are missing. "
                     "Provide BISQ_API_CLIENT_ID/BISQ_API_CLIENT_SECRET or a pairing code ID/QR file."
@@ -337,6 +371,7 @@ class Bisq2API:
                 await self._create_session(base_url)
 
             if not self._session_id:
+                _record_bisq2_api_auth_failure("session_creation_failed")
                 raise RuntimeError(
                     "Bisq API auth is enabled but session creation failed."
                 )

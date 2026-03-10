@@ -14,6 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from app.metrics.task_metrics import (
+    BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_EXPORT_READINESS_STATUS,
+    BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_MARKET_PRICES_READINESS_STATUS,
+    BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP,
+    BISQ2_API_OFFERBOOK_READINESS_STATUS,
+)
+from app.metrics.task_metrics import get_bisq2_api_readiness_snapshot
 from app.services.bisq_mcp_service import (
     Bisq2MCPService,
     CurrencyValidator,
@@ -37,6 +46,7 @@ def mock_settings():
     settings.BISQ_CACHE_TTL_OFFERS = 30
     settings.BISQ_CACHE_TTL_REPUTATION = 300
     settings.ENABLE_BISQ_MCP_INTEGRATION = True
+    settings.BISQ_API_AUTH_ENABLED = False
     return settings
 
 
@@ -60,6 +70,17 @@ def service(mock_settings):
 def disabled_service(mock_settings_disabled):
     """Create disabled service instance for testing."""
     return Bisq2MCPService(mock_settings_disabled)
+
+
+@pytest.fixture(autouse=True)
+def reset_bisq_readiness_metrics():
+    """Reset Bisq readiness gauges between tests."""
+    BISQ2_API_EXPORT_READINESS_STATUS.set(0)
+    BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP.set(0)
+    BISQ2_API_MARKET_PRICES_READINESS_STATUS.set(0)
+    BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP.set(0)
+    BISQ2_API_OFFERBOOK_READINESS_STATUS.set(0)
+    BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP.set(0)
 
 
 # =============================================================================
@@ -296,6 +317,91 @@ class TestCaching:
             assert "offers_EUR_all" in service._offers_cache
 
 
+class TestEndpointFailover:
+    """Tests for Bisq MCP endpoint candidate fallback behavior."""
+
+    def test_build_base_url_candidates_adds_localhost_fallbacks(self):
+        candidates = Bisq2MCPService._build_base_url_candidates(
+            "http://bisq2-api:8090"
+        )
+        assert candidates[0] == "http://bisq2-api:8090"
+        assert "http://localhost:8090" in candidates
+        assert "http://127.0.0.1:8090" in candidates
+
+    @pytest.mark.asyncio
+    async def test_make_request_falls_back_to_secondary_base_url(self, service):
+        service.base_urls = ["http://primary:8090", "http://localhost:8090"]
+        service.active_base_url = "http://primary:8090"
+        service.base_url = "http://primary:8090"
+
+        with patch.object(
+            service, "_request_via_candidate", new_callable=AsyncMock
+        ) as mock_candidate:
+            mock_candidate.side_effect = [
+                httpx.ConnectError("primary unavailable"),
+                {"quotes": {"EUR": {"value": 950000000}}},
+            ]
+
+            result = await service._make_request("/api/v1/market-price/quotes")
+
+            assert result == {"quotes": {"EUR": {"value": 950000000}}}
+            assert service.active_base_url == "http://localhost:8090"
+            assert service.base_url == "http://localhost:8090"
+            assert mock_candidate.await_args_list[0].kwargs["base_url"] == "http://primary:8090"
+            assert mock_candidate.await_args_list[1].kwargs["base_url"] == "http://localhost:8090"
+
+
+class TestAuthentication:
+    """Tests for MCP authentication integration."""
+
+    @pytest.mark.asyncio
+    async def test_request_via_candidate_adds_auth_headers(self, mock_settings):
+        mock_settings.BISQ_API_AUTH_ENABLED = True
+        service = Bisq2MCPService(mock_settings)
+
+        auth_api = MagicMock()
+        auth_api._ensure_authenticated = AsyncMock()
+        auth_api._client_id = "client-id-1"
+        auth_api._session_id = "session-id-1"
+        service._auth_api = auth_api
+
+        with patch.object(
+            service, "_sync_request_wrapper", return_value={"ok": True}
+        ) as mock_sync:
+            result = await service._request_via_candidate(
+                base_url="http://test-bisq-api:8090",
+                endpoint="/api/v1/market-price/quotes",
+            )
+
+        assert result == {"ok": True}
+        auth_api._ensure_authenticated.assert_awaited_once_with(
+            "http://test-bisq-api:8090"
+        )
+        assert mock_sync.call_args.args[2] is None
+        assert mock_sync.call_args.args[3] == {
+            "Bisq-Client-Id": "client-id-1",
+            "Bisq-Session-Id": "session-id-1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_request_via_candidate_without_auth_headers_when_disabled(
+        self, mock_settings
+    ):
+        mock_settings.BISQ_API_AUTH_ENABLED = False
+        service = Bisq2MCPService(mock_settings)
+
+        with patch.object(
+            service, "_sync_request_wrapper", return_value={"ok": True}
+        ) as mock_sync:
+            result = await service._request_via_candidate(
+                base_url="http://test-bisq-api:8090",
+                endpoint="/api/v1/market-price/quotes",
+            )
+
+        assert result == {"ok": True}
+        assert mock_sync.call_args.args[3] is None
+
+
 # =============================================================================
 # Circuit Breaker Tests
 # =============================================================================
@@ -357,7 +463,7 @@ class TestRetryLogic:
         """Test that transient errors trigger retries."""
         call_count = 0
 
-        def mock_sync_wrapper(endpoint, params=None):
+        def mock_sync_wrapper(_base_url, endpoint, params=None, headers=None):
             nonlocal call_count
             call_count += 1
             if call_count < 3:
@@ -434,6 +540,36 @@ class TestGracefulDegradation:
             assert "error_id" in result
             # Should not expose internal error message
             assert "internal" not in result["error"].lower()
+
+
+class TestReadinessMetrics:
+    """Tests for split Bisq readiness metrics."""
+
+    @pytest.mark.asyncio
+    async def test_market_prices_success_records_probe_health(self, service):
+        with patch.object(
+            service, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.return_value = {"quotes": {"EUR": {"value": 123450000}}}
+
+            await service.get_market_prices("EUR")
+
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+        assert snapshot["checks"]["market_prices"]["healthy"] is True
+        assert snapshot["checks"]["market_prices"]["response_time_seconds"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_offerbook_failure_records_probe_unhealthy(self, service):
+        with patch.object(
+            service, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.side_effect = RuntimeError("boom")
+
+            await service.get_offerbook("EUR")
+
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+        assert snapshot["checks"]["offerbook"]["healthy"] is False
+        assert snapshot["status"] == "degraded"
 
 
 # =============================================================================
@@ -526,4 +662,5 @@ class TestLifecycle:
         assert "enabled" in result
         assert "circuit_breaker_state" in result
         assert "cache_stats" in result
+        assert "readiness" in result
         assert result["enabled"] is True

@@ -437,7 +437,8 @@ class TestBisqApiAuth:
             assert headers["Bisq-Session-Id"] == "session-paired"
             saved = json.loads(auth_state_file.read_text(encoding="utf-8"))
             assert saved["client_id"] == "client-paired"
-            assert "client_secret" not in saved
+            assert saved["client_secret"] == "secret-paired"
+            assert saved["session_id"] == "session-paired"
 
     @pytest.mark.asyncio
     async def test_creates_session_when_credentials_exist_but_session_missing(self):
@@ -477,6 +478,8 @@ class TestBisqApiAuth:
             json.dumps(
                 {
                     "client_id": "state-client",
+                    "client_secret": "state-secret",
+                    "session_id": "state-session",
                 }
             ),
             encoding="utf-8",
@@ -495,4 +498,82 @@ class TestBisqApiAuth:
         api = Bisq2API(settings=settings)
 
         assert api._client_id == "state-client"
+        assert api._client_secret == "state-secret"
+        assert api._session_id == "state-session"
+
+    def test_auth_state_does_not_override_explicit_env_credentials(self, tmp_path):
+        auth_state_file = tmp_path / "bisq_api_auth.json"
+        auth_state_file.write_text(
+            json.dumps(
+                {
+                    "client_id": "state-client",
+                    "client_secret": "state-secret",
+                    "session_id": "state-session",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings = MagicMock()
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ_API_AUTH_ENABLED = True
+        settings.BISQ_API_CLIENT_ID = "env-client"
+        settings.BISQ_API_CLIENT_SECRET = "env-secret"
+        settings.BISQ_API_SESSION_ID = ""
+        settings.BISQ_API_PAIRING_CODE_ID = ""
+        settings.BISQ_API_PAIRING_QR_FILE = ""
+        settings.BISQ_API_AUTH_STATE_FILE = str(auth_state_file)
+
+        api = Bisq2API(settings=settings)
+        api._load_auth_state()
+
+        assert api._client_id == "env-client"
+        assert api._client_secret == "env-secret"
+        assert api._session_id == "state-session"
+
+    def test_ignores_partial_auth_state_without_client_secret(self, tmp_path):
+        auth_state_file = tmp_path / "bisq_api_auth.json"
+        auth_state_file.write_text(
+            json.dumps(
+                {
+                    "client_id": "partial-client",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings = MagicMock()
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ_API_AUTH_ENABLED = True
+        settings.BISQ_API_CLIENT_ID = ""
+        settings.BISQ_API_CLIENT_SECRET = ""
+        settings.BISQ_API_SESSION_ID = ""
+        settings.BISQ_API_PAIRING_CODE_ID = ""
+        settings.BISQ_API_PAIRING_QR_FILE = ""
+        settings.BISQ_API_AUTH_STATE_FILE = str(auth_state_file)
+
+        api = Bisq2API(settings=settings)
+
+        assert api._client_id == ""
         assert api._client_secret == ""
+        assert api._session_id == ""
+
+    def test_does_not_persist_partial_auth_state(self, tmp_path):
+        auth_state_file = tmp_path / "bisq_api_auth.json"
+
+        settings = MagicMock()
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ_API_AUTH_ENABLED = True
+        settings.BISQ_API_CLIENT_ID = ""
+        settings.BISQ_API_CLIENT_SECRET = ""
+        settings.BISQ_API_SESSION_ID = ""
+        settings.BISQ_API_PAIRING_CODE_ID = ""
+        settings.BISQ_API_PAIRING_QR_FILE = ""
+        settings.BISQ_API_AUTH_STATE_FILE = str(auth_state_file)
+
+        api = Bisq2API(settings=settings)
+        api._client_id = "client-only"
+
+        api._save_auth_state()
+
+        assert auth_state_file.exists() is False

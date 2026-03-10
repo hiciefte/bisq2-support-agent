@@ -2,6 +2,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
 
     # External URLs
     BISQ_API_URL: str = "http://bisq2-api:8090"
+    BISQ_API_LOCAL_ONLY: bool = False
     PROMETHEUS_URL: str = "http://prometheus:9090"  # Prometheus metrics server
     MCP_HTTP_URL: str = "http://localhost:8000/mcp"  # MCP HTTP server URL for AISuite
 
@@ -123,12 +125,14 @@ class Settings(BaseSettings):
     # Channel plugin enablement flags
     WEB_CHANNEL_ENABLED: bool = True
     BISQ2_CHANNEL_ENABLED: bool = False
+    BISQ2_STAFF_NOTIFICATION_TARGET: str = ""  # Bisq2 channel ID for staff notices
 
     # Matrix sync lane (training ingestion)
     MATRIX_SYNC_ENABLED: bool = False
     MATRIX_SYNC_USER: str = ""  # Required when MATRIX_SYNC_ENABLED=true
     MATRIX_SYNC_PASSWORD: str = ""  # Required when MATRIX_SYNC_ENABLED=true
     MATRIX_SYNC_ROOMS: str | list[str] = ""  # Room IDs to monitor
+    MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
 
@@ -448,6 +452,10 @@ class Settings(BaseSettings):
     TRUSTED_STAFF_IDS: str | list[str] = Field(
         default="",
         description="Comma-separated list of trusted staff full Matrix IDs for auto-training",
+    )
+    BISQ2_STAFF_PROFILE_IDS: str | list[str] = Field(
+        default="",
+        description="Comma-separated list of trusted Bisq2 staff sender profile IDs",
     )
 
     # Escalation Learning Pipeline Settings
@@ -919,6 +927,20 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("BISQ2_STAFF_PROFILE_IDS", mode="before")
+    @classmethod
+    def parse_bisq2_staff_profile_ids(cls, v: str | list[str]) -> list[str]:
+        """Normalize BISQ2_STAFF_PROFILE_IDS to a list of profile IDs."""
+        if isinstance(v, list):
+            return [
+                profile_id.strip()
+                for profile_id in v
+                if isinstance(profile_id, str) and profile_id.strip()
+            ]
+        if isinstance(v, str):
+            return [profile_id.strip() for profile_id in v.split(",") if profile_id.strip()]
+        return []
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
@@ -1091,6 +1113,32 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MATRIX_SYNC_ENABLED is True but missing required settings: "
                 + ", ".join(missing)
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_bisq_api_local_only(self) -> "Settings":
+        """Restrict Bisq API base URL to local harness hosts when explicitly enabled."""
+        if not self.BISQ_API_LOCAL_ONLY:
+            return self
+
+        bisq_api_url = (self.BISQ_API_URL or "").strip()
+        if not bisq_api_url:
+            raise ValueError(
+                "BISQ_API_LOCAL_ONLY is true but BISQ_API_URL is empty."
+            )
+
+        parsed = urlparse(
+            bisq_api_url if "://" in bisq_api_url else f"http://{bisq_api_url}"
+        )
+        host = (parsed.hostname or "").strip().lower()
+        allowed_hosts = {"localhost", "127.0.0.1", "host.docker.internal"}
+        if host not in allowed_hosts:
+            raise ValueError(
+                "BISQ_API_URL must target a local host when BISQ_API_LOCAL_ONLY=true. "
+                f"Allowed hosts: {', '.join(sorted(allowed_hosts))}. "
+                f"Got host: {host or '<empty>'}"
             )
 
         return self
