@@ -95,6 +95,56 @@ groups:
           summary: "RAG cost per request above $0.02"
           description: "Current average cost: ${{ $value }}. Consider optimizing token usage."
 
+      - alert: BisqApiAuthFailures
+        expr: increase(bisq2_api_auth_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: bisq
+        annotations:
+          summary: "Bisq API authentication failures detected"
+          description: "The support API recorded Bisq auth failures in the last 10 minutes. Check client credentials, session bootstrap, and pairing recovery."
+
+      - alert: BisqExportReadinessFailed
+        expr: bisq2_api_export_last_check_timestamp > 0 and bisq2_api_export_readiness_status == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: bisq
+        annotations:
+          summary: "Bisq export readiness is failing"
+          description: "Authenticated /api/v1/support/export checks are failing. FAQ extraction and support export are degraded."
+
+      - alert: BisqMarketPricesReadinessFailed
+        expr: bisq2_api_market_prices_last_check_timestamp > 0 and bisq2_api_market_prices_readiness_status == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: bisq
+        annotations:
+          summary: "Bisq live market-price readiness is failing"
+          description: "Live market price checks against the Bisq API are failing. Price lookups are degraded."
+
+      - alert: BisqOfferbookReadinessFailed
+        expr: bisq2_api_offerbook_last_check_timestamp > 0 and bisq2_api_offerbook_readiness_status == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: bisq
+        annotations:
+          summary: "Bisq live offerbook readiness is failing"
+          description: "Live offerbook checks against the Bisq API are failing. Offer availability lookups are degraded."
+
+      - alert: BisqReadinessChecksStale
+        expr: bisq2_api_last_check_timestamp > 0 and (time() - bisq2_api_last_check_timestamp) > 900
+        for: 10m
+        labels:
+          severity: warning
+          component: bisq
+        annotations:
+          summary: "Bisq readiness checks are stale"
+          description: "No Bisq readiness probe has been recorded for more than 15 minutes. Check startup self-test execution and live-data probe paths."
+
   - name: training_sync_alerts
     interval: 30s
     rules:

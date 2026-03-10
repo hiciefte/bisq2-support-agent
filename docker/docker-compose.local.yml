@@ -17,6 +17,8 @@ services:
       - bisq-support-network
 
   bisq2-api:
+    # Opt-in only for local dev; default local workflow uses host-run harness API.
+    profiles: ["bisq2-api"]
     platform: linux/amd64
     image: bisq2-api
 
@@ -30,16 +32,16 @@ services:
       - ../api/data:/data
     environment:
       - ENVIRONMENT=development
-      # Default uses the dockerized bisq2-api service.
-      # To use a manually started host Bisq2 API, set:
-      #   BISQ_API_URL=http://host.docker.internal:8090
-      - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090}
-      - BISQ_API_AUTH_ENABLED=${BISQ_API_AUTH_ENABLED:-false}
+      # Hard-lock local stack to host-run Bisq2 harness API to prevent accidental remote usage.
+      - BISQ_API_URL=http://host.docker.internal:8090
+      - BISQ_API_LOCAL_ONLY=${BISQ_API_LOCAL_ONLY:-true}
+      # Local harness defaults to authenticated API access; pairing QR is expected in api/data/.
+      - BISQ_API_AUTH_ENABLED=true
       - BISQ_API_CLIENT_ID=${BISQ_API_CLIENT_ID:-}
       - BISQ_API_CLIENT_SECRET=${BISQ_API_CLIENT_SECRET:-}
       - BISQ_API_SESSION_ID=${BISQ_API_SESSION_ID:-}
       - BISQ_API_PAIRING_CODE_ID=${BISQ_API_PAIRING_CODE_ID:-}
-      - BISQ_API_PAIRING_QR_FILE=${BISQ_API_PAIRING_QR_FILE:-}
+      - BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt
       - BISQ_API_PAIRING_CLIENT_NAME=${BISQ_API_PAIRING_CLIENT_NAME:-bisq-support-agent}
       - BISQ_API_AUTH_STATE_FILE=${BISQ_API_AUTH_STATE_FILE:-bisq_api_auth.json}
       - DATA_DIR=/data # Point to the non-reloaded data directory

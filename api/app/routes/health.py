@@ -26,6 +26,15 @@ async def health_check(request: Request):
     if hasattr(request.app.state, "rag_service") and request.app.state.rag_service:
         rag_service_status = "healthy"
 
+    bisq_status = {"status": "unknown"}
+    bisq_service = getattr(request.app.state, "bisq_mcp_service", None)
+    if bisq_service is not None:
+        try:
+            bisq_health = await bisq_service.health_check()
+            bisq_status = bisq_health.get("readiness", {"status": "unknown"})
+        except Exception:  # noqa: BLE001
+            bisq_status = {"status": "unhealthy"}
+
     # Overall status depends on RAG readiness
     overall_status = "healthy" if rag_service_status == "healthy" else "initializing"
 
@@ -43,7 +52,7 @@ async def health_check(request: Request):
             "memory_percent": memory.percent,
             "disk_percent": disk.percent,
         },
-        "services": {"rag": rag_service_status},
+        "services": {"rag": rag_service_status, "bisq2_api": bisq_status},
     }
 
 

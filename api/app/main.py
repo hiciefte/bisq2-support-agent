@@ -37,6 +37,7 @@ from app.routes import (
 )
 from app.routes.admin import include_admin_routers
 from app.services.bisq_mcp_service import Bisq2MCPService
+from app.services.bisq_startup_self_test_service import BisqStartupSelfTestService
 from app.services.channel_autoresponse_policy_service import (
     ChannelAutoResponsePolicyService,
 )
@@ -139,11 +140,31 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Bisq2MCPService...")
     bisq_mcp_service = Bisq2MCPService(settings=settings)
     app.state.bisq_mcp_service = bisq_mcp_service
+    app.state.bisq_startup_self_test = {"status": "unknown", "checks": {}}
     # Set the service for MCP HTTP endpoint
     set_bisq_service(bisq_mcp_service)
     logger.info(
         f"Bisq2MCPService initialized (enabled={settings.ENABLE_BISQ_MCP_INTEGRATION})"
     )
+    try:
+        from app.channels.plugins.bisq2.client.api import Bisq2API
+
+        bisq_api = Bisq2API(settings=settings)
+        bisq_startup_tester = BisqStartupSelfTestService(
+            settings=settings,
+            bisq_api=bisq_api,
+            bisq_mcp_service=bisq_mcp_service,
+        )
+        app.state.bisq_startup_self_test = await bisq_startup_tester.run()
+        logger.info(
+            "Bisq startup self-test completed with status=%s",
+            app.state.bisq_startup_self_test.get("status"),
+        )
+    except Exception:
+        logger.exception("Bisq startup self-test failed unexpectedly")
+    finally:
+        if "bisq_api" in locals():
+            await bisq_api.cleanup()
 
     logger.info("Initializing SimplifiedRAGService...")
     rag_service = SimplifiedRAGService(
@@ -337,6 +358,12 @@ async def lifespan(app: FastAPI):
     app.state.feedback_followup_coordinator = bootstrap_result.runtime.resolve_optional(
         "feedback_followup_coordinator"
     )
+    app.state.arbitration_service = bootstrap_result.runtime.resolve_optional(
+        "arbitration_service"
+    )
+    app.state.staff_assist_service = bootstrap_result.runtime.resolve_optional(
+        "staff_assist_service"
+    )
 
     # Wire escalation response delivery directly to active channel registry.
     escalation_service = getattr(app.state, "escalation_service", None)
@@ -403,7 +430,9 @@ async def lifespan(app: FastAPI):
     )
     logger.info("AnswerComparisonEngine initialized")
 
-    # Initialize Unified Pipeline Service for unified FAQ training
+    # Initialize Unified Pipeline Service for unified FAQ training.
+    # unified_training.db is the single source of truth for candidate review,
+    # calibration, and learning state. Legacy candidate DB files are not used.
     logger.info("Initializing UnifiedPipelineService...")
     unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
     unified_pipeline_service = UnifiedPipelineService(
@@ -482,6 +511,18 @@ async def lifespan(app: FastAPI):
                 "Failed to stop polling service for channel '%s'",
                 channel_id,
             )
+
+    arbitration_service = getattr(app.state, "arbitration_service", None)
+    if arbitration_service is not None and hasattr(arbitration_service, "shutdown"):
+        try:
+            dropped = await arbitration_service.shutdown(timeout_seconds=10.0)
+            if dropped:
+                logger.warning(
+                    "Arbitration coordinator shutdown cancelled %s pending timer task(s)",
+                    dropped,
+                )
+        except Exception:
+            logger.exception("Failed shutting down arbitration coordinator")
 
     # Stop all started channels via registry.
     channel_registry = getattr(app.state, "channel_registry", None)

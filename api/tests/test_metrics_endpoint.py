@@ -117,6 +117,21 @@ class TestMetricsEndpoint:
         for metric in tor_metrics:
             assert metric in content, f"Missing Tor metric: {metric}"
 
+    def test_bisq_readiness_metrics_exposed(self, test_client):
+        """Test that split Bisq readiness metrics are exposed."""
+        response = test_client.get("/metrics")
+        content = response.text
+
+        bisq_metrics = [
+            "bisq2_api_export_readiness_status",
+            "bisq2_api_market_prices_readiness_status",
+            "bisq2_api_offerbook_readiness_status",
+            "bisq2_api_auth_failures_total",
+        ]
+
+        for metric in bisq_metrics:
+            assert metric in content, f"Missing Bisq readiness metric: {metric}"
+
     def test_system_metrics_exposed(self, test_client):
         """Test that standard system metrics are exposed."""
         response = test_client.get("/metrics")

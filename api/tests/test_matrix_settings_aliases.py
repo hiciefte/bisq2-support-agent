@@ -86,3 +86,10 @@ class TestMatrixSettings:
 
         assert settings.MATRIX_ALERT_USER_RESOLVED == "@alert:matrix.org"
         assert settings.MATRIX_ALERT_PASSWORD_RESOLVED == "alert-secret"
+
+    def test_matrix_staff_room_setting_exists_and_is_assignable(self):
+        settings = Settings(
+            MATRIX_STAFF_ROOM="!staff:matrix.org",
+        )
+
+        assert settings.MATRIX_STAFF_ROOM == "!staff:matrix.org"
