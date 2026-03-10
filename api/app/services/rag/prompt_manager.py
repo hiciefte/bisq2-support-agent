@@ -16,8 +16,8 @@ from app.core.config import Settings
 from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
 from app.prompts.runtime_policy import (
-    build_answer_contract_block,
     build_ambiguous_support_workflow_block,
+    build_answer_contract_block,
     build_bisq1_workflow_guardrails_block,
     build_context_only_policy_block,
     build_evidence_discipline_block,
@@ -175,7 +175,9 @@ class PromptManager:
         if self.feedback_service:
             guidance = self.feedback_service.get_prompt_guidance()
             if guidance:
-                guidance_items = [str(item).strip() for item in guidance if str(item).strip()]
+                guidance_items = [
+                    str(item).strip() for item in guidance if str(item).strip()
+                ]
                 if guidance_items:
                     logger.info("Added prompt guidance: %s", " | ".join(guidance_items))
 

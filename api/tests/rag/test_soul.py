@@ -27,7 +27,7 @@ class TestSoulLoader:
     def test_load_soul_contains_identity_markers(self):
         result = load_soul()
         assert "Bisq" in result
-        assert "IDENTITY" in result or "identity" in result.lower()
+        assert "support assistant" in result.lower() or "community" in result.lower()
 
     def test_load_soul_is_cached(self):
         result1 = load_soul()

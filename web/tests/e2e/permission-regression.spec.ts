@@ -34,13 +34,23 @@ test.describe("Permission Regression Tests", () => {
         await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
         await navigateToFaqManagement(page);
 
-        await page.click('button:has-text("Add New FAQ")');
         const testQuestion = `Permission test ${Date.now()}`;
+        const createResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().includes("/admin/faqs") &&
+                response.request().method() === "POST",
+            { timeout: 30000 }
+        );
+        await page.click('button:has-text("Add New FAQ")');
         await page.fill("input#question", testQuestion);
         await page.fill("textarea#answer", "Testing permissions after restart");
         await selectCategory(page, "General");
         await page.click('button:has-text("Add FAQ")');
-        await page.waitForTimeout(1000);
+        expect((await createResponsePromise).ok()).toBeTruthy();
+        await page.getByRole("dialog", { name: "Add New FAQ" }).waitFor({
+            state: "hidden",
+            timeout: 30000,
+        });
 
         // Step 2: Restart API container
         console.log("Restarting API container...");
@@ -64,8 +74,8 @@ test.describe("Permission Regression Tests", () => {
         );
         await expect(faqCard).toBeVisible();
 
-        await faqCard.hover();
-        await faqCard.locator('[data-testid="delete-faq-button"]').click();
+        await faqCard.click();
+        await page.keyboard.press("d");
 
         // Wait for AlertDialog and click Continue
         const dialog = page.getByRole("alertdialog");
@@ -204,26 +214,30 @@ test.describe("Permission Regression Tests", () => {
             await navigateToFaqManagement(page);
 
             // Create FAQ
-            await page.click('button:has-text("Add New FAQ")');
             const testQuestion = `Multi-restart test ${Date.now()}`;
+            const createResponsePromise = page.waitForResponse(
+                (response) =>
+                    response.url().includes("/admin/faqs") &&
+                    response.request().method() === "POST",
+                { timeout: 30000 }
+            );
+            await page.click('button:has-text("Add New FAQ")');
             await page.fill("input#question", testQuestion);
             await page.fill("textarea#answer", "Testing after multiple restarts");
             await selectCategory(page, "General");
             await page.click('button:has-text("Add FAQ")');
-
-            // Wait for form to close and FAQ to appear (same pattern as FAQ management)
-            await page.waitForSelector('button:has-text("Add New FAQ")', {
-                state: "visible",
-                timeout: 10000,
+            expect((await createResponsePromise).ok()).toBeTruthy();
+            await page.getByRole("dialog", { name: "Add New FAQ" }).waitFor({
+                state: "hidden",
+                timeout: 30000,
             });
-            await page.waitForTimeout(500);
 
             const faqCard = page.locator(
                 `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
             );
             await faqCard.waitFor({ state: "visible", timeout: 10000 });
-            await faqCard.hover();
-            await faqCard.locator('[data-testid="delete-faq-button"]').click();
+            await faqCard.click();
+            await page.keyboard.press("d");
 
             // Wait for AlertDialog and click Continue
             const dialog = page.getByRole("alertdialog");
@@ -340,19 +354,23 @@ test.describe("Cross-session Permission Tests", () => {
         }
 
         // Admin 1: Create FAQ
-        await page1.click('button:has-text("Add New FAQ")');
         const testQuestion = `Cross-session test ${Date.now()}`;
+        const createResponsePromise = page1.waitForResponse(
+            (response) =>
+                response.url().includes("/admin/faqs") &&
+                response.request().method() === "POST",
+            { timeout: 30000 }
+        );
+        await page1.click('button:has-text("Add New FAQ")');
         await page1.fill("input#question", testQuestion);
         await page1.fill("textarea#answer", "Cross-session test");
         await selectCategory(page1, "General");
         await page1.click('button:has-text("Add FAQ")');
-
-        // Wait for form to close and FAQ to appear on page1
-        await page1.waitForSelector('button:has-text("Add New FAQ")', {
-            state: "visible",
-            timeout: 10000,
+        expect((await createResponsePromise).ok()).toBeTruthy();
+        await page1.getByRole("dialog", { name: "Add New FAQ" }).waitFor({
+            state: "hidden",
+            timeout: 30000,
         });
-        await page1.waitForTimeout(500);
 
         // Admin 2: Refresh and verify FAQ appears
         await page2.reload();
@@ -366,8 +384,8 @@ test.describe("Cross-session Permission Tests", () => {
             `.bg-card.border.rounded-lg:has-text("${testQuestion}")`
         );
         await faqOnPage1.waitFor({ state: "visible", timeout: 5000 });
-        await faqOnPage1.hover();
-        await faqOnPage1.locator('[data-testid="delete-faq-button"]').click();
+        await faqOnPage1.click();
+        await page1.keyboard.press("d");
 
         // Wait for AlertDialog and click Continue
         const dialog = page1.getByRole("alertdialog");

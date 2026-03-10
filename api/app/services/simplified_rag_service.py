@@ -76,7 +76,9 @@ def _is_definition_question(question_text: Optional[str]) -> bool:
     question = str(question_text or "").strip().lower()
     if not question:
         return False
-    return any(re.search(pattern, question) for pattern in _DEFINITION_QUESTION_PATTERNS)
+    return any(
+        re.search(pattern, question) for pattern in _DEFINITION_QUESTION_PATTERNS
+    )
 
 
 def _compress_simple_fact_answer(answer_text: str) -> str:
@@ -878,7 +880,9 @@ class SimplifiedRAGService:
                 )
                 continue
 
-            language_code = str(getattr(details, "language_code", "") or "").strip().lower()
+            language_code = (
+                str(getattr(details, "language_code", "") or "").strip().lower()
+            )
             confidence = float(getattr(details, "confidence", 0.0) or 0.0)
             if language_code and language_code != "en" and confidence >= 0.80:
                 return language_code
@@ -942,9 +946,8 @@ class SimplifiedRAGService:
                         chat_history
                     )
                     source_lang_hint: str | None = None
-                    if (
-                        chat_history
-                        and self._is_short_ambiguous_follow_up(preprocessed_question)
+                    if chat_history and self._is_short_ambiguous_follow_up(
+                        preprocessed_question
                     ):
                         source_lang_hint = (
                             await self._infer_language_hint_from_chat_history(
@@ -958,9 +961,11 @@ class SimplifiedRAGService:
                     )
                     original_language = translation_result.get("source_lang", "en")
                     was_translated = not translation_result.get("skipped", True)
-                    detection_backend = str(
-                        translation_result.get("detection_backend", "") or ""
-                    ).strip().lower()
+                    detection_backend = (
+                        str(translation_result.get("detection_backend", "") or "")
+                        .strip()
+                        .lower()
+                    )
                     if (
                         original_language == "en"
                         and not was_translated

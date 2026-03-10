@@ -13,7 +13,6 @@ Tests cover:
 
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

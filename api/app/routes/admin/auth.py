@@ -9,8 +9,8 @@ from app.core.exceptions import AuthenticationError, BaseAppException
 from app.core.security import (
     clear_admin_cookie,
     set_admin_cookie,
-    verify_admin_session_token,
     verify_admin_key_with_delay,
+    verify_admin_session_token,
 )
 from app.models.feedback import (
     AdminAuthStatusResponse,
@@ -105,7 +105,9 @@ async def admin_logout(response: Response) -> Dict[str, Any]:
 
 
 @router.get("/status", response_model=AdminAuthStatusResponse)
-async def admin_auth_status(request: Request, response: Response) -> AdminAuthStatusResponse:
+async def admin_auth_status(
+    request: Request, response: Response
+) -> AdminAuthStatusResponse:
     """Check whether the current request carries a valid admin session cookie.
 
     Returns authenticated=false for missing/invalid/expired cookies, so the admin UI

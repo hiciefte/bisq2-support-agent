@@ -22,12 +22,10 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_TEMPLATE_BY_CHANNEL: Dict[str, str] = {
     "bisq2": (
-        "Thanks for the feedback. What was incorrect or missing in the previous AI "
-        "answer? A short reply helps us improve."
+        "What was incorrect or missing in the previous answer? A short reply helps us improve."
     ),
     "matrix": (
-        "Thanks for the feedback. What was incorrect or missing in the previous AI "
-        "answer? Reply in this room and I will record it."
+        "What was incorrect or missing in the previous answer? Reply in this room and I will record it."
     ),
 }
 

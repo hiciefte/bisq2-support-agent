@@ -142,7 +142,10 @@ class TestPromptManagerResponseGuidelines:
         prompt = prompt_manager.create_rag_prompt()
         template = prompt.messages[0].prompt.template
         # Should have guidance about response length that's flexible
-        assert "Keep answers compact" in template or "concise by default" in template.lower()
+        assert (
+            "Keep answers compact" in template
+            or "concise by default" in template.lower()
+        )
 
     def test_prompt_contains_answer_contract(self, prompt_manager):
         prompt = prompt_manager.create_rag_prompt()
@@ -160,7 +163,10 @@ class TestPromptManagerResponseGuidelines:
         assert "Do not invent UI actions" in template
         assert "hand off instead of guessing" in template
         assert "SPV resync, DAO rebuild, failed-trades recovery" in template
-        assert "do not replace it with user-side cancel/delete/reject instructions" in template
+        assert (
+            "do not replace it with user-side cancel/delete/reject instructions"
+            in template
+        )
         assert "Do not recommend DAO rebuild" in template
 
     def test_prompt_contains_bisq1_stuck_trade_guardrails(self, prompt_manager):
@@ -170,7 +176,10 @@ class TestPromptManagerResponseGuidelines:
         assert "recommend SPV resync first" in template
         assert "protocol state not progressing, Altcoin Instant" in template
         assert "re-check the trade state" in template
-        assert "Do not turn a generic Bisq 1 protocol-stuck question into a DAO-state mismatch answer" in template
+        assert (
+            "Do not turn a generic Bisq 1 protocol-stuck question into a DAO-state mismatch answer"
+            in template
+        )
         assert "Do not replace the documented stuck-trade/dispute workflow" in template
 
     def test_prompt_contains_ambiguous_support_workflow_rules(self, prompt_manager):
@@ -179,7 +188,10 @@ class TestPromptManagerResponseGuidelines:
         assert "AMBIGUOUS SUPPORT WORKFLOWS:" in template
         assert "do not stop with a version clarification" in template
         assert "answer at the highest safe level first" in template
-        assert "Do not assume Bisq Easy, Bisq 1, or a specific UI button/menu path" in template
+        assert (
+            "Do not assume Bisq Easy, Bisq 1, or a specific UI button/menu path"
+            in template
+        )
         assert "If version remains unknown after considering Context" in template
         assert "do not name Bisq Easy, Bisq 1, MuSig" in template
         assert "prefer neutral wording such as 'open the affected trade'" in template

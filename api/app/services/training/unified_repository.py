@@ -1236,7 +1236,9 @@ class UnifiedFAQCandidateRepository:
             reviewed_by=row["reviewed_by"],
             reviewed_at=row["reviewed_at"],
             rejection_reason=row["rejection_reason"],
-            rejection_note=row["rejection_note"] if "rejection_note" in row.keys() else None,
+            rejection_note=(
+                row["rejection_note"] if "rejection_note" in row.keys() else None
+            ),
             faq_id=row["faq_id"],
             is_calibration_sample=bool(row["is_calibration_sample"]),
             created_at=row["created_at"],

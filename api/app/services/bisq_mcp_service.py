@@ -447,7 +447,9 @@ class Bisq2MCPService:
 
     @classmethod
     def _build_base_url_candidates(cls, configured_url: str) -> list[str]:
-        primary = str(configured_url or "").strip().rstrip("/") or "http://bisq2-api:8090"
+        primary = (
+            str(configured_url or "").strip().rstrip("/") or "http://bisq2-api:8090"
+        )
         parsed = urlparse(primary)
         host = (parsed.hostname or "").strip().lower()
         candidates = [primary]

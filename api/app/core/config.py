@@ -938,7 +938,9 @@ class Settings(BaseSettings):
                 if isinstance(profile_id, str) and profile_id.strip()
             ]
         if isinstance(v, str):
-            return [profile_id.strip() for profile_id in v.split(",") if profile_id.strip()]
+            return [
+                profile_id.strip() for profile_id in v.split(",") if profile_id.strip()
+            ]
         return []
 
     @field_validator("CORS_ORIGINS", mode="before")
@@ -1125,9 +1127,7 @@ class Settings(BaseSettings):
 
         bisq_api_url = (self.BISQ_API_URL or "").strip()
         if not bisq_api_url:
-            raise ValueError(
-                "BISQ_API_LOCAL_ONLY is true but BISQ_API_URL is empty."
-            )
+            raise ValueError("BISQ_API_LOCAL_ONLY is true but BISQ_API_URL is empty.")
 
         parsed = urlparse(
             bisq_api_url if "://" in bisq_api_url else f"http://{bisq_api_url}"

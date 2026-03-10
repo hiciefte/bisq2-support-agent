@@ -174,11 +174,11 @@ Failed to export chat messages: Cannot connect to host bisq2-api:8090
 
 **Verification:**
 ```bash
-# Test API connectivity from host machine
-curl http://localhost:8090/api/v1/support/export
+# Test unauthenticated Bisq API liveness from host machine
+curl -fsS http://localhost:8090/api/v1/openapi.json >/dev/null
 
-# Or test from within the API container (using Docker network hostname)
-docker compose -f docker/docker-compose.yml exec api curl http://bisq2-api:8090/api/v1/support/export
+# Then test authenticated export readiness from within the API container
+docker compose -f docker/docker-compose.yml exec api curl -fsS http://localhost:8000/health | jq '.services.bisq2_api'
 
 # Run FAQ extraction manually to see final result
 docker compose -f docker/docker-compose.yml exec api python -m app.scripts.extract_faqs
@@ -190,7 +190,7 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 1. Check if there are new support conversations in the Bisq API:
    ```bash
-   curl -sS http://localhost:8090/api/v1/support/export | jq '.exportMetadata.messageCount'
+   docker compose -f docker/docker-compose.yml exec api curl -fsS http://localhost:8000/metrics | grep '^bisq2_api_export_'
    ```
 
 2. Check the FAQ extractor logs:
@@ -214,20 +214,23 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 5. If Bisq2 API has `authorizationRequired=true`, ensure support-agent auth is configured:
    ```bash
-   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_PAIRING_QR_FILE|BISQ_API_PAIRING_CODE_ID|BISQ_API_AUTH_STATE_FILE|BISQ_API_PAIRING_CLIENT_NAME)=' docker/.env
+   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_CLIENT_ID|BISQ_API_CLIENT_SECRET|BISQ_API_PAIRING_QR_FILE|BISQ_API_PAIRING_CODE_ID|BISQ_API_AUTH_STATE_FILE|BISQ_API_PAIRING_CLIENT_NAME)=' docker/.env
    ```
-   - Recommended flow is pairing bootstrap via QR file:
-     1. Set `BISQ_API_AUTH_ENABLED=true` and `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
-     2. Copy current QR payload from Bisq2 API runtime data into API data volume:
+   - Recommended production flow is durable client credentials with optional one-time pairing bootstrap:
+     1. Set `BISQ_API_AUTH_ENABLED=true`.
+     2. Prefer `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` in the deploy environment.
+     3. Use `BISQ_API_PAIRING_QR_FILE` or `BISQ_API_PAIRING_CODE_ID` only for the first bootstrap if durable credentials are not known yet.
+     4. If you must bootstrap from QR, copy the current QR payload from Bisq2 API runtime data into API data volume:
 
         ```bash
         docker compose -f docker/docker-compose.yml exec bisq2-api cat /opt/bisq2/data/pairing_qr_code.txt > api/data/pairing_qr_code.txt
         ```
 
-     3. Restart `api` container and confirm `/data/bisq_api_auth.json` is created.
+     5. Restart `api` container and confirm `/data/bisq_api_auth.json` contains both `client_id` and `client_secret`.
    - Pairing did not complete when logs show `Missing clientId` (missing/invalid QR file or auth disabled in support-agent).
+   - `bisq_api_auth.json` containing only `client_id` is invalid and will be ignored.
    - Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients when logs show `Required permissions not granted` for `/api/v1/support/*`.
-   - When Docker healthcheck for `bisq2-api` uses an authenticated endpoint and returns `403`, use a non-`-f` curl healthcheck so auth-mode `403` still counts as liveness.
+   - Docker liveness for `bisq2-api` should use an unauthenticated endpoint such as `/api/v1/openapi.json`; authenticated readiness is monitored separately through the support API metrics.
 
 ## Monitoring Issues
 

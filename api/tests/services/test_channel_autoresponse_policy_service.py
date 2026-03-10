@@ -8,6 +8,8 @@ from app.services.channel_autoresponse_policy_service import (
     DEFAULT_ACKNOWLEDGMENT_REACTION_KEY,
     DEFAULT_AI_RESPONSE_MODE,
     DEFAULT_AUTORESPONSE_ENABLED,
+    DEFAULT_COMMUNITY_RESPONSE_CANCELS_AI,
+    DEFAULT_COMMUNITY_SUBSTANTIVE_MIN_CHARS,
     DEFAULT_DISPATCH_FAILURE_MESSAGE_TEMPLATE,
     DEFAULT_DRAFT_ASSISTANT_ENABLED,
     DEFAULT_ESCALATION_NOTIFICATION_CHANNEL,
@@ -25,11 +27,9 @@ from app.services.channel_autoresponse_policy_service import (
     DEFAULT_MAX_PROACTIVE_AI_REPLIES_PER_QUESTION,
     DEFAULT_MIN_DELAY_NO_STAFF_SECONDS,
     DEFAULT_PUBLIC_ESCALATION_NOTICE_ENABLED,
-    DEFAULT_COMMUNITY_RESPONSE_CANCELS_AI,
-    DEFAULT_COMMUNITY_SUBSTANTIVE_MIN_CHARS,
-    DEFAULT_STAFF_PRESENCE_AWARE_DELAY,
     DEFAULT_STAFF_ACTIVE_COOLDOWN_SECONDS,
     DEFAULT_STAFF_ASSIST_SURFACE,
+    DEFAULT_STAFF_PRESENCE_AWARE_DELAY,
     DEFAULT_TIMER_JITTER_MAX_SECONDS,
     SUPPORTED_CHANNELS,
     ChannelAutoResponsePolicyService,
@@ -61,7 +61,8 @@ def test_service_seeds_default_policies(tmp_path) -> None:
             == DEFAULT_KNOWLEDGE_AMPLIFIER_ENABLED[policy.channel_id]
         )
         assert (
-            policy.staff_assist_surface == DEFAULT_STAFF_ASSIST_SURFACE[policy.channel_id]
+            policy.staff_assist_surface
+            == DEFAULT_STAFF_ASSIST_SURFACE[policy.channel_id]
         )
         assert (
             policy.first_response_delay_seconds
@@ -80,8 +81,7 @@ def test_service_seeds_default_policies(tmp_path) -> None:
             == DEFAULT_PUBLIC_ESCALATION_NOTICE_ENABLED[policy.channel_id]
         )
         assert (
-            policy.acknowledgment_mode
-            == DEFAULT_ACKNOWLEDGMENT_MODE[policy.channel_id]
+            policy.acknowledgment_mode == DEFAULT_ACKNOWLEDGMENT_MODE[policy.channel_id]
         )
         assert (
             policy.acknowledgment_reaction_key

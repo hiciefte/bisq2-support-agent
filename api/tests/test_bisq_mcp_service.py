@@ -21,8 +21,8 @@ from app.metrics.task_metrics import (
     BISQ2_API_MARKET_PRICES_READINESS_STATUS,
     BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP,
     BISQ2_API_OFFERBOOK_READINESS_STATUS,
+    get_bisq2_api_readiness_snapshot,
 )
-from app.metrics.task_metrics import get_bisq2_api_readiness_snapshot
 from app.services.bisq_mcp_service import (
     Bisq2MCPService,
     CurrencyValidator,
@@ -321,9 +321,7 @@ class TestEndpointFailover:
     """Tests for Bisq MCP endpoint candidate fallback behavior."""
 
     def test_build_base_url_candidates_adds_localhost_fallbacks(self):
-        candidates = Bisq2MCPService._build_base_url_candidates(
-            "http://bisq2-api:8090"
-        )
+        candidates = Bisq2MCPService._build_base_url_candidates("http://bisq2-api:8090")
         assert candidates[0] == "http://bisq2-api:8090"
         assert "http://localhost:8090" in candidates
         assert "http://127.0.0.1:8090" in candidates
@@ -347,8 +345,14 @@ class TestEndpointFailover:
             assert result == {"quotes": {"EUR": {"value": 950000000}}}
             assert service.active_base_url == "http://localhost:8090"
             assert service.base_url == "http://localhost:8090"
-            assert mock_candidate.await_args_list[0].kwargs["base_url"] == "http://primary:8090"
-            assert mock_candidate.await_args_list[1].kwargs["base_url"] == "http://localhost:8090"
+            assert (
+                mock_candidate.await_args_list[0].kwargs["base_url"]
+                == "http://primary:8090"
+            )
+            assert (
+                mock_candidate.await_args_list[1].kwargs["base_url"]
+                == "http://localhost:8090"
+            )
 
 
 class TestAuthentication:

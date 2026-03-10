@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
 from app.channels.escalation_localization import render_escalation_notice
 from app.channels.policy import (
@@ -26,6 +25,7 @@ from app.models.escalation import EscalationCreate
 logger = logging.getLogger(__name__)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
+_REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
 
 
 def _formatter_accepts_kwarg(formatter: Any, name: str) -> bool:
@@ -239,12 +239,12 @@ class ChannelResponseDispatcher:
         if routing_action in _DIRECT_DELIVERY_ACTIONS:
             return True
         # Fail-open for unknown legacy actions to avoid silent user drops.
-        if routing_action and routing_action not in REVIEW_QUEUE_ACTIONS:
+        if routing_action and routing_action not in _REVIEW_QUEUE_ACTIONS:
             logger.warning(
                 "Unknown routing_action=%r for channel dispatcher; defaulting to autosend",
                 routing_action,
             )
-        return routing_action not in REVIEW_QUEUE_ACTIONS
+        return routing_action not in _REVIEW_QUEUE_ACTIONS
 
     @staticmethod
     def should_create_escalation(response: Any) -> bool:
@@ -256,7 +256,7 @@ class ChannelResponseDispatcher:
         requires_human = (
             requires_human_raw if isinstance(requires_human_raw, bool) else False
         )
-        return requires_human or routing_action in REVIEW_QUEUE_ACTIONS
+        return requires_human or routing_action in _REVIEW_QUEUE_ACTIONS
 
     def _resolve_escalation_service(self) -> Any | None:
         if self.escalation_service is not None:
@@ -404,7 +404,8 @@ class ChannelResponseDispatcher:
                 response=response,
                 escalation=escalation,
             )
-            return sent_public
+            if notification_channel == "public_room":
+                return sent_public
 
         # For non-public routing, user-room notice behavior is controlled by policy.
         user_notice_sent = await self._send_user_escalation_notice(incoming, response)
@@ -561,17 +562,17 @@ class ChannelResponseDispatcher:
             else response
         )
         try:
-            notice.answer = notice_text
-            notice.requires_human = True
+            setattr(notice, "answer", notice_text)
+            setattr(notice, "requires_human", True)
             if hasattr(notice, "sources"):
-                notice.sources = []
+                setattr(notice, "sources", [])
             metadata = getattr(notice, "metadata", None)
             if metadata is not None:
                 if hasattr(metadata, "confidence_score"):
-                    metadata.confidence_score = None
+                    setattr(metadata, "confidence_score", None)
                 if hasattr(metadata, "routing_action"):
                     # Reactions to queue-notice messages should not feed learning.
-                    metadata.routing_action = "escalation_notice"
+                    setattr(metadata, "routing_action", "escalation_notice")
         except Exception:
             logger.debug(
                 "Failed to shape queued-review notification payload", exc_info=True
@@ -675,13 +676,13 @@ class ChannelResponseDispatcher:
             self.channel_id,
         )
         try:
-            notice.answer = template
-            notice.requires_human = True
+            setattr(notice, "answer", template)
+            setattr(notice, "requires_human", True)
             if hasattr(notice, "sources"):
-                notice.sources = []
+                setattr(notice, "sources", [])
             metadata = getattr(notice, "metadata", None)
             if metadata is not None and hasattr(metadata, "routing_action"):
-                metadata.routing_action = "escalation_notice"
+                setattr(metadata, "routing_action", "escalation_notice")
         except Exception:
             logger.debug("Failed shaping user escalation notice payload", exc_info=True)
         return notice

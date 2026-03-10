@@ -610,11 +610,7 @@ Language code:"""
                 return details
 
         # Keep a cheap English bypass to avoid unnecessary model/LLM work.
-        if (
-            non_english_hint is None
-            and text_len > self.short_text_chars
-            and self._is_likely_english(text)
-        ):
+        if non_english_hint is None and self._is_likely_english(text):
             details = LanguageDetectionDetails(
                 language_code="en",
                 confidence=0.95,
