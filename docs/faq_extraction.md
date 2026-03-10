@@ -90,9 +90,14 @@ The following file paths are used:
 | Path | Description | Default Location |
 |------|-------------|------------------|
 | `FAQ_DB_PATH` | Path to the FAQ SQLite database | `{DATA_DIR}/faqs.db` |
+| `UNIFIED_TRAINING_DB_PATH` | Unified training pipeline database for candidate review, calibration, and learning state | `{DATA_DIR}/unified_training.db` |
 | `CHAT_EXPORT_FILE_PATH` | Path to the support chat export CSV | `{DATA_DIR}/support_chat_export.csv` |
 | `PROCESSED_CONVS_FILE_PATH` | Path to the processed conversations JSON | `{DATA_DIR}/processed_conversations.json` |
 | `CONVERSATIONS_FILE_PATH` | Path to the conversations JSONL | `{DATA_DIR}/conversations.jsonl` |
+
+Training pipeline storage note:
+- `unified_training.db` is the single source of truth for the current FAQ candidate review pipeline.
+- Legacy files such as `faq_candidates.db` and `unified_candidates.db` may still be present on older systems, but they are not used by the current application runtime.
 
 ## Running the Extraction Process
 

@@ -52,19 +52,43 @@ class PromptOptimizer:
         prompt_guidance = []
 
         if common_issues.get("too_verbose", 0) > 5:
-            prompt_guidance.append("Keep answers very concise and to the point.")
+            prompt_guidance.append(
+                "Keep answers tight: answer first, then only the minimum necessary detail."
+            )
 
         if common_issues.get("too_technical", 0) > 5:
-            prompt_guidance.append("Use simple terms and avoid technical jargon.")
+            prompt_guidance.append(
+                "Use plain language first and introduce technical terms only when they help."
+            )
 
         if common_issues.get("not_specific", 0) > 5:
             prompt_guidance.append(
-                "Be specific and provide concrete examples when possible."
+                "Be specific, concrete, and action-oriented. Prefer exact steps over general advice."
+            )
+
+        if common_issues.get("wrong_version", 0) > 3:
+            prompt_guidance.append(
+                "Do not mix Bisq 1 and Bisq 2 guidance. If version is unclear, ask a short clarifying question."
+            )
+
+        if common_issues.get("bad_tone", 0) > 3:
+            prompt_guidance.append(
+                "Sound like a calm human support teammate. Avoid robotic, corporate, or overly performative language."
+            )
+
+        if common_issues.get("bad_formatting", 0) > 3:
+            prompt_guidance.append(
+                "Keep formatting chat-friendly: short paragraphs, short lists, and no markdown headings."
+            )
+
+        if common_issues.get("partially_inaccurate", 0) > 3:
+            prompt_guidance.append(
+                "Avoid stretching beyond evidence. If one detail is uncertain, state the uncertainty instead of guessing."
             )
 
         # Update the system template with new guidance
         if prompt_guidance:
-            self.prompt_guidance = prompt_guidance
+            self.prompt_guidance = list(dict.fromkeys(prompt_guidance))
             logger.info(f"Updated prompt guidance based on feedback: {prompt_guidance}")
             return True
 

@@ -40,6 +40,7 @@ export interface UnifiedCandidate {
     reviewed_by: string | null;
     reviewed_at: string | null;
     rejection_reason: string | null;
+    rejection_note?: string | null;
     faq_id: string | null;
     is_calibration_sample: boolean;
     created_at: string;

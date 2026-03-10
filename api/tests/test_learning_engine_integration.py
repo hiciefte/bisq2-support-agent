@@ -216,6 +216,33 @@ class TestLearningEngineBasics:
         assert "rejection_rate" in metrics
         assert metrics["total_reviews"] == 3
 
+    def test_get_learning_metrics_separates_answer_quality_reviews(self):
+        """Answer-quality ratings should be tracked separately from FAQ decisions."""
+        engine = LearningEngine()
+
+        engine.record_review("faq1", 0.9, "approved", "AUTO_APPROVE")
+        engine.record_review(
+            "rating:1:alice",
+            0.7,
+            "approved",
+            "SPOT_CHECK",
+            metadata={"review_kind": "answer_quality", "idempotent": True},
+        )
+        engine.record_review(
+            "rating:2:alice",
+            0.6,
+            "rejected",
+            "FULL_REVIEW",
+            metadata={"review_kind": "answer_quality", "idempotent": True},
+        )
+
+        metrics = engine.get_learning_metrics()
+        assert metrics["total_reviews"] == 3
+        assert metrics["faq_reviews_total"] == 1
+        assert metrics["answer_quality_reviews_total"] == 2
+        assert metrics["approval_rate"] == 1.0
+        assert metrics["answer_quality_good_rate"] == 0.5
+
     def test_get_current_thresholds_returns_dict(self):
         """get_current_thresholds should return a dictionary with threshold values."""
         engine = LearningEngine()

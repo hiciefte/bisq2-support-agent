@@ -1051,6 +1051,7 @@ class UnifiedPipelineService:
         candidate_id: int,
         reviewer: str,
         reason: str,
+        reason_note: Optional[str] = None,
     ) -> bool:
         """
         Reject a candidate with a reason.
@@ -1059,6 +1060,7 @@ class UnifiedPipelineService:
             candidate_id: ID of the candidate to reject
             reviewer: Username of the reviewer
             reason: Reason for rejection
+            reason_note: Optional reviewer note with additional context
 
         Returns:
             True if rejection successful
@@ -1067,7 +1069,12 @@ class UnifiedPipelineService:
         if candidate is None:
             raise ValueError(f"Candidate {candidate_id} not found")
 
-        self.repository.reject(candidate_id, reviewer, reason)
+        self.repository.reject(
+            candidate_id,
+            reviewer,
+            reason,
+            reason_note=reason_note,
+        )
 
         # Record metrics
         training_human_reviews.labels(outcome="rejected").inc()
