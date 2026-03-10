@@ -9,9 +9,14 @@ from app.core.exceptions import AuthenticationError, BaseAppException
 from app.core.security import (
     clear_admin_cookie,
     set_admin_cookie,
+    verify_admin_session_token,
     verify_admin_key_with_delay,
 )
-from app.models.feedback import AdminLoginRequest, AdminLoginResponse
+from app.models.feedback import (
+    AdminAuthStatusResponse,
+    AdminLoginRequest,
+    AdminLoginResponse,
+)
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 
@@ -97,3 +102,19 @@ async def admin_logout(response: Response) -> Dict[str, Any]:
     logger.info("Admin logout")
     clear_admin_cookie(response)
     return {"message": "Logout successful", "authenticated": False}
+
+
+@router.get("/status", response_model=AdminAuthStatusResponse)
+async def admin_auth_status(request: Request, response: Response) -> AdminAuthStatusResponse:
+    """Check whether the current request carries a valid admin session cookie.
+
+    Returns authenticated=false for missing/invalid/expired cookies, so the admin UI
+    can perform a lightweight auth probe without triggering expensive admin endpoints.
+    """
+    auth_cookie = request.cookies.get("admin_authenticated")
+    if auth_cookie and verify_admin_session_token(auth_cookie):
+        # Keep sliding session behavior consistent with protected admin routes.
+        set_admin_cookie(response)
+        return AdminAuthStatusResponse(authenticated=True)
+
+    return AdminAuthStatusResponse(authenticated=False)

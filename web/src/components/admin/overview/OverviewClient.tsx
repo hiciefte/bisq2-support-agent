@@ -11,8 +11,15 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ChannelAutoresponseCard } from "@/components/admin/overview/ChannelAutoresponseCard";
 import { OverviewSkeleton } from "@/components/admin/overview/OverviewSkeleton";
 import type { OverviewInitialData } from "@/components/admin/overview/types";
-import { type ChannelId } from "@/components/admin/overview/types";
-import { useChannelAutoresponsePolicies } from "@/hooks/useChannelAutoresponsePolicies";
+import {
+  type ChannelId,
+  type EscalationNotificationChannel,
+} from "@/components/admin/overview/types";
+import {
+  type ChannelAcknowledgmentMode,
+  type ChannelEscalationUserNoticeMode,
+  useChannelAutoresponsePolicies,
+} from "@/hooks/useChannelAutoresponsePolicies";
 import { useOverviewData } from "@/hooks/useOverviewData";
 import { usePeriodStorage } from "@/hooks/usePeriodStorage";
 import { cn } from "@/lib/utils";
@@ -72,6 +79,11 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
     error: autoresponseError,
     refresh: refreshAutoresponsePolicies,
     setChannelMode,
+    setEscalationNotificationChannel,
+    setAcknowledgmentMode,
+    setAcknowledgmentReactionKey,
+    setAcknowledgmentMessageTemplate,
+    setEscalationUserNoticeMode,
   } = useChannelAutoresponsePolicies(initialData.channelPolicies);
 
   const handleRefresh = useCallback(() => {
@@ -86,6 +98,47 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
       void setChannelMode(channelId, mode);
     },
     [setChannelMode],
+  );
+
+  const handleEscalationRouteChange = useCallback(
+    (
+      channelId: ChannelId,
+      escalationNotificationChannel: EscalationNotificationChannel,
+    ) => {
+      void setEscalationNotificationChannel(channelId, escalationNotificationChannel);
+    },
+    [setEscalationNotificationChannel],
+  );
+
+  const handleAcknowledgmentModeChange = useCallback(
+    (channelId: ChannelId, acknowledgmentMode: ChannelAcknowledgmentMode) => {
+      void setAcknowledgmentMode(channelId, acknowledgmentMode);
+    },
+    [setAcknowledgmentMode],
+  );
+
+  const handleAcknowledgmentReactionKeyChange = useCallback(
+    (channelId: ChannelId, acknowledgmentReactionKey: string) => {
+      void setAcknowledgmentReactionKey(channelId, acknowledgmentReactionKey);
+    },
+    [setAcknowledgmentReactionKey],
+  );
+
+  const handleAcknowledgmentMessageTemplateChange = useCallback(
+    (channelId: ChannelId, acknowledgmentMessageTemplate: string) => {
+      void setAcknowledgmentMessageTemplate(channelId, acknowledgmentMessageTemplate);
+    },
+    [setAcknowledgmentMessageTemplate],
+  );
+
+  const handleEscalationUserNoticeModeChange = useCallback(
+    (
+      channelId: ChannelId,
+      escalationUserNoticeMode: ChannelEscalationUserNoticeMode,
+    ) => {
+      void setEscalationUserNoticeMode(channelId, escalationUserNoticeMode);
+    },
+    [setEscalationUserNoticeMode],
   );
 
   const formatResponseTime = (seconds: number | null | undefined) => {
@@ -487,6 +540,11 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
                     isSavingByChannel={isSavingByChannel}
                     error={autoresponseError}
                     onModeChange={handleModeChange}
+                    onEscalationRouteChange={handleEscalationRouteChange}
+                    onAcknowledgmentModeChange={handleAcknowledgmentModeChange}
+                    onAcknowledgmentReactionKeyChange={handleAcknowledgmentReactionKeyChange}
+                    onAcknowledgmentMessageTemplateChange={handleAcknowledgmentMessageTemplateChange}
+                    onEscalationUserNoticeModeChange={handleEscalationUserNoticeModeChange}
                     onRetry={() => {
                       void refreshAutoresponsePolicies();
                     }}
