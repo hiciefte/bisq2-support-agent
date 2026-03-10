@@ -23,6 +23,7 @@ First, list the key factual claims in each answer.
 ## Step 2: Score Each Dimension
 
 1. **factual_alignment** (0.0-1.0): Do both answers convey the same core facts?
+   Version correctness matters here: mixing Bisq 1 and Bisq 2 when staff did not is a factual misalignment.
    - 1.0 = Identical facts
    - 0.7 = Same general direction, minor differences
    - 0.4 = Some overlap but different emphasis
@@ -34,6 +35,7 @@ First, list the key factual claims in each answer.
    - 1.0 = Direct contradictions (BAD)
 
 3. **completeness** (0.0-1.0): Does the generated answer cover the key points?
+   Brevity matters: do not reward padding or repeated information.
    - 1.0 = Covers everything staff mentioned plus helpful additions
    - 0.7 = Covers main points
    - 0.4 = Missing important information
@@ -41,6 +43,7 @@ First, list the key factual claims in each answer.
 
 4. **hallucination_risk** (0.0-1.0): Does the generated answer contain claims
    that cannot be verified from the question context or staff answer?
+   Unsupported version assumptions, invented procedures, and fabricated links all count as hallucinations.
    - 0.0 = All claims are verifiable or general knowledge (GOOD)
    - 0.3 = Minor unverifiable details that could be true
    - 0.6 = Specific technical claims with no basis in context
@@ -69,7 +72,7 @@ Return JSON:
   "contradiction_score": 0.0-1.0,
   "completeness": 0.0-1.0,
   "hallucination_risk": 0.0-1.0,
-  "reasoning": "Brief explanation of scores"
+  "reasoning": "Brief explanation of scores. Mention brevity, tone, or channel-fit problems if they materially affect quality."
 }
 """
 

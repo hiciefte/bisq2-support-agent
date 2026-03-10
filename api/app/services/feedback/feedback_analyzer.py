@@ -75,6 +75,34 @@ class FeedbackAnalyzer:
             ],
             "missing_context": ["context", "missing", "incomplete", "partial"],
             "confusing": ["confusing", "confused", "unclear", "hard to understand"],
+            "wrong_version": [
+                "wrong version",
+                "bisq 1",
+                "bisq 2",
+                "bisq easy",
+                "mixed versions",
+            ],
+            "bad_tone": [
+                "robotic",
+                "sounds like ai",
+                "corporate",
+                "stiff",
+                "unnatural",
+            ],
+            "bad_formatting": [
+                "formatting",
+                "hard to scan",
+                "wall of text",
+                "markdown",
+                "heading",
+            ],
+            "partially_inaccurate": [
+                "partly wrong",
+                "partially wrong",
+                "small snippet",
+                "almost right",
+                "mostly right",
+            ],
         }
 
         logger.info("Feedback analyzer initialized")
@@ -127,6 +155,10 @@ class FeedbackAnalyzer:
                     "too_technical",
                     "not_specific",
                     "inaccurate",
+                    "wrong_version",
+                    "bad_tone",
+                    "bad_formatting",
+                    "partially_inaccurate",
                 ]:
                     if item.get(issue_key):
                         issues[issue_key] += 1

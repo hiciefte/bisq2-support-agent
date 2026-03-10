@@ -48,3 +48,27 @@ def test_non_idempotent_reviews_continue_to_append() -> None:
     )
 
     assert len(engine._review_history) == 2
+
+
+def test_generated_answer_rating_actions_are_normalized() -> None:
+    """Legacy answer_* actions should normalize to approved/rejected."""
+    engine = LearningEngine()
+    engine.min_samples_for_update = 99999
+
+    engine.record_review(
+        question_id="answer_rating:1:alice",
+        confidence=0.7,
+        admin_action="answer_approved",
+        routing_action="SPOT_CHECK",
+        metadata={"idempotent": True, "review_kind": "answer_quality"},
+    )
+    engine.record_review(
+        question_id="answer_rating:2:alice",
+        confidence=0.6,
+        admin_action="answer_rejected",
+        routing_action="FULL_REVIEW",
+        metadata={"idempotent": True, "review_kind": "answer_quality"},
+    )
+
+    assert engine._review_history[0]["admin_action"] == "approved"
+    assert engine._review_history[1]["admin_action"] == "rejected"

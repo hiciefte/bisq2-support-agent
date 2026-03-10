@@ -109,14 +109,16 @@ If a staff member corrects their own answer:
 - Preserve the user's original intent and wording
 
 ### Answer Transformation (comprehensive):
-Transform conversational staff answers into polished, documentation-quality FAQ responses:
+Transform conversational staff answers into concise, staff-quality support answers:
 
 **Tone & Voice:**
-- Convert casual/conversational → professional/neutral
+- Convert casual/conversational -> calm, direct, human support tone
+- Keep the answer suitable for a staff member to send with little or no editing
 - Use imperative voice for instructions ("Navigate to..." not "you should go to...")
 - Use third-person for descriptions ("Users can..." not "you can...")
 - Remove filler words: "basically", "just", "actually", "well", "so", "hey", "yeah"
 - Remove chat artifacts: "hmm", "umm", "lol", "haha", "np", "hope this helps"
+- Do not add corporate wording, slogans, or generic AI phrasing
 
 **Context Independence:**
 - Remove references to conversation: "as I mentioned", "like I said", "earlier"
@@ -127,7 +129,8 @@ Transform conversational staff answers into polished, documentation-quality FAQ 
 - Lead with the direct answer or action
 - Use clear, logical sentence structure
 - For multi-step processes, use numbered lists or clear sequence words
-- Keep answers concise but complete (aim for 1-3 sentences when possible)
+- Keep answers concise but complete (aim for 1-4 sentences when possible)
+- Never use markdown headings
 
 **PRESERVE EXACTLY (never modify):**
 - Technical commands, code snippets, file paths

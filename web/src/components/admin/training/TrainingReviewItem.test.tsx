@@ -8,7 +8,7 @@
  * Actual: "FAQ Answer (Staff Source)"
  */
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TrainingReviewItem } from './TrainingReviewItem';
 
 // Mock lucide-react icons
@@ -652,7 +652,7 @@ describe('TrainingReviewItem', () => {
       );
 
       // Rating section text should NOT be visible when protocol is null
-      expect(screen.queryByText(/Would this answer be good enough to auto-send/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Generated Answer Rating \(auto-response quality\)/)).not.toBeInTheDocument();
     });
 
     test('should show rating section when protocol is set', () => {
@@ -670,7 +670,7 @@ describe('TrainingReviewItem', () => {
       );
 
       // Rating section should be visible when protocol is set
-      expect(screen.getByText(/Would this answer be good enough to auto-send/)).toBeInTheDocument();
+      expect(screen.getByText(/Generated Answer Rating \(auto-response quality\)/)).toBeInTheDocument();
     });
 
     test('should hide rating buttons when protocol is null even with generated answer', () => {
@@ -845,7 +845,35 @@ describe('TrainingReviewItem', () => {
       );
 
       // Calibration items should show calibration-specific rating prompt
-      expect(screen.getByText(/Rate this answer for auto-send calibration/)).toBeInTheDocument();
+      expect(screen.getByText(/Generated Answer Rating \(auto-response quality\)/)).toBeInTheDocument();
+    });
+
+    test('should allow changing answer rating from good to needs work', async () => {
+      const mockCandidate = createMockCandidate({
+        routing: 'AUTO_APPROVE',
+        protocol: 'bisq_easy',
+        generated_answer: 'Test answer for calibration.',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          {...mockHandlers}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Good Answer'));
+      await waitFor(() => {
+        expect(mockHandlers.onRateGeneratedAnswer).toHaveBeenCalledTimes(1);
+      });
+      fireEvent.click(screen.getByText('Needs Work'));
+      await waitFor(() => {
+        expect(mockHandlers.onRateGeneratedAnswer).toHaveBeenCalledTimes(2);
+      });
+
+      expect(mockHandlers.onRateGeneratedAnswer).toHaveBeenNthCalledWith(1, 'good');
+      expect(mockHandlers.onRateGeneratedAnswer).toHaveBeenNthCalledWith(2, 'needs_improvement');
     });
 
     test('should show standard actions (Skip/Reject/Approve) for FULL_REVIEW items', () => {
@@ -1135,6 +1163,33 @@ describe('TrainingReviewItem', () => {
 
       expect(screen.getByText('Incorrect information')).toBeInTheDocument();
       expect(screen.getByText('Outdated content')).toBeInTheDocument();
+      expect(screen.getByText('Too niche / edge case')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Optional context for analysis')).toBeInTheDocument();
+    });
+
+    test('passes optional reject note to onReject callback', () => {
+      const mockCandidate = createMockCandidate({
+        routing: 'FULL_REVIEW',
+      });
+
+      render(
+        <TrainingReviewItem
+          pair={mockCandidate}
+          isLoading={false}
+          openRejectMenuSignal={1}
+          {...mockHandlers}
+        />
+      );
+
+      const noteField = screen.getByPlaceholderText('Optional context for analysis');
+      fireEvent.change(noteField, { target: { value: 'Too specific to be reusable FAQ content' } });
+
+      fireEvent.click(screen.getByText('Too niche / edge case'));
+
+      expect(mockHandlers.onReject).toHaveBeenCalledWith(
+        'too_niche_edge_case',
+        'Too specific to be reusable FAQ content'
+      );
     });
   });
 });

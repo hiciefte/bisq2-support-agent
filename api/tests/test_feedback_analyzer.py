@@ -54,3 +54,12 @@ class TestFeedbackAnalyzerFieldFix:
         ]
         issues = analyzer.analyze_feedback_issues(feedback)
         assert len(issues) == 0
+
+    def test_text_analysis_detects_new_prompt_quality_issues(self):
+        analyzer = FeedbackAnalyzer()
+        detected = analyzer.analyze_feedback_text(
+            "This sounds robotic, mixes Bisq 1 and Bisq 2, and the formatting is a wall of text."
+        )
+        assert "bad_tone" in detected
+        assert "wrong_version" in detected
+        assert "bad_formatting" in detected

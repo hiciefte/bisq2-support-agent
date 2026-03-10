@@ -126,11 +126,12 @@ class LearningEngine:
             metadata: Optional additional metadata
         """
         metadata_dict: Dict[str, Any] = metadata or {}
+        normalized_action = self._normalize_admin_action(admin_action)
 
         review_record = {
             "question_id": question_id,
             "confidence": confidence,
-            "admin_action": admin_action,
+            "admin_action": normalized_action,
             "routing_action": routing_action,
             "metadata": metadata_dict,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -147,13 +148,13 @@ class LearningEngine:
             self._review_history.append(review_record)
 
         # Record metrics for admin review
-        learning_reviews_total.labels(admin_action=admin_action).inc()
+        learning_reviews_total.labels(admin_action=normalized_action).inc()
 
         logger.debug(
             "Recorded review%s: %s - %s at %.2f",
             " (replaced)" if replaced else "",
             question_id,
-            admin_action,
+            normalized_action,
             confidence,
         )
 
@@ -355,15 +356,33 @@ class LearningEngine:
                 "edit_rate": 0.0,
                 "rejection_rate": 0.0,
                 "threshold_updates": len(self._threshold_history),
+                "faq_reviews_total": 0,
+                "answer_quality_reviews_total": 0,
+                "answer_quality_good_rate": 0.0,
+                "answer_quality_needs_work_rate": 0.0,
             }
 
-        total = len(self._review_history)
-        approved = sum(
-            1 for r in self._review_history if r["admin_action"] == "approved"
+        faq_reviews = [
+            r
+            for r in self._review_history
+            if r.get("metadata", {}).get("review_kind") != "answer_quality"
+        ]
+        answer_quality_reviews = [
+            r
+            for r in self._review_history
+            if r.get("metadata", {}).get("review_kind") == "answer_quality"
+        ]
+
+        total = len(faq_reviews)
+        approved = sum(1 for r in faq_reviews if r["admin_action"] == "approved")
+        edited = sum(1 for r in faq_reviews if r["admin_action"] == "edited")
+        rejected = sum(1 for r in faq_reviews if r["admin_action"] == "rejected")
+        quality_total = len(answer_quality_reviews)
+        quality_good = sum(
+            1 for r in answer_quality_reviews if r["admin_action"] == "approved"
         )
-        edited = sum(1 for r in self._review_history if r["admin_action"] == "edited")
-        rejected = sum(
-            1 for r in self._review_history if r["admin_action"] == "rejected"
+        quality_needs_work = sum(
+            1 for r in answer_quality_reviews if r["admin_action"] == "rejected"
         )
 
         # Calculate confidence distribution stats with error handling (P5)
@@ -402,7 +421,7 @@ class LearningEngine:
             max_confidence = None
 
         return {
-            "total_reviews": total,
+            "total_reviews": len(self._review_history),
             "approval_rate": approved / total if total > 0 else 0.0,
             "edit_rate": edited / total if total > 0 else 0.0,
             "rejection_rate": rejected / total if total > 0 else 0.0,
@@ -411,7 +430,27 @@ class LearningEngine:
             "std_confidence": std_confidence,
             "min_confidence": min_confidence,
             "max_confidence": max_confidence,
+            "faq_reviews_total": total,
+            "answer_quality_reviews_total": quality_total,
+            "answer_quality_good_rate": (
+                quality_good / quality_total if quality_total > 0 else 0.0
+            ),
+            "answer_quality_needs_work_rate": (
+                quality_needs_work / quality_total if quality_total > 0 else 0.0
+            ),
         }
+
+    @staticmethod
+    def _normalize_admin_action(admin_action: str) -> str:
+        """Normalize historical action aliases to approved/edited/rejected."""
+        normalized = str(admin_action or "").strip().lower()
+        if normalized == "answer_approved":
+            return "approved"
+        if normalized == "answer_rejected":
+            return "rejected"
+        if normalized in {"approved", "edited", "rejected"}:
+            return normalized
+        return "rejected"
 
     def get_threshold_history(self) -> List[Dict[str, Any]]:
         """Get history of threshold changes."""
