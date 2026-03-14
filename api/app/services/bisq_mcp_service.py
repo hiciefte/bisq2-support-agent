@@ -545,6 +545,12 @@ class Bisq2MCPService:
 
         await self._auth_api._ensure_authenticated(base_url)  # noqa: SLF001
 
+        return self._current_authenticated_headers()
+
+    def _current_authenticated_headers(self) -> Dict[str, str]:
+        if self._auth_api is None:
+            raise RuntimeError("Bisq MCP auth client is not initialized.")
+
         client_id = str(getattr(self._auth_api, "_client_id", "") or "").strip()
         session_id = str(getattr(self._auth_api, "_session_id", "") or "").strip()
         if not client_id or not session_id:
@@ -632,7 +638,18 @@ class Bisq2MCPService:
                 and self._auth_api is not None
             ):
                 self._auth_api._session_id = ""  # noqa: SLF001
-                refreshed_headers = await self._build_authenticated_headers(base_url)
+                recover_authentication = getattr(
+                    self._auth_api, "_recover_authentication", None
+                )
+                recovered = False
+                if callable(recover_authentication):
+                    recovered = await recover_authentication(base_url)
+                if not recovered:
+                    await self._auth_api._ensure_authenticated(  # noqa: SLF001
+                        base_url,
+                        allow_cached_session_state=False,
+                    )
+                refreshed_headers = self._current_authenticated_headers()
                 return await asyncio.to_thread(
                     breaker.call,
                     self._sync_request_wrapper,

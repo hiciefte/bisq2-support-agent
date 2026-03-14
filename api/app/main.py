@@ -205,6 +205,17 @@ async def lifespan(app: FastAPI):
             "TranslationService initialization failed; continuing without multilingual translation",
             exc_info=True,
         )
+    from app.channels.ingress import ChannelIngressContextService
+
+    app.state.ingress_context_service = ChannelIngressContextService(
+        language_detector=(
+            getattr(app.state.translation_service, "detector", None)
+            if getattr(app.state, "translation_service", None) is not None
+            else None
+        ),
+        translation_service=getattr(app.state, "translation_service", None),
+    )
+    logger.info("Shared ingress context service initialized")
 
     # Eager load ColBERT reranker if enabled and using Qdrant backend
     if settings.RETRIEVER_BACKEND == "qdrant" and settings.ENABLE_COLBERT_RERANK:
@@ -274,6 +285,7 @@ async def lifespan(app: FastAPI):
     channel_gateway = create_channel_gateway(
         rag_service=cast(RAGServiceProtocol, rag_service),
         register_default_hooks=True,
+        ingress_context_service=getattr(app.state, "ingress_context_service", None),
     )
     from app.channels.hooks.channel_autoresponse_hook import (
         ChannelAIGenerationPolicyHook,
@@ -331,6 +343,15 @@ async def lifespan(app: FastAPI):
             "feedback_service": feedback_service,
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
             "escalation_service": getattr(app.state, "escalation_service", None),
+            "translation_service": getattr(app.state, "translation_service", None),
+            "language_detector": getattr(
+                getattr(app.state, "translation_service", None),
+                "detector",
+                None,
+            ),
+            "ingress_context_service": getattr(
+                app.state, "ingress_context_service", None
+            ),
         },
     )
     bootstrap_result = bootstrapper.bootstrap()

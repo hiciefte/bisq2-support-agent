@@ -192,7 +192,12 @@ class Bisq2API:
             )
             return ""
 
-    def _load_auth_state(self) -> None:
+    def _load_auth_state(
+        self,
+        *,
+        override_existing: bool = False,
+        include_session_id: bool = True,
+    ) -> None:
         if not self._auth_state_file:
             return
         path = Path(self._auth_state_file)
@@ -210,11 +215,15 @@ class Bisq2API:
                 )
                 _record_bisq2_api_auth_failure("invalid_auth_state")
                 return
-            if client_id and not self._client_id:
+            if client_id and (override_existing or not self._client_id):
                 self._client_id = client_id
-            if client_secret and not self._client_secret:
+            if client_secret and (override_existing or not self._client_secret):
                 self._client_secret = client_secret
-            if session_id and not self._session_id:
+            if (
+                include_session_id
+                and session_id
+                and (override_existing or not self._session_id)
+            ):
                 self._session_id = session_id
             if client_id or client_secret or session_id:
                 logger.info("Loaded Bisq API auth state from %s", path)
@@ -335,7 +344,51 @@ class Bisq2API:
             self._session_id = session_id
             self._save_auth_state()
 
-    async def _ensure_authenticated(self, base_url: str) -> None:
+    def _clear_auth_credentials(self) -> None:
+        self._client_id = ""
+        self._client_secret = ""
+        self._session_id = ""
+
+    async def _recover_authentication(self, base_url: str) -> bool:
+        previous_credentials = (self._client_id, self._client_secret)
+        self._session_id = ""
+
+        self._load_auth_state(override_existing=True, include_session_id=False)
+        recovered_credentials = (self._client_id, self._client_secret)
+
+        if (
+            recovered_credentials != previous_credentials
+            and self._client_id
+            and self._client_secret
+        ):
+            try:
+                await self._create_session(base_url)
+            except Exception:
+                logger.warning(
+                    "Bisq API auth-state credentials could not create a session; falling back to pairing"
+                )
+                self._clear_auth_credentials()
+            else:
+                return bool(self._session_id)
+
+        if not self._pairing_code_id:
+            self._pairing_code_id = self._load_pairing_code_id_from_qr_file()
+
+        if self._pairing_code_id:
+            self._clear_auth_credentials()
+            await self._pair_client(base_url)
+            if not self._session_id and self._client_id and self._client_secret:
+                await self._create_session(base_url)
+            return bool(self._session_id)
+
+        return False
+
+    async def _ensure_authenticated(
+        self,
+        base_url: str,
+        *,
+        allow_cached_session_state: bool = True,
+    ) -> None:
         if not self._auth_enabled:
             return
 
@@ -347,7 +400,7 @@ class Bisq2API:
                 return
 
             if not self._client_id or not self._session_id:
-                self._load_auth_state()
+                self._load_auth_state(include_session_id=allow_cached_session_state)
 
             if self._client_id and self._session_id:
                 return
@@ -368,7 +421,11 @@ class Bisq2API:
                 )
 
             if not self._session_id:
-                await self._create_session(base_url)
+                try:
+                    await self._create_session(base_url)
+                except Exception:
+                    if not await self._recover_authentication(base_url):
+                        raise
 
             if not self._session_id:
                 _record_bisq2_api_auth_failure("session_creation_failed")
@@ -413,7 +470,10 @@ class Bisq2API:
                             and attempt == 0
                         ):
                             self._session_id = ""
-                            await self._ensure_authenticated(base_url)
+                            await self._ensure_authenticated(
+                                base_url,
+                                allow_cached_session_state=False,
+                            )
                             request_kwargs["headers"] = (
                                 self._build_authenticated_headers(headers)
                             )

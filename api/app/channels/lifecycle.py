@@ -28,6 +28,7 @@ def create_channel_gateway(
     rate_limit_capacity: int = 20,
     rate_limit_refill_rate: float = 1.0,
     valid_tokens: Optional[Iterable[str]] = None,
+    ingress_context_service: Optional[object] = None,
 ) -> ChannelGateway:
     """Create and configure channel gateway.
 
@@ -41,7 +42,10 @@ def create_channel_gateway(
     Returns:
         Configured ChannelGateway instance.
     """
-    gateway = ChannelGateway(rag_service=rag_service)
+    gateway = ChannelGateway(
+        rag_service=rag_service,
+        ingress_context_service=ingress_context_service,
+    )
 
     if register_default_hooks:
         # Register pre-processing hooks

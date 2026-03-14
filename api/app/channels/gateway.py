@@ -3,6 +3,7 @@
 Routes messages through pre/post hooks and RAG service.
 """
 
+import inspect
 import logging
 import time
 import uuid
@@ -53,6 +54,7 @@ class ChannelGateway:
         rag_service: RAGServiceProtocol,
         pre_hooks: Optional[List[PreProcessingHook]] = None,
         post_hooks: Optional[List[PostProcessingHook]] = None,
+        ingress_context_service: Optional[Any] = None,
     ):
         """Initialize gateway.
 
@@ -68,6 +70,7 @@ class ChannelGateway:
         self._post_hooks: List[PostProcessingHook] = sorted(
             post_hooks or [], key=lambda h: h.priority
         )
+        self._ingress_context_service = ingress_context_service
 
     async def process_message(
         self, message: IncomingMessage
@@ -88,6 +91,8 @@ class ChannelGateway:
             return ErrorFactory.invalid_message("Message cannot be None")
 
         try:
+            message = await self._prepare_message(message)
+
             # Execute pre-processing hooks
             for hook in self._pre_hooks:
                 if hook.should_skip(message):
@@ -124,6 +129,16 @@ class ChannelGateway:
                     question=message.question,
                     chat_history=chat_history,
                     detection_source=message.channel.value,
+                    language_hint=getattr(
+                        getattr(message, "locale_context", None),
+                        "language_code",
+                        None,
+                    ),
+                    language_hint_confidence=getattr(
+                        getattr(message, "locale_context", None),
+                        "confidence",
+                        None,
+                    ),
                 )
 
             except Exception as e:
@@ -176,6 +191,21 @@ class ChannelGateway:
                 details={"reason": "internal_gateway_error"},
                 recoverable=True,
             )
+
+    async def _prepare_message(self, message: IncomingMessage) -> IncomingMessage:
+        service = self._ingress_context_service
+        if (
+            service is None
+            or inspect.getattr_static(service, "prepare_incoming", None) is None
+        ):
+            return message
+        prepare = getattr(service, "prepare_incoming", None) if service else None
+        if not callable(prepare):
+            return message
+        prepared = prepare(message, thread_language_hint=None)
+        if inspect.isawaitable(prepared):
+            prepared = await prepared
+        return prepared
 
     def register_pre_hook(self, hook: PreProcessingHook) -> None:
         """Register pre-processing hook.
