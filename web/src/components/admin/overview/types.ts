@@ -1,3 +1,5 @@
+import type { TrustMonitorPolicy } from "@/components/admin/security/types";
+
 export type ChannelId = "web" | "bisq2" | "matrix";
 export type EscalationNotificationChannel = "public_room" | "staff_room" | "none";
 
@@ -78,4 +80,5 @@ export interface OverviewInitialData {
   dashboardData: DashboardData | null;
   actionCounts: AdminActionCounts | null;
   channelPolicies: ChannelAutoresponsePolicy[];
+  trustMonitorPolicy: TrustMonitorPolicy | null;
 }

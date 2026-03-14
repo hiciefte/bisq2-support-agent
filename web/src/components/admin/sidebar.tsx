@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, GraduationCap, AlertTriangle } from "lucide-react"
+import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, GraduationCap, AlertTriangle, ShieldAlert } from "lucide-react"
 import { useAdminActionCounts } from "@/hooks/useAdminActionCounts"
 
 const navigation = [
@@ -38,6 +38,12 @@ const navigation = [
     href: "/admin/training",
     icon: GraduationCap,
     description: "Auto-training pipeline"
+  },
+  {
+    name: "Security Alerts",
+    href: "/admin/security/alerts",
+    icon: ShieldAlert,
+    description: "Trust-monitor findings"
   }
 ]
 
