@@ -54,6 +54,7 @@ from app.services.training.comparison_engine import AnswerComparisonEngine
 from app.services.training.unified_pipeline_service import UnifiedPipelineService
 from app.services.training.unified_repository import UnifiedFAQCandidateRepository
 from app.services.translation import TranslationService
+from app.services.trust_monitor_policy_service import TrustMonitorPolicyService
 from app.services.wiki_service import WikiService
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,6 +111,8 @@ async def lifespan(app: FastAPI):
     app.state.bisq2_live_chat_service = None
     app.state.matrix_channel = None
     app.state.channel_autoresponse_policy_service = None
+    app.state.trust_monitor_policy_service = None
+    app.state.trust_monitor_service = None
 
     # Initialize task metrics persistence and restore values
     logger.info("Initializing task metrics persistence...")
@@ -129,6 +132,35 @@ async def lifespan(app: FastAPI):
     app.state.channel_autoresponse_policy_service = ChannelAutoResponsePolicyService(
         db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
     )
+    app.state.trust_monitor_policy_service = TrustMonitorPolicyService(
+        db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
+        settings=settings,
+    )
+    try:
+        from app.channels.staff import (
+            StaffResolver,
+            collect_staff_display_names,
+            collect_trusted_staff_ids,
+        )
+        from app.channels.trust_monitor.publisher import CompositeTrustAlertPublisher
+        from app.channels.trust_monitor.service import TrustMonitorService
+
+        app.state.trust_monitor_service = TrustMonitorService(
+            db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
+            settings=settings,
+            policy_service=app.state.trust_monitor_policy_service,
+            publisher=CompositeTrustAlertPublisher(),
+            staff_resolver=StaffResolver(
+                trusted_staff_ids=collect_trusted_staff_ids(
+                    settings, channel_id="matrix"
+                ),
+                display_names=collect_staff_display_names(settings),
+            ),
+        )
+        app.state.trust_monitor_service.apply_retention()
+    except Exception:
+        app.state.trust_monitor_service = None
+        logger.exception("Trust monitor initialization failed")
 
     logger.info("Initializing FAQService...")
     faq_service = FAQService(settings=settings)
@@ -342,6 +374,8 @@ async def lifespan(app: FastAPI):
         shared_services={
             "feedback_service": feedback_service,
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
+            "trust_monitor_policy_service": app.state.trust_monitor_policy_service,
+            "trust_monitor_service": app.state.trust_monitor_service,
             "escalation_service": getattr(app.state, "escalation_service", None),
             "translation_service": getattr(app.state, "translation_service", None),
             "language_detector": getattr(
@@ -385,6 +419,58 @@ async def lifespan(app: FastAPI):
     app.state.staff_assist_service = bootstrap_result.runtime.resolve_optional(
         "staff_assist_service"
     )
+
+    trust_monitor_service = getattr(app.state, "trust_monitor_service", None)
+    if trust_monitor_service is not None:
+        publisher = getattr(trust_monitor_service, "publisher", None)
+        matrix_channel = bootstrap_result.registry.get("matrix")
+        if (
+            publisher is not None
+            and matrix_channel is not None
+            and hasattr(publisher, "matrix_notifier")
+        ):
+
+            async def _notify_staff_room(finding):
+                from app.channels.models import (
+                    ChannelType,
+                    OutgoingMessage,
+                    ResponseMetadata,
+                    UserContext,
+                )
+
+                target = app.state.trust_monitor_policy_service.get_policy().matrix_staff_room_id or getattr(
+                    settings, "MATRIX_STAFF_ROOM", ""
+                )
+                if not target:
+                    return
+                summary = finding.evidence_summary
+                lines = [
+                    f"Trust monitor finding: {finding.detector_key}",
+                    f"User: {finding.suspect_actor_id}",
+                    f"Display name: {finding.suspect_display_name or '-'}",
+                    f"Score: {finding.score:.2f}",
+                ]
+                for key, value in summary.items():
+                    lines.append(f"{key}: {value}")
+                message = OutgoingMessage(
+                    message_id=f"trust-{finding.id}",
+                    in_reply_to=str(finding.id),
+                    channel=ChannelType.MATRIX,
+                    answer="\n".join(lines),
+                    user=UserContext(
+                        user_id="trust-monitor",
+                        session_id=None,
+                        channel_user_id="trust-monitor",
+                    ),
+                    metadata=ResponseMetadata(
+                        processing_time_ms=0.0,
+                        rag_strategy="trust_monitor",
+                        model_name="trust-monitor",
+                    ),
+                )
+                await matrix_channel.send_message(target, message)
+
+            publisher.matrix_notifier = _notify_staff_room
 
     # Wire escalation response delivery directly to active channel registry.
     escalation_service = getattr(app.state, "escalation_service", None)

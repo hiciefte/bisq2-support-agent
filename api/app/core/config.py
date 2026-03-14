@@ -142,6 +142,23 @@ class Settings(BaseSettings):
     MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
     MATRIX_ALERT_SESSION_FILE: str = "matrix_alert_session.json"
 
+    # Trust monitoring settings
+    TRUST_MONITOR_ENABLED: bool = True
+    TRUST_MONITOR_NAME_COLLISION_ENABLED: bool = True
+    TRUST_MONITOR_SILENT_OBSERVER_ENABLED: bool = True
+    TRUST_MONITOR_ALERT_SURFACE: str = "admin_ui"
+    TRUST_MONITOR_MATRIX_PUBLIC_ROOMS: str | list[str] = ""
+    TRUST_MONITOR_MATRIX_STAFF_ROOM: str = ""
+    TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS: int = 14
+    TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS: int = 30
+    TRUST_MONITOR_MINIMUM_OBSERVATIONS: int = 10
+    TRUST_MONITOR_MINIMUM_EARLY_READ_HITS: int = 8
+    TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD: float = 12.0
+    TRUST_MONITOR_EVIDENCE_TTL_DAYS: int = 7
+    TRUST_MONITOR_AGGREGATE_TTL_DAYS: int = 30
+    TRUST_MONITOR_FINDING_TTL_DAYS: int = 30
+    TRUST_MONITOR_ACTOR_KEY_SECRET: str = ""
+
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
@@ -807,6 +824,17 @@ class Settings(BaseSettings):
             return [room.strip() for room in v.split(",") if room.strip()]
 
         # Fallback for unexpected types
+        return []
+
+    @field_validator("TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", mode="before")
+    @classmethod
+    def parse_trust_monitor_matrix_public_rooms(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, list):
+            return [
+                room.strip() for room in v if isinstance(room, str) and room.strip()
+            ]
+        if isinstance(v, str):
+            return [room.strip() for room in v.split(",") if room.strip()]
         return []
 
     @field_validator("SUPPORT_AGENT_NICKNAMES", mode="before")
