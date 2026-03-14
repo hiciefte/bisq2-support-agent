@@ -15,6 +15,7 @@ from app.channels.models import (
     ChatMessage,
     DocumentReference,
     IncomingMessage,
+    LocaleContext,
     OutgoingMessage,
     ResponseMetadata,
     UserContext,
@@ -348,3 +349,41 @@ class TestChannelTypeProperty:
         """Channels must implement channel_type property."""
         with pytest.raises(TypeError, match="abstract"):
             ChannelBase(runtime=MagicMock())
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_handle_incoming_passes_language_hint_to_rag_service():
+    """handle_incoming forwards shared locale context to the RAG service."""
+    runtime = MagicMock()
+    runtime.rag_service = AsyncMock()
+    runtime.rag_service.query = AsyncMock(
+        return_value={
+            "answer": "Test answer",
+            "sources": [],
+            "rag_strategy": "retrieval",
+            "model_name": "gpt-4",
+        }
+    )
+    channel = ConcreteTestChannel(runtime)
+    incoming_message = IncomingMessage(
+        message_id="test-msg-1",
+        channel=ChannelType.WEB,
+        question="What is Bisq?",
+        user=UserContext(user_id="test-user"),
+        locale_context=LocaleContext(
+            language_code="de",
+            confidence=0.93,
+            source="thread_state_hint",
+        ),
+    )
+
+    await channel.handle_incoming(incoming_message)
+
+    runtime.rag_service.query.assert_called_once_with(
+        question="What is Bisq?",
+        chat_history=None,
+        detection_source="test",
+        language_hint="de",
+        language_hint_confidence=0.93,
+    )

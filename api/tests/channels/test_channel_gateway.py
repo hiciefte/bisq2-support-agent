@@ -382,3 +382,48 @@ class TestChannelGatewayMetrics:
 
         assert isinstance(result, OutgoingMessage)
         assert mock_pre_hook.name in result.metadata.hooks_executed
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_route_applies_ingress_context_service_before_rag(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Gateway uses the shared ingress service before querying RAG."""
+        from app.channels.gateway import ChannelGateway
+        from app.channels.models import ClassificationDecision, LocaleContext
+
+        prepared = sample_incoming_message.model_copy(
+            update={
+                "locale_context": LocaleContext(
+                    language_code="de",
+                    confidence=0.91,
+                    source="chat_history_hint",
+                ),
+                "classification": ClassificationDecision(
+                    should_process=True,
+                    is_question_candidate=True,
+                    is_explicit_invocation=True,
+                    is_substantive_message=True,
+                    topic_risk="low",
+                    reasons=[],
+                ),
+            }
+        )
+        ingress_service = MagicMock()
+        ingress_service.prepare_incoming = AsyncMock(return_value=prepared)
+
+        gateway = ChannelGateway(
+            rag_service=mock_rag_service,
+            ingress_context_service=ingress_service,
+        )
+
+        await gateway.process_message(sample_incoming_message)
+
+        ingress_service.prepare_incoming.assert_awaited_once_with(
+            sample_incoming_message,
+            thread_language_hint=None,
+        )
+        call_args = mock_rag_service.query.call_args
+        assert call_args is not None
+        assert call_args.kwargs["language_hint"] == "de"
+        assert call_args.kwargs["language_hint_confidence"] == 0.91

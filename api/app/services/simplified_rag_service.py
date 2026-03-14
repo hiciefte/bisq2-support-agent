@@ -895,6 +895,8 @@ class SimplifiedRAGService:
         chat_history: Optional[List[Dict[str, str]]] = None,
         override_version: Optional[str] = None,
         detection_source: Optional[str] = None,
+        language_hint: Optional[str] = None,
+        language_hint_confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Process a query and return a response with metadata.
 
@@ -946,7 +948,10 @@ class SimplifiedRAGService:
                         chat_history
                     )
                     source_lang_hint: str | None = None
-                    if chat_history and self._is_short_ambiguous_follow_up(
+                    normalized_language_hint = str(language_hint or "").strip().lower()
+                    if normalized_language_hint and normalized_language_hint != "en":
+                        source_lang_hint = normalized_language_hint
+                    elif chat_history and self._is_short_ambiguous_follow_up(
                         preprocessed_question
                     ):
                         source_lang_hint = (
@@ -970,13 +975,16 @@ class SimplifiedRAGService:
                         original_language == "en"
                         and not was_translated
                         and detection_backend == "english_heuristic"
-                        and chat_history
                     ):
-                        history_lang_hint = (
-                            await self._infer_language_hint_from_chat_history(
-                                chat_history
+                        history_lang_hint = normalized_language_hint or None
+                        if history_lang_hint in {"", "en"}:
+                            history_lang_hint = None
+                        if history_lang_hint is None and chat_history:
+                            history_lang_hint = (
+                                await self._infer_language_hint_from_chat_history(
+                                    chat_history
+                                )
                             )
-                        )
                         if history_lang_hint and history_lang_hint != "en":
                             original_language = history_lang_hint
                             logger.info(

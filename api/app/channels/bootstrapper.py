@@ -174,6 +174,7 @@ class ChannelBootstrapper:
         # Register shared reaction services
         self._register_reaction_services(runtime)
         self._register_question_prefilter(runtime)
+        self._register_ingress_context_service(runtime)
 
         return runtime
 
@@ -293,6 +294,25 @@ class ChannelBootstrapper:
 
         runtime.register("question_prefilter", QuestionPrefilter())
         logger.debug("Registered question prefilter service")
+
+    @staticmethod
+    def _register_ingress_context_service(runtime: ChannelRuntime) -> None:
+        """Register shared ingress locale/classification service."""
+        from app.channels.ingress import ChannelIngressContextService
+
+        if runtime.resolve_optional("ingress_context_service") is not None:
+            return
+
+        runtime.register(
+            "ingress_context_service",
+            ChannelIngressContextService(
+                language_detector=runtime.resolve_optional("language_detector"),
+                translation_service=runtime.resolve_optional("translation_service"),
+                question_prefilter=runtime.resolve_optional("question_prefilter"),
+            ),
+            allow_override=True,
+        )
+        logger.debug("Registered ingress context service")
 
     def _import_channel_modules(self) -> None:
         """Import channel modules to trigger @register_channel decorators.
