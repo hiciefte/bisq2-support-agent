@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 CHATOPS_PARSE_TOTAL = Counter(
     "chatops_parse_total",
@@ -28,6 +28,13 @@ CHATOPS_AUDIT_WRITES_TOTAL = Counter(
     "chatops_audit_writes_total",
     "Total number of ChatOps audit entries written",
     ["channel", "result"],
+)
+
+CHATOPS_DISPATCH_LATENCY_SECONDS = Histogram(
+    "chatops_dispatch_latency_seconds",
+    "ChatOps dispatch latency in seconds by channel, command, and outcome",
+    ["channel", "command", "result"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
 )
 
 TRUST_MONITOR_EVENTS_TOTAL = Counter(
@@ -90,6 +97,20 @@ def record_chatops_dispatch(*, channel: str, command: str, result: str) -> None:
 
 def record_chatops_audit_write(*, channel: str, result: str) -> None:
     CHATOPS_AUDIT_WRITES_TOTAL.labels(channel=channel, result=result).inc()
+
+
+def record_chatops_dispatch_latency(
+    *,
+    channel: str,
+    command: str,
+    result: str,
+    duration_seconds: float,
+) -> None:
+    CHATOPS_DISPATCH_LATENCY_SECONDS.labels(
+        channel=channel,
+        command=command,
+        result=result,
+    ).observe(max(0.0, float(duration_seconds)))
 
 
 def record_trust_event(*, channel: str, event_type: str, result: str) -> None:

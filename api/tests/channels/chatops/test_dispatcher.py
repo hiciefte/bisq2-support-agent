@@ -157,6 +157,37 @@ async def test_dispatch_claim_and_unclaim_delegate_to_service() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_records_latency_metric() -> None:
+    service = _service()
+    service.list_escalations.return_value = EscalationListResponse(
+        escalations=[],
+        total=0,
+        limit=20,
+        offset=0,
+    )
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    with pytest.MonkeyPatch.context() as mp:
+        latency_calls: list[dict[str, object]] = []
+
+        def _capture(**kwargs):
+            latency_calls.append(kwargs)
+
+        mp.setattr(
+            "app.channels.chatops.dispatcher.record_chatops_dispatch_latency",
+            _capture,
+        )
+        result = await dispatcher.dispatch(_command(ChatOpsCommandName.LIST))
+
+    assert result.ok is True
+    assert latency_calls
+    assert latency_calls[0]["channel"] == "matrix"
+    assert latency_calls[0]["command"] == "list"
+    assert latency_calls[0]["result"] == "ok"
+    assert float(latency_calls[0]["duration_seconds"]) >= 0.0
+
+
+@pytest.mark.asyncio
 async def test_dispatch_send_uses_ai_draft_and_cancels_arbitration_when_thread_is_known() -> (
     None
 ):

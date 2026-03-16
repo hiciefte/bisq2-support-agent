@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -12,7 +13,10 @@ from app.channels.chatops.models import (
     ChatOpsCommandName,
     ChatOpsResult,
 )
-from app.metrics.operator_metrics import record_chatops_dispatch
+from app.metrics.operator_metrics import (
+    record_chatops_dispatch,
+    record_chatops_dispatch_latency,
+)
 from app.models.escalation import (
     EscalationAlreadyClaimedError,
     EscalationClosedError,
@@ -44,12 +48,21 @@ class ChatOpsDispatcher:
 
     async def dispatch(self, command: ChatOpsCommand) -> ChatOpsResult:
         source_message_id = str(command.source_message_id or "").strip()
+        started_at = time.perf_counter()
+        channel = command.channel_id or "unknown"
+        command_name = command.name.value
         if not source_message_id:
             result = await self._dispatch_uncached(command)
             record_chatops_dispatch(
-                channel=command.channel_id or "unknown",
-                command=command.name.value,
+                channel=channel,
+                command=command_name,
                 result="ok" if result.ok else "error",
+            )
+            record_chatops_dispatch_latency(
+                channel=channel,
+                command=command_name,
+                result="ok" if result.ok else "error",
+                duration_seconds=time.perf_counter() - started_at,
             )
             self._record_audit(command, result)
             return result
@@ -66,9 +79,15 @@ class ChatOpsDispatcher:
                 metadata=dict(cached.metadata),
             )
             record_chatops_dispatch(
-                channel=command.channel_id or "unknown",
-                command=command.name.value,
+                channel=channel,
+                command=command_name,
                 result="idempotent",
+            )
+            record_chatops_dispatch_latency(
+                channel=channel,
+                command=command_name,
+                result="idempotent",
+                duration_seconds=time.perf_counter() - started_at,
             )
             self._record_audit(command, result)
             return result
@@ -86,9 +105,15 @@ class ChatOpsDispatcher:
                 metadata=dict(cached.metadata),
             )
             record_chatops_dispatch(
-                channel=command.channel_id or "unknown",
-                command=command.name.value,
+                channel=channel,
+                command=command_name,
                 result="idempotent",
+            )
+            record_chatops_dispatch_latency(
+                channel=channel,
+                command=command_name,
+                result="idempotent",
+                duration_seconds=time.perf_counter() - started_at,
             )
             self._record_audit(command, result)
             return result
@@ -100,10 +125,17 @@ class ChatOpsDispatcher:
             self._idempotent_results[source_message_id] = result
             if len(self._idempotent_results) > self._idempotent_max_entries:
                 self._idempotent_results.pop(next(iter(self._idempotent_results)), None)
+            outcome = "ok" if result.ok else "error"
             record_chatops_dispatch(
-                channel=command.channel_id or "unknown",
-                command=command.name.value,
-                result="ok" if result.ok else "error",
+                channel=channel,
+                command=command_name,
+                result=outcome,
+            )
+            record_chatops_dispatch_latency(
+                channel=channel,
+                command=command_name,
+                result=outcome,
+                duration_seconds=time.perf_counter() - started_at,
             )
             self._record_audit(command, result)
             return result
