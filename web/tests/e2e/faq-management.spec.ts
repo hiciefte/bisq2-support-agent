@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, loginAsAdmin, waitForApiReady } from "./utils";
 
 // Global type declaration for console error tracking
 declare global {
@@ -24,6 +24,7 @@ test.describe("FAQ Management", () => {
     // FAQ card selector constant - used throughout tests
     // Note: Use base classes only (no border-border) as it's conditionally applied
     const FAQ_CARD_SELECTOR = ".bg-card.border.rounded-lg";
+    const SELECTED_FAQ_CARD_SELECTOR = ".bg-card.rounded-lg.ring-2";
 
     // Track created FAQs for cleanup
     const createdFaqQuestions: string[] = [];
@@ -84,58 +85,13 @@ test.describe("FAQ Management", () => {
             };
         });
 
-        // Retry navigation with exponential backoff for flaky server startup
-        let lastError: Error | null = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-                // Navigate to admin page using domcontentloaded (more reliable than networkidle)
-                await page.goto(`${WEB_BASE_URL}/admin`, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 20000
-                });
-
-                // Wait for login form to appear
-                await page.getByLabel('API Key').waitFor({ timeout: 15000 });
-
-                // Login with admin API key
-                await page.getByLabel('API Key').fill(ADMIN_API_KEY);
-                await page.click('button:has-text("Login")');
-
-                // Wait for authenticated UI to appear (sidebar with navigation)
-                await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 15000 });
-
-                // Navigate to FAQ management
-                await page.click('a[href="/admin/manage-faqs"]');
-
-                // Wait for FAQ management page to load - look for specific heading
-                // Use longer timeout as Next.js may need to compile the page (8-15s first time)
-                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
-
-                // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
-                // Use Promise.any to ensure at least one selector is found (rejects only if all fail)
-                await Promise.any([
-                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
-                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
-                ]);
-
-                // Success - exit retry loop
-                lastError = null;
-                break;
-            } catch (error) {
-                lastError = error as Error;
-                console.log(`Attempt ${attempt}/3 failed: ${lastError.message}`);
-                if (attempt < 3) {
-                    // Clear cookies between retries to ensure clean state
-                    await context.clearCookies();
-                    // Wait before retry with exponential backoff
-                    await new Promise(r => setTimeout(r, attempt * 2000));
-                }
-            }
-        }
-
-        if (lastError) {
-            throw lastError;
-        }
+        await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+        await page.click('a[href="/admin/manage-faqs"]');
+        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
+        await Promise.any([
+            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
+            page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
+        ]);
     });
 
     test.afterEach(async ({ page, request }) => {
@@ -198,6 +154,9 @@ test.describe("FAQ Management", () => {
 
         // Select the FAQ card and enter edit mode via the stable keyboard shortcut path.
         await faqCard.click();
+        await expect(page.locator(`${SELECTED_FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`)).toBeVisible({
+            timeout: 5000,
+        });
         await page.keyboard.press("Enter");
 
         // Wait for inline edit mode to activate (textarea becomes visible)
@@ -211,7 +170,7 @@ test.describe("FAQ Management", () => {
         await inlineAnswerField.fill("Updated answer via E2E test");
 
         // Save changes by clicking the "Save" button (text button, not icon)
-        const saveButton = page.locator('button:has-text("Save")');
+        const saveButton = page.getByRole("button", { name: "Save", exact: true });
         const updateResponsePromise = page.waitForResponse(
             (response) =>
                 response.url().includes("/admin/faqs/") &&

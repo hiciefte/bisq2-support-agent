@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, waitForApiReady } from "./utils";
+import { selectCategory, API_BASE_URL, ADMIN_API_KEY, WEB_BASE_URL, loginAsAdmin, waitForApiReady } from "./utils";
 
 /**
  * FAQ Keyboard Shortcuts Tests
@@ -31,58 +31,13 @@ test.describe("FAQ Keyboard Shortcuts", () => {
         // Wait for API to be ready (important after container restart tests)
         await waitForApiReady(request);
 
-        // Retry navigation with exponential backoff for flaky server startup
-        let lastError: Error | null = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-                // Navigate to admin page using domcontentloaded (more reliable than networkidle)
-                await page.goto(`${WEB_BASE_URL}/admin`, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 20000
-                });
-
-                // Wait for login form to appear
-                await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-
-                // Login with admin API key
-                await page.fill('input[type="password"]', ADMIN_API_KEY);
-                await page.click('button:has-text("Login")');
-
-                // Wait for authenticated UI to appear (sidebar with navigation)
-                await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 15000 });
-
-                // Navigate to FAQ management
-                await page.click('a[href="/admin/manage-faqs"]');
-
-                // Wait for FAQ management page to load - look for specific heading
-                // Use longer timeout as Next.js may need to compile the page (8-15s first time)
-                await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
-
-                // Wait for either FAQ cards to appear OR "Add New FAQ" button (if no FAQs exist)
-                // Use Promise.any to ensure at least one selector is found (rejects only if all fail)
-                await Promise.any([
-                    page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
-                    page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
-                ]);
-
-                // Success - exit retry loop
-                lastError = null;
-                break;
-            } catch (error) {
-                lastError = error as Error;
-                console.log(`Attempt ${attempt}/3 failed: ${lastError.message}`);
-                if (attempt < 3) {
-                    // Clear cookies between retries to ensure clean state
-                    await context.clearCookies();
-                    // Wait before retry with exponential backoff
-                    await new Promise(r => setTimeout(r, attempt * 2000));
-                }
-            }
-        }
-
-        if (lastError) {
-            throw lastError;
-        }
+        await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
+        await page.click('a[href="/admin/manage-faqs"]');
+        await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 30000 });
+        await Promise.any([
+            page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 5000 }),
+            page.waitForSelector('button:has-text("Add New FAQ")', { timeout: 5000 }),
+        ]);
     });
 
     // Helper to create FAQ via API for faster test setup
@@ -120,6 +75,15 @@ test.describe("FAQ Keyboard Shortcuts", () => {
         return (await selectedCard.locator("h3").first().innerText()).trim();
     };
 
+    const selectFaqCard = async (page: Page, question: string): Promise<void> => {
+        const targetFaqCard = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${question}")`).first();
+        await expect(targetFaqCard).toBeVisible({ timeout: 5000 });
+        await targetFaqCard.click();
+        await expect(page.locator(SELECTED_FAQ_CARD_SELECTOR).filter({ hasText: question })).toBeVisible({
+            timeout: 5000,
+        });
+    };
+
     test.afterEach(async ({ request }) => {
         // Clean up created FAQs
         for (const question of createdFaqQuestions) {
@@ -155,8 +119,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Press J to select first FAQ
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
 
             // Press Enter to enter edit mode
             await page.keyboard.press("Enter");
@@ -175,19 +138,17 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForSelector('h1:has-text("FAQ Management")', { timeout: 10000 });
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Press J to select first FAQ
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
 
             // Press E - should NOT enter edit mode anymore
             await page.keyboard.press("e");
 
             // Give it a moment to potentially open edit mode
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(1000);
 
-            // Verify edit mode is NOT active (no textarea visible in edit context)
-            // Note: There might be textareas elsewhere, so we check for the inline edit specific pattern
-            const saveButton = page.locator('button:has-text("Save")');
-            await expect(saveButton).toHaveCount(0);
+            const faqCard = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${testQuestion}")`);
+            await expect(faqCard.locator("text=Bisq Easy")).toBeVisible({ timeout: 5000 });
+            await expect(faqCard.locator("textarea")).toHaveCount(0);
         });
     });
 
@@ -212,13 +173,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             // Wait for FAQs to appear
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
 
-            // Blur the search input by clicking on the page title
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Use keyboard navigation to select the first FAQ
-            await page.keyboard.press("j");
-            await page.waitForTimeout(200);
+            await selectFaqCard(page, faq1Question);
 
             // Enter edit mode using Enter key
             await page.keyboard.press("Enter");
@@ -310,13 +265,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(faqQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Select the FAQ
-            await page.keyboard.press("j");
+            await selectFaqCard(page, faqQuestion);
 
             // Press V to verify
             await page.keyboard.press("v");
@@ -352,13 +303,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Select the FAQ
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
 
             // Press 1 to set protocol to Multisig v1
             await page.keyboard.press("1");
@@ -387,12 +334,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("e");
 
             await page.waitForTimeout(1000);
@@ -416,12 +360,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("m");
 
             await page.waitForTimeout(1000);
@@ -445,12 +386,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("0");
 
             await page.waitForTimeout(1000);
@@ -475,13 +413,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input by clicking on the page title
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Select and enter edit mode
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("Enter");
 
             // Wait for edit mode
@@ -518,13 +452,9 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await searchInput.fill(testQuestion);
             await page.waitForTimeout(1000);
 
-            // Wait for FAQs to appear and blur the search input
+            // Wait for FAQs to appear and select the target FAQ directly.
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Select and enter edit mode
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("Enter");
 
             // Wait for edit mode
@@ -554,11 +484,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
             await page.waitForTimeout(1000);
 
             await page.waitForSelector(FAQ_CARD_SELECTOR, { timeout: 10000 });
-            await page.locator('h1:has-text("FAQ Management")').click();
-            await page.waitForTimeout(200);
-
-            // Select and enter edit mode
-            await page.keyboard.press("j");
+            await selectFaqCard(page, testQuestion);
             await page.keyboard.press("Enter");
 
             // Wait for edit mode
