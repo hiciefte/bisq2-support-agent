@@ -18,6 +18,12 @@ export function useTrustMonitorPolicy(initialPolicy: TrustMonitorPolicy | null) 
     policyRef.current = policy;
   }, [policy]);
 
+  useEffect(() => {
+    setPolicy(initialPolicy);
+    policyRef.current = initialPolicy;
+    setIsLoading(initialPolicy === null);
+  }, [initialPolicy]);
+
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {

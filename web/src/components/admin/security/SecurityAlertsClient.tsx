@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SecurityAlertsInitialData, TrustFinding, TrustFindingCounts } from "@/components/admin/security/types";
 import { SecurityAlertsPolicyBar } from "@/components/admin/security/SecurityAlertsPolicyBar";
@@ -25,11 +25,28 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   const statusFilter = searchParams.get("status") ?? "";
   const detectorFilter = searchParams.get("detector") ?? "";
 
+  useEffect(() => {
+    setFindings(initialData.findings?.items ?? []);
+    setCounts(initialData.counts);
+  }, [initialData]);
+
+  const filteredFindings = useMemo(() => findings.filter((finding) => {
+    const statusMatch = !statusFilter || finding.status === statusFilter;
+    const detectorMatch = !detectorFilter || finding.detector_key === detectorFilter;
+    return statusMatch && detectorMatch;
+  }), [detectorFilter, findings, statusFilter]);
+
   const selectedFindingId = useMemo(() => {
     const raw = searchParams.get("findingId");
-    return raw ? Number(raw) : findings[0]?.id ?? null;
-  }, [findings, searchParams]);
-  const selectedFinding = findings.find((finding) => finding.id === selectedFindingId) ?? null;
+    if (raw) {
+      const parsed = Number(raw);
+      if (filteredFindings.some((finding) => finding.id === parsed)) {
+        return parsed;
+      }
+    }
+    return filteredFindings[0]?.id ?? null;
+  }, [filteredFindings, searchParams]);
+  const selectedFinding = filteredFindings.find((finding) => finding.id === selectedFindingId) ?? null;
 
   const updateUrl = (next: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -42,12 +59,6 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
     });
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
-
-  const filteredFindings = findings.filter((finding) => {
-    const statusMatch = !statusFilter || finding.status === statusFilter;
-    const detectorMatch = !detectorFilter || finding.detector_key === detectorFilter;
-    return statusMatch && detectorMatch;
-  });
 
   const handleAction = async (action: "resolve" | "false-positive" | "suppress" | "mark-benign") => {
     if (!selectedFinding) return;
@@ -152,7 +163,9 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
           selectedFindingId={selectedFindingId}
           onSelect={(findingId) => updateUrl({ findingId: String(findingId) })}
         />
-        <SecurityFindingDetail finding={selectedFinding} isMutating={isMutating} onAction={handleAction} />
+        <div className="xl:sticky xl:top-24 xl:self-start">
+          <SecurityFindingDetail finding={selectedFinding} isMutating={isMutating} onAction={handleAction} />
+        </div>
       </div>
     </div>
   );
