@@ -15,6 +15,7 @@ from app.models.escalation import (
     EscalationListResponse,
     EscalationNotFoundError,
     EscalationNotRespondedError,
+    EscalationPriority,
     EscalationStatus,
     EscalationUpdate,
     UserPollResponse,
@@ -137,6 +138,32 @@ class EscalationService:
                 status=EscalationStatus.IN_REVIEW,
                 staff_id=staff_id,
                 claimed_at=now,
+            ),
+        )
+
+    async def unclaim_escalation(self, escalation_id: int, staff_id: str) -> Escalation:
+        """Release an escalation back to the pending queue."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} is closed")
+
+        if escalation.staff_id and escalation.staff_id != staff_id:
+            if escalation.claimed_at and not self._is_claim_expired(
+                escalation.claimed_at
+            ):
+                raise EscalationAlreadyClaimedError(
+                    f"Escalation {escalation_id} claimed by {escalation.staff_id}"
+                )
+
+        return await self.repository.update(
+            escalation_id,
+            EscalationUpdate(
+                status=EscalationStatus.PENDING,
+                staff_id=None,
+                claimed_at=None,
             ),
         )
 
@@ -470,6 +497,20 @@ class EscalationService:
                 status=EscalationStatus.CLOSED,
                 closed_at=now,
             ),
+        )
+
+    async def prioritize_escalation(
+        self,
+        escalation_id: int,
+        priority: EscalationPriority,
+    ) -> Escalation:
+        """Update escalation priority."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+        return await self.repository.update(
+            escalation_id,
+            EscalationUpdate(priority=priority),
         )
 
     # ------------------------------------------------------------------

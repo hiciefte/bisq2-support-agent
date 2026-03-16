@@ -135,6 +135,8 @@ class Settings(BaseSettings):
     MATRIX_STAFF_ROOM: str = ""  # Room ID for staff escalation notifications
     MATRIX_SYNC_SESSION_FILE: str = "matrix_session.json"
     MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES: bool = True
+    MATRIX_CHATOPS_ENABLED: bool = False
+    MATRIX_CHATOPS_ROOM_IDS: str | list[str] = ""
 
     # Matrix alert lane (Alertmanager notifications)
     MATRIX_ALERT_USER: str = ""  # Required when MATRIX_ALERT_ROOM is set
