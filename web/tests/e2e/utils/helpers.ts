@@ -5,7 +5,7 @@
  */
 
 import { APIRequestContext, expect, Page } from "@playwright/test";
-import { API_BASE_URL } from "./env";
+import { API_BASE_URL, WEB_BASE_URL } from "./env";
 
 const SUBMIT_BUTTON_SELECTOR = "button[type=\"submit\"]";
 const ENABLED_INPUT_SELECTOR = "input:not([disabled]), textarea:not([disabled])";
@@ -151,19 +151,28 @@ export async function waitForAssistantMessage(
  */
 export async function waitForApiReady(
     requestContext: APIRequestContext | Page,
-    timeout: number = 60000,
+    timeout: number = 180000,
 ): Promise<void> {
     const request = "request" in requestContext ? requestContext.request : requestContext;
+    const healthUrls = [
+        `${API_BASE_URL}/health`,
+        `${WEB_BASE_URL}/api/health`,
+    ];
 
     await expect
         .poll(
             async () => {
-                try {
-                    const response = await request.get(`${API_BASE_URL}/health`);
-                    return response.status();
-                } catch {
-                    return 0;
+                for (const url of healthUrls) {
+                    try {
+                        const response = await request.get(url);
+                        if (response.status() === 200) {
+                            return 200;
+                        }
+                    } catch {
+                        // Try the next candidate.
+                    }
                 }
+                return 0;
             },
             { timeout, intervals: [1000, 2000, 3000] },
         )

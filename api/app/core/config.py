@@ -126,6 +126,8 @@ class Settings(BaseSettings):
     WEB_CHANNEL_ENABLED: bool = True
     BISQ2_CHANNEL_ENABLED: bool = False
     BISQ2_STAFF_NOTIFICATION_TARGET: str = ""  # Bisq2 channel ID for staff notices
+    BISQ2_CHATOPS_ENABLED: bool = False
+    BISQ2_CHATOPS_CHANNEL_IDS: str | list[str] = ""
 
     # Matrix sync lane (training ingestion)
     MATRIX_SYNC_ENABLED: bool = False
@@ -970,6 +972,22 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [
                 profile_id.strip() for profile_id in v.split(",") if profile_id.strip()
+            ]
+        return []
+
+    @field_validator("BISQ2_CHATOPS_CHANNEL_IDS", mode="before")
+    @classmethod
+    def parse_bisq2_chatops_channel_ids(cls, v: str | list[str]) -> list[str]:
+        """Normalize BISQ2_CHATOPS_CHANNEL_IDS to a list of channel IDs."""
+        if isinstance(v, list):
+            return [
+                channel_id.strip()
+                for channel_id in v
+                if isinstance(channel_id, str) and channel_id.strip()
+            ]
+        if isinstance(v, str):
+            return [
+                channel_id.strip() for channel_id in v.split(",") if channel_id.strip()
             ]
         return []
 

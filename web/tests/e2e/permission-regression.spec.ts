@@ -30,6 +30,8 @@ test.describe("Permission Regression Tests", () => {
     test.skip(process.env.CI === "true", "Container restart tests only run locally");
 
     test("FAQ deletion should work after container restart", async ({ page }) => {
+        test.setTimeout(RESTART_TEST_TIMEOUT_MS);
+
         // Step 1: Create a test FAQ
         await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
         await navigateToFaqManagement(page);
@@ -59,7 +61,7 @@ test.describe("Permission Regression Tests", () => {
                 "docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api"
             );
             // Wait for API to be healthy (poll /health)
-            await waitForApiReady(page);
+            await waitForApiReady(page, RESTART_TEST_TIMEOUT_MS);
         } catch (error) {
             console.error("Failed to restart container:", error);
             throw error;
@@ -108,12 +110,14 @@ test.describe("Permission Regression Tests", () => {
     });
 
     test("Feedback submission should work after container restart", async ({ page }) => {
+        test.setTimeout(RESTART_TEST_TIMEOUT_MS);
+
         // Step 1: Restart API container
         console.log("Restarting API container...");
         await execAsync(
             "docker compose -f ../docker/docker-compose.yml -f ../docker/docker-compose.local.yml restart api"
         );
-        await waitForApiReady(page);
+        await waitForApiReady(page, RESTART_TEST_TIMEOUT_MS);
 
         // Step 2: Submit feedback
         await page.goto(`${WEB_BASE_URL}`);

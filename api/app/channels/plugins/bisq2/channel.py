@@ -87,6 +87,7 @@ class Bisq2Channel(ChannelBase):
     @classmethod
     def setup_dependencies(cls, runtime: Any, settings: Any) -> None:
         """Register Bisq2 channel dependencies in shared runtime."""
+        from app.channels.plugins.bisq2.chatops_adapter import Bisq2ChatOpsAdapter
         from app.channels.plugins.bisq2.client.api import Bisq2API
         from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
         from app.channels.plugins.bisq2.reaction_handler import Bisq2ReactionHandler
@@ -106,6 +107,22 @@ class Bisq2Channel(ChannelBase):
         runtime.register("bisq2_api", bisq_api, allow_override=True)
         runtime.register("bisq2_websocket_client", ws_client, allow_override=True)
         runtime.register("staff_resolver", staff_resolver, allow_override=True)
+
+        chatops_channel_ids = {
+            str(channel_id or "").strip()
+            for channel_id in getattr(settings, "BISQ2_CHATOPS_CHANNEL_IDS", []) or []
+            if str(channel_id or "").strip()
+        }
+        if chatops_channel_ids:
+            runtime.register(
+                "bisq2_chatops_adapter",
+                Bisq2ChatOpsAdapter(
+                    runtime=runtime,
+                    enabled=bool(getattr(settings, "BISQ2_CHATOPS_ENABLED", False)),
+                    allowed_channel_ids=chatops_channel_ids,
+                ),
+                allow_override=True,
+            )
 
         reaction_processor = runtime.resolve_optional("reaction_processor")
         if reaction_processor is not None:
@@ -756,6 +773,7 @@ class Bisq2Channel(ChannelBase):
         for msg in new_messages:
             message_id = self._derive_message_id(msg)
             if self._is_staff_message(msg):
+                await self._maybe_handle_staff_chatops_message(msg)
                 await self._record_staff_activity_from_message(msg)
                 self._mark_seen(message_id)
                 continue
@@ -784,6 +802,22 @@ class Bisq2Channel(ChannelBase):
                 source_name,
             )
         return incoming_messages
+
+    async def _maybe_handle_staff_chatops_message(self, msg: Dict[str, Any]) -> bool:
+        """Handle trusted-staff `!case` commands before normal suppression."""
+        adapter = self.runtime.resolve_optional("bisq2_chatops_adapter")
+        handle_message = getattr(adapter, "handle_message", None) if adapter else None
+        if not callable(handle_message):
+            return False
+        try:
+            return bool(await handle_message(msg))
+        except Exception:
+            self._logger.debug(
+                "Failed processing Bisq2 ChatOps command message_id=%s",
+                self._derive_message_id(msg),
+                exc_info=True,
+            )
+            return False
 
     async def _record_staff_activity_from_message(self, msg: Dict[str, Any]) -> None:
         """Forward trusted Bisq2 staff activity to arbitration service."""

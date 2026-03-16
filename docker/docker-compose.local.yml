@@ -50,7 +50,20 @@ services:
       - "host.docker.internal:host-gateway"
     # Note: --loop asyncio disables uvloop to allow AISuite's MCP client to work
     # (nest_asyncio cannot patch uvloop, only standard asyncio event loops)
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --loop asyncio
+    #
+    # Keep reload opt-in for local container usage. The auto-reload supervisor has
+    # proven unstable across container restarts, which breaks the Playwright restart
+    # regression tests and leaves the API health endpoint hanging. Defaulting to the
+    # single-process server keeps local automation deterministic while still allowing
+    # developers to opt back into reload with API_RELOAD=true.
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        if [ "${API_RELOAD:-false}" = "true" ]; then
+          exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --loop asyncio
+        fi
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio
     ports:
       - "8000:8000"
     healthcheck:
