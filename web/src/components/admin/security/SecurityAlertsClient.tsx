@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SecurityAlertsInitialData, TrustFinding, TrustFindingCounts } from "@/components/admin/security/types";
 import { SecurityAlertsPolicyBar } from "@/components/admin/security/SecurityAlertsPolicyBar";
+import { SecurityAuditTrail } from "@/components/admin/security/SecurityAuditTrail";
 import { SecurityFindingDetail } from "@/components/admin/security/SecurityFindingDetail";
 import { SecurityFindingsList } from "@/components/admin/security/SecurityFindingsList";
+import { SecurityOpsSummary } from "@/components/admin/security/SecurityOpsSummary";
 import { useTrustMonitorPolicy } from "@/hooks/useTrustMonitorPolicy";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 
@@ -20,7 +22,7 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   const [findings, setFindings] = useState<TrustFinding[]>(initialData.findings?.items ?? []);
   const [counts, setCounts] = useState<TrustFindingCounts | null>(initialData.counts);
   const [isMutating, setIsMutating] = useState(false);
-  const { policy, isSaving, setAlertSurface } = useTrustMonitorPolicy(initialData.policy);
+  const { policy, isSaving, setAlertSurface, updatePolicy } = useTrustMonitorPolicy(initialData.policy);
 
   const statusFilter = searchParams.get("status") ?? "";
   const detectorFilter = searchParams.get("detector") ?? "";
@@ -95,7 +97,19 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
 
   return (
     <div className="space-y-6">
-      <SecurityAlertsPolicyBar policy={policy} isSaving={isSaving} onAlertSurfaceChange={setAlertSurface} />
+      <SecurityAlertsPolicyBar
+        policy={policy}
+        isSaving={isSaving}
+        onAlertSurfaceChange={setAlertSurface}
+        onPolicyPatch={updatePolicy}
+      />
+
+      <SecurityOpsSummary ops={initialData.ops} />
+
+      <SecurityAuditTrail
+        trustAudit={initialData.trustAudit?.items ?? []}
+        chatopsAudit={initialData.chatopsAudit?.items ?? []}
+      />
 
       <div className="grid gap-3 rounded-2xl border border-border/70 bg-card/50 p-4 md:grid-cols-3">
         <label className="space-y-2 text-sm">

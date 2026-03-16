@@ -118,6 +118,30 @@ class TrustAccessAuditEntry:
 
 
 @dataclass(slots=True)
+class TrustRetentionRun:
+    id: int
+    created_at: datetime
+    deleted_evidence_events: int
+    deleted_actor_aggregates: int
+    deleted_findings: int
+    deleted_feedback: int
+    deleted_access_audit: int
+
+
+@dataclass(slots=True)
+class TrustMonitorOpsSnapshot:
+    monitored_public_rooms: list[str]
+    staff_room_id: str
+    evidence_events_count: int
+    actor_aggregates_count: int
+    findings_count: int
+    oldest_evidence_age_seconds: float | None
+    oldest_aggregate_age_seconds: float | None
+    oldest_finding_age_seconds: float | None
+    last_retention_run: TrustRetentionRun | None = None
+
+
+@dataclass(slots=True)
 class TrustPolicy:
     enabled: bool
     name_collision_enabled: bool

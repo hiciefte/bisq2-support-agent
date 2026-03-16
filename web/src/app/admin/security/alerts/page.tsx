@@ -1,5 +1,13 @@
 import { SecurityAlertsClient } from "@/components/admin/security/SecurityAlertsClient";
-import type { SecurityAlertsInitialData, TrustFindingCounts, TrustFindingListResponse, TrustMonitorPolicy } from "@/components/admin/security/types";
+import type {
+  ChatOpsAuditListResponse,
+  SecurityAlertsInitialData,
+  TrustAccessAuditListResponse,
+  TrustFindingCounts,
+  TrustFindingListResponse,
+  TrustMonitorOpsSnapshot,
+  TrustMonitorPolicy,
+} from "@/components/admin/security/types";
 import { fetchAdminApiJson } from "@/lib/server-admin-api";
 
 interface SecurityAlertsPageProps {
@@ -15,15 +23,21 @@ async function fetchInitialData(status: string, detector: string): Promise<Secur
     params.set("detector_key", detector);
   }
   const suffix = params.toString();
-  const [findings, counts, policy] = await Promise.allSettled([
+  const [findings, counts, policy, ops, trustAudit, chatopsAudit] = await Promise.allSettled([
     fetchAdminApiJson<TrustFindingListResponse>(`/admin/security/findings${suffix ? `?${suffix}` : ""}`),
     fetchAdminApiJson<TrustFindingCounts>("/admin/security/findings/counts"),
     fetchAdminApiJson<TrustMonitorPolicy>("/admin/security/trust-monitor/policy"),
+    fetchAdminApiJson<TrustMonitorOpsSnapshot>("/admin/security/trust-monitor/ops"),
+    fetchAdminApiJson<TrustAccessAuditListResponse>("/admin/security/trust-monitor/access-audit"),
+    fetchAdminApiJson<ChatOpsAuditListResponse>("/admin/security/chatops/audit"),
   ]);
   return {
     findings: findings.status === "fulfilled" ? findings.value : null,
     counts: counts.status === "fulfilled" ? counts.value : null,
     policy: policy.status === "fulfilled" ? policy.value : null,
+    ops: ops.status === "fulfilled" ? ops.value : null,
+    trustAudit: trustAudit.status === "fulfilled" ? trustAudit.value : null,
+    chatopsAudit: chatopsAudit.status === "fulfilled" ? chatopsAudit.value : null,
   };
 }
 

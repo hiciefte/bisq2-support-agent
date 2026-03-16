@@ -32,6 +32,7 @@ class ChatOpsCommand:
     source_message_id: str
     room_id: str
     raw_text: str
+    channel_id: str = ""
     case_id: int | None = None
     options: dict[str, str] = field(default_factory=dict)
     message: str | None = None

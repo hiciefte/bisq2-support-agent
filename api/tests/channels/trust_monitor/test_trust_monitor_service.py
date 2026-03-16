@@ -182,6 +182,25 @@ def test_trusted_staff_name_does_not_trigger_collision(tmp_path) -> None:
     assert service.list_findings().items == []
 
 
+def test_staff_room_is_excluded_even_if_event_reaches_service(tmp_path) -> None:
+    service, publisher = _service(tmp_path)
+
+    finding = service.ingest_event(
+        TrustEvent(
+            channel_id="matrix",
+            space_id="!staff:matrix.org",
+            actor_id="@copycat:matrix.org",
+            actor_display_name="Alice Support",
+            event_type=TrustEventType.MEMBER_JOINED,
+            occurred_at=datetime.now(UTC),
+            external_event_id="$staff-room-copycat",
+        )
+    )
+
+    assert finding is None
+    assert publisher.published_findings == []
+
+
 def test_silent_observer_creates_shadow_finding_after_threshold(tmp_path) -> None:
     service, publisher = _service(tmp_path)
     now = datetime.now(UTC)
@@ -317,6 +336,9 @@ def test_retention_purges_expired_evidence_and_findings(tmp_path) -> None:
 
     assert service.list_findings().items == []
     assert service.list_evidence(limit=10) == []
+    snapshot = service.ops_snapshot()
+    assert snapshot.last_retention_run is not None
+    assert snapshot.last_retention_run.deleted_evidence_events >= 1
 
 
 def test_evidence_store_never_persists_message_body(tmp_path) -> None:

@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from app.channels.chatops import ChatOpsCommand, ChatOpsCommandName, ChatOpsDispatcher
+from app.channels.chatops import (
+    ChatOpsAuditStore,
+    ChatOpsCommand,
+    ChatOpsCommandName,
+    ChatOpsDispatcher,
+)
 from app.models.escalation import (
     Escalation,
     EscalationAlreadyClaimedError,
@@ -33,6 +38,7 @@ def _command(
         source_message_id=source_message_id,
         room_id="!staff:server",
         raw_text=f"!case {name.value}",
+        channel_id="matrix",
         case_id=case_id,
         options=options or {},
         message=message,
@@ -318,6 +324,31 @@ async def test_dispatch_concurrent_idempotent_result_calls_service_once() -> Non
     assert first.message == second.message
     assert first.idempotent is False
     assert second.idempotent is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_writes_durable_audit_entries(tmp_path) -> None:
+    service = _service()
+    service.list_escalations.return_value = EscalationListResponse(
+        escalations=[],
+        total=0,
+        limit=20,
+        offset=0,
+    )
+    audit_store = ChatOpsAuditStore(str(tmp_path / "feedback.db"))
+    dispatcher = ChatOpsDispatcher(
+        escalation_service=service,
+        audit_store=audit_store,
+    )
+
+    await dispatcher.dispatch(_command(ChatOpsCommandName.LIST, source_message_id="$1"))
+    await dispatcher.dispatch(_command(ChatOpsCommandName.LIST, source_message_id="$1"))
+
+    entries = audit_store.list_entries(limit=10)
+    assert len(entries) == 2
+    assert entries[0].command_name == "list"
+    assert entries[0].idempotent is True
+    assert entries[1].idempotent is False
 
 
 @pytest.mark.asyncio

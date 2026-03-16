@@ -20,8 +20,11 @@ from app.channels.trust_monitor.models import (
     TrustFindingCounts,
     TrustFindingList,
     TrustFindingStatus,
+    TrustMonitorOpsSnapshot,
     TrustPolicy,
+    TrustRetentionRun,
 )
+from app.metrics.operator_metrics import set_trust_retention_snapshot
 
 
 class TrustMonitorStore:
@@ -132,6 +135,15 @@ class TrustMonitorStore:
             target_id TEXT NOT NULL,
             metadata_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS trust_retention_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            deleted_evidence_events INTEGER NOT NULL DEFAULT 0,
+            deleted_actor_aggregates INTEGER NOT NULL DEFAULT 0,
+            deleted_findings INTEGER NOT NULL DEFAULT 0,
+            deleted_feedback INTEGER NOT NULL DEFAULT 0,
+            deleted_access_audit INTEGER NOT NULL DEFAULT 0
         );
         """
         with self.connection() as conn:
@@ -548,6 +560,54 @@ class TrustMonitorStore:
             ).fetchall()
         return [self._evidence_from_row(row) for row in rows]
 
+    def latest_retention_run(self) -> TrustRetentionRun | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM trust_retention_runs ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        return self._retention_run_from_row(row) if row else None
+
+    def ops_snapshot(
+        self,
+        *,
+        monitored_public_rooms: list[str],
+        staff_room_id: str,
+        now: datetime,
+    ) -> TrustMonitorOpsSnapshot:
+        with self.connection() as conn:
+            evidence_count = int(
+                conn.execute("SELECT COUNT(*) FROM trust_evidence_events").fetchone()[0]
+            )
+            aggregate_count = int(
+                conn.execute("SELECT COUNT(*) FROM trust_actor_aggregates").fetchone()[
+                    0
+                ]
+            )
+            finding_count = int(
+                conn.execute("SELECT COUNT(*) FROM trust_findings").fetchone()[0]
+            )
+            oldest_evidence = conn.execute(
+                "SELECT MIN(occurred_at) FROM trust_evidence_events"
+            ).fetchone()[0]
+            oldest_aggregate = conn.execute(
+                "SELECT MIN(observed_at) FROM trust_actor_aggregates"
+            ).fetchone()[0]
+            oldest_finding = conn.execute(
+                "SELECT MIN(updated_at) FROM trust_findings"
+            ).fetchone()[0]
+
+        return TrustMonitorOpsSnapshot(
+            monitored_public_rooms=list(monitored_public_rooms),
+            staff_room_id=staff_room_id,
+            evidence_events_count=evidence_count,
+            actor_aggregates_count=aggregate_count,
+            findings_count=finding_count,
+            oldest_evidence_age_seconds=self._age_seconds(oldest_evidence, now),
+            oldest_aggregate_age_seconds=self._age_seconds(oldest_aggregate, now),
+            oldest_finding_age_seconds=self._age_seconds(oldest_finding, now),
+            last_retention_run=self.latest_retention_run(),
+        )
+
     def purge_expired(self, *, policy: TrustPolicy, now: datetime) -> None:
         evidence_cutoff = (
             (now - timedelta(days=policy.evidence_ttl_days)).astimezone(UTC).isoformat()
@@ -561,26 +621,72 @@ class TrustMonitorStore:
             (now - timedelta(days=policy.finding_ttl_days)).astimezone(UTC).isoformat()
         )
         with self.connection() as conn:
-            conn.execute(
+            deleted_evidence = conn.execute(
                 "DELETE FROM trust_evidence_events WHERE occurred_at < ?",
                 (evidence_cutoff,),
-            )
-            conn.execute(
+            ).rowcount
+            deleted_aggregates = conn.execute(
                 "DELETE FROM trust_actor_aggregates WHERE observed_at < ?",
                 (aggregate_cutoff,),
-            )
-            conn.execute(
+            ).rowcount
+            deleted_findings = conn.execute(
                 "DELETE FROM trust_findings WHERE updated_at < ?",
                 (finding_cutoff,),
-            )
-            conn.execute(
+            ).rowcount
+            deleted_feedback = conn.execute(
                 "DELETE FROM trust_finding_feedback WHERE created_at < ?",
                 (finding_cutoff,),
-            )
-            conn.execute(
+            ).rowcount
+            deleted_audit = conn.execute(
                 "DELETE FROM trust_access_audit WHERE created_at < ?",
                 (finding_cutoff,),
+            ).rowcount
+            conn.execute(
+                """
+                INSERT INTO trust_retention_runs (
+                    created_at,
+                    deleted_evidence_events,
+                    deleted_actor_aggregates,
+                    deleted_findings,
+                    deleted_feedback,
+                    deleted_access_audit
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now.astimezone(UTC).isoformat(),
+                    deleted_evidence,
+                    deleted_aggregates,
+                    deleted_findings,
+                    deleted_feedback,
+                    deleted_audit,
+                ),
             )
+
+        snapshot = self.ops_snapshot(
+            monitored_public_rooms=[],
+            staff_room_id="",
+            now=now,
+        )
+        set_trust_retention_snapshot(
+            deleted_by_table={
+                "trust_evidence_events": deleted_evidence,
+                "trust_actor_aggregates": deleted_aggregates,
+                "trust_findings": deleted_findings,
+                "trust_finding_feedback": deleted_feedback,
+                "trust_access_audit": deleted_audit,
+            },
+            row_counts={
+                "trust_evidence_events": snapshot.evidence_events_count,
+                "trust_actor_aggregates": snapshot.actor_aggregates_count,
+                "trust_findings": snapshot.findings_count,
+            },
+            oldest_ages_seconds={
+                "trust_evidence_events": snapshot.oldest_evidence_age_seconds,
+                "trust_actor_aggregates": snapshot.oldest_aggregate_age_seconds,
+                "trust_findings": snapshot.oldest_finding_age_seconds,
+            },
+            run_at=now.timestamp(),
+        )
 
     def count_early_reads(
         self,
@@ -737,3 +843,22 @@ class TrustMonitorStore:
             created_at=datetime.fromisoformat(row["created_at"]),
             metadata=json.loads(row["metadata_json"] or "{}"),
         )
+
+    @staticmethod
+    def _retention_run_from_row(row: sqlite3.Row) -> TrustRetentionRun:
+        return TrustRetentionRun(
+            id=int(row["id"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            deleted_evidence_events=int(row["deleted_evidence_events"] or 0),
+            deleted_actor_aggregates=int(row["deleted_actor_aggregates"] or 0),
+            deleted_findings=int(row["deleted_findings"] or 0),
+            deleted_feedback=int(row["deleted_feedback"] or 0),
+            deleted_access_audit=int(row["deleted_access_audit"] or 0),
+        )
+
+    @staticmethod
+    def _age_seconds(value: str | None, now: datetime) -> float | None:
+        if not value:
+            return None
+        observed_at = datetime.fromisoformat(value)
+        return max(0.0, (now - observed_at).total_seconds())

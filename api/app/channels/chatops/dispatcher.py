@@ -6,11 +6,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.channels.chatops.audit_store import ChatOpsAuditStore
 from app.channels.chatops.models import (
     ChatOpsCommand,
     ChatOpsCommandName,
     ChatOpsResult,
 )
+from app.metrics.operator_metrics import record_chatops_dispatch
 from app.models.escalation import (
     EscalationAlreadyClaimedError,
     EscalationClosedError,
@@ -29,10 +31,12 @@ class ChatOpsDispatcher:
         *,
         escalation_service: Any,
         arbitration_service: Any | None = None,
+        audit_store: ChatOpsAuditStore | None = None,
         stale_after_minutes: int = 30,
     ) -> None:
         self.escalation_service = escalation_service
         self.arbitration_service = arbitration_service
+        self.audit_store = audit_store
         self.stale_after_minutes = max(1, int(stale_after_minutes))
         self._idempotent_results: dict[str, ChatOpsResult] = {}
         self._inflight_results: dict[str, asyncio.Task[ChatOpsResult]] = {}
@@ -41,11 +45,18 @@ class ChatOpsDispatcher:
     async def dispatch(self, command: ChatOpsCommand) -> ChatOpsResult:
         source_message_id = str(command.source_message_id or "").strip()
         if not source_message_id:
-            return await self._dispatch_uncached(command)
+            result = await self._dispatch_uncached(command)
+            record_chatops_dispatch(
+                channel=command.channel_id or "unknown",
+                command=command.name.value,
+                result="ok" if result.ok else "error",
+            )
+            self._record_audit(command, result)
+            return result
 
         cached = self._idempotent_results.get(source_message_id)
         if cached is not None:
-            return ChatOpsResult(
+            result = ChatOpsResult(
                 handled=cached.handled,
                 ok=cached.ok,
                 message=cached.message,
@@ -54,11 +65,18 @@ class ChatOpsDispatcher:
                 idempotent=True,
                 metadata=dict(cached.metadata),
             )
+            record_chatops_dispatch(
+                channel=command.channel_id or "unknown",
+                command=command.name.value,
+                result="idempotent",
+            )
+            self._record_audit(command, result)
+            return result
 
         inflight = self._inflight_results.get(source_message_id)
         if inflight is not None:
             cached = await inflight
-            return ChatOpsResult(
+            result = ChatOpsResult(
                 handled=cached.handled,
                 ok=cached.ok,
                 message=cached.message,
@@ -67,6 +85,13 @@ class ChatOpsDispatcher:
                 idempotent=True,
                 metadata=dict(cached.metadata),
             )
+            record_chatops_dispatch(
+                channel=command.channel_id or "unknown",
+                command=command.name.value,
+                result="idempotent",
+            )
+            self._record_audit(command, result)
+            return result
 
         task = asyncio.create_task(self._dispatch_uncached(command))
         self._inflight_results[source_message_id] = task
@@ -75,9 +100,37 @@ class ChatOpsDispatcher:
             self._idempotent_results[source_message_id] = result
             if len(self._idempotent_results) > self._idempotent_max_entries:
                 self._idempotent_results.pop(next(iter(self._idempotent_results)), None)
+            record_chatops_dispatch(
+                channel=command.channel_id or "unknown",
+                command=command.name.value,
+                result="ok" if result.ok else "error",
+            )
+            self._record_audit(command, result)
             return result
         finally:
             self._inflight_results.pop(source_message_id, None)
+
+    def _record_audit(self, command: ChatOpsCommand, result: ChatOpsResult) -> None:
+        if self.audit_store is None:
+            return
+        metadata = {
+            "has_message": bool(str(command.message or "").strip()),
+            "message_length": len(str(command.message or "").strip()),
+            "option_keys": sorted((command.options or {}).keys()),
+            "result": "ok" if result.ok else "error",
+        }
+        self.audit_store.add_entry(
+            channel_id=command.channel_id or "unknown",
+            room_id=command.room_id,
+            actor_id=command.actor_id,
+            command_name=command.name.value,
+            case_id=result.case_id if result.case_id is not None else command.case_id,
+            source_message_id=command.source_message_id,
+            ok=result.ok,
+            idempotent=result.idempotent,
+            metadata=metadata,
+            created_at=datetime.now(timezone.utc),
+        )
 
     async def _dispatch_uncached(self, command: ChatOpsCommand) -> ChatOpsResult:
         handler_map = {

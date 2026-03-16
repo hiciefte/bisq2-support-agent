@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { Loader2, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { TrustAlertSurface, TrustMonitorPolicy } from "@/components/admin/security/types";
@@ -166,6 +167,11 @@ export function TrustMonitoringCard({
               <div>Min hits: {policy?.minimum_early_read_hits ?? 0}</div>
             </div>
           </div>
+        </div>
+        <div className="flex justify-end">
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/security/alerts">Open security review</Link>
+          </Button>
         </div>
       </CardContent>
     </Card>
