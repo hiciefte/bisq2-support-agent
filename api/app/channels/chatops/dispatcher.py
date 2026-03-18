@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -27,6 +28,7 @@ class ChatOpsDispatcher:
         self.arbitration_service = arbitration_service
         self.stale_after_minutes = max(1, int(stale_after_minutes))
         self._idempotent_results: dict[str, ChatOpsResult] = {}
+        self._inflight_results: dict[str, asyncio.Task[ChatOpsResult]] = {}
 
     async def dispatch(self, command: ChatOpsCommand) -> ChatOpsResult:
         cached = self._idempotent_results.get(command.source_message_id)
@@ -41,9 +43,27 @@ class ChatOpsDispatcher:
                 metadata=dict(cached.metadata),
             )
 
-        result = await self._dispatch_uncached(command)
-        self._idempotent_results[command.source_message_id] = result
-        return result
+        inflight = self._inflight_results.get(command.source_message_id)
+        if inflight is not None:
+            cached = await inflight
+            return ChatOpsResult(
+                handled=cached.handled,
+                ok=cached.ok,
+                message=cached.message,
+                command_name=cached.command_name,
+                case_id=cached.case_id,
+                idempotent=True,
+                metadata=dict(cached.metadata),
+            )
+
+        task = asyncio.create_task(self._dispatch_uncached(command))
+        self._inflight_results[command.source_message_id] = task
+        try:
+            result = await task
+            self._idempotent_results[command.source_message_id] = result
+            return result
+        finally:
+            self._inflight_results.pop(command.source_message_id, None)
 
     async def _dispatch_uncached(self, command: ChatOpsCommand) -> ChatOpsResult:
         handler_map = {
@@ -76,7 +96,7 @@ class ChatOpsDispatcher:
             handled=True,
             ok=True,
             message=(
-                "Matrix ChatOps commands:\n"
+                "ChatOps commands:\n"
                 "!case list [new|mine|stale|escalated] [channel=matrix|bisq2] [limit=20]\n"
                 "!case view <case_id>\n"
                 "!case claim <case_id>\n"

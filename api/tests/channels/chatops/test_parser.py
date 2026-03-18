@@ -105,3 +105,33 @@ def test_parse_requires_case_id_for_send() -> None:
     assert result.command is None
     assert result.error_message is not None
     assert "`!case send` requires a case id." in result.error_message
+
+
+def test_parse_rejects_prefix_without_boundary() -> None:
+    parser = ChatOpsParser()
+
+    result = parser.parse(
+        text="!casefoo 241",
+        actor_id="@staff:server",
+        source_message_id="$event",
+        room_id="!staff:server",
+    )
+
+    assert result.handled is False
+    assert result.command is None
+
+
+def test_parse_rejects_zero_case_id() -> None:
+    parser = ChatOpsParser()
+
+    result = parser.parse(
+        text="!case send 0",
+        actor_id="@staff:server",
+        source_message_id="$event",
+        room_id="!staff:server",
+    )
+
+    assert result.handled is True
+    assert result.command is None
+    assert result.error_message is not None
+    assert "positive integer" in result.error_message

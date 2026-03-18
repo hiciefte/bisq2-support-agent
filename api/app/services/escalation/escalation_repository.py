@@ -358,6 +358,30 @@ class EscalationRepository:
             row = await cursor.fetchone()
             return _row_to_escalation(row)
 
+    async def unclaim(self, escalation_id: int, status: Enum | str) -> Escalation:
+        """Clear staff assignment and claim timestamp explicitly."""
+        from app.models.escalation import EscalationNotFoundError
+
+        status_value = status.value if isinstance(status, Enum) else str(status)
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                UPDATE escalations
+                SET status = ?, staff_id = NULL, claimed_at = NULL
+                WHERE id = ?
+                """,
+                (status_value, escalation_id),
+            )
+            await db.commit()
+            if cursor.rowcount == 0:
+                raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+            cursor = await db.execute(
+                "SELECT * FROM escalations WHERE id = ?", (escalation_id,)
+            )
+            row = await cursor.fetchone()
+            return _row_to_escalation(row)
+
     # ------------------------------------------------------------------
     # Rating
     # ------------------------------------------------------------------

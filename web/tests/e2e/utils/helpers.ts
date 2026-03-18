@@ -147,7 +147,7 @@ export async function waitForAssistantMessage(
  * Polls the /health endpoint until it returns 200 status.
  *
  * @param requestContext - Playwright APIRequestContext or Page
- * @param timeout - Maximum time to wait in milliseconds (default: 60000)
+ * @param timeout - Maximum time to wait in milliseconds (default: 180000)
  */
 export async function waitForApiReady(
     requestContext: APIRequestContext | Page,

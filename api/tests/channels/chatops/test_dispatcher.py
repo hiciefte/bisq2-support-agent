@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -249,6 +250,39 @@ async def test_dispatch_returns_idempotent_result_for_same_source_message() -> N
     assert first.idempotent is False
     assert second.idempotent is True
     assert second.message == first.message
+
+
+@pytest.mark.asyncio
+async def test_dispatch_concurrent_idempotent_result_calls_service_once() -> None:
+    service = _service()
+    blocker = asyncio.Event()
+
+    async def delayed_list_escalations(**_: object) -> EscalationListResponse:
+        await blocker.wait()
+        return EscalationListResponse(
+            escalations=[],
+            total=0,
+            limit=20,
+            offset=0,
+        )
+
+    service.list_escalations = AsyncMock(side_effect=delayed_list_escalations)
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+    command = _command(ChatOpsCommandName.LIST, source_message_id="$same")
+
+    first_task = asyncio.create_task(dispatcher.dispatch(command))
+    second_task = asyncio.create_task(dispatcher.dispatch(command))
+    await asyncio.sleep(0)
+    blocker.set()
+
+    first, second = await asyncio.gather(first_task, second_task)
+
+    service.list_escalations.assert_awaited_once()
+    assert first.ok is True
+    assert second.ok is True
+    assert first.message == second.message
+    assert first.idempotent is False
+    assert second.idempotent is True
 
 
 @pytest.mark.asyncio

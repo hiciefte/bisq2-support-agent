@@ -46,7 +46,7 @@ export const normalizeApiUrl = (url: string | undefined): string => {
   const defaultUrl = DEFAULT_API_URL;
   if (!url) return defaultUrl;
 
-  // If URL starts with '/', prepend base origin
+  // Relative URLs are normalized to the computed default backend URL.
   if (url.startsWith('/')) {
     return defaultUrl;
   }

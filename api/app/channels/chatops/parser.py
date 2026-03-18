@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import string
 
 from app.channels.chatops.models import (
     ChatOpsCommand,
@@ -41,7 +42,10 @@ class ChatOpsParser:
         if not normalized.startswith(self.prefix):
             return ChatOpsParseResult(command=None, handled=False)
 
-        remainder = normalized[len(self.prefix) :].strip()
+        raw_remainder = normalized[len(self.prefix) :]
+        if raw_remainder and raw_remainder[0] not in string.whitespace:
+            return ChatOpsParseResult(command=None, handled=False)
+        remainder = raw_remainder.strip()
         if not remainder:
             return ChatOpsParseResult(
                 command=None,
@@ -204,7 +208,12 @@ class ChatOpsParser:
             raise ValueError(
                 f"Invalid case id `{token}`. Case id must be a positive integer."
             )
-        return int(token)
+        parsed_id = int(token)
+        if parsed_id <= 0:
+            raise ValueError(
+                f"Invalid case id `{token}`. Case id must be a positive integer."
+            )
+        return parsed_id
 
     @staticmethod
     def _split_option_tokens(raw_args: str) -> list[str]:

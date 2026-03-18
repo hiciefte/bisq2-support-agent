@@ -8,6 +8,7 @@ from app.models.escalation import (
     DuplicateEscalationError,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCountsResponse,
     EscalationCreate,
     EscalationDeliveryStatus,
@@ -148,7 +149,7 @@ class EscalationService:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
         if escalation.status == EscalationStatus.CLOSED:
-            raise EscalationNotFoundError(f"Escalation {escalation_id} is closed")
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
 
         if escalation.staff_id and escalation.staff_id != staff_id:
             if escalation.claimed_at and not self._is_claim_expired(
@@ -158,13 +159,9 @@ class EscalationService:
                     f"Escalation {escalation_id} claimed by {escalation.staff_id}"
                 )
 
-        return await self.repository.update(
+        return await self.repository.unclaim(
             escalation_id,
-            EscalationUpdate(
-                status=EscalationStatus.PENDING,
-                staff_id=None,
-                claimed_at=None,
-            ),
+            EscalationStatus.PENDING,
         )
 
     def _is_claim_expired(self, claimed_at: datetime) -> bool:
@@ -193,7 +190,7 @@ class EscalationService:
 
         # Closed — cannot respond
         if escalation.status == EscalationStatus.CLOSED:
-            raise EscalationNotFoundError(f"Escalation {escalation_id} is closed")
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
 
         # Must be claimed by this staff (or pending)
         if (

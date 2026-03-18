@@ -1307,6 +1307,10 @@ class TestBisq2ChannelPolling:
         chatops_adapter.handle_message.assert_awaited_once()
         handled_payload = chatops_adapter.handle_message.await_args.args[0]
         assert handled_payload["messageId"] == "staff-cmd-1"
+        assert handled_payload["channelId"] == "support.staff"
+        assert handled_payload["conversationId"] == "support.staff"
+        assert handled_payload["authorId"] == "staff-001"
+        assert handled_payload["message"] == "!case claim 241"
         arbitration_service.record_staff_activity.assert_awaited_once_with(
             room_or_conversation_id="support.staff",
             staff_id="staff-001",

@@ -8,6 +8,7 @@ from app.models.escalation import (
     DuplicateEscalationError,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCreate,
     EscalationNotFoundError,
     EscalationNotRespondedError,
@@ -48,6 +49,7 @@ def mock_repository():
     repo.get_by_id = AsyncMock()
     repo.get_by_message_id = AsyncMock()
     repo.update = AsyncMock()
+    repo.unclaim = AsyncMock()
     repo.update_rating = AsyncMock()
     repo.list_escalations = AsyncMock()
     repo.get_counts = AsyncMock()
@@ -396,6 +398,43 @@ class TestEscalationServiceClaim:
 
         result = await service.claim_escalation(1, "staff_2")
         assert result.staff_id == "staff_2"
+
+
+class TestEscalationServiceUnclaim:
+    """Test unclaim logic."""
+
+    @pytest.mark.asyncio
+    async def test_unclaim_clears_staff_assignment(self, service, mock_repository):
+        claimed = _make_escalation(
+            status=EscalationStatus.IN_REVIEW,
+            staff_id="staff_1",
+            claimed_at=datetime.now(timezone.utc),
+        )
+        released = _make_escalation(
+            status=EscalationStatus.PENDING,
+            staff_id=None,
+            claimed_at=None,
+        )
+        mock_repository.get_by_id.return_value = claimed
+        mock_repository.unclaim.return_value = released
+
+        result = await service.unclaim_escalation(1, "staff_1")
+
+        mock_repository.unclaim.assert_awaited_once_with(1, EscalationStatus.PENDING)
+        assert result.status == EscalationStatus.PENDING
+        assert result.staff_id is None
+        assert result.claimed_at is None
+
+    @pytest.mark.asyncio
+    async def test_unclaim_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.unclaim_escalation(1, "staff_1")
 
 
 # ---------------------------------------------------------------------------

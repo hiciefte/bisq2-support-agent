@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { dismissPrivacyNotice } from "./utils/helpers";
+import { dismissPrivacyNotice, waitForApiReady } from "./utils/helpers";
 
 const TEST_BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
@@ -9,6 +9,7 @@ test.describe("Smoke", () => {
         await page.goto(TEST_BASE_URL);
         await dismissPrivacyNotice(page);
         await expect(page.getByRole("textbox")).toBeVisible({ timeout: 60000 });
+        await waitForApiReady(request, 60000);
 
         // Ensure Next.js proxy to backend works.
         const healthViaProxy = await request.get(`${TEST_BASE_URL}/api/health`);
