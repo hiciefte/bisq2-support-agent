@@ -580,6 +580,21 @@ class TestEscalationServiceRespond:
             await service.respond_to_escalation(99999, "Answer", "staff_1")
 
 
+class TestEscalationServicePrioritize:
+    """Test priority update logic."""
+
+    @pytest.mark.asyncio
+    async def test_prioritize_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.prioritize_escalation(1, EscalationPriority.HIGH)
+
+
 # ---------------------------------------------------------------------------
 # Generate FAQ
 # ---------------------------------------------------------------------------

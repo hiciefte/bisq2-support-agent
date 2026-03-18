@@ -514,6 +514,8 @@ class EscalationService:
         escalation = await self.repository.get_by_id(escalation_id)
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
         return await self.repository.update(
             escalation_id,
             EscalationUpdate(priority=priority),
