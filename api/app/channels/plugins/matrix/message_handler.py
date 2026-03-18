@@ -137,6 +137,8 @@ class MatrixMessageHandler:
         await self._record_trust_event(
             room_id=room_id, event=effective_event, sender_id=sender_id, room=room
         )
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
+            return
         if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
