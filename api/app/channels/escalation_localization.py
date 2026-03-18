@@ -30,9 +30,10 @@ def render_escalation_notice(
 ) -> str:
     """Render a localized escalation notice with graceful English fallback."""
     lang = normalize_language_code(language_code)
-    primary_key = ESCALATION_NOTICE_CHANNEL_KEYS.get(channel_id) or ESCALATION_NOTICE_CHANNEL_KEYS[
-        DEFAULT_ESCALATION_CHANNEL
-    ]
+    primary_key = (
+        ESCALATION_NOTICE_CHANNEL_KEYS.get(channel_id)
+        or ESCALATION_NOTICE_CHANNEL_KEYS[DEFAULT_ESCALATION_CHANNEL]
+    )
     generic_key = ESCALATION_NOTICE_CHANNEL_KEYS[DEFAULT_ESCALATION_CHANNEL]
     return ESCALATION_NOTICE_CATALOG.format(
         key=primary_key,
