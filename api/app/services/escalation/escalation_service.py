@@ -13,6 +13,7 @@ from app.models.escalation import (
     EscalationCreate,
     EscalationDeliveryStatus,
     EscalationFilters,
+    EscalationInvalidStateError,
     EscalationListResponse,
     EscalationNotFoundError,
     EscalationNotRespondedError,
@@ -106,6 +107,9 @@ class EscalationService:
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
+
         # Already claimed by same staff — idempotent
         if escalation.staff_id == staff_id and escalation.status in (
             EscalationStatus.IN_REVIEW,
@@ -150,6 +154,11 @@ class EscalationService:
 
         if escalation.status == EscalationStatus.CLOSED:
             raise EscalationClosedError(f"Escalation {escalation_id} is closed")
+
+        if escalation.status != EscalationStatus.IN_REVIEW:
+            raise EscalationInvalidStateError(
+                f"Escalation {escalation_id} cannot be unclaimed from {escalation.status}"
+            )
 
         if escalation.staff_id and escalation.staff_id != staff_id:
             if escalation.claimed_at and not self._is_claim_expired(

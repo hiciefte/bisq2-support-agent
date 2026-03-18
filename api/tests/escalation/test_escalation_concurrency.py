@@ -8,8 +8,8 @@ from app.models.escalation import (
     DuplicateEscalationError,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCreate,
-    EscalationNotFoundError,
     EscalationPriority,
     EscalationStatus,
 )
@@ -131,7 +131,7 @@ class TestEscalationConcurrency:
         closed = _make_escalation(status=EscalationStatus.CLOSED)
         mock_repository.get_by_id.return_value = closed
 
-        with pytest.raises(EscalationNotFoundError):
+        with pytest.raises(EscalationClosedError):
             await service.respond_to_escalation(1, "Answer", "staff_1")
 
     @pytest.mark.asyncio

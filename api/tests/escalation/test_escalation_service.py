@@ -10,6 +10,7 @@ from app.models.escalation import (
     EscalationAlreadyClaimedError,
     EscalationClosedError,
     EscalationCreate,
+    EscalationInvalidStateError,
     EscalationNotFoundError,
     EscalationNotRespondedError,
     EscalationPriority,
@@ -399,6 +400,17 @@ class TestEscalationServiceClaim:
         result = await service.claim_escalation(1, "staff_2")
         assert result.staff_id == "staff_2"
 
+    @pytest.mark.asyncio
+    async def test_claim_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.claim_escalation(1, "staff_1")
+
 
 class TestEscalationServiceUnclaim:
     """Test unclaim logic."""
@@ -434,6 +446,18 @@ class TestEscalationServiceUnclaim:
         )
 
         with pytest.raises(EscalationClosedError):
+            await service.unclaim_escalation(1, "staff_1")
+
+    @pytest.mark.asyncio
+    async def test_unclaim_non_review_escalation_raises_invalid_state(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_id="staff_1",
+        )
+
+        with pytest.raises(EscalationInvalidStateError):
             await service.unclaim_escalation(1, "staff_1")
 
 
