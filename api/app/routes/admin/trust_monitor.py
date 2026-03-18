@@ -154,6 +154,11 @@ def _monitor_service(request: Request):
 
 
 def _policy_response(policy) -> TrustMonitorPolicyResponse:
+    updated_at = policy.updated_at
+    if isinstance(updated_at, datetime):
+        updated_at_value = updated_at.isoformat()
+    else:
+        updated_at_value = str(updated_at or "")
     return TrustMonitorPolicyResponse(
         enabled=policy.enabled,
         name_collision_enabled=policy.name_collision_enabled,
@@ -169,7 +174,7 @@ def _policy_response(policy) -> TrustMonitorPolicyResponse:
         evidence_ttl_days=policy.evidence_ttl_days,
         aggregate_ttl_days=policy.aggregate_ttl_days,
         finding_ttl_days=policy.finding_ttl_days,
-        updated_at=policy.updated_at.isoformat(),
+        updated_at=updated_at_value,
     )
 
 
