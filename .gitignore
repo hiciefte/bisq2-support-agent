@@ -101,6 +101,7 @@ api/data/*chat*
 # Runtime state files (local only, not tracked)
 api/data/matrix_polling_state.json
 api/data/matrix_alert_session.json
+api/data/manual_matrix_alert_store*/
 api/data/pairing_qr_code.txt
 api/data/bm25_vocabulary.json
 api/data/qdrant_index_metadata.json
@@ -160,5 +161,4 @@ api/data/matrix_session.json
 api/data/evaluation/qdrant_prompt_refactor*.json
 
 # Local Python runtime caches inside newly added packages/tests
-api/app/**/__pycache__/
-api/tests/**/__pycache__/
+# __pycache__ is already covered by the global rule above.

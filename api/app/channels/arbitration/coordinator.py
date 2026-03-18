@@ -9,7 +9,6 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from app.channels.models import (
@@ -32,6 +31,7 @@ from app.channels.policy import (
 from app.channels.response_dispatcher import ChannelResponseDispatcher
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class _ThreadEntry:
@@ -82,6 +82,7 @@ class ArbitrationCoordinator:
         max_concurrent_threads: int = 500,
         max_accumulated_messages: int = 10,
         max_accumulated_chars: int = 3600,
+        dispatch_retry_delay_seconds: float = 5.0,
     ) -> None:
         self.policy_service = policy_service
         self.escalation_service = escalation_service
@@ -89,6 +90,9 @@ class ArbitrationCoordinator:
         self.max_concurrent_threads = max(1, int(max_concurrent_threads))
         self.max_accumulated_messages = max(1, int(max_accumulated_messages))
         self.max_accumulated_chars = max(256, int(max_accumulated_chars))
+        self.dispatch_retry_delay_seconds = max(
+            0.0, float(dispatch_retry_delay_seconds)
+        )
 
         self._threads: dict[str, _ThreadEntry] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -109,16 +113,27 @@ class ArbitrationCoordinator:
         channel: Any | None = None,
     ) -> bool:
         """Queue a message for arbitration or dispatch immediately when eligible."""
-        channel_id = str(getattr(incoming.channel, "value", incoming.channel) or "").strip().lower()
+        channel_id = (
+            str(getattr(incoming.channel, "value", incoming.channel) or "")
+            .strip()
+            .lower()
+        )
         normalized_thread = self._normalize_thread_id(channel_id, thread_id)
-        normalized_room = str(room_or_conversation_id or "").strip() or normalized_thread
-        delay_seconds = get_first_response_delay_seconds(self.policy_service, channel_id)
+        normalized_room = (
+            str(room_or_conversation_id or "").strip() or normalized_thread
+        )
+        delay_seconds = get_first_response_delay_seconds(
+            self.policy_service, channel_id
+        )
 
         if delay_seconds <= 0:
             response = await on_release(incoming)
             return bool(await on_dispatch(incoming, response))
 
-        if normalized_thread not in self._threads and len(self._threads) >= self.max_concurrent_threads:
+        if (
+            normalized_thread not in self._threads
+            and len(self._threads) >= self.max_concurrent_threads
+        ):
             logger.warning(
                 "Arbitration overflow for channel=%s thread=%s; falling back to immediate dispatch",
                 channel_id,
@@ -274,7 +289,9 @@ class ArbitrationCoordinator:
     ) -> None:
         try:
             await asyncio.sleep(max(0.0, float(delay_seconds)))
-            await self._on_wait_timer_elapsed(thread_id=thread_id, generation=generation)
+            await self._on_wait_timer_elapsed(
+                thread_id=thread_id, generation=generation
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -286,7 +303,9 @@ class ArbitrationCoordinator:
             entry = self._threads.get(thread_id)
             if entry is None or entry.generation != generation:
                 return
-            if self._is_staff_recently_active(entry.room_or_conversation_id, entry.channel_id):
+            if self._is_staff_recently_active(
+                entry.room_or_conversation_id, entry.channel_id
+            ):
                 self._defer_thread_due_to_room_activity(entry)
                 await self._publish_staff_assist(
                     entry,
@@ -336,7 +355,9 @@ class ArbitrationCoordinator:
             async with lock:
                 entry = self._threads.get(thread_id)
                 if entry is not None and entry.generation == generation:
-                    entry.state = "ai_sent" if dispatch_sent else "dispatch_failed_escalated"
+                    entry.state = (
+                        "ai_sent" if dispatch_sent else "dispatch_failed_escalated"
+                    )
                     await self._publish_staff_assist(
                         entry,
                         incoming=merged_incoming,
@@ -397,19 +418,27 @@ class ArbitrationCoordinator:
     ) -> None:
         try:
             await asyncio.sleep(max(0.0, float(delay_seconds)))
-            await self._on_deferred_timer_elapsed(thread_id=thread_id, generation=generation)
+            await self._on_deferred_timer_elapsed(
+                thread_id=thread_id, generation=generation
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Arbitration deferred timer failed for thread=%s", thread_id)
+            logger.exception(
+                "Arbitration deferred timer failed for thread=%s", thread_id
+            )
 
-    async def _on_deferred_timer_elapsed(self, *, thread_id: str, generation: int) -> None:
+    async def _on_deferred_timer_elapsed(
+        self, *, thread_id: str, generation: int
+    ) -> None:
         lock = self._lock_for(thread_id)
         async with lock:
             entry = self._threads.get(thread_id)
             if entry is None or entry.generation != generation:
                 return
-            if self._is_staff_recently_active(entry.room_or_conversation_id, entry.channel_id):
+            if self._is_staff_recently_active(
+                entry.room_or_conversation_id, entry.channel_id
+            ):
                 self._defer_thread_due_to_room_activity(entry)
                 await self._publish_staff_assist(
                     entry,
@@ -432,7 +461,7 @@ class ArbitrationCoordinator:
         first_sent = bool(await on_dispatch(incoming, response))
         if first_sent:
             return True
-        await asyncio.sleep(5.0)
+        await asyncio.sleep(self.dispatch_retry_delay_seconds)
         second_sent = bool(await on_dispatch(incoming, response))
         if second_sent:
             return True
@@ -547,6 +576,7 @@ class ArbitrationCoordinator:
             confidence_score=0.0,
             routing_action="needs_human",
             routing_reason="hitl_timeout",
+            version_confidence=None,
         )
         notice = OutgoingMessage(
             message_id=f"hitl-timeout-{uuid.uuid4()}",
@@ -597,7 +627,9 @@ class ArbitrationCoordinator:
             message_id=f"dispatch-failure-{uuid.uuid4()}",
             in_reply_to=incoming.message_id,
             channel=incoming.channel,
-            answer=get_dispatch_failure_message_template(self.policy_service, channel_id),
+            answer=get_dispatch_failure_message_template(
+                self.policy_service, channel_id
+            ),
             sources=[],
             user=incoming.user,
             metadata=ResponseMetadata(
@@ -607,6 +639,7 @@ class ArbitrationCoordinator:
                 confidence_score=0.0,
                 routing_action="needs_human",
                 routing_reason="dispatch_failure",
+                version_confidence=None,
             ),
             original_question=incoming.question,
             requires_human=True,
@@ -652,7 +685,9 @@ class ArbitrationCoordinator:
                     sent = send_reaction(
                         target,
                         str(incoming.message_id),
-                        get_acknowledgment_reaction_key(self.policy_service, channel_id),
+                        get_acknowledgment_reaction_key(
+                            self.policy_service, channel_id
+                        ),
                     )
                     if inspect.isawaitable(sent):
                         sent = await sent
@@ -686,6 +721,7 @@ class ArbitrationCoordinator:
                 confidence_score=0.0,
                 routing_action="acknowledgment",
                 routing_reason="waiting_window",
+                version_confidence=None,
             ),
             original_question=incoming.question,
             requires_human=False,
@@ -702,8 +738,12 @@ class ArbitrationCoordinator:
                 exc_info=True,
             )
 
-    def _compute_wait_delay_seconds(self, *, channel_id: str, base_delay_seconds: int) -> float:
-        jitter_max = max(0, get_timer_jitter_max_seconds(self.policy_service, channel_id))
+    def _compute_wait_delay_seconds(
+        self, *, channel_id: str, base_delay_seconds: int
+    ) -> float:
+        jitter_max = max(
+            0, get_timer_jitter_max_seconds(self.policy_service, channel_id)
+        )
         if jitter_max <= 0:
             return float(base_delay_seconds)
         jitter = random.uniform(-(jitter_max / 2.0), jitter_max / 2.0)
@@ -736,6 +776,7 @@ class ArbitrationCoordinator:
 
     def _clear_thread(self, thread_id: str) -> None:
         entry = self._threads.pop(thread_id, None)
+        self._locks.pop(thread_id, None)
         if entry is None:
             return
         self._cancel_task(entry.timer_task)
@@ -752,8 +793,12 @@ class ArbitrationCoordinator:
                         exc_info=True,
                     )
 
-    def _is_staff_recently_active(self, room_or_conversation_id: str, channel_id: str) -> bool:
-        last = self._last_staff_activity_by_room.get(str(room_or_conversation_id or "").strip())
+    def _is_staff_recently_active(
+        self, room_or_conversation_id: str, channel_id: str
+    ) -> bool:
+        last = self._last_staff_activity_by_room.get(
+            str(room_or_conversation_id or "").strip()
+        )
         if last is None:
             return False
         cooldown = get_staff_active_cooldown_seconds(self.policy_service, channel_id)

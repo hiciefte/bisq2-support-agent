@@ -91,7 +91,9 @@ class InboundMessageOrchestrator:
                     return apply_autosend_policy(response, autosend_enabled)
 
                 async def _on_dispatch(queued_incoming: Any, response: Any) -> bool:
-                    return bool(await self.dispatcher.dispatch(queued_incoming, response))
+                    return bool(
+                        await self.dispatcher.dispatch(queued_incoming, response)
+                    )
 
                 enqueue_result = arbitration.enqueue(
                     incoming=incoming,
@@ -217,7 +219,9 @@ class InboundMessageOrchestrator:
 
     def _resolve_arbitration_service(self) -> Any | None:
         runtime = getattr(self.channel, "runtime", None)
-        resolve_optional = getattr(runtime, "resolve_optional", None) if runtime else None
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
         if not callable(resolve_optional):
             return None
         try:
@@ -231,11 +235,8 @@ class InboundMessageOrchestrator:
             return None
         if arbitration is None:
             return None
-        required = ("enqueue", "record_staff_activity")
-        for attr in required:
-            if inspect.getattr_static(arbitration, attr, _MISSING) is _MISSING:
-                return None
-        return arbitration
+        enqueue = getattr(arbitration, "enqueue", None)
+        return arbitration if callable(enqueue) else None
 
     def _derive_arbitration_keys(
         self,
@@ -250,7 +251,9 @@ class InboundMessageOrchestrator:
             or str(metadata.get("channel_id", "") or "").strip()
             or canonical.thread_id
         )
-        user_id = str(getattr(getattr(incoming, "user", None), "user_id", "") or "").strip()
+        user_id = str(
+            getattr(getattr(incoming, "user", None), "user_id", "") or ""
+        ).strip()
         if room_or_conversation_id and user_id:
             return (room_or_conversation_id, user_id), room_or_conversation_id
         return canonical.thread_id, room_or_conversation_id or canonical.thread_id

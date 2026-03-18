@@ -511,6 +511,8 @@ class TestBisq2ChannelMessageHandling:
         result = await channel.send_message("bisq2-conversation-id", outgoing)
 
         assert bool(result) is False
+        assert result.external_message_id is None
+        assert result.error == "bisq2_api_unavailable"
 
 
 class TestBisq2ChannelPolling:

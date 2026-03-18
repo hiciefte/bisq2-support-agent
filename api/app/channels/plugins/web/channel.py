@@ -7,7 +7,12 @@ from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
-from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage, SendResult
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    OutgoingMessage,
+    SendResult,
+)
 from app.channels.registry import register_channel
 
 
@@ -74,7 +79,9 @@ class WebChannel(ChannelBase):
             message: Message to send.
 
         Returns:
-            True (web always "succeeds" as sending is via HTTP response).
+            SendResult indicating the HTTP response path succeeded. Web messages
+            are not pushed externally, so `external_message_id` is always None
+            and `editable` is False.
         """
         # Web channel doesn't push - responses are returned via HTTP
         self._logger.debug(f"Web channel send_message called for {target}")

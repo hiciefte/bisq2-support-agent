@@ -129,10 +129,12 @@ class MatrixMessageHandler:
         if incoming is None:
             return
 
-        sender_id = str(getattr(getattr(incoming, "user", None), "user_id", "") or "").strip()
+        sender_id = str(
+            getattr(getattr(incoming, "user", None), "user_id", "") or ""
+        ).strip()
         if self._is_self_sender(sender_id):
             return
-        if self._is_staff_sender(sender_id):
+        if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
                 room_id=room_id,
@@ -263,11 +265,7 @@ class MatrixMessageHandler:
         own_user_id = str(getattr(self.client, "user_id", "") or "").strip()
         return bool(own_user_id and normalized == own_user_id)
 
-    def _is_staff_sender(self, sender_id: str) -> bool:
-        normalized = str(sender_id or "").strip()
-        if not normalized:
-            return False
-
+    def _is_staff_sender(self, *, room: Any, event: Any, sender_id: str) -> bool:
         channel = self.channel
         runtime = getattr(channel, "runtime", None) if channel is not None else None
         resolver = (
@@ -280,20 +278,43 @@ class MatrixMessageHandler:
         if not callable(is_staff):
             return False
 
+        candidates: list[str] = []
+        for raw in (
+            sender_id,
+            getattr(event, "sender", None),
+            self._resolve_sender_display_name(room=room, sender_id=sender_id),
+        ):
+            normalized = str(raw or "").strip()
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+
         try:
-            return bool(is_staff(normalized))
+            return any(bool(is_staff(candidate)) for candidate in candidates)
         except Exception:
             logger.debug(
                 "Failed staff sender check for Matrix sender=%s",
-                normalized,
+                sender_id,
                 exc_info=True,
             )
             return False
 
+    @staticmethod
+    def _resolve_sender_display_name(*, room: Any, sender_id: str) -> str:
+        room_resolver = getattr(room, "user_name", None)
+        if not callable(room_resolver):
+            return ""
+        try:
+            resolved = room_resolver(sender_id)
+        except Exception:
+            return ""
+        return resolved if isinstance(resolved, str) else ""
+
     async def _record_staff_activity(self, *, room_id: str, staff_id: str) -> None:
         channel = self.channel
         runtime = getattr(channel, "runtime", None) if channel is not None else None
-        resolve_optional = getattr(runtime, "resolve_optional", None) if runtime else None
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
         if not callable(resolve_optional):
             return
         arbitration = resolve_optional("arbitration_service")
@@ -326,8 +347,12 @@ class MatrixMessageHandler:
     ) -> bool:
         if room_id not in self.staff_command_room_ids:
             return False
-        runtime = getattr(self.channel, "runtime", None) if self.channel is not None else None
-        resolve_optional = getattr(runtime, "resolve_optional", None) if runtime else None
+        runtime = (
+            getattr(self.channel, "runtime", None) if self.channel is not None else None
+        )
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
         if not callable(resolve_optional):
             return False
         command_handler = resolve_optional("matrix_reaction_handler")

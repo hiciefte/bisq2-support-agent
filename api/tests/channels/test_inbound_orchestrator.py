@@ -328,13 +328,7 @@ async def test_orchestrator_sends_acknowledgment_reaction_before_arbitration_enq
         ),
     )
 
-    def resolve_optional(name: str):
-        if name == "feedback_followup_coordinator":
-            return feedback_followup
-        return None
-
     runtime = MagicMock()
-    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
 
     channel = MagicMock()
     channel.channel_id = "matrix"
@@ -354,13 +348,15 @@ async def test_orchestrator_sends_acknowledgment_reaction_before_arbitration_enq
         user=SimpleNamespace(user_id="@user:server"),
     )
     arbitration = ArbitrationCoordinator(policy_service=policy_service)
-    runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: arbitration
-        if name == "arbitration_service"
-        else feedback_followup
-        if name == "feedback_followup_coordinator"
-        else None
-    )
+
+    def resolve_optional(name: str):
+        if name == "arbitration_service":
+            return arbitration
+        if name == "feedback_followup_coordinator":
+            return feedback_followup
+        return None
+
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
 
     orchestrator = InboundMessageOrchestrator(
         channel=channel,

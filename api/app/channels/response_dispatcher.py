@@ -10,21 +10,21 @@ import logging
 from copy import deepcopy
 from typing import Any
 
+from app.channels.constants import REVIEW_QUEUE_ACTIONS
+from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
+from app.channels.escalation_localization import render_escalation_notice
 from app.channels.policy import (
     get_escalation_notification_channel,
     get_escalation_user_notice_mode,
     get_escalation_user_notice_template,
     is_public_escalation_notice_enabled,
 )
-from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
-from app.channels.escalation_localization import render_escalation_notice
 from app.channels.streaming import deliver_buffered_stream, deliver_native_stream
 from app.models.escalation import EscalationCreate
 
 logger = logging.getLogger(__name__)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
-_REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
 
 
 def _formatter_accepts_kwarg(formatter: Any, name: str) -> bool:
@@ -238,12 +238,12 @@ class ChannelResponseDispatcher:
         if routing_action in _DIRECT_DELIVERY_ACTIONS:
             return True
         # Fail-open for unknown legacy actions to avoid silent user drops.
-        if routing_action and routing_action not in _REVIEW_QUEUE_ACTIONS:
+        if routing_action and routing_action not in REVIEW_QUEUE_ACTIONS:
             logger.warning(
                 "Unknown routing_action=%r for channel dispatcher; defaulting to autosend",
                 routing_action,
             )
-        return routing_action not in _REVIEW_QUEUE_ACTIONS
+        return routing_action not in REVIEW_QUEUE_ACTIONS
 
     @staticmethod
     def should_create_escalation(response: Any) -> bool:
@@ -255,7 +255,7 @@ class ChannelResponseDispatcher:
         requires_human = (
             requires_human_raw if isinstance(requires_human_raw, bool) else False
         )
-        return requires_human or routing_action in _REVIEW_QUEUE_ACTIONS
+        return requires_human or routing_action in REVIEW_QUEUE_ACTIONS
 
     def _resolve_escalation_service(self) -> Any | None:
         if self.escalation_service is not None:
@@ -397,17 +397,13 @@ class ChannelResponseDispatcher:
 
         notification_channel = self._notification_channel_mode()
         sent_public = False
-        if (
-            notification_channel == "public_room"
-            and self._is_public_notice_enabled()
-        ):
+        if notification_channel == "public_room" and self._is_public_notice_enabled():
             sent_public = await self._send_public_escalation_notice(
                 incoming=incoming,
                 response=response,
                 escalation=escalation,
             )
-            if notification_channel == "public_room":
-                return sent_public
+            return sent_public
 
         # For non-public routing, user-room notice behavior is controlled by policy.
         user_notice_sent = await self._send_user_escalation_notice(incoming, response)
@@ -563,17 +559,17 @@ class ChannelResponseDispatcher:
             else response
         )
         try:
-            setattr(notice, "answer", notice_text)
-            setattr(notice, "requires_human", True)
+            notice.answer = notice_text
+            notice.requires_human = True
             if hasattr(notice, "sources"):
-                setattr(notice, "sources", [])
+                notice.sources = []
             metadata = getattr(notice, "metadata", None)
             if metadata is not None:
                 if hasattr(metadata, "confidence_score"):
-                    setattr(metadata, "confidence_score", None)
+                    metadata.confidence_score = None
                 if hasattr(metadata, "routing_action"):
                     # Reactions to queue-notice messages should not feed learning.
-                    setattr(metadata, "routing_action", "escalation_notice")
+                    metadata.routing_action = "escalation_notice"
         except Exception:
             logger.debug(
                 "Failed to shape queued-review notification payload", exc_info=True
@@ -664,7 +660,9 @@ class ChannelResponseDispatcher:
         target = str(metadata.get("staff_room_id", "") or "").strip()
         return target
 
-    def _build_user_escalation_notice_response(self, incoming: Any, response: Any) -> Any:
+    def _build_user_escalation_notice_response(
+        self, incoming: Any, response: Any
+    ) -> Any:
         notice = (
             response.model_copy(deep=True)
             if hasattr(response, "model_copy")
@@ -675,13 +673,13 @@ class ChannelResponseDispatcher:
             self.channel_id,
         )
         try:
-            setattr(notice, "answer", template)
-            setattr(notice, "requires_human", True)
+            notice.answer = template
+            notice.requires_human = True
             if hasattr(notice, "sources"):
-                setattr(notice, "sources", [])
+                notice.sources = []
             metadata = getattr(notice, "metadata", None)
             if metadata is not None and hasattr(metadata, "routing_action"):
-                setattr(metadata, "routing_action", "escalation_notice")
+                metadata.routing_action = "escalation_notice"
         except Exception:
             logger.debug("Failed shaping user escalation notice payload", exc_info=True)
         return notice
@@ -734,7 +732,9 @@ class ChannelResponseDispatcher:
             if isinstance(escalation_id, int) and escalation_id > 0
             else "/admin/escalations"
         )
-        source_block = "\n".join(source_lines) if source_lines else "- No source links available."
+        source_block = (
+            "\n".join(source_lines) if source_lines else "- No source links available."
+        )
         routing_line = routing_reason or "n/a"
         confidence_line = confidence_text or "n/a"
         draft_block = ai_draft_answer or "_No AI draft answer available._"
@@ -769,7 +769,9 @@ class ChannelResponseDispatcher:
             if metadata is not None and hasattr(metadata, "routing_action"):
                 setattr(metadata, "routing_action", "staff_escalation_notice")
         except Exception:
-            logger.debug("Failed shaping staff-room escalation notice payload", exc_info=True)
+            logger.debug(
+                "Failed shaping staff-room escalation notice payload", exc_info=True
+            )
         return notice
 
     @staticmethod

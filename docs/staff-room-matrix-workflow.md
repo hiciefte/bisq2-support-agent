@@ -26,6 +26,10 @@ When an escalation is routed to `staff_room`, the bot posts a notice with:
 - Reply in thread with `/send <edited reply>`: send edited text to user.
 - Reply in thread with `/dismiss`: dismiss escalation with no reply.
 
+Reactions provide quick approval or dismissal. Thread commands give more control:
+use `/send` to send the draft unchanged, `/send <edited reply>` to send edited
+text, and `/dismiss` to close without replying.
+
 Command actions require replying to a staff escalation notice event.
 
 ## Threading Behavior

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.services.channel_autoresponse_policy_service import (
     DEFAULT_ACKNOWLEDGMENT_MESSAGE_TEMPLATE,
     DEFAULT_ACKNOWLEDGMENT_MODE,
@@ -26,7 +27,6 @@ from app.services.channel_autoresponse_policy_service import (
 logger = logging.getLogger(__name__)
 
 AUTOSEND_DISABLED_REASON = "Channel auto-response disabled by admin policy."
-_REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
 
 
 def is_generation_enabled(policy_service: Any | None, channel_id: str) -> bool:
@@ -83,7 +83,9 @@ def get_ai_response_mode(policy_service: Any | None, channel_id: str) -> str:
         return str(DEFAULT_AI_RESPONSE_MODE.get(normalized, "autonomous"))
 
 
-def get_first_response_delay_seconds(policy_service: Any | None, channel_id: str) -> int:
+def get_first_response_delay_seconds(
+    policy_service: Any | None, channel_id: str
+) -> int:
     normalized = str(channel_id or "").strip().lower()
     if policy_service is None:
         return int(DEFAULT_FIRST_RESPONSE_DELAY_SECONDS.get(normalized, 0))
@@ -159,7 +161,9 @@ def is_public_escalation_notice_enabled(
     channel_id: str,
 ) -> bool:
     normalized = str(channel_id or "").strip().lower()
-    default = bool(DEFAULT_PUBLIC_ESCALATION_NOTICE_ENABLED.get(normalized, normalized == "web"))
+    default = bool(
+        DEFAULT_PUBLIC_ESCALATION_NOTICE_ENABLED.get(normalized, normalized == "web")
+    )
     if policy_service is None:
         return default
     try:
@@ -182,7 +186,9 @@ def get_acknowledgment_mode(policy_service: Any | None, channel_id: str) -> str:
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        mode = str(getattr(policy, "acknowledgment_mode", default) or "").strip().lower()
+        mode = (
+            str(getattr(policy, "acknowledgment_mode", default) or "").strip().lower()
+        )
         return mode if mode in {"none", "reaction", "message"} else default
     except Exception:
         logger.exception(
@@ -200,7 +206,9 @@ def get_acknowledgment_reaction_key(policy_service: Any | None, channel_id: str)
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "acknowledgment_reaction_key", default) or "").strip()
+        value = str(
+            getattr(policy, "acknowledgment_reaction_key", default) or ""
+        ).strip()
         return value or default
     except Exception:
         logger.exception(
@@ -225,7 +233,9 @@ def get_acknowledgment_message_template(
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "acknowledgment_message_template", default) or "").strip()
+        value = str(
+            getattr(policy, "acknowledgment_message_template", default) or ""
+        ).strip()
         return value or default
     except Exception:
         logger.exception(
@@ -249,7 +259,9 @@ def get_escalation_user_notice_template(
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "escalation_user_notice_template", default) or "").strip()
+        value = str(
+            getattr(policy, "escalation_user_notice_template", default) or ""
+        ).strip()
         return value or default
     except Exception:
         logger.exception(
@@ -269,7 +281,11 @@ def get_escalation_user_notice_mode(
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "escalation_user_notice_mode", default) or "").strip().lower()
+        value = (
+            str(getattr(policy, "escalation_user_notice_mode", default) or "")
+            .strip()
+            .lower()
+        )
         return value if value in {"none", "message"} else default
     except Exception:
         logger.exception(
@@ -294,7 +310,9 @@ def get_dispatch_failure_message_template(
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "dispatch_failure_message_template", default) or "").strip()
+        value = str(
+            getattr(policy, "dispatch_failure_message_template", default) or ""
+        ).strip()
         return value or default
     except Exception:
         logger.exception(
@@ -309,12 +327,18 @@ def get_escalation_notification_channel(
     channel_id: str,
 ) -> str:
     normalized = str(channel_id or "").strip().lower()
-    default = str(DEFAULT_ESCALATION_NOTIFICATION_CHANNEL.get(normalized, "public_room"))
+    default = str(
+        DEFAULT_ESCALATION_NOTIFICATION_CHANNEL.get(normalized, "public_room")
+    )
     if policy_service is None:
         return default
     try:
         policy = policy_service.get_policy(normalized)
-        value = str(getattr(policy, "escalation_notification_channel", default) or "").strip().lower()
+        value = (
+            str(getattr(policy, "escalation_notification_channel", default) or "")
+            .strip()
+            .lower()
+        )
         return value if value in {"public_room", "staff_room", "none"} else default
     except Exception:
         logger.exception(
@@ -347,14 +371,12 @@ def apply_autosend_policy(response: Any, autosend_enabled: bool) -> Any:
     if autosend_enabled:
         return response
     metadata = getattr(response, "metadata", None)
-    routing_action = (
-        str(getattr(metadata, "routing_action", "") or "").strip().lower()
-    )
+    routing_action = str(getattr(metadata, "routing_action", "") or "").strip().lower()
     requires_human_raw = getattr(response, "requires_human", False)
     requires_human = (
         requires_human_raw if isinstance(requires_human_raw, bool) else False
     )
-    if requires_human or routing_action in _REVIEW_QUEUE_ACTIONS:
+    if requires_human or routing_action in REVIEW_QUEUE_ACTIONS:
         return response
 
     response.requires_human = True

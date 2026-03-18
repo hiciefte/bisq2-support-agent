@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -37,10 +38,12 @@ class StaffAssistService:
         *,
         policy_service: Any | None = None,
         publisher: Any | None = None,
+        max_cached_threads: int = 500,
     ) -> None:
         self.policy_service = policy_service
         self.publisher = publisher
-        self._latest_by_thread: dict[str, StaffAssistPayload] = {}
+        self.max_cached_threads = max(1, int(max_cached_threads))
+        self._latest_by_thread: OrderedDict[str, StaffAssistPayload] = OrderedDict()
 
     def latest_for_thread(self, thread_id: str) -> StaffAssistPayload | None:
         """Return latest payload for a thread (primarily for tests/debug)."""
@@ -69,16 +72,24 @@ class StaffAssistService:
             question=str(getattr(incoming, "question", "") or "").strip(),
             draft_answer=self._extract_draft_answer(response),
             knowledge_sources=self._extract_sources(response),
-            ai_response_mode=get_ai_response_mode(self.policy_service, normalized_channel),
+            ai_response_mode=get_ai_response_mode(
+                self.policy_service, normalized_channel
+            ),
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
         self._latest_by_thread[normalized_thread] = payload
+        self._latest_by_thread.move_to_end(normalized_thread)
+        self._evict_oldest_if_needed()
         await self._publish_to_sink(payload)
         return payload
 
     def clear_thread(self, thread_id: str) -> None:
         """Forget retained payload for a finished thread."""
         self._latest_by_thread.pop(str(thread_id or "").strip(), None)
+
+    def _evict_oldest_if_needed(self) -> None:
+        while len(self._latest_by_thread) > self.max_cached_threads:
+            self._latest_by_thread.popitem(last=False)
 
     @staticmethod
     def _extract_draft_answer(response: Any | None) -> str | None:

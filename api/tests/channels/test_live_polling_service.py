@@ -30,17 +30,17 @@ async def test_run_once_does_not_poll_when_generation_disabled():
 @pytest.mark.asyncio
 async def test_run_once_polls_and_dispatches_when_generation_enabled():
     incoming = SimpleNamespace(message_id="m1")
-    response = SimpleNamespace(
-        requires_human=False,
-        metadata=SimpleNamespace(routing_action="auto_send"),
-    )
     channel = MagicMock()
     channel.channel_id = "bisq2"
     channel.poll_conversations = AsyncMock(return_value=[incoming])
-    channel.handle_incoming = AsyncMock(return_value=response)
+    orchestrator = AsyncMock()
+    orchestrator.process_incoming = AsyncMock(return_value=True)
 
-    service = LivePollingService(channel=channel, channel_id="bisq2")
-    service.dispatcher.dispatch = AsyncMock(return_value=True)
+    service = LivePollingService(
+        channel=channel,
+        channel_id="bisq2",
+        orchestrator=orchestrator,
+    )
 
     with patch(
         "app.channels.services.live_polling_service.is_generation_enabled",
@@ -53,5 +53,4 @@ async def test_run_once_polls_and_dispatches_when_generation_enabled():
 
     assert processed == 1
     channel.poll_conversations.assert_awaited_once()
-    channel.handle_incoming.assert_awaited_once_with(incoming)
-    service.dispatcher.dispatch.assert_awaited_once_with(incoming, response)
+    orchestrator.process_incoming.assert_awaited_once_with(incoming)

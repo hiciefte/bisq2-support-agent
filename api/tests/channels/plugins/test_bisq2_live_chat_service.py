@@ -45,6 +45,8 @@ def _policy_service(enabled: bool = True, generation_enabled: bool = True):
 @pytest.mark.asyncio
 async def test_run_once_polls_and_sends_responses() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="auto_send")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -69,6 +71,8 @@ async def test_run_once_polls_and_sends_responses() -> None:
 @pytest.mark.asyncio
 async def test_run_once_skips_message_without_delivery_target() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="auto_send")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -126,6 +130,8 @@ async def test_run_once_creates_escalation_for_non_autosend_routing_actions() ->
 @pytest.mark.asyncio
 async def test_run_once_sends_clarification_messages_without_escalation() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="needs_clarification")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -151,6 +157,8 @@ async def test_run_once_sends_clarification_messages_without_escalation() -> Non
 @pytest.mark.asyncio
 async def test_run_once_fails_open_and_sends_for_unknown_routing_action() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -176,6 +184,8 @@ async def test_run_once_fails_open_and_sends_for_unknown_routing_action() -> Non
 @pytest.mark.asyncio
 async def test_run_once_skips_when_channel_autoresponse_disabled() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="auto_send")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -203,6 +213,8 @@ async def test_run_once_skips_when_policy_lookup_fails_and_default_is_disabled()
     None
 ):
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     incoming = _incoming()
     outgoing = _outgoing(routing_action="auto_send")
     channel.poll_conversations = AsyncMock(return_value=[incoming])
@@ -267,6 +279,7 @@ async def test_run_once_queues_for_review_when_generation_enabled_and_autosend_d
 @pytest.mark.asyncio
 async def test_run_once_ignores_messages_when_ai_generation_disabled() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
     incoming = _incoming()
     channel.poll_conversations = AsyncMock(return_value=[incoming])
     channel.handle_incoming = AsyncMock()
@@ -297,6 +310,8 @@ async def test_run_once_ignores_messages_when_ai_generation_disabled() -> None:
 @pytest.mark.asyncio
 async def test_start_and_stop_manage_background_task() -> None:
     channel = MagicMock()
+    channel.channel_id = "bisq2"
+    channel.runtime = None
     channel.start = AsyncMock(return_value=None)
     channel.stop = AsyncMock(return_value=None)
     channel.poll_conversations = AsyncMock(return_value=[])

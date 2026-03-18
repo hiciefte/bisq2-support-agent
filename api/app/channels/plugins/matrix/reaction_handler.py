@@ -173,7 +173,13 @@ class MatrixReactionHandler(ReactionHandlerBase):
     def _normalize_staff_action_key(key: str) -> str:
         normalized = str(key or "").strip().replace("\ufe0f", "")
         # Remove Fitzpatrick skin-tone modifiers.
-        for tone in ("\U0001f3fb", "\U0001f3fc", "\U0001f3fd", "\U0001f3fe", "\U0001f3ff"):
+        for tone in (
+            "\U0001f3fb",
+            "\U0001f3fc",
+            "\U0001f3fd",
+            "\U0001f3fe",
+            "\U0001f3ff",
+        ):
             normalized = normalized.replace(tone, "")
         return normalized
 
@@ -204,7 +210,9 @@ class MatrixReactionHandler(ReactionHandlerBase):
         record = tracker.lookup("matrix", str(target_event_id))
         if record is None:
             return None
-        routing_action = str(getattr(record, "routing_action", "") or "").strip().lower()
+        routing_action = (
+            str(getattr(record, "routing_action", "") or "").strip().lower()
+        )
         if routing_action != "staff_escalation_notice":
             return None
         return record
@@ -236,8 +244,11 @@ class MatrixReactionHandler(ReactionHandlerBase):
         escalation_id: int,
     ) -> str:
         repository = getattr(escalation_service, "repository", None)
-        get_by_id = getattr(repository, "get_by_id", None) if repository else None
-        escalation = await get_by_id(escalation_id) if callable(get_by_id) else None
+        get_by_id = getattr(repository, "get_by_id", None)
+        if callable(get_by_id):
+            escalation = await get_by_id(escalation_id)
+        else:
+            escalation = None
         return str(getattr(escalation, "ai_draft_answer", "") or "").strip()
 
     @staticmethod

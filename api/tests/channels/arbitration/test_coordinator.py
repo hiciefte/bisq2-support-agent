@@ -34,7 +34,9 @@ def _incoming(
     )
 
 
-def _outgoing(incoming: IncomingMessage, *, answer: str = "AI draft") -> OutgoingMessage:
+def _outgoing(
+    incoming: IncomingMessage, *, answer: str = "AI draft"
+) -> OutgoingMessage:
     return OutgoingMessage(
         message_id=f"out-{incoming.message_id}",
         in_reply_to=incoming.message_id,
@@ -100,7 +102,9 @@ async def test_wait_timer_releases_and_dispatches_in_autonomous_mode() -> None:
     response = _outgoing(incoming)
     on_release = AsyncMock(return_value=response)
     on_dispatch = AsyncMock(return_value=True)
-    coordinator = ArbitrationCoordinator(policy_service=_policy_service(mode="autonomous"))
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(mode="autonomous")
+    )
 
     await coordinator.enqueue(
         incoming=incoming,
@@ -159,7 +163,9 @@ async def test_hitl_timeout_escalates_and_notifies_user_without_auto_dispatch() 
     on_release = AsyncMock(return_value=response)
     on_dispatch = AsyncMock(return_value=True)
     escalation_service = MagicMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=99))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=99)
+    )
     channel = MagicMock()
     channel.runtime = None
     channel.get_delivery_target = MagicMock(return_value="!room:server")
@@ -201,7 +207,9 @@ async def test_hitl_timeout_escalates_and_notifies_user_without_auto_dispatch() 
 
 
 @pytest.mark.asyncio
-async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_none() -> None:
+async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_none() -> (
+    None
+):
     incoming = _incoming(room_id="!support:server")
     incoming = incoming.model_copy(
         update={
@@ -215,7 +223,9 @@ async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_n
     on_release = AsyncMock(return_value=response)
     on_dispatch = AsyncMock(return_value=True)
     escalation_service = MagicMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=101))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=101)
+    )
     policy = SimpleNamespace(
         first_response_delay_seconds=60,
         ai_response_mode="hitl",
@@ -230,7 +240,9 @@ async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_n
     policy_service = SimpleNamespace(get_policy=lambda _channel_id: policy)
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
     channel = MagicMock()
     channel.runtime = runtime
@@ -267,7 +279,7 @@ async def test_hitl_timeout_routes_to_staff_room_only_when_user_notice_mode_is_n
     assert channel.send_message.call_args.args[0] == "!staff:server"
     sent_notice = channel.send_message.call_args.args[1]
     assert "Escalation #101" in sent_notice.answer
-    assert "AI draft answer:" in sent_notice.answer
+    assert "Reply to user (copy-ready):" in sent_notice.answer
     assert "AI draft" in sent_notice.answer
     assert coordinator._threads == {}
 
@@ -279,7 +291,9 @@ async def test_followup_messages_are_accumulated_for_single_release() -> None:
     response = _outgoing(second)
     on_release = AsyncMock(return_value=response)
     on_dispatch = AsyncMock(return_value=True)
-    coordinator = ArbitrationCoordinator(policy_service=_policy_service(mode="autonomous"))
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(mode="autonomous")
+    )
 
     await coordinator.enqueue(
         incoming=first,
@@ -313,7 +327,9 @@ async def test_autonomous_dispatch_retries_once_before_dead_letter_escalation() 
     on_release = AsyncMock(return_value=response)
     on_dispatch = AsyncMock(side_effect=[False, False])
     escalation_service = MagicMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=100))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=100)
+    )
     channel = MagicMock()
     channel.get_delivery_target = MagicMock(return_value="!room:server")
     channel.send_message = AsyncMock(return_value=True)
@@ -345,7 +361,9 @@ async def test_autonomous_dispatch_retries_once_before_dead_letter_escalation() 
 
 
 @pytest.mark.asyncio
-async def test_room_staff_activity_defers_pending_thread_until_cooldown_expires() -> None:
+async def test_room_staff_activity_defers_pending_thread_until_cooldown_expires() -> (
+    None
+):
     incoming = _incoming()
     response = _outgoing(incoming)
     on_release = AsyncMock(return_value=response)

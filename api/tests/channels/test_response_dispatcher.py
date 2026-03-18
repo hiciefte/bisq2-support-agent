@@ -40,8 +40,8 @@ def test_format_escalation_notice_localizes_generic_fallback():
         channel_registry=None,
     )
 
-    assert "#" not in message
-    assert "hier" in message.lower()
+    assert "#42" in message
+    assert "support-team" in message.lower()
 
 
 @pytest.mark.unit
@@ -152,7 +152,9 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
         message_id="m-2",
         question="my trade is stuck",
         channel_metadata={"room_id": "!support:matrix.org"},
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -165,7 +167,9 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=77))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=77)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -174,7 +178,9 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -205,7 +211,9 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
         message_id="m-3",
         question="need help with wallet",
         channel_metadata={"room_id": "!support:matrix.org"},
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -218,7 +226,9 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=88))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=88)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -227,7 +237,9 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -247,8 +259,8 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
     escalation_service.create_escalation.assert_awaited_once()
     channel.send_message.assert_awaited_once()
     notice = channel.send_message.call_args.args[1]
-    assert "#" not in notice.answer
-    assert "follow up" in notice.answer.lower()
+    assert "#88" in notice.answer
+    assert "support team" in notice.answer.lower()
 
 
 @pytest.mark.unit
@@ -258,7 +270,9 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
         message_id="m-4",
         question="need help",
         channel_metadata={"room_id": "!support:matrix.org"},
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -271,7 +285,9 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=99))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=99)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -281,7 +297,9 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -314,7 +332,9 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
             "room_id": "!support:matrix.org",
             "staff_room_id": "!staff:matrix.org",
         },
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -327,7 +347,9 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=123))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=123)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -337,7 +359,9 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -369,15 +393,16 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
     assert "Routing reason: manual_review" in staff_notice_call.args[1].answer
     assert "Confidence: 10%" in staff_notice_call.args[1].answer
     assert "/admin/escalations?search=123" in staff_notice_call.args[1].answer
-    assert "- Reply in thread with `/send <edited reply>`" in staff_notice_call.args[1].answer
+    assert (
+        "- Reply in thread with `/send <edited reply>`"
+        in staff_notice_call.args[1].answer
+    )
     assert "- Reply in thread with `/dismiss`" in staff_notice_call.args[1].answer
     assert (
         "- React `👍` to send the reply above to the user."
         in staff_notice_call.args[1].answer
     )
-    assert (
-        "- React `👎` to dismiss with no reply." in staff_notice_call.args[1].answer
-    )
+    assert "- React `👎` to dismiss with no reply." in staff_notice_call.args[1].answer
     assert staff_notice_call.args[1].message_id == "staff-escalation-123"
 
 
@@ -391,7 +416,9 @@ async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_non
             "room_id": "!support:matrix.org",
             "staff_room_id": "!staff:matrix.org",
         },
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -404,7 +431,9 @@ async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_non
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=125))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=125)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -415,7 +444,9 @@ async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_non
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -451,13 +482,17 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
             "room_id": "!support:matrix.org",
             "staff_room_id": "!staff:matrix.org",
         },
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
         answer="draft",
         sources=[
-            SimpleNamespace(title="Bisq Easy docs", url="https://docs.bisq.network/easy"),
+            SimpleNamespace(
+                title="Bisq Easy docs", url="https://docs.bisq.network/easy"
+            ),
             SimpleNamespace(title="FAQ entry", url="https://faq.bisq.network/q/123"),
         ],
         metadata=SimpleNamespace(
@@ -467,7 +502,9 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=126))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=126)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -478,7 +515,9 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -509,7 +548,9 @@ async def test_dispatch_falls_back_to_message_for_unsupported_user_notice_mode()
         message_id="m-5c",
         question="trade stuck at payout",
         channel_metadata={"room_id": "!support:matrix.org"},
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -522,7 +563,9 @@ async def test_dispatch_falls_back_to_message_for_unsupported_user_notice_mode()
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=126))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=126)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -533,7 +576,9 @@ async def test_dispatch_falls_back_to_message_for_unsupported_user_notice_mode()
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     channel = MagicMock()
@@ -562,7 +607,9 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
         message_id="m-6",
         question="trade stuck at payout",
         channel_metadata={"room_id": "!support:matrix.org"},
-        user=SimpleNamespace(user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"),
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
     )
     response = SimpleNamespace(
         requires_human=True,
@@ -575,7 +622,9 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
         ),
     )
     escalation_service = AsyncMock()
-    escalation_service.create_escalation = AsyncMock(return_value=SimpleNamespace(id=124))
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=124)
+    )
 
     policy_service = MagicMock()
     policy_service.get_policy.return_value = SimpleNamespace(
@@ -585,7 +634,9 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
     )
     runtime = MagicMock()
     runtime.resolve_optional = MagicMock(
-        side_effect=lambda name: policy_service if name == "channel_autoresponse_policy_service" else None
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
     )
 
     class _MatrixChannelStub:

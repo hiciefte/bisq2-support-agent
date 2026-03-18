@@ -165,7 +165,8 @@ class TestEscalationPostHookExecution:
         await hook.execute(incoming, outgoing)
 
         assert outgoing.answer != original_answer
-        assert "#" not in outgoing.answer
+        assert "team member" in outgoing.answer.lower()
+        assert "follow up" in outgoing.answer.lower()
 
     @pytest.mark.asyncio
     async def test_uses_channel_adapter_message_formatter(
@@ -317,4 +318,6 @@ class TestEscalationPostHookErrorHandling:
 
         assert result is None
         # Should have a generic fallback message
-        assert "follow up" in outgoing.answer.lower()
+        assert "support team" in outgoing.answer.lower()
+        assert "staff member" in outgoing.answer.lower()
+        assert "#42" in outgoing.answer
