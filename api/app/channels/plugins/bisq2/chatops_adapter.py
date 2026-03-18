@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+
+logger = logging.getLogger(__name__)
 
 
 class Bisq2ChatOpsAdapter:
@@ -74,7 +77,20 @@ class Bisq2ChatOpsAdapter:
             )
             return True
 
-        result = await self.dispatcher.dispatch(parsed.command)
+        try:
+            result = await self.dispatcher.dispatch(parsed.command)
+        except Exception:
+            logger.exception(
+                "Bisq2 ChatOps dispatch failed for channel=%s actor=%s",
+                channel_id,
+                sender_profile_id,
+            )
+            await self._send_notice(
+                target=conversation_id or channel_id,
+                body="Command failed to execute.",
+                citation=text or None,
+            )
+            return True
         await self._send_notice(
             target=conversation_id or channel_id,
             body=result.message,

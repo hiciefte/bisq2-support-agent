@@ -11,7 +11,14 @@ from app.channels.chatops.models import (
     ChatOpsCommandName,
     ChatOpsResult,
 )
-from app.models.escalation import EscalationPriority, EscalationStatus
+from app.models.escalation import (
+    EscalationAlreadyClaimedError,
+    EscalationClosedError,
+    EscalationInvalidStateError,
+    EscalationNotFoundError,
+    EscalationPriority,
+    EscalationStatus,
+)
 
 
 class ChatOpsDispatcher:
@@ -29,9 +36,14 @@ class ChatOpsDispatcher:
         self.stale_after_minutes = max(1, int(stale_after_minutes))
         self._idempotent_results: dict[str, ChatOpsResult] = {}
         self._inflight_results: dict[str, asyncio.Task[ChatOpsResult]] = {}
+        self._idempotent_max_entries = 2048
 
     async def dispatch(self, command: ChatOpsCommand) -> ChatOpsResult:
-        cached = self._idempotent_results.get(command.source_message_id)
+        source_message_id = str(command.source_message_id or "").strip()
+        if not source_message_id:
+            return await self._dispatch_uncached(command)
+
+        cached = self._idempotent_results.get(source_message_id)
         if cached is not None:
             return ChatOpsResult(
                 handled=cached.handled,
@@ -43,7 +55,7 @@ class ChatOpsDispatcher:
                 metadata=dict(cached.metadata),
             )
 
-        inflight = self._inflight_results.get(command.source_message_id)
+        inflight = self._inflight_results.get(source_message_id)
         if inflight is not None:
             cached = await inflight
             return ChatOpsResult(
@@ -57,13 +69,15 @@ class ChatOpsDispatcher:
             )
 
         task = asyncio.create_task(self._dispatch_uncached(command))
-        self._inflight_results[command.source_message_id] = task
+        self._inflight_results[source_message_id] = task
         try:
             result = await task
-            self._idempotent_results[command.source_message_id] = result
+            self._idempotent_results[source_message_id] = result
+            if len(self._idempotent_results) > self._idempotent_max_entries:
+                self._idempotent_results.pop(next(iter(self._idempotent_results)), None)
             return result
         finally:
-            self._inflight_results.pop(command.source_message_id, None)
+            self._inflight_results.pop(source_message_id, None)
 
     async def _dispatch_uncached(self, command: ChatOpsCommand) -> ChatOpsResult:
         handler_map = {
@@ -214,30 +228,36 @@ class ChatOpsDispatcher:
         )
 
     async def _handle_claim(self, command: ChatOpsCommand) -> ChatOpsResult:
-        escalation = await self.escalation_service.claim_escalation(
-            command.case_id,
-            command.actor_id,
-        )
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Claimed case #{escalation.id}.",
-            command_name=command.name.value,
-            case_id=escalation.id,
-        )
+        try:
+            escalation = await self.escalation_service.claim_escalation(
+                command.case_id,
+                command.actor_id,
+            )
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Claimed case #{escalation.id}.",
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _handle_unclaim(self, command: ChatOpsCommand) -> ChatOpsResult:
-        escalation = await self.escalation_service.unclaim_escalation(
-            command.case_id,
-            command.actor_id,
-        )
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Released case #{escalation.id}.",
-            command_name=command.name.value,
-            case_id=escalation.id,
-        )
+        try:
+            escalation = await self.escalation_service.unclaim_escalation(
+                command.case_id,
+                command.actor_id,
+            )
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Released case #{escalation.id}.",
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _handle_send(self, command: ChatOpsCommand) -> ChatOpsResult:
         escalation = await self.escalation_service.repository.get_by_id(command.case_id)
@@ -252,19 +272,22 @@ class ChatOpsDispatcher:
                 command_name=command.name.value,
                 case_id=command.case_id,
             )
-        await self._cancel_arbitration_if_possible(escalation)
-        updated = await self.escalation_service.respond_to_escalation(
-            command.case_id,
-            draft,
-            command.actor_id,
-        )
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Sent case #{updated.id} to the user.",
-            command_name=command.name.value,
-            case_id=updated.id,
-        )
+        try:
+            await self._cancel_arbitration_if_possible(escalation)
+            updated = await self.escalation_service.respond_to_escalation(
+                command.case_id,
+                draft,
+                command.actor_id,
+            )
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Sent case #{updated.id} to the user.",
+                command_name=command.name.value,
+                case_id=updated.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _handle_edit_send(self, command: ChatOpsCommand) -> ChatOpsResult:
         escalation = await self.escalation_service.repository.get_by_id(command.case_id)
@@ -279,46 +302,55 @@ class ChatOpsDispatcher:
                 command_name=command.name.value,
                 case_id=command.case_id,
             )
-        await self._cancel_arbitration_if_possible(escalation)
-        updated = await self.escalation_service.respond_to_escalation(
-            command.case_id,
-            edited_message,
-            command.actor_id,
-        )
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Edited and sent case #{updated.id}.",
-            command_name=command.name.value,
-            case_id=updated.id,
-        )
+        try:
+            await self._cancel_arbitration_if_possible(escalation)
+            updated = await self.escalation_service.respond_to_escalation(
+                command.case_id,
+                edited_message,
+                command.actor_id,
+            )
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Edited and sent case #{updated.id}.",
+                command_name=command.name.value,
+                case_id=updated.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _handle_escalate(self, command: ChatOpsCommand) -> ChatOpsResult:
-        escalation = await self.escalation_service.prioritize_escalation(
-            command.case_id,
-            EscalationPriority.HIGH,
-        )
-        reason = str(command.options.get("reason", "") or "").strip()
-        suffix = f" Reason: {reason}" if reason else ""
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Marked case #{escalation.id} as high priority.{suffix}",
-            command_name=command.name.value,
-            case_id=escalation.id,
-        )
+        try:
+            escalation = await self.escalation_service.prioritize_escalation(
+                command.case_id,
+                EscalationPriority.HIGH,
+            )
+            reason = str(command.options.get("reason", "") or "").strip()
+            suffix = f" Reason: {reason}" if reason else ""
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Marked case #{escalation.id} as high priority.{suffix}",
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _handle_resolve(self, command: ChatOpsCommand) -> ChatOpsResult:
-        escalation = await self.escalation_service.close_escalation(command.case_id)
-        note = str(command.options.get("note", "") or "").strip()
-        suffix = f" Note: {note}" if note else ""
-        return ChatOpsResult(
-            handled=True,
-            ok=True,
-            message=f"Resolved case #{escalation.id}.{suffix}",
-            command_name=command.name.value,
-            case_id=escalation.id,
-        )
+        try:
+            escalation = await self.escalation_service.close_escalation(command.case_id)
+            note = str(command.options.get("note", "") or "").strip()
+            suffix = f" Note: {note}" if note else ""
+            return ChatOpsResult(
+                handled=True,
+                ok=True,
+                message=f"Resolved case #{escalation.id}.{suffix}",
+                command_name=command.name.value,
+                case_id=escalation.id,
+            )
+        except self._DOMAIN_EXCEPTIONS as exc:
+            return self._domain_error(command, exc)
 
     async def _cancel_arbitration_if_possible(self, escalation: Any) -> None:
         coordinator = self.arbitration_service
@@ -364,3 +396,20 @@ class ChatOpsDispatcher:
             command_name=command.name.value,
             case_id=command.case_id,
         )
+
+    @staticmethod
+    def _domain_error(command: ChatOpsCommand, exc: Exception) -> ChatOpsResult:
+        return ChatOpsResult(
+            handled=True,
+            ok=False,
+            message=str(exc),
+            command_name=command.name.value,
+            case_id=command.case_id,
+        )
+
+    _DOMAIN_EXCEPTIONS = (
+        EscalationNotFoundError,
+        EscalationAlreadyClaimedError,
+        EscalationClosedError,
+        EscalationInvalidStateError,
+    )

@@ -144,7 +144,8 @@ export async function waitForAssistantMessage(
 /**
  * Wait for the API to be healthy and ready to accept requests.
  *
- * Polls the /health endpoint until it returns 200 status.
+ * Polls both the direct API health endpoint and the web proxy health endpoint
+ * until one returns HTTP 200 or the timeout expires.
  *
  * @param requestContext - Playwright APIRequestContext or Page
  * @param timeout - Maximum time to wait in milliseconds (default: 180000)

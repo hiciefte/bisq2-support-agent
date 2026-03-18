@@ -11,6 +11,7 @@ import pytest
 from app.channels.chatops import ChatOpsCommand, ChatOpsCommandName, ChatOpsDispatcher
 from app.models.escalation import (
     Escalation,
+    EscalationAlreadyClaimedError,
     EscalationDeliveryStatus,
     EscalationListResponse,
     EscalationPriority,
@@ -221,6 +222,20 @@ async def test_dispatch_edit_send_rejects_empty_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_claim_returns_domain_error_result() -> None:
+    service = _service()
+    service.claim_escalation.side_effect = EscalationAlreadyClaimedError(
+        "Escalation 21 already claimed"
+    )
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    result = await dispatcher.dispatch(_command(ChatOpsCommandName.CLAIM, case_id=21))
+
+    assert result.ok is False
+    assert result.message == "Escalation 21 already claimed"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_escalate_and_resolve_delegate_to_service() -> None:
     service = _service()
     high = _escalation(41, priority=EscalationPriority.HIGH)
@@ -303,6 +318,26 @@ async def test_dispatch_concurrent_idempotent_result_calls_service_once() -> Non
     assert first.message == second.message
     assert first.idempotent is False
     assert second.idempotent is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_without_source_message_id_skips_idempotent_cache() -> None:
+    service = _service()
+    service.list_escalations.return_value = EscalationListResponse(
+        escalations=[],
+        total=0,
+        limit=20,
+        offset=0,
+    )
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+    command = _command(ChatOpsCommandName.LIST, source_message_id="")
+
+    first = await dispatcher.dispatch(command)
+    second = await dispatcher.dispatch(command)
+
+    assert first.idempotent is False
+    assert second.idempotent is False
+    assert service.list_escalations.await_count == 2
 
 
 @pytest.mark.asyncio

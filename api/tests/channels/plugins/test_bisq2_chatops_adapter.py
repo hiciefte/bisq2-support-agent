@@ -89,3 +89,35 @@ async def test_handle_message_replies_with_dispatch_result() -> None:
         text="Claimed case #12.",
         citation="!case claim 12",
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_message_replies_with_failure_notice_on_dispatch_error() -> None:
+    staff_resolver = MagicMock()
+    staff_resolver.is_staff.return_value = True
+    runtime, bisq_api = _runtime(staff_resolver=staff_resolver)
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(side_effect=RuntimeError("boom"))
+    adapter = Bisq2ChatOpsAdapter(
+        runtime=runtime,
+        enabled=True,
+        allowed_channel_ids={"support.staff"},
+        dispatcher=dispatcher,
+    )
+
+    handled = await adapter.handle_message(
+        {
+            "messageId": "msg-1",
+            "channelId": "support.staff",
+            "conversationId": "support.staff",
+            "senderUserProfileId": "staff-001",
+            "message": "!case claim 12",
+        }
+    )
+
+    assert handled is True
+    bisq_api.send_support_message.assert_awaited_once_with(
+        channel_id="support.staff",
+        text="Command failed to execute.",
+        citation="!case claim 12",
+    )
