@@ -201,6 +201,26 @@ async def test_dispatch_edit_send_uses_custom_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_edit_send_rejects_empty_message() -> None:
+    service = _service()
+    escalation = _escalation(32)
+    service.repository.get_by_id.return_value = escalation
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    result = await dispatcher.dispatch(
+        _command(
+            ChatOpsCommandName.EDIT_SEND,
+            case_id=32,
+            message="   ",
+        )
+    )
+
+    service.respond_to_escalation.assert_not_awaited()
+    assert result.ok is False
+    assert result.message == "Case #32 requires a non-empty edited message."
+
+
+@pytest.mark.asyncio
 async def test_dispatch_escalate_and_resolve_delegate_to_service() -> None:
     service = _service()
     high = _escalation(41, priority=EscalationPriority.HIGH)

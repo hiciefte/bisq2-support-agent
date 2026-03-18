@@ -270,10 +270,19 @@ class ChatOpsDispatcher:
         escalation = await self.escalation_service.repository.get_by_id(command.case_id)
         if escalation is None:
             return self._not_found(command)
+        edited_message = str(command.message or "").strip()
+        if not edited_message:
+            return ChatOpsResult(
+                handled=True,
+                ok=False,
+                message=f"Case #{command.case_id} requires a non-empty edited message.",
+                command_name=command.name.value,
+                case_id=command.case_id,
+            )
         await self._cancel_arbitration_if_possible(escalation)
         updated = await self.escalation_service.respond_to_escalation(
             command.case_id,
-            str(command.message or "").strip(),
+            edited_message,
             command.actor_id,
         )
         return ChatOpsResult(

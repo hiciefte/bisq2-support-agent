@@ -298,9 +298,9 @@ def get_escalation_user_notice_mode(
         logger.exception(
             "Failed to read escalation_user_notice_mode for channel=%s; falling back to default=%s",
             normalized,
-            invalid_value_fallback,
+            default,
         )
-        return invalid_value_fallback
+        return default
 
 
 def get_dispatch_failure_message_template(
