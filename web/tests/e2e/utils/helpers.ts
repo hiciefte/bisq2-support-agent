@@ -159,13 +159,16 @@ export async function waitForApiReady(
         `${API_BASE_URL}/health`,
         `${WEB_BASE_URL}/api/health`,
     ];
+    const deadline = Date.now() + timeout;
 
     await expect
         .poll(
             async () => {
                 for (const url of healthUrls) {
                     try {
-                        const response = await request.get(url);
+                        const response = await request.get(url, {
+                            timeout: Math.min(5000, Math.max(1, deadline - Date.now())),
+                        });
                         if (response.status() === 200) {
                             return 200;
                         }
