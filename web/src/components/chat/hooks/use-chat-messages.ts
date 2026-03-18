@@ -5,8 +5,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { API_BASE_URL } from "@/lib/config";
+import { parseChatUiLabels } from "../utils/ui-labels";
 import type {
-    ChatUiLabels,
     McpToolUsage,
     Message,
     Source,
@@ -131,39 +131,6 @@ const parseMcpTools = (value: unknown): McpToolUsage[] | undefined => {
     return tools.length > 0 ? tools : undefined;
 };
 
-const parseUiLabels = (value: unknown): ChatUiLabels | undefined => {
-    if (!isJsonRecord(value)) {
-        return undefined;
-    }
-
-    const labels: ChatUiLabels = {
-        helpful_prompt:
-            typeof value.helpful_prompt === "string"
-                ? value.helpful_prompt
-                : undefined,
-        helpful_thank_you:
-            typeof value.helpful_thank_you === "string"
-                ? value.helpful_thank_you
-                : undefined,
-        staff_helpful_prompt:
-            typeof value.staff_helpful_prompt === "string"
-                ? value.staff_helpful_prompt
-                : undefined,
-        staff_response_label:
-            typeof value.staff_response_label === "string"
-                ? value.staff_response_label
-                : undefined,
-        support_team_notified:
-            typeof value.support_team_notified === "string"
-                ? value.support_team_notified
-                : undefined,
-    };
-
-    return Object.values(labels).some((entry) => typeof entry === "string")
-        ? labels
-        : undefined;
-};
-
 const parseStoredMessage = (value: unknown): Message | null => {
     if (!isJsonRecord(value)) {
         return null;
@@ -229,7 +196,7 @@ const parseStoredMessage = (value: unknown): Message | null => {
             typeof value.escalation_user_language === "string"
                 ? value.escalation_user_language
                 : undefined,
-        ui_labels: parseUiLabels(value.ui_labels),
+        ui_labels: parseChatUiLabels(value.ui_labels),
         staff_response: parseStaffResponse(value.staff_response),
     };
 };
@@ -531,7 +498,7 @@ export const useChatMessages = () => {
                         typeof payload.user_language === "string"
                             ? payload.user_language
                             : undefined,
-                    ui_labels: parseUiLabels(payload.ui_labels),
+                    ui_labels: parseChatUiLabels(payload.ui_labels),
                 };
 
                 setMessages((prev) => [...prev, assistantMessage]);

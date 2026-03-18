@@ -14,7 +14,7 @@ function normalize(value: string | null | undefined): string {
 }
 
 function normalizeLanguageCode(value: string | null | undefined): string {
-  const normalized = normalize(value).toLowerCase();
+  const normalized = normalize(value).replace(/_/g, "-").toLowerCase();
   if (!normalized) return "";
   return normalized.split("-", 1)[0] || normalized;
 }
@@ -67,12 +67,5 @@ export function getInitialSuggestedAnswerView(
 export function getInitialStaffAnswer(
   snapshot: EscalationLanguageSnapshot,
 ): string {
-  const suggestedView = getInitialSuggestedAnswerView(snapshot);
-  if (suggestedView === "localized") {
-    const localized = getLocalizedDraftAnswer(snapshot);
-    if (localized) {
-      return localized;
-    }
-  }
   return getCanonicalDraftAnswer(snapshot);
 }

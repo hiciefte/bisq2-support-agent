@@ -1,7 +1,7 @@
 {
-  "chat.ui.helpful_prompt": "¿Fue útil esta respuesta?",
-  "chat.ui.helpful_thank_you": "¡Gracias por tu comentario!",
-  "chat.ui.staff_helpful_prompt": "¿Fue útil la respuesta del personal?",
-  "chat.ui.staff_response_label": "Respuesta del personal",
-  "chat.ui.support_team_notified": "Equipo de soporte notificado"
+  "chat.ui.helpful_prompt": "Dis answer help?",
+  "chat.ui.helpful_thank_you": "Thank you for your feedback!",
+  "chat.ui.staff_helpful_prompt": "Di staff answer help?",
+  "chat.ui.staff_response_label": "Staff reply",
+  "chat.ui.support_team_notified": "Support team don hear am"
 }

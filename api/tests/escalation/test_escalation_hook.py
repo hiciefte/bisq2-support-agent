@@ -318,6 +318,6 @@ class TestEscalationPostHookErrorHandling:
 
         assert result is None
         # Should have a generic fallback message
-        assert "support team" in outgoing.answer.lower()
-        assert "staff member" in outgoing.answer.lower()
-        assert "#42" in outgoing.answer
+        assert "team member" in outgoing.answer.lower()
+        assert "follow up" in outgoing.answer.lower()
+        assert "#42" not in outgoing.answer

@@ -695,6 +695,23 @@ class TestTranslationService:
         assert result["cached"] is False
         mock_llm_provider.generate.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_translate_query_does_not_passthrough_non_entity_bisq_phrase(
+        self, translation_service, mock_llm_provider
+    ):
+        """Only exact short Bisq entity phrases should bypass translation."""
+        mock_llm_provider.generate = AsyncMock(return_value="I love Bisq")
+
+        result = await translation_service.translate_query(
+            "Ich liebe Bisq",
+            source_lang="de",
+        )
+
+        assert result["translated_text"] == "I love Bisq"
+        assert result["source_lang"] == "de"
+        assert result["skipped"] is False
+        mock_llm_provider.generate.assert_awaited_once()
+
 
 # =============================================================================
 # TASK 10.6: BGE-M3 EMBEDDINGS TESTS
