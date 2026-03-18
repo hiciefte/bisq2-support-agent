@@ -29,7 +29,7 @@ def test_authorize_rejects_disabled_feature() -> None:
 
     assert result is not None
     assert result.ok is False
-    assert result.message == "Matrix ChatOps is disabled."
+    assert result.message == "ChatOps is disabled."
 
 
 def test_authorize_rejects_wrong_room() -> None:
@@ -43,7 +43,33 @@ def test_authorize_rejects_wrong_room() -> None:
 
     assert result is not None
     assert result.ok is False
-    assert "configured Matrix staff room" in result.message
+    assert "configured staff channel" in result.message
+
+
+def test_authorize_supports_transport_specific_labels() -> None:
+    authorizer = ChatOpsAuthorizer(
+        enabled=False,
+        allowed_room_ids={"support.staff"},
+        staff_resolver=StaffResolver(["staff-1"]),
+        surface_label="Bisq2 ChatOps",
+        allowed_scope_label="configured Bisq2 staff channel",
+    )
+
+    disabled = authorizer.authorize(
+        _command(actor_id="staff-1", room_id="support.staff")
+    )
+    wrong_scope = ChatOpsAuthorizer(
+        enabled=True,
+        allowed_room_ids={"support.staff"},
+        staff_resolver=StaffResolver(["staff-1"]),
+        surface_label="Bisq2 ChatOps",
+        allowed_scope_label="configured Bisq2 staff channel",
+    ).authorize(_command(actor_id="staff-1", room_id="public"))
+
+    assert disabled is not None
+    assert disabled.message == "Bisq2 ChatOps is disabled."
+    assert wrong_scope is not None
+    assert wrong_scope.message.endswith("configured Bisq2 staff channel.")
 
 
 def test_authorize_rejects_non_staff_sender() -> None:

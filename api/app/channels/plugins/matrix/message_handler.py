@@ -147,6 +147,8 @@ class MatrixMessageHandler:
                 sender_id=sender_id,
             )
             return
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
+            return
         if room_id not in self.allowed_room_ids:
             return
 

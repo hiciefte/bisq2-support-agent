@@ -61,6 +61,8 @@ class MatrixChatOpsAdapter:
             enabled=self.enabled,
             allowed_room_ids=self.allowed_room_ids,
             staff_resolver=self.runtime.resolve_optional("staff_resolver"),
+            surface_label="Matrix ChatOps",
+            allowed_scope_label="configured Matrix staff room",
         )
         auth_result = authorizer.authorize(parsed.command)
         if auth_result is not None:

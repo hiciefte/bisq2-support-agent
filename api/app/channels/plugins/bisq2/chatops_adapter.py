@@ -62,6 +62,8 @@ class Bisq2ChatOpsAdapter:
             enabled=self.enabled,
             allowed_room_ids=self.allowed_channel_ids,
             staff_resolver=self.runtime.resolve_optional("staff_resolver"),
+            surface_label="Bisq2 ChatOps",
+            allowed_scope_label="configured Bisq2 staff channel",
         )
         auth_result = authorizer.authorize(parsed.command)
         if auth_result is not None:

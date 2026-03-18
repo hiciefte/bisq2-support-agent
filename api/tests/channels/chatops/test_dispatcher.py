@@ -272,3 +272,25 @@ async def test_dispatch_stale_filters_old_pending_cases() -> None:
 
     assert "#51 [new]" in result.message
     assert "#52" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_dispatch_escalated_filters_high_priority_pending_cases() -> None:
+    service = _service()
+    service.list_escalations.return_value = EscalationListResponse(
+        escalations=[
+            _escalation(61, priority=EscalationPriority.HIGH),
+            _escalation(62, priority=EscalationPriority.NORMAL),
+        ],
+        total=2,
+        limit=20,
+        offset=0,
+    )
+    dispatcher = ChatOpsDispatcher(escalation_service=service)
+
+    result = await dispatcher.dispatch(
+        _command(ChatOpsCommandName.LIST, options={"scope": "escalated"})
+    )
+
+    assert "#61 [escalated]" in result.message
+    assert "#62" not in result.message

@@ -120,6 +120,18 @@ class ChatOpsDispatcher:
                 if getattr(escalation, "created_at", None)
                 and escalation.created_at <= cutoff
             ][:limit]
+        elif scope == "escalated":
+            response = await service.list_escalations(
+                status=EscalationStatus.PENDING,
+                channel=channel,
+                limit=max(limit * 3, limit),
+                offset=0,
+            )
+            escalations = [
+                escalation
+                for escalation in response.escalations
+                if getattr(escalation, "priority", None) == EscalationPriority.HIGH
+            ][:limit]
         else:
             status_filter = EscalationStatus.PENDING
             response = await service.list_escalations(

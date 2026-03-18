@@ -177,6 +177,69 @@ async def test_on_message_records_trust_event_even_when_generation_disabled() ->
 
 
 @pytest.mark.asyncio
+async def test_on_message_handles_staff_chatops_even_when_generation_disabled() -> None:
+    client = MagicMock()
+    client.user_id = "@agent:server"
+    connection_manager = MagicMock()
+    connection_manager.sync_forever = AsyncMock()
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = MagicMock(
+        enabled=False, generation_enabled=False
+    )
+
+    staff_resolver = MagicMock()
+    staff_resolver.is_staff.return_value = True
+    matrix_chatops_adapter = MagicMock()
+    matrix_chatops_adapter.handle_event = AsyncMock(return_value=True)
+    arbitration_service = MagicMock()
+    arbitration_service.record_staff_activity = AsyncMock()
+    runtime = MagicMock()
+
+    def resolve_optional(name: str):
+        if name == "staff_resolver":
+            return staff_resolver
+        if name == "arbitration_service":
+            return arbitration_service
+        if name == "matrix_chatops_adapter":
+            return matrix_chatops_adapter
+        if name == "feedback_followup_coordinator":
+            return None
+        return None
+
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.handle_incoming = AsyncMock()
+
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        autoresponse_policy_service=policy_service,
+        allowed_room_ids=["!sync:server"],
+        staff_command_room_ids=["!staff:server"],
+        channel_id="matrix",
+    )
+
+    room, event = _matrix_reply_event(
+        room_id="!staff:server",
+        sender="@support:server",
+        body="!case claim 241",
+    )
+    await handler._on_message(room, event)
+
+    matrix_chatops_adapter.handle_event.assert_awaited_once_with(
+        room_id="!staff:server",
+        event_id="$evt-reply:server",
+        sender="@support:server",
+        text="!case claim 241",
+    )
+    arbitration_service.record_staff_activity.assert_awaited_once()
+    channel.handle_incoming.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_on_message_skips_when_channel_not_attached() -> None:
     client = MagicMock()
     connection_manager = MagicMock()
