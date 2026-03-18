@@ -135,7 +135,9 @@ class Bisq2Channel(ChannelBase):
         """Return channel type for outgoing messages."""
         return ChannelType.BISQ2
 
-    def get_staff_notification_target(self, metadata: dict[str, Any] | None = None) -> str:
+    def get_staff_notification_target(
+        self, metadata: dict[str, Any] | None = None
+    ) -> str:
         """Resolve Bisq2 staff-notification target for escalation notices.
 
         Priority:

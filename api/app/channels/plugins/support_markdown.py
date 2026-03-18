@@ -64,9 +64,13 @@ def compose_support_answer_markdown(
         else bool(include_confidence)
     )
     confidence_value = (
-        _render_confidence_value(confidence_score) if should_include_confidence else None
+        _render_confidence_value(confidence_score)
+        if should_include_confidence
+        else None
     )
-    source_mix = _render_source_mix(source_entries) if normalized_format == "admin" else None
+    source_mix = (
+        _render_source_mix(source_entries) if normalized_format == "admin" else None
+    )
 
     if normalized_format == "matrix":
         return _render_matrix_answer(base_answer, source_entries)

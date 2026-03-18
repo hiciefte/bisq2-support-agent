@@ -413,9 +413,7 @@ class TestMatrixChannelMessageHandling:
         call_kwargs = mock_client.room_send.call_args.kwargs
         assert call_kwargs["room_id"] == "!room:matrix.org"
         assert call_kwargs["message_type"] == "m.reaction"
-        assert (
-            call_kwargs["content"]["m.relates_to"]["event_id"] == "$target123"
-        )
+        assert call_kwargs["content"]["m.relates_to"]["event_id"] == "$target123"
         assert call_kwargs["content"]["m.relates_to"]["key"] == "👀"
 
     @pytest.mark.unit

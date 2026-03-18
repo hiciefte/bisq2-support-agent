@@ -23,10 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nio import AsyncClient, AsyncClientConfig
-
 from app.channels.plugins.matrix.client.session_manager import SessionManager
-
+from nio import AsyncClient, AsyncClientConfig
 
 DEFAULT_HOMESERVER = "https://matrix.org"
 DEFAULT_ADMIN_API_BASE = "http://localhost:8000"
@@ -140,7 +138,9 @@ def _matrix_room_event(
     )
 
 
-def _admin_get_escalation(api_base: str, api_key: str, escalation_id: int) -> dict[str, Any]:
+def _admin_get_escalation(
+    api_base: str, api_key: str, escalation_id: int
+) -> dict[str, Any]:
     return _http_json(
         "GET",
         f"{api_base}/admin/escalations/{escalation_id}",
@@ -319,12 +319,15 @@ def _wait_for_sender_event(
             if event[0] in seen:
                 continue
             return event
-        seen.update(event_id for event_id, _, _ in _recent_sender_events(
-            access_token,
-            room_id,
-            sender=sender,
-            since_ts_ms=since_ts_ms,
-        ))
+        seen.update(
+            event_id
+            for event_id, _, _ in _recent_sender_events(
+                access_token,
+                room_id,
+                sender=sender,
+                since_ts_ms=since_ts_ms,
+            )
+        )
         time.sleep(2)
     return None
 
@@ -363,7 +366,9 @@ async def _run_scenario(
         timeout_seconds=NOTICE_TIMEOUT_SECONDS,
     )
     if staff_notice is None:
-        return ScenarioResult(name, escalation_id, False, "staff notice event not found")
+        return ScenarioResult(
+            name, escalation_id, False, "staff notice event not found"
+        )
 
     staff_notice_event_id, _, _ = staff_notice
     print(f"staff notice event={staff_notice_event_id}")
@@ -524,7 +529,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--staff-password",
-        default=os.getenv("MATRIX_E2E_STAFF_PASSWORD", os.getenv("MATRIX_ALERT_PASSWORD", "")),
+        default=os.getenv(
+            "MATRIX_E2E_STAFF_PASSWORD", os.getenv("MATRIX_ALERT_PASSWORD", "")
+        ),
     )
     parser.add_argument(
         "--bot-user-id",
@@ -555,7 +562,9 @@ def parse_args() -> argparse.Namespace:
     args.user_id = args.user_id or _env_required("MATRIX_E2E_USER_ID")
     args.user_password = args.user_password or _env_required("MATRIX_E2E_USER_PASSWORD")
     args.staff_id = args.staff_id or _env_required("MATRIX_E2E_STAFF_ID")
-    args.staff_password = args.staff_password or _env_required("MATRIX_E2E_STAFF_PASSWORD")
+    args.staff_password = args.staff_password or _env_required(
+        "MATRIX_E2E_STAFF_PASSWORD"
+    )
     args.bot_user_id = args.bot_user_id or _env_required("MATRIX_E2E_BOT_USER_ID")
     args.sync_room = args.sync_room or _env_required("MATRIX_E2E_SYNC_ROOM")
     args.staff_room = args.staff_room or _env_required("MATRIX_E2E_STAFF_ROOM")

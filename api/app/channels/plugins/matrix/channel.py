@@ -10,8 +10,12 @@ from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
-from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
-from app.channels.models import SendResult
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    OutgoingMessage,
+    SendResult,
+)
 from app.channels.plugins.matrix.room_filter import (
     resolve_allowed_reaction_rooms,
     resolve_allowed_sync_rooms,
@@ -202,7 +206,9 @@ class MatrixChannel(ChannelBase):
         """Return channel type for outgoing messages."""
         return ChannelType.MATRIX
 
-    def get_staff_notification_target(self, metadata: dict[str, Any] | None = None) -> str:
+    def get_staff_notification_target(
+        self, metadata: dict[str, Any] | None = None
+    ) -> str:
         """Resolve staff notification room target for escalation notices.
 
         Priority:
@@ -446,7 +452,10 @@ class MatrixChannel(ChannelBase):
                             ),
                             timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
                         )
-                        if hasattr(retry_response, "event_id") and retry_response.event_id:
+                        if (
+                            hasattr(retry_response, "event_id")
+                            and retry_response.event_id
+                        ):
                             self._logger.info(
                                 "Recovered Matrix room state after send exception "
                                 "room_id=%s",
@@ -470,7 +479,9 @@ class MatrixChannel(ChannelBase):
 
     @staticmethod
     def _resolve_message_msgtype(metadata: Any | None) -> str:
-        routing_action = str(getattr(metadata, "routing_action", "") or "").strip().lower()
+        routing_action = (
+            str(getattr(metadata, "routing_action", "") or "").strip().lower()
+        )
         if routing_action.endswith("_notice"):
             return "m.notice"
         return "m.text"

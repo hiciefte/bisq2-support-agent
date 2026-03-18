@@ -202,7 +202,9 @@ class ChannelBootstrapper:
                         "channel_autoresponse_policy_service"
                     ),
                     escalation_service=runtime.resolve_optional("escalation_service"),
-                    staff_assist_service=runtime.resolve_optional("staff_assist_service"),
+                    staff_assist_service=runtime.resolve_optional(
+                        "staff_assist_service"
+                    ),
                 ),
                 allow_override=True,
             )
