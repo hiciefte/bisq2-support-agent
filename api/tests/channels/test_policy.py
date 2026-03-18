@@ -40,6 +40,18 @@ def test_get_escalation_user_notice_mode_reads_policy_value() -> None:
     assert mode == "none"
 
 
+def test_get_escalation_user_notice_mode_accepts_public_reply() -> None:
+    policy_service = SimpleNamespace(
+        get_policy=lambda _channel_id: SimpleNamespace(
+            escalation_user_notice_mode="public_reply"
+        )
+    )
+
+    mode = get_escalation_user_notice_mode(policy_service, "matrix")
+
+    assert mode == "public_reply"
+
+
 def test_get_escalation_user_notice_mode_falls_back_for_invalid_value() -> None:
     policy_service = SimpleNamespace(
         get_policy=lambda _channel_id: SimpleNamespace(

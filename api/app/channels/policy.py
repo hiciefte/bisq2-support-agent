@@ -286,7 +286,7 @@ def get_escalation_user_notice_mode(
             .strip()
             .lower()
         )
-        return value if value in {"none", "message"} else default
+        return value if value in {"none", "message", "public_reply"} else default
     except Exception:
         logger.exception(
             "Failed to read escalation_user_notice_mode for channel=%s; falling back to default=%s",

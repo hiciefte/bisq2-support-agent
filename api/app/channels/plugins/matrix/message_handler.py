@@ -268,9 +268,7 @@ class MatrixMessageHandler:
     def _is_staff_sender(self, *, room: Any, event: Any, sender_id: str) -> bool:
         channel = self.channel
         runtime = getattr(channel, "runtime", None) if channel is not None else None
-        resolver = (
-            runtime.resolve_optional("staff_resolver") if runtime is not None else None
-        )
+        resolver = self._resolve_staff_resolver(runtime)
         if resolver is None:
             return False
 
@@ -297,6 +295,18 @@ class MatrixMessageHandler:
                 exc_info=True,
             )
             return False
+
+    def _resolve_staff_resolver(self, runtime: Any) -> Any | None:
+        if runtime is None:
+            return None
+        resolve_optional = getattr(runtime, "resolve_optional", None)
+        if not callable(resolve_optional):
+            return None
+        try:
+            return resolve_optional("staff_resolver")
+        except Exception:
+            logger.debug("Failed resolving Matrix staff_resolver", exc_info=True)
+            return None
 
     @staticmethod
     def _resolve_sender_display_name(*, room: Any, sender_id: str) -> str:

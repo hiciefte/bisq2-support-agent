@@ -267,6 +267,56 @@ class TestMatrixReactionEventProcessing:
         assert reaction_event.rating == ReactionRating.POSITIVE
 
     @pytest.mark.asyncio
+    async def test_staff_escalation_reaction_uses_current_room_for_confirmation(
+        self, handler, mock_runtime
+    ):
+        room = self._make_room(room_id="!room:server")
+        event = self._make_reaction_event(
+            relates_to_event_id="$staff-notice:server",
+            key="\U0001f44d",
+            sender="@staff:server",
+        )
+
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-42",
+            answer="Escalation #42",
+            delivery_target="",
+        )
+        escalation_service = MagicMock()
+        escalation_service.respond_to_escalation = AsyncMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(ai_draft_answer="AI draft")
+        )
+        client = MagicMock()
+        client.room_send = AsyncMock()
+        runtime_settings = SimpleNamespace(MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES=True)
+
+        def resolve_optional(name: str):
+            if name == "sent_message_tracker":
+                return tracker
+            if name == "staff_resolver":
+                resolver = MagicMock()
+                resolver.is_staff.return_value = True
+                return resolver
+            if name == "escalation_service":
+                return escalation_service
+            if name == "matrix_client":
+                return client
+            return None
+
+        mock_runtime.resolve_optional.side_effect = resolve_optional
+        mock_runtime.settings = runtime_settings
+
+        await handler._on_reaction_event(room, event)
+
+        client = mock_runtime.resolve_optional("matrix_client")
+        client.room_send.assert_awaited_once()
+        assert client.room_send.await_args.kwargs["room_id"] == "!room:server"
+
+    @pytest.mark.asyncio
     async def test_processes_rocket_reaction_as_positive(self, handler, mock_processor):
         """Rocket emoji maps to POSITIVE for quick-reaction parity."""
         room = self._make_room()
@@ -475,11 +525,11 @@ class TestMatrixReactionStaffActions:
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
             )
         )
         room = self._make_room()
@@ -516,11 +566,11 @@ class TestMatrixReactionStaffActions:
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
             )
         )
         room = self._make_room()
@@ -555,11 +605,11 @@ class TestMatrixReactionStaffActions:
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
             )
         )
         room = self._make_room()
@@ -592,11 +642,11 @@ class TestMatrixReactionStaffActions:
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
             )
         )
         room = self._make_room()
@@ -646,19 +696,23 @@ class TestMatrixReactionStaffActions:
         escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
         escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
         matrix_client = MagicMock()
-        matrix_client.room_send = AsyncMock(return_value=SimpleNamespace(event_id="$ok"))
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
 
         mock_runtime.resolve_optional = MagicMock(
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else matrix_client
-                if name == "matrix_client"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
             )
         )
 
@@ -679,7 +733,8 @@ class TestMatrixReactionStaffActions:
         assert sent_content["msgtype"] == "m.notice"
         assert sent_content["m.relates_to"]["rel_type"] == "m.thread"
         assert (
-            sent_content["m.relates_to"]["m.in_reply_to"]["event_id"] == "$staff-msg:server"
+            sent_content["m.relates_to"]["m.in_reply_to"]["event_id"]
+            == "$staff-msg:server"
         )
 
     @pytest.mark.asyncio
@@ -703,19 +758,23 @@ class TestMatrixReactionStaffActions:
         escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
         escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
         matrix_client = MagicMock()
-        matrix_client.room_send = AsyncMock(return_value=SimpleNamespace(event_id="$ok"))
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
 
         mock_runtime.resolve_optional = MagicMock(
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else matrix_client
-                if name == "matrix_client"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
             )
         )
 
@@ -749,19 +808,23 @@ class TestMatrixReactionStaffActions:
         escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
         escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
         matrix_client = MagicMock()
-        matrix_client.room_send = AsyncMock(return_value=SimpleNamespace(event_id="$ok"))
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
 
         mock_runtime.resolve_optional = MagicMock(
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else matrix_client
-                if name == "matrix_client"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
             )
         )
 
@@ -807,11 +870,11 @@ class TestMatrixReactionStaffActions:
             side_effect=lambda name: (
                 tracker
                 if name == "sent_message_tracker"
-                else escalation_service
-                if name == "escalation_service"
-                else staff_resolver
-                if name == "staff_resolver"
-                else None
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
             )
         )
 

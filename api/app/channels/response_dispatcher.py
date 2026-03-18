@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -407,13 +408,14 @@ class ChannelResponseDispatcher:
 
         # For non-public routing, user-room notice behavior is controlled by policy.
         user_notice_sent = await self._send_user_escalation_notice(incoming, response)
+        staff_notice_sent = False
         if notification_channel == "staff_room":
-            await self._send_staff_room_escalation_notice(
+            staff_notice_sent = await self._send_staff_room_escalation_notice(
                 incoming=incoming,
                 response=response,
                 escalation=escalation,
             )
-        return sent_public or user_notice_sent
+        return sent_public or user_notice_sent or staff_notice_sent
 
     async def notify_review_queued(
         self,
@@ -793,8 +795,14 @@ class ChannelResponseDispatcher:
 
         iterable = sources if isinstance(sources, list) else []
         for source in iterable[:limit]:
-            title = str(getattr(source, "title", "") or "").strip() or "Source"
-            url = str(getattr(source, "url", "") or "").strip()
+            if isinstance(source, Mapping):
+                raw_title = source.get("title", "")
+                raw_url = source.get("url", "")
+            else:
+                raw_title = getattr(source, "title", "")
+                raw_url = getattr(source, "url", "")
+            title = str(raw_title or "").strip() or "Source"
+            url = str(raw_url or "").strip()
             if url:
                 lines.append(f"- {title}: {url}")
             else:

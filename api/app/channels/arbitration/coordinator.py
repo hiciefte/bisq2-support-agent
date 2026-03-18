@@ -295,6 +295,9 @@ class ArbitrationCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
+            await self._cleanup_failed_thread(
+                thread_id=thread_id, generation=generation
+            )
             logger.exception("Arbitration wait timer failed for thread=%s", thread_id)
 
     async def _on_wait_timer_elapsed(self, *, thread_id: str, generation: int) -> None:
@@ -424,6 +427,9 @@ class ArbitrationCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
+            await self._cleanup_failed_thread(
+                thread_id=thread_id, generation=generation
+            )
             logger.exception(
                 "Arbitration deferred timer failed for thread=%s", thread_id
             )
@@ -495,6 +501,9 @@ class ArbitrationCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
+            await self._cleanup_failed_thread(
+                thread_id=thread_id, generation=generation
+            )
             logger.exception("HITL timeout handler failed for thread=%s", thread_id)
 
     async def _on_hitl_timeout(
@@ -785,13 +794,21 @@ class ArbitrationCoordinator:
             clear_fn = getattr(self.staff_assist_service, "clear_thread", None)
             if callable(clear_fn):
                 try:
-                    clear_fn(thread_id)
+                    clear_fn(thread_id, entry.channel_id)
                 except Exception:
                     logger.debug(
                         "Failed clearing staff-assist payload for thread=%s",
                         thread_id,
                         exc_info=True,
                     )
+
+    async def _cleanup_failed_thread(self, *, thread_id: str, generation: int) -> None:
+        lock = self._lock_for(thread_id)
+        async with lock:
+            entry = self._threads.get(thread_id)
+            if entry is None or entry.generation != generation:
+                return
+            self._clear_thread(thread_id)
 
     def _is_staff_recently_active(
         self, room_or_conversation_id: str, channel_id: str

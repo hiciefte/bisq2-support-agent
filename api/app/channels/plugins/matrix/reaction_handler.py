@@ -118,6 +118,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
                 return
 
             handled_staff_action = await self._handle_staff_room_escalation_action(
+                room_id=room_id,
                 target_event_id=target_event_id,
                 key=str(key),
                 sender=str(sender),
@@ -432,6 +433,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
     async def _handle_staff_room_escalation_action(
         self,
         *,
+        room_id: str,
         target_event_id: str,
         key: str,
         sender: str,
@@ -482,7 +484,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
                     escalation_id, draft, sender
                 )
                 await self._send_staff_thread_notice(
-                    room_id=str(getattr(record, "delivery_target", "") or "").strip(),
+                    room_id=room_id,
                     root_event_id=str(target_event_id),
                     body=f"Approved escalation #{escalation_id} and sent response.",
                 )
@@ -495,7 +497,7 @@ class MatrixReactionHandler(ReactionHandlerBase):
 
             await escalation_service.close_escalation(escalation_id)
             await self._send_staff_thread_notice(
-                room_id=str(getattr(record, "delivery_target", "") or "").strip(),
+                room_id=room_id,
                 root_event_id=str(target_event_id),
                 body=f"Dismissed escalation #{escalation_id} with no reply.",
             )

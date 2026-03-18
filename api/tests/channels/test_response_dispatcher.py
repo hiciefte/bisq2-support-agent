@@ -664,3 +664,32 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
     assert channel.send_message.await_count == 2
     staff_notice_call = channel.send_message.await_args_list[1]
     assert staff_notice_call.args[0] == "!staff-from-method:matrix.org"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_notify_review_queued_reports_success_when_staff_notice_sends():
+    dispatcher = ChannelResponseDispatcher(channel=MagicMock(), channel_id="matrix")
+    dispatcher._notification_channel_mode = MagicMock(return_value="staff_room")
+    dispatcher._send_user_escalation_notice = AsyncMock(return_value=False)
+    dispatcher._send_staff_room_escalation_notice = AsyncMock(return_value=True)
+
+    sent = await dispatcher.notify_review_queued(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    assert sent is True
+
+
+@pytest.mark.unit
+def test_format_source_lines_supports_dict_sources():
+    dispatcher = ChannelResponseDispatcher(channel=None, channel_id="matrix")
+
+    lines = dispatcher._build_staff_notice_source_lines(
+        [{"title": "Doc 1", "url": "https://example.org"}],
+        limit=5,
+    )
+
+    assert lines == ["- Doc 1: https://example.org"]

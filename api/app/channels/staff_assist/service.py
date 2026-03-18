@@ -45,9 +45,29 @@ class StaffAssistService:
         self.max_cached_threads = max(1, int(max_cached_threads))
         self._latest_by_thread: OrderedDict[str, StaffAssistPayload] = OrderedDict()
 
-    def latest_for_thread(self, thread_id: str) -> StaffAssistPayload | None:
+    @staticmethod
+    def _case_key(channel_id: str | None, thread_id: str) -> str:
+        normalized_thread = str(thread_id or "").strip()
+        normalized_channel = str(channel_id or "").strip().lower()
+        if normalized_channel and normalized_thread:
+            return f"{normalized_channel}:{normalized_thread}"
+        return normalized_thread
+
+    def latest_for_thread(
+        self,
+        thread_id: str,
+        channel_id: str | None = None,
+    ) -> StaffAssistPayload | None:
         """Return latest payload for a thread (primarily for tests/debug)."""
-        return self._latest_by_thread.get(str(thread_id or "").strip())
+        key = self._case_key(channel_id, thread_id)
+        payload = self._latest_by_thread.get(key)
+        if payload is not None or channel_id is not None:
+            return payload
+        normalized_thread = str(thread_id or "").strip()
+        for candidate in self._latest_by_thread.values():
+            if candidate.thread_id == normalized_thread:
+                return candidate
+        return None
 
     async def publish(
         self,
@@ -77,15 +97,23 @@ class StaffAssistService:
             ),
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
-        self._latest_by_thread[normalized_thread] = payload
-        self._latest_by_thread.move_to_end(normalized_thread)
+        case_key = self._case_key(normalized_channel, normalized_thread)
+        self._latest_by_thread[case_key] = payload
+        self._latest_by_thread.move_to_end(case_key)
         self._evict_oldest_if_needed()
         await self._publish_to_sink(payload)
         return payload
 
-    def clear_thread(self, thread_id: str) -> None:
+    def clear_thread(self, thread_id: str, channel_id: str | None = None) -> None:
         """Forget retained payload for a finished thread."""
-        self._latest_by_thread.pop(str(thread_id or "").strip(), None)
+        key = self._case_key(channel_id, thread_id)
+        removed = self._latest_by_thread.pop(key, None)
+        if removed is not None or channel_id is not None:
+            return
+        normalized_thread = str(thread_id or "").strip()
+        for existing_key, payload in list(self._latest_by_thread.items()):
+            if payload.thread_id == normalized_thread:
+                self._latest_by_thread.pop(existing_key, None)
 
     def _evict_oldest_if_needed(self) -> None:
         while len(self._latest_by_thread) > self.max_cached_threads:

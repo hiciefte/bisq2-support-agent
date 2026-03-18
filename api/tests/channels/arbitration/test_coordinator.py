@@ -395,3 +395,30 @@ async def test_room_staff_activity_defers_pending_thread_until_cooldown_expires(
     on_release.assert_awaited_once()
     on_dispatch.assert_awaited_once()
     assert coordinator._threads == {}
+
+
+@pytest.mark.asyncio
+async def test_wait_timer_exception_cleans_up_thread_entry() -> None:
+    incoming = _incoming()
+    on_release = AsyncMock(side_effect=RuntimeError("release failed"))
+    on_dispatch = AsyncMock(return_value=True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(mode="autonomous")
+    )
+
+    await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=on_release,
+        on_dispatch=on_dispatch,
+    )
+
+    await coordinator._run_wait_timer(
+        thread_id="!room:server::@user:server",
+        generation=1,
+        delay_seconds=0,
+    )
+
+    assert coordinator._threads == {}
+    assert coordinator._locks == {}
