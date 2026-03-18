@@ -15,12 +15,16 @@ async function fetchInitialData(status: string, detector: string): Promise<Secur
     params.set("detector_key", detector);
   }
   const suffix = params.toString();
-  const [findings, counts, policy] = await Promise.all([
+  const [findings, counts, policy] = await Promise.allSettled([
     fetchAdminApiJson<TrustFindingListResponse>(`/admin/security/findings${suffix ? `?${suffix}` : ""}`),
     fetchAdminApiJson<TrustFindingCounts>("/admin/security/findings/counts"),
     fetchAdminApiJson<TrustMonitorPolicy>("/admin/security/trust-monitor/policy"),
   ]);
-  return { findings, counts, policy };
+  return {
+    findings: findings.status === "fulfilled" ? findings.value : null,
+    counts: counts.status === "fulfilled" ? counts.value : null,
+    policy: policy.status === "fulfilled" ? policy.value : null,
+  };
 }
 
 export default async function SecurityAlertsPage({ searchParams }: SecurityAlertsPageProps) {

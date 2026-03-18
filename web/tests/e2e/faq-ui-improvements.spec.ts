@@ -56,7 +56,9 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         );
 
         if (cardTexts.length > 0) {
-            expect(cardTexts.some((text) => text.includes("bisq"))).toBeTruthy();
+            if (!cardTexts.some((text) => text.includes("bisq"))) {
+                throw new Error(`Expected at least one FAQ card to contain "bisq"; found cards: ${cardTexts.join(" | ")}`);
+            }
             return;
         }
 

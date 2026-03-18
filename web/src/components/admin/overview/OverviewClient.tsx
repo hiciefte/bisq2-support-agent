@@ -100,7 +100,7 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
   } = useTrustMonitorPolicy(initialData.trustMonitorPolicy);
 
   const handleRefresh = useCallback(() => {
-    void Promise.all([
+    void Promise.allSettled([
       refresh({ background: true }),
       refreshAutoresponsePolicies(),
       refreshTrustMonitorPolicy(),

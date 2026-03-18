@@ -270,48 +270,15 @@ class InboundMessageOrchestrator:
         )
         if not callable(resolve_optional):
             return incoming
-        ingress_service = resolve_optional("ingress_context_service")
-        if (
-            ingress_service is None
-            or inspect.getattr_static(ingress_service, "prepare_incoming", _MISSING)
-            is _MISSING
-        ):
+        try:
+            ingress_service = resolve_optional("ingress_context_service")
+        except Exception:
+            logger.debug(
+                "Failed resolving ingress_context_service for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
             return incoming
-        prepare_incoming = getattr(ingress_service, "prepare_incoming", None)
-        if not callable(prepare_incoming):
-            return incoming
-        thread_language_hint = await self._resolve_thread_language_hint(thread_id)
-        result = prepare_incoming(
-            incoming,
-            thread_language_hint=thread_language_hint,
-        )
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    async def _resolve_thread_language_hint(self, thread_id: str) -> str | None:
-        if self.coordination_store is None:
-            return None
-        key = thread_state_key(self.channel_id, thread_id)
-        result: Any = self.coordination_store.get_thread_state(key)
-        if inspect.isawaitable(result):
-            result = await result
-        if not isinstance(result, dict):
-            return None
-        language_code = str(result.get("last_language_code", "") or "").strip().lower()
-        if not language_code:
-            return None
-        return language_code
-
-    async def _prepare_incoming(self, incoming: Any, *, thread_id: str) -> Any:
-        channel = self.channel
-        runtime = getattr(channel, "runtime", None) if channel is not None else None
-        resolve_optional = (
-            getattr(runtime, "resolve_optional", None) if runtime else None
-        )
-        if not callable(resolve_optional):
-            return incoming
-        ingress_service = resolve_optional("ingress_context_service")
         if (
             ingress_service is None
             or inspect.getattr_static(ingress_service, "prepare_incoming", _MISSING)

@@ -17,6 +17,7 @@ from app.channels.models import (
     SendResult,
 )
 from app.channels.plugins.matrix.room_filter import (
+    normalize_room_ids,
     resolve_allowed_reaction_rooms,
     resolve_allowed_sync_rooms,
 )
@@ -311,7 +312,16 @@ class MatrixChannel(ChannelBase):
                 self._logger.warning(f"Failed to start reaction handler: {e}")
 
         runtime_settings = getattr(self.runtime, "settings", None)
-        allowed_rooms = resolve_allowed_sync_rooms(runtime_settings)
+        allowed_rooms = set(resolve_allowed_sync_rooms(runtime_settings))
+        trust_rooms = normalize_room_ids(
+            getattr(runtime_settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", "")
+        )
+        allowed_rooms.update(trust_rooms)
+        trust_staff_room = str(
+            getattr(runtime_settings, "TRUST_MONITOR_MATRIX_STAFF_ROOM", "") or ""
+        ).strip()
+        if trust_staff_room:
+            allowed_rooms.add(trust_staff_room)
         for room_id in allowed_rooms:
             await self.join_room(str(room_id))
 

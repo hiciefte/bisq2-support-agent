@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -57,19 +58,17 @@ class MatrixTrustMonitorHandler:
         room_id = str(getattr(room, "room_id", "") or "").strip()
         if room_id not in self.allowed_room_ids:
             return
-        membership = str(getattr(event, "membership", "") or "").strip().lower()
-        event_type = (
-            TrustEventType.MEMBER_JOINED
-            if membership == "join"
-            else TrustEventType.IDENTITY_CHANGED
-        )
+        event_type = self._resolve_member_event_type(event)
+        if event_type is None:
+            return
         timestamp = getattr(event, "server_timestamp", None) or 0
         occurred_at = (
             datetime.fromtimestamp(timestamp / 1000, tz=UTC)
             if timestamp
             else datetime.now(UTC)
         )
-        self.trust_monitor_service.ingest_event(
+        await asyncio.to_thread(
+            self.trust_monitor_service.ingest_event,
             TrustEvent(
                 channel_id="matrix",
                 space_id=room_id,
@@ -78,7 +77,7 @@ class MatrixTrustMonitorHandler:
                 event_type=event_type,
                 occurred_at=occurred_at,
                 external_event_id=str(getattr(event, "event_id", "") or ""),
-            )
+            ),
         )
 
     async def _on_receipt_event(self, room: Any, event: Any) -> None:
@@ -99,7 +98,8 @@ class MatrixTrustMonitorHandler:
                     if ts
                     else datetime.now(UTC)
                 )
-                self.trust_monitor_service.ingest_event(
+                await asyncio.to_thread(
+                    self.trust_monitor_service.ingest_event,
                     TrustEvent(
                         channel_id="matrix",
                         space_id=room_id,
@@ -109,5 +109,23 @@ class MatrixTrustMonitorHandler:
                         occurred_at=occurred_at,
                         external_event_id=f"receipt:{room_id}:{target_message_id}:{actor_id}:{ts}",
                         target_message_id=str(target_message_id),
-                    )
+                    ),
                 )
+
+    @staticmethod
+    def _resolve_member_event_type(event: Any) -> TrustEventType | None:
+        membership = str(getattr(event, "membership", "") or "").strip().lower()
+        if membership != "join":
+            return None
+        previous = getattr(event, "prev_content", None) or {}
+        if not isinstance(previous, dict):
+            previous = {}
+        previous_membership = str(previous.get("membership", "") or "").strip().lower()
+        previous_display_name = str(previous.get("displayname", "") or "")
+        current_display_name = str(getattr(event, "displayname", "") or "")
+        if (
+            previous_membership == "join"
+            and previous_display_name != current_display_name
+        ):
+            return TrustEventType.IDENTITY_CHANGED
+        return TrustEventType.MEMBER_JOINED

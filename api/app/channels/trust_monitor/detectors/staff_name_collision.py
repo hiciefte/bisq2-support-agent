@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import UTC
 
 from app.channels.staff import StaffResolver
@@ -10,8 +11,9 @@ from app.channels.trust_monitor.models import TrustAlertSurface, TrustEventType
 
 
 def normalize_display_name(value: str) -> str:
-    lowered = re.sub(r"\s+", " ", value.strip().lower())
-    return re.sub(r"[^a-z0-9]+", "", lowered)
+    normalized = unicodedata.normalize("NFKC", value or "").strip().lower()
+    collapsed = re.sub(r"\s+", " ", normalized)
+    return "".join(character for character in collapsed if character.isalnum())
 
 
 class StaffNameCollisionDetector:

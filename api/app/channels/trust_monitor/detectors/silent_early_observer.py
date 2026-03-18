@@ -67,7 +67,7 @@ class SilentEarlyObserverDetector:
             return None
         if early_hits < policy.minimum_early_read_hits:
             return None
-        ratio = float("inf") if reply_count == 0 else early_hits / max(reply_count, 1)
+        ratio = None if reply_count == 0 else early_hits / max(reply_count, 1)
         if reply_count > 0 and ratio < policy.read_to_reply_ratio_threshold:
             return None
         score = min(0.99, 0.55 + (early_hits / max(observations, 1)) * 0.35)

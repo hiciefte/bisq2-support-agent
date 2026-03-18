@@ -32,15 +32,23 @@ class TrustMonitorStore:
         self._initialize()
 
     @contextmanager
-    def connection(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    def connection(
+        self,
+        *,
+        commit: bool = True,
+    ) -> Generator[sqlite3.Connection, None, None]:
+        with self._lock:
+            conn = sqlite3.connect(
+                str(self.db_path), check_same_thread=False, timeout=30.0
+            )
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            try:
+                yield conn
+                if commit:
+                    conn.commit()
+            finally:
+                conn.close()
 
     def _initialize(self) -> None:
         schema = """
@@ -525,7 +533,7 @@ class TrustMonitorStore:
             )
 
     def list_access_audit(self, *, limit: int = 50) -> list[TrustAccessAuditEntry]:
-        with self.connection() as conn:
+        with self.connection(commit=False) as conn:
             rows = conn.execute(
                 "SELECT * FROM trust_access_audit ORDER BY created_at DESC LIMIT ?",
                 (limit,),
@@ -533,7 +541,7 @@ class TrustMonitorStore:
         return [self._audit_from_row(row) for row in rows]
 
     def list_evidence(self, *, limit: int = 50) -> list[TrustEvidenceRecord]:
-        with self.connection() as conn:
+        with self.connection(commit=False) as conn:
             rows = conn.execute(
                 "SELECT * FROM trust_evidence_events ORDER BY occurred_at DESC LIMIT ?",
                 (limit,),
@@ -583,79 +591,79 @@ class TrustMonitorStore:
         since: datetime,
         early_read_window_seconds: int,
     ) -> tuple[int, int, int]:
-        with self.connection() as conn:
-            sent_rows = conn.execute(
-                """
-                SELECT id, target_message_id, occurred_at
-                FROM trust_evidence_events
-                WHERE channel_id = ?
-                  AND space_id = ?
-                  AND event_type = ?
-                  AND trusted_staff = 0
-                  AND occurred_at >= ?
-                ORDER BY occurred_at ASC
-                """,
-                (
-                    channel_id,
-                    space_id,
-                    TrustEventType.MESSAGE_SENT.value,
-                    since.astimezone(UTC).isoformat(),
-                ),
-            ).fetchall()
-            observation_count = len(sent_rows)
-            early_hits = 0
-            for row in sent_rows:
-                occurred_at = self._parse_timestamp(row["occurred_at"])
-                if occurred_at is None:
-                    continue
-                upper = (
-                    (occurred_at + timedelta(seconds=early_read_window_seconds))
-                    .astimezone(UTC)
-                    .isoformat()
-                )
-                match = conn.execute(
+        since_iso = since.astimezone(UTC).isoformat()
+        with self.connection(commit=False) as conn:
+            observation_count = int(
+                conn.execute(
                     """
-                    SELECT 1
+                    SELECT COUNT(*)
+                    FROM trust_evidence_events
+                    WHERE channel_id = ?
+                      AND space_id = ?
+                      AND event_type = ?
+                      AND trusted_staff = 0
+                      AND occurred_at >= ?
+                    """,
+                    (
+                        channel_id,
+                        space_id,
+                        TrustEventType.MESSAGE_SENT.value,
+                        since_iso,
+                    ),
+                ).fetchone()[0]
+            )
+            early_hits = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT sent.id)
+                    FROM trust_evidence_events AS sent
+                    JOIN trust_evidence_events AS read
+                      ON read.channel_id = sent.channel_id
+                     AND read.space_id = sent.space_id
+                     AND read.event_type = ?
+                     AND read.actor_key = ?
+                     AND read.target_message_id = sent.target_message_id
+                     AND julianday(read.occurred_at) >= julianday(sent.occurred_at)
+                     AND julianday(read.occurred_at) <= (
+                           julianday(sent.occurred_at) + (? / 86400.0)
+                     )
+                    WHERE sent.channel_id = ?
+                      AND sent.space_id = ?
+                      AND sent.event_type = ?
+                      AND sent.trusted_staff = 0
+                      AND sent.occurred_at >= ?
+                    """,
+                    (
+                        TrustEventType.MESSAGE_READ.value,
+                        actor_key,
+                        early_read_window_seconds,
+                        channel_id,
+                        space_id,
+                        TrustEventType.MESSAGE_SENT.value,
+                        since_iso,
+                    ),
+                ).fetchone()[0]
+            )
+            reply_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
                     FROM trust_evidence_events
                     WHERE channel_id = ?
                       AND space_id = ?
                       AND event_type = ?
                       AND actor_key = ?
-                      AND target_message_id = ?
                       AND occurred_at >= ?
-                      AND occurred_at <= ?
-                    LIMIT 1
                     """,
                     (
                         channel_id,
                         space_id,
-                        TrustEventType.MESSAGE_READ.value,
+                        TrustEventType.MESSAGE_REPLIED.value,
                         actor_key,
-                        row["target_message_id"],
-                        row["occurred_at"],
-                        upper,
+                        since_iso,
                     ),
-                ).fetchone()
-                if match:
-                    early_hits += 1
-            reply_count = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM trust_evidence_events
-                WHERE channel_id = ?
-                  AND space_id = ?
-                  AND event_type = ?
-                  AND actor_key = ?
-                  AND occurred_at >= ?
-                """,
-                (
-                    channel_id,
-                    space_id,
-                    TrustEventType.MESSAGE_REPLIED.value,
-                    actor_key,
-                    since.astimezone(UTC).isoformat(),
-                ),
-            ).fetchone()[0]
+                ).fetchone()[0]
+            )
         return observation_count, early_hits, int(reply_count)
 
     @staticmethod

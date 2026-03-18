@@ -32,6 +32,7 @@ export function useTrustMonitorPolicy(initialPolicy: TrustMonitorPolicy | null) 
         throw new Error(`Failed to load trust monitor policy (${response.status})`);
       }
       const payload = (await response.json()) as TrustMonitorPolicy;
+      policyRef.current = payload;
       setPolicy(payload);
       setError(null);
     } catch (err) {
@@ -52,7 +53,9 @@ export function useTrustMonitorPolicy(initialPolicy: TrustMonitorPolicy | null) 
     }
     const version = mutationVersionRef.current + 1;
     mutationVersionRef.current = version;
-    setPolicy({ ...previous, ...patch });
+    const optimistic = { ...previous, ...patch };
+    policyRef.current = optimistic;
+    setPolicy(optimistic);
     setIsSaving(true);
     try {
       const response = await makeAuthenticatedRequest("/admin/security/trust-monitor/policy", {
@@ -66,12 +69,14 @@ export function useTrustMonitorPolicy(initialPolicy: TrustMonitorPolicy | null) 
       if (mutationVersionRef.current !== version) {
         return true;
       }
+      policyRef.current = updated;
       setPolicy(updated);
       setError(null);
       return true;
     } catch (err) {
       console.error("Failed to update trust monitor policy", err);
       if (mutationVersionRef.current === version && previous !== null) {
+        policyRef.current = previous;
         setPolicy(previous);
       }
       setError("Could not update trust-monitor policy.");

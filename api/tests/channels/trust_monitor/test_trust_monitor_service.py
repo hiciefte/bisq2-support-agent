@@ -4,6 +4,10 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from app.channels.staff import StaffResolver
+from app.channels.trust_monitor.detectors.base import DetectorResult
+from app.channels.trust_monitor.detectors.staff_name_collision import (
+    normalize_display_name,
+)
 from app.channels.trust_monitor.events import TrustEvent
 from app.channels.trust_monitor.models import (
     TrustAlertSurface,
@@ -72,6 +76,31 @@ def test_actor_key_generation_is_stable(tmp_path) -> None:
 
     assert left == right
     assert left != other
+
+
+def test_detector_result_uses_fresh_default_timestamp() -> None:
+    left = DetectorResult(
+        detector_key="x",
+        suspect_actor_id="a",
+        suspect_actor_key="k1",
+        suspect_display_name="name",
+        score=0.1,
+        evidence_summary={},
+    )
+    right = DetectorResult(
+        detector_key="x",
+        suspect_actor_id="b",
+        suspect_actor_key="k2",
+        suspect_display_name="name",
+        score=0.2,
+        evidence_summary={},
+    )
+
+    assert right.occurred_at >= left.occurred_at
+
+
+def test_normalize_display_name_preserves_unicode_letters() -> None:
+    assert normalize_display_name("Jörg Support") == "jörgsupport"
 
 
 def test_name_collision_creates_finding_and_publishes_to_admin_ui(tmp_path) -> None:
@@ -189,6 +218,7 @@ def test_silent_observer_creates_shadow_finding_after_threshold(tmp_path) -> Non
     assert findings.items[0].detector_key == "silent_early_observer"
     assert findings.items[0].alert_surface == TrustAlertSurface.ADMIN_UI
     assert publisher.published_findings[-1].detector_key == "silent_early_observer"
+    assert findings.items[0].evidence_summary["ratio"] is None
 
 
 def test_silent_observer_is_suppressed_by_replies(tmp_path) -> None:

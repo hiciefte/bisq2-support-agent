@@ -21,6 +21,13 @@ interface TrustMonitoringCardProps {
   onAlertSurfaceChange: (surface: TrustAlertSurface) => void;
 }
 
+const TRUST_ALERT_SURFACES: readonly TrustAlertSurface[] = [
+  "admin_ui",
+  "staff_room",
+  "both",
+  "none",
+];
+
 function rolloutState(policy: TrustMonitorPolicy | null): { label: string; description: string } {
   if (!policy || !policy.enabled) {
     return { label: "Off", description: "Detection is disabled." };
@@ -117,7 +124,7 @@ export function TrustMonitoringCard({
             type="single"
             value={policy?.alert_surface ?? "admin_ui"}
             onValueChange={(value) => {
-              if (value) {
+              if (TRUST_ALERT_SURFACES.includes(value as TrustAlertSurface)) {
                 onAlertSurfaceChange(value as TrustAlertSurface);
               }
             }}

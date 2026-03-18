@@ -80,7 +80,7 @@ class TrustFindingCountsResponse(BaseModel):
 
 
 class FindingActionRequest(BaseModel):
-    actor_id: str = "admin"
+    actor_id: str | None = None
 
 
 def _policy_service(request: Request):
@@ -115,7 +115,7 @@ def _policy_response(policy) -> TrustMonitorPolicyResponse:
         evidence_ttl_days=policy.evidence_ttl_days,
         aggregate_ttl_days=policy.aggregate_ttl_days,
         finding_ttl_days=policy.finding_ttl_days,
-        updated_at=policy.updated_at,
+        updated_at=policy.updated_at.isoformat(),
     )
 
 
@@ -198,7 +198,7 @@ def resolve_finding(
     updated = _monitor_service(request).apply_feedback(
         finding_id,
         action="resolve",
-        actor_id=(payload.actor_id if payload else "admin"),
+        actor_id=(payload.actor_id if payload and payload.actor_id else "admin"),
     )
     return _finding_response(updated)
 
@@ -212,7 +212,7 @@ def false_positive(
     updated = _monitor_service(request).apply_feedback(
         finding_id,
         action="false_positive",
-        actor_id=(payload.actor_id if payload else "admin"),
+        actor_id=(payload.actor_id if payload and payload.actor_id else "admin"),
     )
     return _finding_response(updated)
 
@@ -224,7 +224,7 @@ def suppress_finding(
     updated = _monitor_service(request).apply_feedback(
         finding_id,
         action="suppress",
-        actor_id=(payload.actor_id if payload else "admin"),
+        actor_id=(payload.actor_id if payload and payload.actor_id else "admin"),
     )
     return _finding_response(updated)
 
@@ -236,11 +236,12 @@ def mark_benign(
     updated = _monitor_service(request).apply_feedback(
         finding_id,
         action="mark_benign",
-        actor_id=(payload.actor_id if payload else "admin"),
+        actor_id=(payload.actor_id if payload and payload.actor_id else "admin"),
     )
     return _finding_response(updated)
 
 
+# Resolve Pydantic forward references for FastAPI response models in isolated test imports.
 TrustMonitorPolicyResponse.model_rebuild()
 TrustFindingResponse.model_rebuild()
 TrustFindingListResponse.model_rebuild()

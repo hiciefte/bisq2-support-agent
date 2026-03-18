@@ -10,6 +10,11 @@ interface SecurityFindingsListProps {
   onSelect: (findingId: number) => void;
 }
 
+const DETECTOR_LABELS: Record<TrustFinding["detector_key"], string> = {
+  staff_name_collision: "Staff Name Collision",
+  silent_early_observer: "Silent Observer",
+};
+
 export function SecurityFindingsList({ findings, selectedFindingId, onSelect }: SecurityFindingsListProps) {
   if (findings.length === 0) {
     return (
@@ -26,6 +31,7 @@ export function SecurityFindingsList({ findings, selectedFindingId, onSelect }: 
           key={finding.id}
           type="button"
           onClick={() => onSelect(finding.id)}
+          aria-pressed={selectedFindingId === finding.id}
           className={cn(
             "w-full rounded-2xl border px-4 py-4 text-left transition-colors",
             selectedFindingId === finding.id
@@ -35,7 +41,7 @@ export function SecurityFindingsList({ findings, selectedFindingId, onSelect }: 
         >
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
-              <div className="text-sm font-medium">{finding.detector_key === "staff_name_collision" ? "Staff Name Collision" : "Silent Observer"}</div>
+              <div className="text-sm font-medium">{DETECTOR_LABELS[finding.detector_key] ?? finding.detector_key ?? "Unknown Detector"}</div>
               <div className="text-xs text-muted-foreground">{finding.suspect_display_name || finding.suspect_actor_id}</div>
             </div>
             <Badge variant="secondary" className="border border-border/60 bg-background/70 text-xs text-muted-foreground">

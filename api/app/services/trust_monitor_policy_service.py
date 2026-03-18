@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -96,7 +95,7 @@ class TrustMonitorPolicyService:
             finding_ttl_days=int(
                 getattr(self.settings, "TRUST_MONITOR_FINDING_TTL_DAYS", 30)
             ),
-            updated_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC),
         )
 
     def _seed_defaults(self) -> None:
@@ -136,7 +135,7 @@ class TrustMonitorPolicyService:
                 policy.evidence_ttl_days,
                 policy.aggregate_ttl_days,
                 policy.finding_ttl_days,
-                policy.updated_at,
+                policy.updated_at.astimezone(UTC).isoformat(),
             ),
         )
 
@@ -164,20 +163,105 @@ class TrustMonitorPolicyService:
             evidence_ttl_days=int(row["evidence_ttl_days"]),
             aggregate_ttl_days=int(row["aggregate_ttl_days"]),
             finding_ttl_days=int(row["finding_ttl_days"]),
-            updated_at=row["updated_at"],
+            updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
     def set_policy(self, **patch: Any) -> TrustPolicy:
         with self._lock:
             current = self.get_policy()
-            data = asdict(current)
-            data.update(
-                {key: value for key, value in patch.items() if value is not None}
-            )
-            data["alert_surface"] = TrustAlertSurface(str(data["alert_surface"]))
-            data["updated_at"] = datetime.now(UTC).isoformat()
-            updated = TrustPolicy(**data)
+            updates = {key: value for key, value in patch.items() if value is not None}
+            if not updates:
+                return current
+            if "alert_surface" in updates:
+                updates["alert_surface"] = TrustAlertSurface(
+                    str(updates["alert_surface"])
+                )
+            updated_at = datetime.now(UTC)
+            updates["updated_at"] = updated_at
+            assignments = {
+                "enabled": 1 if updates.get("enabled", current.enabled) else 0,
+                "name_collision_enabled": (
+                    1
+                    if updates.get(
+                        "name_collision_enabled", current.name_collision_enabled
+                    )
+                    else 0
+                ),
+                "silent_observer_enabled": (
+                    1
+                    if updates.get(
+                        "silent_observer_enabled", current.silent_observer_enabled
+                    )
+                    else 0
+                ),
+                "alert_surface": (
+                    updates.get("alert_surface", current.alert_surface).value
+                ),
+                "matrix_public_room_ids_json": json.dumps(
+                    updates.get(
+                        "matrix_public_room_ids", current.matrix_public_room_ids
+                    )
+                ),
+                "matrix_staff_room_id": updates.get(
+                    "matrix_staff_room_id",
+                    current.matrix_staff_room_id,
+                ),
+                "silent_observer_window_days": updates.get(
+                    "silent_observer_window_days",
+                    current.silent_observer_window_days,
+                ),
+                "early_read_window_seconds": updates.get(
+                    "early_read_window_seconds",
+                    current.early_read_window_seconds,
+                ),
+                "minimum_observations": updates.get(
+                    "minimum_observations",
+                    current.minimum_observations,
+                ),
+                "minimum_early_read_hits": updates.get(
+                    "minimum_early_read_hits",
+                    current.minimum_early_read_hits,
+                ),
+                "read_to_reply_ratio_threshold": updates.get(
+                    "read_to_reply_ratio_threshold",
+                    current.read_to_reply_ratio_threshold,
+                ),
+                "evidence_ttl_days": updates.get(
+                    "evidence_ttl_days",
+                    current.evidence_ttl_days,
+                ),
+                "aggregate_ttl_days": updates.get(
+                    "aggregate_ttl_days",
+                    current.aggregate_ttl_days,
+                ),
+                "finding_ttl_days": updates.get(
+                    "finding_ttl_days",
+                    current.finding_ttl_days,
+                ),
+                "updated_at": updated_at.astimezone(UTC).isoformat(),
+            }
             with self._connect() as conn:
-                self._write_policy(conn, updated)
+                conn.execute(
+                    """
+                    UPDATE trust_monitor_policy
+                    SET enabled = :enabled,
+                        name_collision_enabled = :name_collision_enabled,
+                        silent_observer_enabled = :silent_observer_enabled,
+                        alert_surface = :alert_surface,
+                        matrix_public_room_ids_json = :matrix_public_room_ids_json,
+                        matrix_staff_room_id = :matrix_staff_room_id,
+                        silent_observer_window_days = :silent_observer_window_days,
+                        early_read_window_seconds = :early_read_window_seconds,
+                        minimum_observations = :minimum_observations,
+                        minimum_early_read_hits = :minimum_early_read_hits,
+                        read_to_reply_ratio_threshold = :read_to_reply_ratio_threshold,
+                        evidence_ttl_days = :evidence_ttl_days,
+                        aggregate_ttl_days = :aggregate_ttl_days,
+                        finding_ttl_days = :finding_ttl_days,
+                        updated_at = :updated_at
+                    WHERE policy_key = 'default'
+                    """,
+                    assignments,
+                )
                 conn.commit()
-            return updated
+            return self.get_policy()

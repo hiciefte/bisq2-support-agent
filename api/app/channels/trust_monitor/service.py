@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -48,9 +49,22 @@ class TrustMonitorService:
             store=self.store,
             staff_resolver=staff_resolver,
         )
-        self._actor_secret = str(
-            getattr(settings, "TRUST_MONITOR_ACTOR_KEY_SECRET", "") or "trust-monitor"
-        ).encode("utf-8")
+        self._actor_secret = self._resolve_actor_secret(settings)
+
+    @staticmethod
+    def _resolve_actor_secret(settings: Any) -> bytes:
+        configured = str(
+            getattr(settings, "TRUST_MONITOR_ACTOR_KEY_SECRET", "") or ""
+        ).strip()
+        if configured:
+            return configured.encode("utf-8")
+        environment = str(getattr(settings, "ENVIRONMENT", "development") or "").lower()
+        is_dev = bool(getattr(settings, "DEBUG", False)) or environment != "production"
+        if not is_dev:
+            raise ValueError(
+                "TRUST_MONITOR_ACTOR_KEY_SECRET must be set when trust monitoring is enabled in production"
+            )
+        return secrets.token_urlsafe(32).encode("utf-8")
 
     def actor_key(self, channel_id: str, actor_id: str) -> str:
         digest = hmac.new(
@@ -186,6 +200,8 @@ class TrustMonitorService:
         elif feedback_action is TrustFeedbackAction.MARK_BENIGN:
             status = TrustFindingStatus.BENIGN
             benign_until = now + timedelta(days=30)
+        elif feedback_action is TrustFeedbackAction.USEFUL:
+            status = finding.status
         self.store.add_feedback(
             finding_id=finding_id,
             actor_id=actor_id,

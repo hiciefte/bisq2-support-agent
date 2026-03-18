@@ -105,9 +105,6 @@ class MatrixMessageHandler:
 
     async def _on_message(self, room: Any, event: Any) -> None:
         """Process Matrix message events through the standard channel pipeline."""
-        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
-            return
-
         channel = self.channel
         if channel is None:
             logger.debug("Skipping Matrix message because channel is not attached")
@@ -140,6 +137,8 @@ class MatrixMessageHandler:
         await self._record_trust_event(
             room_id=room_id, event=effective_event, sender_id=sender_id, room=room
         )
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
+            return
         if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
@@ -336,16 +335,25 @@ class MatrixMessageHandler:
                 getattr(runtime, "resolve_optional", None) if runtime else None
             )
             if callable(resolve_optional):
-                service = resolve_optional("trust_monitor_service")
+                try:
+                    service = resolve_optional("trust_monitor_service")
+                except Exception:
+                    logger.debug(
+                        "Failed resolving trust_monitor_service for room_id=%s",
+                        room_id,
+                        exc_info=True,
+                    )
+                    return
         if service is None:
             return
         try:
             from app.channels.trust_monitor.events import TrustEvent
             from app.channels.trust_monitor.models import TrustEventType
 
+            reply_to_event_id = self._extract_reply_to_event_id(event)
             event_type = (
                 TrustEventType.MESSAGE_REPLIED
-                if self._extract_reply_to_event_id(event)
+                if reply_to_event_id
                 else TrustEventType.MESSAGE_SENT
             )
             timestamp_ms = getattr(event, "server_timestamp", None) or 0
@@ -366,7 +374,8 @@ class MatrixMessageHandler:
                     event_type=event_type,
                     occurred_at=occurred_at,
                     external_event_id=str(getattr(event, "event_id", "") or ""),
-                    target_message_id=str(getattr(event, "event_id", "") or ""),
+                    target_message_id=reply_to_event_id
+                    or str(getattr(event, "event_id", "") or ""),
                     metadata={"body_length": len(self._extract_event_text(event))},
                 )
             )

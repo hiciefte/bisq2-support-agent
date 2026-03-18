@@ -147,6 +147,36 @@ async def test_on_message_skips_when_generation_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_message_records_trust_event_even_when_generation_disabled() -> None:
+    client = MagicMock()
+    connection_manager = MagicMock()
+    connection_manager.sync_forever = AsyncMock()
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = MagicMock(
+        enabled=False, generation_enabled=False
+    )
+    channel = MagicMock()
+    channel.handle_incoming = AsyncMock()
+    trust_monitor_service = MagicMock()
+
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        autoresponse_policy_service=policy_service,
+        allowed_room_ids=["!room:server"],
+        channel_id="matrix",
+        trust_monitor_service=trust_monitor_service,
+    )
+
+    room, event = _matrix_event()
+    await handler._on_message(room, event)
+
+    trust_monitor_service.ingest_event.assert_called_once()
+    channel.handle_incoming.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_on_message_skips_when_channel_not_attached() -> None:
     client = MagicMock()
     connection_manager = MagicMock()
@@ -204,6 +234,36 @@ async def test_on_message_dispatches_to_channel() -> None:
 
     channel.handle_incoming.assert_called_once()
     channel.send_message.assert_called_once_with("!room:server", outgoing)
+
+
+@pytest.mark.asyncio
+async def test_record_trust_event_uses_reply_target_message_id() -> None:
+    client = MagicMock()
+    connection_manager = MagicMock()
+    connection_manager.sync_forever = AsyncMock()
+    trust_monitor_service = MagicMock()
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        allowed_room_ids=["!room:server"],
+        trust_monitor_service=trust_monitor_service,
+    )
+
+    room, event = _matrix_reply_event(
+        sender="@user:server",
+        body="A reply",
+        reply_to_event_id="$original:server",
+    )
+    await handler._record_trust_event(
+        room_id="!room:server",
+        event=event,
+        sender_id="@user:server",
+        room=room,
+    )
+
+    forwarded = trust_monitor_service.ingest_event.call_args.args[0]
+    assert forwarded.event_type.value == "message_replied"
+    assert forwarded.target_message_id == "$original:server"
 
 
 @pytest.mark.asyncio

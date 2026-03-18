@@ -75,7 +75,6 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
     try {
       const response = await makeAuthenticatedRequest(`/admin/security/findings/${selectedFinding.id}/${action}`, {
         method: "POST",
-        body: JSON.stringify({ actor_id: "admin" }),
       });
       if (!response.ok) {
         throw new Error(`Failed to update finding (${response.status})`);

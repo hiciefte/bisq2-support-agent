@@ -14,7 +14,7 @@ async function fetchInitialOverviewData() {
     fetchAdminApiJson<DashboardData>("/admin/dashboard/overview?period=7d"),
     fetchAdminApiJson<AdminActionCounts>("/admin/overview/action-counts"),
     fetchAdminApiJson<ChannelAutoresponsePolicy[]>("/admin/channels/autoresponse"),
-    fetchAdminApiJson<TrustMonitorPolicy>("/admin/security/trust-monitor/policy"),
+    fetchAdminApiJson<TrustMonitorPolicy>("/admin/security/trust-monitor/policy").catch(() => null),
   ]);
 
   return {

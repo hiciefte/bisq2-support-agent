@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,4 +17,4 @@ class DetectorResult:
     evidence_summary: dict[str, Any]
     notify: bool = True
     alert_surface: TrustAlertSurface = TrustAlertSurface.ADMIN_UI
-    occurred_at: datetime = datetime.now(UTC)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))

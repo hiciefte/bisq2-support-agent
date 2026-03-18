@@ -76,7 +76,7 @@ test.describe("FAQ Keyboard Shortcuts", () => {
     };
 
     const selectFaqCard = async (page: Page, question: string): Promise<void> => {
-        const targetFaqCard = page.locator(`${FAQ_CARD_SELECTOR}:has-text("${question}")`).first();
+        const targetFaqCard = page.locator(FAQ_CARD_SELECTOR).filter({ hasText: question }).first();
         await expect(targetFaqCard).toBeVisible({ timeout: 5000 });
         await targetFaqCard.click();
         await expect(page.locator(SELECTED_FAQ_CARD_SELECTOR).filter({ hasText: question })).toBeVisible({

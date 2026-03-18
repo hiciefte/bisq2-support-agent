@@ -1124,6 +1124,36 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_trust_monitor_settings(self) -> "Settings":
+        if not self.TRUST_MONITOR_ENABLED:
+            return self
+        environment = str(self.ENVIRONMENT or "").strip().lower()
+        if environment == "prod":
+            environment = "production"
+        if (
+            environment == "production"
+            and not self.TRUST_MONITOR_ACTOR_KEY_SECRET.strip()
+        ):
+            raise ValueError(
+                "TRUST_MONITOR_ACTOR_KEY_SECRET required when TRUST_MONITOR_ENABLED is true in production"
+            )
+        integer_fields = {
+            "TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS": self.TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS,
+            "TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS": self.TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS,
+            "TRUST_MONITOR_MINIMUM_OBSERVATIONS": self.TRUST_MONITOR_MINIMUM_OBSERVATIONS,
+            "TRUST_MONITOR_MINIMUM_EARLY_READ_HITS": self.TRUST_MONITOR_MINIMUM_EARLY_READ_HITS,
+            "TRUST_MONITOR_EVIDENCE_TTL_DAYS": self.TRUST_MONITOR_EVIDENCE_TTL_DAYS,
+            "TRUST_MONITOR_AGGREGATE_TTL_DAYS": self.TRUST_MONITOR_AGGREGATE_TTL_DAYS,
+            "TRUST_MONITOR_FINDING_TTL_DAYS": self.TRUST_MONITOR_FINDING_TTL_DAYS,
+        }
+        for name, value in integer_fields.items():
+            if value < 1:
+                raise ValueError(f"{name} must be >= 1")
+        if self.TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD <= 0:
+            raise ValueError("TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD must be > 0")
+        return self
+
+    @model_validator(mode="after")
     def validate_matrix_sync_enabled_config(self) -> "Settings":
         """Require core sync fields when MATRIX_SYNC_ENABLED is explicitly enabled."""
         if not self.MATRIX_SYNC_ENABLED:

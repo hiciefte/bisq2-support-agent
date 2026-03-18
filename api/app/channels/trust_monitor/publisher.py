@@ -39,7 +39,15 @@ class CompositeTrustAlertPublisher(TrustAlertPublisher):
         surface = finding.alert_surface
         if surface in {TrustAlertSurface.ADMIN_UI, TrustAlertSurface.BOTH}:
             if self.admin_publisher is not None:
-                self.admin_publisher.publish(finding)
+                try:
+                    self.admin_publisher.publish(finding)
+                except Exception:
+                    logger.warning(
+                        "Trust admin publisher failed detector=%s actor=%s",
+                        finding.detector_key,
+                        finding.suspect_actor_id,
+                        exc_info=True,
+                    )
         if surface in {TrustAlertSurface.STAFF_ROOM, TrustAlertSurface.BOTH}:
             if self.matrix_notifier is None:
                 logger.warning(
@@ -55,4 +63,12 @@ class CompositeTrustAlertPublisher(TrustAlertPublisher):
                     "No running event loop for trust-monitor staff-room publish"
                 )
                 return
-            loop.create_task(self.matrix_notifier(finding))
+            try:
+                loop.create_task(self.matrix_notifier(finding))
+            except Exception:
+                logger.warning(
+                    "Trust matrix notifier scheduling failed detector=%s actor=%s",
+                    finding.detector_key,
+                    finding.suspect_actor_id,
+                    exc_info=True,
+                )

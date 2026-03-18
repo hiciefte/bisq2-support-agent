@@ -133,7 +133,7 @@ class TrustPolicy:
     evidence_ttl_days: int
     aggregate_ttl_days: int
     finding_ttl_days: int
-    updated_at: str
+    updated_at: datetime
 
 
 ALLOWED_EVENT_TYPES = {event_type.value for event_type in TrustEventType}

@@ -92,6 +92,7 @@ def test_get_and_patch_policy(tmp_path) -> None:
     payload = patch.json()
     assert payload["alert_surface"] == "staff_room"
     assert payload["silent_observer_enabled"] is False
+    assert isinstance(payload["updated_at"], str)
 
 
 def test_list_findings_and_apply_actions(tmp_path) -> None:
