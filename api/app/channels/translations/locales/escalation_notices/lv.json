@@ -1,6 +1,6 @@
 {
-  "escalation.notice.generic": "Es atzīmēju šo kādai komandas locekļa, kurš var pārskatīt detaļas. Kāds drīz šeit sazināsies.",
-  "escalation.notice.web": "Es atzīmēju šo kādai komandas locekļa, kurš var pārskatīt detaļas. Kāds drīz šeit sazināsies.",
+  "escalation.notice.generic": "Es atzīmēju šo kādam komandas loceklim, kurš var pārskatīt detaļas. Kāds drīz šeit sazināsies.",
+  "escalation.notice.web": "Es atzīmēju šo kādam komandas loceklim, kurš var pārskatīt detaļas. Kāds drīz šeit sazināsies.",
   "escalation.notice.matrix": "Šim nepieciešama komandas locekļa uzmanība. Kāds drīz šeit sazināsies.",
   "escalation.notice.bisq2": "Šim nepieciešama komandas locekļa uzmanība. Kāds drīz šajā sarunā sazināsies."
 }

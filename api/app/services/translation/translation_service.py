@@ -55,6 +55,19 @@ Text to translate:
 Translation:"""
 
     UNKNOWN_LANGUAGE_CODES: frozenset[str] = frozenset({"und", "unknown"})
+    SHORT_BISQ_ENTITY_ALLOWLIST: frozenset[str] = frozenset(
+        {
+            "bisq",
+            "bisq 1",
+            "bisq 2",
+            "bisq easy",
+            "btc",
+            "bsq",
+            "xmr",
+            "eur",
+            "usd",
+        }
+    )
 
     def __init__(
         self,
@@ -220,8 +233,8 @@ Translation:"""
         tokens = [t for t in text.split() if t.strip()]
         if len(tokens) > 3:
             return False
-        lowered = text.casefold()
-        return "bisq" in lowered
+        normalized = " ".join(tokens).casefold()
+        return normalized in TranslationService.SHORT_BISQ_ENTITY_ALLOWLIST
 
     async def translate_query(
         self,

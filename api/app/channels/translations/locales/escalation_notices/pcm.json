@@ -1,6 +1,6 @@
 {
-  "escalation.notice.generic": "Nai flag ko ini para sa usa ka miyembro sa team nga makatan-aw sa mga detalye. Usa ka tawo ang mosunod dinhi sa dili madugay.",
-  "escalation.notice.web": "Nai flag ko ini para sa usa ka miyembro sa team nga makatan-aw sa mga detalye. Usa ka tawo ang mosunod dinhi sa dili madugay.",
-  "escalation.notice.matrix": "Kinahanglan kini og atensyon sa usa ka miyembro sa team. Usa ka tawo ang mosunod dinhi sa kwarto.",
-  "escalation.notice.bisq2": "Kinahanglan kini og atensyon sa usa ka miyembro sa team. Usa ka tawo ang mosunod dinhi sa panag-istoryahan."
+  "escalation.notice.generic": "I don flag this give one member of the support team wey fit review the details. Person go reply here soon.",
+  "escalation.notice.web": "I don flag this give one member of the support team wey fit review the details. Person go reply here soon.",
+  "escalation.notice.matrix": "This one need attention from the support team. Person go reply here for this room soon.",
+  "escalation.notice.bisq2": "This one need attention from the support team. Person go reply here for this chat soon."
 }

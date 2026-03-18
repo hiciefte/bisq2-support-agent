@@ -40,8 +40,8 @@ def test_format_escalation_notice_localizes_generic_fallback():
         channel_registry=None,
     )
 
-    assert "#42" in message
-    assert "support-team" in message.lower()
+    assert "#42" not in message
+    assert "teammitglied" in message.lower()
 
 
 @pytest.mark.unit
@@ -259,8 +259,9 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
     escalation_service.create_escalation.assert_awaited_once()
     channel.send_message.assert_awaited_once()
     notice = channel.send_message.call_args.args[1]
-    assert "#88" in notice.answer
-    assert "support team" in notice.answer.lower()
+    assert "#88" not in notice.answer
+    assert "team member" in notice.answer.lower()
+    assert "follow up" in notice.answer.lower()
 
 
 @pytest.mark.unit
