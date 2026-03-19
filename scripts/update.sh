@@ -51,6 +51,10 @@ validate_environment() {
         log_warning "Consider running with sudo if you encounter permission errors"
     fi
 
+    if ! validate_runtime_configuration; then
+        exit 1
+    fi
+
     log_success "Environment validation complete"
 }
 
@@ -206,13 +210,18 @@ perform_update() {
 
     if [ $update_status -eq 2 ]; then
         # No updates available
-        log_success "No updates needed"
-        exit 0
+        log_success "No repository updates available"
+        NO_REPO_UPDATES=true
+        export NO_REPO_UPDATES
+        return 0
     elif [ $update_status -ne 0 ]; then
         # Update failed
         log_error "Repository update failed"
         exit 1
     fi
+
+    NO_REPO_UPDATES=false
+    export NO_REPO_UPDATES
 
     log_success "Repository updated successfully"
 }
@@ -473,7 +482,16 @@ apply_updates() {
 
         # Check if no service changes are needed
         if check_no_changes_needed; then
-            log_info "No service rebuilds or restarts needed. Configuration or non-service files changed"
+            if [ "${NO_REPO_UPDATES:-false}" = "true" ]; then
+                log_info "Repository is already current. Reconciling runtime health instead of exiting early."
+            else
+                log_info "No service rebuilds or restarts needed. Verifying runtime health."
+            fi
+
+            if ! reconcile_runtime_services "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                log_error "Runtime service reconciliation failed"
+                return 1
+            fi
         fi
     fi
 }

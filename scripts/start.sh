@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
 DOCKER_DIR="$PROJECT_ROOT/docker"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/common.sh"
 
 echo "========================================================"
 echo " Starting Bisq Support Assistant (Production Mode)"
@@ -27,6 +29,10 @@ else
     echo "Proceeding with defaults. This may not be a complete configuration."
 fi
 # --- End Source Environment Configuration --- #
+
+if ! validate_runtime_configuration; then
+    exit 1
+fi
 
 # Export UID and GID for Docker Compose, using defaults if not set in the sourced file.
 export APP_UID=${APP_UID:-1001}
@@ -85,6 +91,10 @@ ensure_dependent_services() {
         missing_services="$missing_services nginx"
     fi
 
+    if uses_qdrant_runtime && ! docker compose -f docker-compose.yml ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
+        missing_services="$missing_services qdrant"
+    fi
+
     if [ -n "$missing_services" ]; then
         echo "🔄 Starting missing dependent services:$missing_services"
         docker compose -f docker-compose.yml up -d $missing_services
@@ -93,6 +103,9 @@ ensure_dependent_services() {
 
 # Wait for critical services to be healthy
 echo "Checking critical services..."
+if uses_qdrant_runtime; then
+    check_service_health "qdrant" 6
+fi
 check_service_health "api" 12  # 2 minutes with 10s intervals
 api_healthy=$?
 

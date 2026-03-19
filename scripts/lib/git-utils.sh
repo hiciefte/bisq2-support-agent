@@ -58,6 +58,63 @@ check_local_changes() {
     fi
 }
 
+has_unmerged_paths() {
+    local repo_dir="${1:-.}"
+
+    cd "$repo_dir" || return 1
+
+    if git diff --name-only --diff-filter=U | grep -q .; then
+        return 0
+    fi
+
+    return 1
+}
+
+has_pending_git_operation() {
+    local repo_dir="${1:-.}"
+
+    cd "$repo_dir" || return 1
+
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if git rev-parse -q --verify REVERT_HEAD >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+ensure_repository_update_safe() {
+    local repo_dir="${1:-.}"
+
+    cd "$repo_dir" || {
+        log_error "Failed to change to repository directory: $repo_dir"
+        return 1
+    }
+
+    if has_unmerged_paths "$repo_dir"; then
+        log_error "Repository has unmerged paths. Resolve conflicts before running the update script."
+        return 1
+    fi
+
+    if has_pending_git_operation "$repo_dir"; then
+        log_error "Repository has an in-progress git operation. Complete or abort it before updating."
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to stash local changes
 stash_changes() {
     local repo_dir="${1:-.}"
@@ -347,6 +404,10 @@ update_repository() {
 
     # Validate git repository
     if ! validate_git_repo "$repo_dir"; then
+        return 1
+    fi
+
+    if ! ensure_repository_update_safe "$repo_dir"; then
         return 1
     fi
 
@@ -836,6 +897,9 @@ get_build_id() {
 
 # Export all functions
 export -f check_local_changes
+export -f has_unmerged_paths
+export -f has_pending_git_operation
+export -f ensure_repository_update_safe
 export -f stash_changes
 export -f restore_stash
 export -f fetch_remote

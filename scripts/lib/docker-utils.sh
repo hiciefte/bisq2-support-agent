@@ -137,8 +137,12 @@ restart_service_with_deps() {
 
     case "$service" in
         "api")
-            if ! docker compose -f "$compose_file" up -d api web nginx; then
-                log_error "Failed to restart api, web, nginx"
+            local api_services=("api" "web" "nginx")
+            if uses_qdrant_runtime; then
+                api_services=("qdrant" "${api_services[@]}")
+            fi
+            if ! docker compose -f "$compose_file" up -d "${api_services[@]}"; then
+                log_error "Failed to restart ${api_services[*]}"
                 return 1
             fi
             ;;
@@ -181,6 +185,10 @@ ensure_dependent_services() {
         missing_services="$missing_services nginx"
     fi
 
+    if uses_qdrant_runtime && ! docker compose -f "$compose_file" ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
+        missing_services="$missing_services qdrant"
+    fi
+
     if [ -n "$missing_services" ]; then
         log_info "Starting missing dependent services:$missing_services"
         docker compose -f "$compose_file" up -d $missing_services
@@ -204,6 +212,10 @@ start_services() {
     fi
 
     log_info "Waiting for services to become healthy..."
+
+    if uses_qdrant_runtime; then
+        wait_for_healthy "qdrant" 60 "$docker_dir" "$compose_file"
+    fi
 
     # Wait for critical services to be healthy
     # Increased timeout to 180s for API (FastAPI + retrieval/index initialization needs 60-90s)
@@ -281,7 +293,12 @@ rebuild_services() {
     fi
 
     log_info "Starting rebuilt backend containers..."
-    if ! docker compose -f "$compose_file" up -d "${rebuild_services[@]}"; then
+    local runtime_services=("${rebuild_services[@]}")
+    if uses_qdrant_runtime; then
+        runtime_services=("qdrant" "${runtime_services[@]}")
+    fi
+
+    if ! docker compose -f "$compose_file" up -d "${runtime_services[@]}"; then
         log_error "Failed to start backend containers"
         return 1
     fi
@@ -310,6 +327,24 @@ rebuild_services() {
     fi
 
     return 0
+}
+
+reconcile_runtime_services() {
+    local docker_dir="${1:-$DOCKER_DIR}"
+    local compose_file="${2:-docker-compose.yml}"
+
+    log_info "Reconciling runtime services..."
+    if check_and_repair_services "$docker_dir" "$compose_file"; then
+        return 0
+    fi
+
+    log_warning "Service repair was insufficient. Restarting the full runtime set..."
+    if ! start_services "$docker_dir" "$compose_file"; then
+        log_error "Failed to restart runtime services"
+        return 1
+    fi
+
+    check_and_repair_services "$docker_dir" "$compose_file"
 }
 
 # Function to test the chat endpoint
@@ -386,6 +421,11 @@ check_and_repair_services() {
     # All core and monitoring services are critical for production operation
     local critical_services=("api" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
     local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor" "matrix-alertmanager-webhook")
+
+    if uses_qdrant_runtime; then
+        critical_services=("qdrant" "${critical_services[@]}")
+        all_services=("qdrant" "${all_services[@]}")
+    fi
 
     cd "$docker_dir" || return 1
 
@@ -482,6 +522,7 @@ export -f ensure_dependent_services
 export -f start_services
 export -f stop_services
 export -f rebuild_services
+export -f reconcile_runtime_services
 export -f test_chat_endpoint
 export -f show_service_status
 export -f check_and_repair_services

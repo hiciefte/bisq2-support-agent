@@ -3,6 +3,10 @@
 # Exit on error
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/common.sh"
+
 # --- Source Environment Configuration --- #
 ENV_FILE="/etc/bisq-support/deploy.env"
 if [ -f "$ENV_FILE" ]; then
@@ -15,6 +19,10 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 # --- End Source Environment Configuration --- #
+
+if ! validate_runtime_configuration; then
+    exit 1
+fi
 
 # Define installation directory, user, and other constants
 INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}

@@ -107,6 +107,55 @@ source_env_file() {
     fi
 }
 
+is_env_enabled() {
+    local value="${1:-}"
+    local normalized
+    normalized=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+    case "$normalized" in
+        1|true|yes|on)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+uses_qdrant_runtime() {
+    local backend="${RETRIEVER_BACKEND:-qdrant}"
+    [ "$backend" = "qdrant" ]
+}
+
+validate_runtime_configuration() {
+    local backend="${RETRIEVER_BACKEND:-qdrant}"
+
+    case "$backend" in
+        qdrant)
+            ;;
+        *)
+            log_error "Unsupported RETRIEVER_BACKEND='$backend'. Supported values: qdrant"
+            return 1
+            ;;
+    esac
+
+    if is_env_enabled "${TRUST_MONITOR_ENABLED:-false}" && [ -z "${TRUST_MONITOR_ACTOR_KEY_SECRET:-}" ]; then
+        log_error "TRUST_MONITOR_ACTOR_KEY_SECRET is required when TRUST_MONITOR_ENABLED=true"
+        return 1
+    fi
+
+    if is_env_enabled "${MATRIX_CHATOPS_ENABLED:-false}" && [ -z "${MATRIX_CHATOPS_ROOM_IDS:-}" ]; then
+        log_error "MATRIX_CHATOPS_ROOM_IDS is required when MATRIX_CHATOPS_ENABLED=true"
+        return 1
+    fi
+
+    if is_env_enabled "${BISQ2_CHATOPS_ENABLED:-false}" && [ -z "${BISQ2_CHATOPS_CHANNEL_IDS:-}" ]; then
+        log_error "BISQ2_CHATOPS_CHANNEL_IDS is required when BISQ2_CHATOPS_ENABLED=true"
+        return 1
+    fi
+
+    return 0
+}
+
 # Display banner
 display_banner() {
     local title="$1"
@@ -174,6 +223,9 @@ export -f check_root
 export -f check_docker_daemon
 export -f check_docker_compose
 export -f source_env_file
+export -f is_env_enabled
+export -f uses_qdrant_runtime
+export -f validate_runtime_configuration
 export -f display_banner
 export -f get_container_name
 export -f validate_git_repo
