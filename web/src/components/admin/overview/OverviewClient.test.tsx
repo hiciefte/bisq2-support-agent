@@ -12,10 +12,10 @@ jest.mock("lucide-react", () => {
   return new Proxy({}, { get: () => MockIcon });
 });
 
-const trustMonitoringCardSpy = jest.fn(() => <div>trust-monitor-card</div>);
+const mockTrustMonitoringCardSpy = jest.fn(() => <div>trust-monitor-card</div>);
 
 jest.mock("@/components/admin/overview/TrustMonitoringCard", () => ({
-  TrustMonitoringCard: (props: unknown) => trustMonitoringCardSpy(props),
+  TrustMonitoringCard: (props: unknown) => mockTrustMonitoringCardSpy(props),
 }));
 
 jest.mock("@/components/admin/overview/ChannelAutoresponseCard", () => ({
@@ -130,7 +130,7 @@ describe("OverviewClient", () => {
     );
 
     expect(screen.getByText("trust-monitor-card")).toBeInTheDocument();
-    expect(trustMonitoringCardSpy).toHaveBeenCalledWith(
+    expect(mockTrustMonitoringCardSpy).toHaveBeenCalledWith(
       expect.objectContaining({ defaultCollapsed: true }),
     );
   });

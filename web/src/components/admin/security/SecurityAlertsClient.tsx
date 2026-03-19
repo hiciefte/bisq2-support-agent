@@ -72,13 +72,13 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
       setBootstrapError(null);
       try {
         const [
-          findingsResponse,
-          countsResponse,
-          policyResponse,
-          opsResponse,
-          trustAuditResponse,
-          chatopsAuditResponse,
-        ] = await Promise.all([
+          findingsResult,
+          countsResult,
+          policyResult,
+          opsResult,
+          trustAuditResult,
+          chatopsAuditResult,
+        ] = await Promise.allSettled([
           makeAuthenticatedRequest("/admin/security/findings"),
           makeAuthenticatedRequest("/admin/security/findings/counts"),
           makeAuthenticatedRequest("/admin/security/trust-monitor/policy"),
@@ -91,33 +91,40 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
           return;
         }
 
+        const findingsResponse = findingsResult.status === "fulfilled" ? findingsResult.value : null;
+        const countsResponse = countsResult.status === "fulfilled" ? countsResult.value : null;
+        const policyResponse = policyResult.status === "fulfilled" ? policyResult.value : null;
+        const opsResponse = opsResult.status === "fulfilled" ? opsResult.value : null;
+        const trustAuditResponse = trustAuditResult.status === "fulfilled" ? trustAuditResult.value : null;
+        const chatopsAuditResponse = chatopsAuditResult.status === "fulfilled" ? chatopsAuditResult.value : null;
+
         const failedEndpoints = [
-          findingsResponse.ok ? null : "findings",
-          countsResponse.ok ? null : "counts",
-          policyResponse.ok ? null : "policy",
-          opsResponse.ok ? null : "ops",
-          trustAuditResponse.ok ? null : "trust-audit",
-          chatopsAuditResponse.ok ? null : "chatops-audit",
+          findingsResponse?.ok ? null : "findings",
+          countsResponse?.ok ? null : "counts",
+          policyResponse?.ok ? null : "policy",
+          opsResponse?.ok ? null : "ops",
+          trustAuditResponse?.ok ? null : "trust-audit",
+          chatopsAuditResponse?.ok ? null : "chatops-audit",
         ].filter((value): value is string => value !== null);
 
-        if (findingsResponse.ok) {
+        if (findingsResponse?.ok) {
           const payload = (await findingsResponse.json()) as SecurityAlertsInitialData["findings"];
           setFindings(payload?.items ?? []);
         }
-        if (countsResponse.ok) {
+        if (countsResponse?.ok) {
           setCounts((await countsResponse.json()) as TrustFindingCounts);
         }
-        if (policyResponse.ok) {
+        if (policyResponse?.ok) {
           setPolicy((await policyResponse.json()) as TrustMonitorPolicy);
         }
-        if (opsResponse.ok) {
+        if (opsResponse?.ok) {
           setOps((await opsResponse.json()) as SecurityAlertsInitialData["ops"]);
         }
-        if (trustAuditResponse.ok) {
+        if (trustAuditResponse?.ok) {
           const payload = await trustAuditResponse.json();
           setTrustAudit(payload.items ?? []);
         }
-        if (chatopsAuditResponse.ok) {
+        if (chatopsAuditResponse?.ok) {
           const payload = await chatopsAuditResponse.json();
           setChatopsAudit(payload.items ?? []);
         }
@@ -162,6 +169,19 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   const selectedFinding = filteredFindings.find((finding) => finding.id === selectedFindingId) ?? null;
   const hasActiveFilters = Boolean(statusFilter || detectorFilter);
 
+  const derivedCounts = useMemo<TrustFindingCounts>(() => findings.reduce<TrustFindingCounts>((summary, finding) => {
+    summary.total += 1;
+    summary[finding.status] += 1;
+    return summary;
+  }, {
+    total: 0,
+    open: 0,
+    resolved: 0,
+    false_positive: 0,
+    suppressed: 0,
+    benign: 0,
+  }), [findings]);
+
   const updateUrl = (next: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
     Object.entries(next).forEach(([key, value]) => {
@@ -177,13 +197,15 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   const handleAction = async (action: "resolve" | "false-positive" | "suppress" | "mark-benign") => {
     if (!selectedFinding) return;
     const previous = findings;
-    const nextStatus = action === "false-positive"
-      ? "false_positive"
-      : action === "mark-benign"
-        ? "benign"
-        : action;
+    const actionToStatus: Record<typeof action, TrustFinding["status"]> = {
+      resolve: "resolved",
+      "false-positive": "false_positive",
+      suppress: "suppressed",
+      "mark-benign": "benign",
+    };
+    const nextStatus = actionToStatus[action];
     setFindings((current) => current.map((finding) => (
-      finding.id === selectedFinding.id ? { ...finding, status: nextStatus as TrustFinding["status"] } : finding
+      finding.id === selectedFinding.id ? { ...finding, status: nextStatus } : finding
     )));
     setIsMutating(true);
     try {
@@ -208,12 +230,12 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   };
 
   const statusCards: Array<{ key: keyof TrustFindingCounts | "total"; label: string; value: number; filter: string | null }> = [
-    { key: "total", label: "All findings", value: counts?.total ?? findings.length, filter: null },
-    { key: "open", label: "Open", value: counts?.open ?? 0, filter: "open" },
-    { key: "resolved", label: "Resolved", value: counts?.resolved ?? 0, filter: "resolved" },
-    { key: "false_positive", label: "False positive", value: counts?.false_positive ?? 0, filter: "false_positive" },
-    { key: "suppressed", label: "Suppressed", value: counts?.suppressed ?? 0, filter: "suppressed" },
-    { key: "benign", label: "Benign", value: counts?.benign ?? 0, filter: "benign" },
+    { key: "total", label: "All findings", value: counts?.total ?? derivedCounts.total, filter: null },
+    { key: "open", label: "Open", value: counts?.open ?? derivedCounts.open, filter: "open" },
+    { key: "resolved", label: "Resolved", value: counts?.resolved ?? derivedCounts.resolved, filter: "resolved" },
+    { key: "false_positive", label: "False positive", value: counts?.false_positive ?? derivedCounts.false_positive, filter: "false_positive" },
+    { key: "suppressed", label: "Suppressed", value: counts?.suppressed ?? derivedCounts.suppressed, filter: "suppressed" },
+    { key: "benign", label: "Benign", value: counts?.benign ?? derivedCounts.benign, filter: "benign" },
   ];
 
   return (
