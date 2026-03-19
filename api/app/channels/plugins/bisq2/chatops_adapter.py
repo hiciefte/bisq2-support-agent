@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ class Bisq2ChatOpsAdapter:
         self.dispatcher = dispatcher or ChatOpsDispatcher(
             escalation_service=runtime.resolve_optional("escalation_service"),
             arbitration_service=runtime.resolve_optional("arbitration_service"),
+            audit_store=runtime.resolve_optional("chatops_audit_store"),
         )
 
     async def handle_message(self, payload: dict[str, Any]) -> bool:
@@ -49,17 +52,35 @@ class Bisq2ChatOpsAdapter:
             actor_id=sender_profile_id,
             source_message_id=message_id,
             room_id=channel_id,
+            channel_id="bisq2",
         )
         if not parsed.handled:
+            record_chatops_parse(channel="bisq2", result="ignored")
             return False
 
         if parsed.command is None:
+            record_chatops_parse(channel="bisq2", result="invalid")
+            audit_store = self.runtime.resolve_optional("chatops_audit_store")
+            if audit_store is not None:
+                audit_store.add_entry(
+                    channel_id="bisq2",
+                    room_id=channel_id,
+                    actor_id=sender_profile_id,
+                    command_name="invalid",
+                    case_id=None,
+                    source_message_id=message_id,
+                    ok=False,
+                    idempotent=False,
+                    metadata={"result": "invalid_command"},
+                    created_at=datetime.now(timezone.utc),
+                )
             await self._send_notice(
                 target=conversation_id or channel_id,
                 body=parsed.error_message or "Invalid command.",
                 citation=text or None,
             )
             return True
+        record_chatops_parse(channel="bisq2", result="parsed")
 
         authorizer = ChatOpsAuthorizer(
             enabled=self.enabled,
@@ -70,12 +91,28 @@ class Bisq2ChatOpsAdapter:
         )
         auth_result = authorizer.authorize(parsed.command)
         if auth_result is not None:
+            record_chatops_auth(channel="bisq2", result="rejected")
+            audit_store = self.runtime.resolve_optional("chatops_audit_store")
+            if audit_store is not None:
+                audit_store.add_entry(
+                    channel_id="bisq2",
+                    room_id=channel_id,
+                    actor_id=sender_profile_id,
+                    command_name=parsed.command.name.value,
+                    case_id=parsed.command.case_id,
+                    source_message_id=message_id,
+                    ok=False,
+                    idempotent=False,
+                    metadata={"result": "auth_rejected"},
+                    created_at=datetime.now(timezone.utc),
+                )
             await self._send_notice(
                 target=conversation_id or channel_id,
                 body=auth_result.message,
                 citation=text or None,
             )
             return True
+        record_chatops_auth(channel="bisq2", result="authorized")
 
         try:
             result = await self.dispatcher.dispatch(parsed.command)

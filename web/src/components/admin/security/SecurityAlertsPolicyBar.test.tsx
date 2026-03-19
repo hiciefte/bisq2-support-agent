@@ -32,11 +32,13 @@ describe("SecurityAlertsPolicyBar", () => {
   test("renders rollout badge and quick actions", async () => {
     const user = userEvent.setup();
     const onAlertSurfaceChange = jest.fn();
+    const onPolicyPatch = jest.fn().mockResolvedValue(true);
     render(
       <SecurityAlertsPolicyBar
         policy={POLICY}
         isSaving={false}
         onAlertSurfaceChange={onAlertSurfaceChange}
+        onPolicyPatch={onPolicyPatch}
       />,
     );
 
@@ -44,5 +46,30 @@ describe("SecurityAlertsPolicyBar", () => {
 
     await user.click(screen.getByRole("button", { name: "Promote to Staff Room" }));
     expect(onAlertSurfaceChange).toHaveBeenCalledWith("staff_room");
+  });
+
+  test("submits advanced policy changes", async () => {
+    const user = userEvent.setup();
+    const onPolicyPatch = jest.fn().mockResolvedValue(true);
+    render(
+      <SecurityAlertsPolicyBar
+        policy={POLICY}
+        isSaving={false}
+        onAlertSurfaceChange={jest.fn()}
+        onPolicyPatch={onPolicyPatch}
+      />,
+    );
+
+    await user.click(screen.getByText("Advanced controls"));
+    const windowField = screen.getByLabelText("Window (days)");
+    await user.clear(windowField);
+    await user.type(windowField, "21");
+    await user.click(screen.getByRole("button", { name: "Save advanced controls" }));
+
+    expect(onPolicyPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        silent_observer_window_days: 21,
+      }),
+    );
   });
 });

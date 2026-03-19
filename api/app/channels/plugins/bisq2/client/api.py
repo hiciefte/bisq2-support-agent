@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ from urllib.parse import ParseResult, urlparse, urlunparse
 
 import aiohttp
 from app.core.config import Settings
+from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ class Bisq2API:
         self._auth_state_file = self._resolve_path(
             "BISQ_API_AUTH_STATE_PATH", "BISQ_API_AUTH_STATE_FILE"
         )
+        self._auth_state_secret = self._resolve_auth_state_secret()
         self._pairing_qr_file = self._resolve_path(
             "BISQ_API_PAIRING_QR_PATH", "BISQ_API_PAIRING_QR_FILE"
         )
@@ -123,6 +126,26 @@ class Bisq2API:
             return fallback
         data_dir = self._setting_str("DATA_DIR", "api/data")
         return os.path.join(data_dir, fallback)
+
+    def _resolve_auth_state_secret(self) -> str:
+        candidates = (
+            "BISQ_API_AUTH_STATE_SECRET",
+            "ADMIN_API_KEY",
+            "OPENAI_API_KEY",
+        )
+        for candidate in candidates:
+            value = self._setting_str(candidate)
+            if value:
+                return value
+        return ""
+
+    def _auth_state_fernet(self) -> Fernet | None:
+        if not self._auth_state_secret:
+            return None
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(self._auth_state_secret.encode("utf-8")).digest()
+        )
+        return Fernet(key)
 
     @staticmethod
     def _parse_len_prefixed_bytes(payload: bytes, offset: int) -> tuple[bytes, int]:
@@ -204,7 +227,7 @@ class Bisq2API:
         if not path.exists():
             return
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload, was_plaintext = self._read_auth_state_payload(path)
             client_id = str(payload.get("client_id", "")).strip()
             client_secret = str(payload.get("client_secret", "")).strip()
             session_id = str(payload.get("session_id", "")).strip()
@@ -227,6 +250,8 @@ class Bisq2API:
                 self._session_id = session_id
             if client_id or client_secret or session_id:
                 logger.info("Loaded Bisq API auth state from %s", path)
+            if was_plaintext and client_id and client_secret:
+                self._save_auth_state()
         except Exception:
             logger.exception("Failed to load Bisq API auth state from %s", path)
 
@@ -234,6 +259,13 @@ class Bisq2API:
         if not self._auth_state_file:
             return
         if not self._client_id or not self._client_secret:
+            return
+        fernet = self._auth_state_fernet()
+        if fernet is None:
+            logger.warning(
+                "Skipping Bisq API auth state persistence because no auth-state encryption secret is configured"
+            )
+            _record_bisq2_api_auth_failure("auth_state_secret_missing")
             return
 
         path = Path(self._auth_state_file)
@@ -245,12 +277,35 @@ class Bisq2API:
                 "client_secret": self._client_secret,
                 "session_id": self._session_id,
             }
-            temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            encrypted = fernet.encrypt(
+                json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            )
+            temp_path.write_bytes(encrypted)
             temp_path.replace(path)
         except Exception:
             logger.exception("Failed to persist Bisq API auth state to %s", path)
             if temp_path.exists():
                 temp_path.unlink()
+
+    def _read_auth_state_payload(self, path: Path) -> tuple[dict[str, Any], bool]:
+        raw = path.read_bytes()
+        if not raw:
+            return {}, False
+        try:
+            return json.loads(raw.decode("utf-8")), True
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+        fernet = self._auth_state_fernet()
+        if fernet is None:
+            raise ValueError(
+                "Encrypted Bisq API auth state present but no auth-state secret is configured"
+            )
+        try:
+            decrypted = fernet.decrypt(raw)
+        except InvalidToken as exc:
+            raise ValueError("Failed to decrypt Bisq API auth state") from exc
+        return json.loads(decrypted.decode("utf-8")), False
 
     async def setup(self):
         """Initialize the API client with timeouts."""

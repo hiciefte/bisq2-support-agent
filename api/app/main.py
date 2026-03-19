@@ -113,6 +113,7 @@ async def lifespan(app: FastAPI):
     app.state.channel_autoresponse_policy_service = None
     app.state.trust_monitor_policy_service = None
     app.state.trust_monitor_service = None
+    app.state.chatops_audit_store = None
 
     # Initialize task metrics persistence and restore values
     logger.info("Initializing task metrics persistence...")
@@ -128,6 +129,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing FeedbackService...")
     feedback_service = FeedbackService(settings=settings)
+
+    from app.channels.chatops import ChatOpsAuditStore
+
+    app.state.chatops_audit_store = ChatOpsAuditStore(
+        db_path=os.path.join(settings.DATA_DIR, "feedback.db")
+    )
 
     app.state.channel_autoresponse_policy_service = ChannelAutoResponsePolicyService(
         db_path=os.path.join(settings.DATA_DIR, "feedback.db"),
@@ -376,6 +383,7 @@ async def lifespan(app: FastAPI):
             "channel_autoresponse_policy_service": app.state.channel_autoresponse_policy_service,
             "trust_monitor_policy_service": app.state.trust_monitor_policy_service,
             "trust_monitor_service": app.state.trust_monitor_service,
+            "chatops_audit_store": app.state.chatops_audit_store,
             "escalation_service": getattr(app.state, "escalation_service", None),
             "translation_service": getattr(app.state, "translation_service", None),
             "language_detector": getattr(

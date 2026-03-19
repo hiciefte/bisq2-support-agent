@@ -51,8 +51,65 @@ export interface TrustFindingCounts {
   benign: number;
 }
 
+export interface TrustRetentionRun {
+  id: number;
+  created_at: string;
+  deleted_evidence_events: number;
+  deleted_actor_aggregates: number;
+  deleted_findings: number;
+  deleted_feedback: number;
+  deleted_access_audit: number;
+}
+
+export interface TrustMonitorOpsSnapshot {
+  monitored_public_rooms: string[];
+  staff_room_id: string;
+  evidence_events_count: number;
+  actor_aggregates_count: number;
+  findings_count: number;
+  oldest_evidence_age_seconds: number | null;
+  oldest_aggregate_age_seconds: number | null;
+  oldest_finding_age_seconds: number | null;
+  last_retention_run: TrustRetentionRun | null;
+}
+
+export interface TrustAccessAuditEntry {
+  id: number;
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TrustAccessAuditListResponse {
+  items: TrustAccessAuditEntry[];
+}
+
+export interface ChatOpsAuditEntry {
+  id: number;
+  channel_id: string;
+  room_id: string;
+  actor_id: string;
+  command_name: string;
+  case_id: number | null;
+  source_message_id: string;
+  ok: boolean;
+  idempotent: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ChatOpsAuditListResponse {
+  items: ChatOpsAuditEntry[];
+}
+
 export interface SecurityAlertsInitialData {
   findings: TrustFindingListResponse | null;
   counts: TrustFindingCounts | null;
   policy: TrustMonitorPolicy | null;
+  ops: TrustMonitorOpsSnapshot | null;
+  trustAudit: TrustAccessAuditListResponse | null;
+  chatopsAudit: ChatOpsAuditListResponse | null;
 }

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.channels.chatops import ChatOpsAuditStore
 from app.channels.staff import StaffResolver
 from app.channels.trust_monitor.events import TrustEvent
 from app.channels.trust_monitor.models import TrustEventType
@@ -72,6 +73,9 @@ def _build_app(tmp_path) -> tuple[TestClient, TrustMonitorService]:
     app = FastAPI()
     app.state.trust_monitor_service = service
     app.state.trust_monitor_policy_service = policy_service
+    app.state.chatops_audit_store = ChatOpsAuditStore(
+        db_path=str(tmp_path / "feedback.db")
+    )
     app.include_router(module.router)
     app.dependency_overrides[module.verify_admin_access] = lambda: None
     return TestClient(app), service
@@ -122,3 +126,46 @@ def test_list_findings_and_apply_actions(tmp_path) -> None:
     counts = client.get("/admin/security/findings/counts")
     assert counts.status_code == 200
     assert counts.json()["resolved"] == 1
+
+
+def test_get_ops_and_audit_feeds(tmp_path) -> None:
+    client, service = _build_app(tmp_path)
+    service.ingest_event(
+        TrustEvent(
+            channel_id="matrix",
+            space_id="!support:matrix.org",
+            actor_id="@copycat:matrix.org",
+            actor_display_name="Alice Support",
+            event_type=TrustEventType.MEMBER_JOINED,
+            occurred_at=datetime.now(UTC),
+            external_event_id="debug:copycat-ops",
+        )
+    )
+    service.apply_retention(now=datetime.now(UTC))
+    client.app.state.chatops_audit_store.add_entry(
+        channel_id="matrix",
+        room_id="!staff:matrix.org",
+        actor_id="@alice:matrix.org",
+        command_name="claim",
+        case_id=42,
+        source_message_id="$event-1",
+        ok=True,
+        idempotent=False,
+        metadata={"result": "ok"},
+        created_at=datetime.now(UTC),
+    )
+
+    ops = client.get("/admin/security/trust-monitor/ops")
+    assert ops.status_code == 200
+    ops_payload = ops.json()
+    assert ops_payload["monitored_public_rooms"] == ["!support:matrix.org"]
+    assert ops_payload["last_retention_run"] is not None
+
+    access = client.get("/admin/security/trust-monitor/access-audit")
+    assert access.status_code == 200
+    assert isinstance(access.json()["items"], list)
+
+    chatops = client.get("/admin/security/chatops/audit")
+    assert chatops.status_code == 200
+    assert len(chatops.json()["items"]) == 1
+    assert chatops.json()["items"][0]["command_name"] == "claim"

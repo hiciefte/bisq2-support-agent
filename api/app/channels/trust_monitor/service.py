@@ -23,9 +23,15 @@ from app.channels.trust_monitor.models import (
     TrustFindingCounts,
     TrustFindingList,
     TrustFindingStatus,
+    TrustMonitorOpsSnapshot,
     utc_now,
 )
 from app.channels.trust_monitor.publisher import TrustAlertPublisher
+from app.metrics.operator_metrics import (
+    record_trust_event,
+    record_trust_feedback,
+    record_trust_finding,
+)
 from app.services.trust_monitor_policy_service import TrustMonitorPolicyService
 
 
@@ -77,12 +83,24 @@ class TrustMonitorService:
     def ingest_event(self, event: TrustEvent) -> TrustFinding | None:
         policy = self.policy_service.get_policy()
         if not policy.enabled:
+            record_trust_event(
+                channel=event.channel_id,
+                event_type=event.event_type.value,
+                result="policy_disabled",
+            )
             return None
-        if (
-            event.channel_id == "matrix"
-            and event.space_id not in policy.matrix_public_room_ids
-        ):
-            if event.space_id != policy.matrix_staff_room_id:
+        if event.channel_id == "matrix":
+            monitored_rooms = set(policy.matrix_public_room_ids)
+            if event.space_id not in monitored_rooms:
+                record_trust_event(
+                    channel=event.channel_id,
+                    event_type=event.event_type.value,
+                    result=(
+                        "staff_room_excluded"
+                        if event.space_id == policy.matrix_staff_room_id
+                        else "out_of_scope"
+                    ),
+                )
                 return None
         actor_key = self.actor_key(event.channel_id, event.actor_id)
         target_actor_key = (
@@ -108,7 +126,17 @@ class TrustMonitorService:
             trusted_staff=trusted_staff,
         )
         if stored_event is None:
+            record_trust_event(
+                channel=event.channel_id,
+                event_type=event.event_type.value,
+                result="duplicate",
+            )
             return None
+        record_trust_event(
+            channel=event.channel_id,
+            event_type=event.event_type.value,
+            result="stored",
+        )
 
         candidate = None
         if policy.name_collision_enabled:
@@ -156,8 +184,18 @@ class TrustMonitorService:
             created_at=candidate.occurred_at,
             notify=notify,
         )
+        record_trust_finding(
+            detector=finding.detector_key,
+            action="upserted" if existing is not None else "created",
+            surface=finding.alert_surface.value,
+        )
         if notify:
             self.publisher.publish(finding)
+            record_trust_finding(
+                detector=finding.detector_key,
+                action="notified",
+                surface=finding.alert_surface.value,
+            )
         return finding
 
     def list_findings(
@@ -222,6 +260,7 @@ class TrustMonitorService:
             target_id=str(finding_id),
             created_at=now,
         )
+        record_trust_feedback(action=feedback_action.value)
         return updated
 
     def list_access_audit(self, *, limit: int = 50) -> list[TrustAccessAuditEntry]:
@@ -229,6 +268,14 @@ class TrustMonitorService:
 
     def list_evidence(self, *, limit: int = 50):
         return self.store.list_evidence(limit=limit)
+
+    def ops_snapshot(self) -> TrustMonitorOpsSnapshot:
+        policy = self.policy_service.get_policy()
+        return self.store.ops_snapshot(
+            monitored_public_rooms=policy.matrix_public_room_ids,
+            staff_room_id=policy.matrix_staff_room_id,
+            now=utc_now(),
+        )
 
     def apply_retention(self, *, now: datetime | None = None) -> None:
         self.store.purge_expired(

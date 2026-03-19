@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.chatops import ChatOpsAuthorizer, ChatOpsDispatcher, ChatOpsParser
+from app.metrics.operator_metrics import record_chatops_auth, record_chatops_parse
 
 
 class MatrixChatOpsAdapter:
@@ -30,6 +32,7 @@ class MatrixChatOpsAdapter:
         self.dispatcher = dispatcher or ChatOpsDispatcher(
             escalation_service=runtime.resolve_optional("escalation_service"),
             arbitration_service=runtime.resolve_optional("arbitration_service"),
+            audit_store=runtime.resolve_optional("chatops_audit_store"),
         )
 
     async def handle_event(
@@ -45,17 +48,35 @@ class MatrixChatOpsAdapter:
             actor_id=sender,
             source_message_id=event_id,
             room_id=room_id,
+            channel_id="matrix",
         )
         if not parsed.handled:
+            record_chatops_parse(channel="matrix", result="ignored")
             return False
 
         if parsed.command is None:
+            record_chatops_parse(channel="matrix", result="invalid")
+            audit_store = self.runtime.resolve_optional("chatops_audit_store")
+            if audit_store is not None:
+                audit_store.add_entry(
+                    channel_id="matrix",
+                    room_id=room_id,
+                    actor_id=sender,
+                    command_name="invalid",
+                    case_id=None,
+                    source_message_id=event_id,
+                    ok=False,
+                    idempotent=False,
+                    metadata={"result": "invalid_command"},
+                    created_at=datetime.now(timezone.utc),
+                )
             await self._send_notice(
                 room_id=room_id,
                 root_event_id=event_id,
                 body=parsed.error_message or "Invalid command.",
             )
             return True
+        record_chatops_parse(channel="matrix", result="parsed")
 
         authorizer = ChatOpsAuthorizer(
             enabled=self.enabled,
@@ -66,12 +87,28 @@ class MatrixChatOpsAdapter:
         )
         auth_result = authorizer.authorize(parsed.command)
         if auth_result is not None:
+            record_chatops_auth(channel="matrix", result="rejected")
+            audit_store = self.runtime.resolve_optional("chatops_audit_store")
+            if audit_store is not None:
+                audit_store.add_entry(
+                    channel_id="matrix",
+                    room_id=room_id,
+                    actor_id=sender,
+                    command_name=parsed.command.name.value,
+                    case_id=parsed.command.case_id,
+                    source_message_id=event_id,
+                    ok=False,
+                    idempotent=False,
+                    metadata={"result": "auth_rejected"},
+                    created_at=datetime.now(timezone.utc),
+                )
             await self._send_notice(
                 room_id=room_id,
                 root_event_id=event_id,
                 body=auth_result.message,
             )
             return True
+        record_chatops_auth(channel="matrix", result="authorized")
 
         result = await self.dispatcher.dispatch(parsed.command)
         await self._send_notice(

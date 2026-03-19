@@ -5,6 +5,7 @@ import {
     submitChatMessage,
     waitForApiReady,
 } from "./utils/helpers";
+import { ENABLE_LIVE_CHAT_POLICY_E2E } from "./utils/env";
 
 /**
  * Bisq Version Handling Tests
@@ -45,6 +46,7 @@ const askQuestionAndGetResponse = async (page: Page, question: string): Promise<
 };
 
 test.describe("Bisq Version Handling", () => {
+    test.skip(!ENABLE_LIVE_CHAT_POLICY_E2E, "Set ENABLE_LIVE_CHAT_POLICY_E2E=true to run live LLM version-handling scenarios.");
     // These tests make real LLM API calls and may fail due to transient API
     // errors ("failed to fetch") or slow responses. Retry once on failure.
     test.describe.configure({ retries: 1 });

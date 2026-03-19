@@ -37,6 +37,7 @@ class ChatOpsParser:
         actor_id: str,
         source_message_id: str,
         room_id: str,
+        channel_id: str = "",
     ) -> ChatOpsParseResult:
         normalized = str(text or "").strip()
         if not normalized.startswith(self.prefix):
@@ -78,6 +79,7 @@ class ChatOpsParser:
                 actor_id=actor_id,
                 source_message_id=source_message_id,
                 room_id=room_id,
+                channel_id=channel_id,
                 raw_text=normalized,
             )
         except ValueError as exc:
@@ -116,6 +118,7 @@ class ChatOpsParser:
         actor_id: str,
         source_message_id: str,
         room_id: str,
+        channel_id: str,
         raw_text: str,
     ) -> ChatOpsCommand:
         case_id: int | None = None
@@ -176,6 +179,7 @@ class ChatOpsParser:
             source_message_id=str(source_message_id or "").strip(),
             room_id=str(room_id or "").strip(),
             raw_text=raw_text,
+            channel_id=str(channel_id or "").strip(),
             case_id=case_id,
             options=options,
             message=message,

@@ -65,6 +65,14 @@ export const normalizeApiUrl = (url: string | undefined): string => {
  */
 export const API_BASE_URL = normalizeApiUrl(process.env.NEXT_PUBLIC_API_URL);
 
+
+/**
+ * Real LLM-driven chat E2E tests are nondeterministic and should only run
+ * when explicitly enabled for the environment under test.
+ */
+export const ENABLE_LIVE_CHAT_POLICY_E2E =
+  process.env.ENABLE_LIVE_CHAT_POLICY_E2E === 'true';
+
 /**
  * Admin API key for authentication
  */

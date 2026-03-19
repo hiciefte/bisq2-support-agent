@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     BISQ_API_PAIRING_QR_FILE: str = ""
     BISQ_API_PAIRING_CLIENT_NAME: str = "bisq-support-agent"
     BISQ_API_AUTH_STATE_FILE: str = "bisq_api_auth.json"
+    BISQ_API_AUTH_STATE_SECRET: str = ""
 
     # Bisq 2 MCP Integration Settings
     BISQ_API_TIMEOUT: int = Field(

@@ -79,6 +79,60 @@ class TrustFindingCountsResponse(BaseModel):
     benign: int
 
 
+class TrustAccessAuditResponse(BaseModel):
+    id: int
+    actor_id: str
+    action: str
+    target_type: str
+    target_id: str
+    metadata: dict
+    created_at: str
+
+
+class TrustAccessAuditListResponse(BaseModel):
+    items: list[TrustAccessAuditResponse]
+
+
+class TrustRetentionRunResponse(BaseModel):
+    id: int
+    created_at: str
+    deleted_evidence_events: int
+    deleted_actor_aggregates: int
+    deleted_findings: int
+    deleted_feedback: int
+    deleted_access_audit: int
+
+
+class TrustMonitorOpsResponse(BaseModel):
+    monitored_public_rooms: list[str]
+    staff_room_id: str
+    evidence_events_count: int
+    actor_aggregates_count: int
+    findings_count: int
+    oldest_evidence_age_seconds: float | None
+    oldest_aggregate_age_seconds: float | None
+    oldest_finding_age_seconds: float | None
+    last_retention_run: TrustRetentionRunResponse | None
+
+
+class ChatOpsAuditResponse(BaseModel):
+    id: int
+    channel_id: str
+    room_id: str
+    actor_id: str
+    command_name: str
+    case_id: int | None
+    source_message_id: str
+    ok: bool
+    idempotent: bool
+    metadata: dict
+    created_at: str
+
+
+class ChatOpsAuditListResponse(BaseModel):
+    items: list[ChatOpsAuditResponse]
+
+
 class FindingActionRequest(BaseModel):
     actor_id: str | None = None
 
@@ -100,6 +154,11 @@ def _monitor_service(request: Request):
 
 
 def _policy_response(policy) -> TrustMonitorPolicyResponse:
+    updated_at = policy.updated_at
+    if isinstance(updated_at, datetime):
+        updated_at_value = updated_at.isoformat()
+    else:
+        updated_at_value = str(updated_at or "")
     return TrustMonitorPolicyResponse(
         enabled=policy.enabled,
         name_collision_enabled=policy.name_collision_enabled,
@@ -115,7 +174,7 @@ def _policy_response(policy) -> TrustMonitorPolicyResponse:
         evidence_ttl_days=policy.evidence_ttl_days,
         aggregate_ttl_days=policy.aggregate_ttl_days,
         finding_ttl_days=policy.finding_ttl_days,
-        updated_at=policy.updated_at.isoformat(),
+        updated_at=updated_at_value,
     )
 
 
@@ -138,6 +197,53 @@ def _finding_response(finding) -> TrustFindingResponse:
         ),
         notification_count=finding.notification_count,
     )
+
+
+def _access_audit_response(entry) -> TrustAccessAuditResponse:
+    return TrustAccessAuditResponse(
+        id=entry.id,
+        actor_id=entry.actor_id,
+        action=entry.action,
+        target_type=entry.target_type,
+        target_id=entry.target_id,
+        metadata=entry.metadata,
+        created_at=entry.created_at.isoformat(),
+    )
+
+
+def _retention_response(entry) -> TrustRetentionRunResponse | None:
+    if entry is None:
+        return None
+    return TrustRetentionRunResponse(
+        id=entry.id,
+        created_at=entry.created_at.isoformat(),
+        deleted_evidence_events=entry.deleted_evidence_events,
+        deleted_actor_aggregates=entry.deleted_actor_aggregates,
+        deleted_findings=entry.deleted_findings,
+        deleted_feedback=entry.deleted_feedback,
+        deleted_access_audit=entry.deleted_access_audit,
+    )
+
+
+def _ops_response(snapshot) -> TrustMonitorOpsResponse:
+    return TrustMonitorOpsResponse(
+        monitored_public_rooms=snapshot.monitored_public_rooms,
+        staff_room_id=snapshot.staff_room_id,
+        evidence_events_count=snapshot.evidence_events_count,
+        actor_aggregates_count=snapshot.actor_aggregates_count,
+        findings_count=snapshot.findings_count,
+        oldest_evidence_age_seconds=snapshot.oldest_evidence_age_seconds,
+        oldest_aggregate_age_seconds=snapshot.oldest_aggregate_age_seconds,
+        oldest_finding_age_seconds=snapshot.oldest_finding_age_seconds,
+        last_retention_run=_retention_response(snapshot.last_retention_run),
+    )
+
+
+def _chatops_audit_store(request: Request):
+    store = getattr(request.app.state, "chatops_audit_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="ChatOps audit store unavailable")
+    return store
 
 
 @router.get("/trust-monitor/policy", response_model=TrustMonitorPolicyResponse)
@@ -188,6 +294,49 @@ def count_findings(request: Request) -> TrustFindingCountsResponse:
         false_positive=counts.false_positive,
         suppressed=counts.suppressed,
         benign=counts.benign,
+    )
+
+
+@router.get("/trust-monitor/access-audit", response_model=TrustAccessAuditListResponse)
+def list_access_audit(
+    request: Request, limit: int = 20
+) -> TrustAccessAuditListResponse:
+    entries = _monitor_service(request).list_access_audit(limit=max(1, min(limit, 100)))
+    return TrustAccessAuditListResponse(
+        items=[_access_audit_response(entry) for entry in entries]
+    )
+
+
+@router.get("/trust-monitor/ops", response_model=TrustMonitorOpsResponse)
+def get_ops_snapshot(request: Request) -> TrustMonitorOpsResponse:
+    return _ops_response(_monitor_service(request).ops_snapshot())
+
+
+@router.get("/chatops/audit", response_model=ChatOpsAuditListResponse)
+def list_chatops_audit(
+    request: Request, limit: int = 20, channel_id: str | None = None
+) -> ChatOpsAuditListResponse:
+    entries = _chatops_audit_store(request).list_entries(
+        limit=max(1, min(limit, 100)),
+        channel_id=channel_id,
+    )
+    return ChatOpsAuditListResponse(
+        items=[
+            ChatOpsAuditResponse(
+                id=entry.id,
+                channel_id=entry.channel_id,
+                room_id=entry.room_id,
+                actor_id=entry.actor_id,
+                command_name=entry.command_name,
+                case_id=entry.case_id,
+                source_message_id=entry.source_message_id,
+                ok=entry.ok,
+                idempotent=entry.idempotent,
+                metadata=entry.metadata,
+                created_at=entry.created_at.isoformat(),
+            )
+            for entry in entries
+        ]
     )
 
 
@@ -246,3 +395,9 @@ TrustMonitorPolicyResponse.model_rebuild()
 TrustFindingResponse.model_rebuild()
 TrustFindingListResponse.model_rebuild()
 TrustFindingCountsResponse.model_rebuild()
+TrustAccessAuditResponse.model_rebuild()
+TrustAccessAuditListResponse.model_rebuild()
+TrustRetentionRunResponse.model_rebuild()
+TrustMonitorOpsResponse.model_rebuild()
+ChatOpsAuditResponse.model_rebuild()
+ChatOpsAuditListResponse.model_rebuild()
