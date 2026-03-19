@@ -37,6 +37,14 @@ import { ConfidenceBadge } from "@/components/chat/components/confidence-badge"
 import type { Source } from "@/components/chat/types/chat.types"
 import { normalizeRoutingReasonSourceCount } from "@/lib/escalation-routing"
 import {
+  getCanonicalDraftAnswer,
+  getCanonicalQuestion,
+  getInitialQuestionView,
+  getInitialSuggestedAnswerView,
+  getLocalizedDraftAnswer,
+  getLocalizedQuestion,
+} from "./language-preference"
+import {
   FAQ_CATEGORIES,
   FAQ_PROTOCOL_OPTIONS,
   inferFaqMetadata,
@@ -103,22 +111,6 @@ function isMeaningfullyEditedAnswer(staffAnswer: string, aiDraftAnswer: string):
   return normalizedStaff !== normalizedDraft
 }
 
-function getCanonicalQuestion(escalation: EscalationItem): string {
-  return escalation.question?.trim() || escalation.question_original?.trim() || ""
-}
-
-function getLocalizedQuestion(escalation: EscalationItem): string {
-  return escalation.question_original?.trim() || escalation.question?.trim() || ""
-}
-
-function getCanonicalDraftAnswer(escalation: EscalationItem): string {
-  return escalation.ai_draft_answer?.trim() || escalation.ai_draft_answer_original?.trim() || ""
-}
-
-function getLocalizedDraftAnswer(escalation: EscalationItem): string {
-  return escalation.ai_draft_answer_original?.trim() || escalation.ai_draft_answer?.trim() || ""
-}
-
 export function EscalationReviewPanel({
   escalation,
   open,
@@ -130,10 +122,10 @@ export function EscalationReviewPanel({
   const suggestedTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const [phase, setPhase] = useState<'review' | 'faq'>('review')
-  const [questionView, setQuestionView] = useState<'canonical' | 'original'>('canonical')
-  const [suggestedAnswerView, setSuggestedAnswerView] = useState<'canonical' | 'localized'>('canonical')
+  const [questionView, setQuestionView] = useState<'canonical' | 'original'>(() => getInitialQuestionView(escalation))
+  const [suggestedAnswerView, setSuggestedAnswerView] = useState<'canonical' | 'localized'>(() => getInitialSuggestedAnswerView(escalation))
 
-  const [staffAnswer, setStaffAnswer] = useState(getCanonicalDraftAnswer(escalation))
+  const [staffAnswer, setStaffAnswer] = useState(() => getCanonicalDraftAnswer(escalation))
   const [isResponding, setIsResponding] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isEditingSuggestedAnswer, setIsEditingSuggestedAnswer] = useState(false)
@@ -149,20 +141,21 @@ export function EscalationReviewPanel({
 
   // Reset form when escalation changes
   useEffect(() => {
-    aiDraftRef.current = getCanonicalDraftAnswer(escalation)
-    setStaffAnswer(escalation.staff_answer || getCanonicalDraftAnswer(escalation))
+    const canonicalDraft = getCanonicalDraftAnswer(escalation)
+    aiDraftRef.current = canonicalDraft
+    setStaffAnswer(escalation.staff_answer || canonicalDraft)
     const hasExistingStaffResponse = Boolean((escalation.staff_answer || "").trim())
     const hasMeaningfulEdit = isMeaningfullyEditedAnswer(
       escalation.staff_answer || "",
-      getCanonicalDraftAnswer(escalation),
+      canonicalDraft,
     )
     const shouldStartInFaq = hasExistingStaffResponse && (
       hasMeaningfulEdit &&
       (escalation.status === "responded" || escalation.status === "closed")
     )
     setPhase(shouldStartInFaq ? "faq" : "review")
-    setQuestionView("canonical")
-    setSuggestedAnswerView("canonical")
+    setQuestionView(getInitialQuestionView(escalation))
+    setSuggestedAnswerView(getInitialSuggestedAnswerView(escalation))
     setIsEditingSuggestedAnswer(false)
     setFaqQuestion(getCanonicalQuestion(escalation))
     setFaqAnswer(escalation.staff_answer || getCanonicalDraftAnswer(escalation))

@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Ovo označavam za člana tima koji može pregledati detalje. Netko će se uskoro javiti.",
+  "escalation.notice.web": "Ovo označavam za člana tima koji može pregledati detalje. Netko će se uskoro javiti.",
+  "escalation.notice.matrix": "Ovo zahtijeva pažnju člana tima. Netko će se javiti u ovoj sobi.",
+  "escalation.notice.bisq2": "Ovo zahtijeva pažnju člana tima. Netko će se javiti u ovom razgovoru."
+}

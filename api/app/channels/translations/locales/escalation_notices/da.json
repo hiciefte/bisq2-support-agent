@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Jeg markerer dette for et teammedlem, der kan gennemgå detaljerne. Nogen vil følge op her snart.",
+  "escalation.notice.web": "Jeg markerer dette for et teammedlem, der kan gennemgå detaljerne. Nogen vil følge op her snart.",
+  "escalation.notice.matrix": "Dette kræver opmærksomhed fra et teammedlem. Nogen vil følge op i dette rum.",
+  "escalation.notice.bisq2": "Dette kræver opmærksomhed fra et teammedlem. Nogen vil følge op i denne samtale."
+}

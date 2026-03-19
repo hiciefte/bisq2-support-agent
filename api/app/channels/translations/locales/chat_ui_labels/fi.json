@@ -1,0 +1,7 @@
+{
+  "chat.ui.helpful_prompt": "Oliko tämä vastaus hyödyllinen?",
+  "chat.ui.helpful_thank_you": "Kiitos palautteestasi!",
+  "chat.ui.staff_helpful_prompt": "Oliko henkilökunnan vastaus hyödyllinen?",
+  "chat.ui.staff_response_label": "Henkilökunnan vastaus",
+  "chat.ui.support_team_notified": "Tukitiimi on ilmoitettu"
+}

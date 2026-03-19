@@ -5,7 +5,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { API_BASE_URL } from "@/lib/config";
-import type { McpToolUsage, Message, Source } from "../types/chat.types";
+import { parseChatUiLabels } from "../utils/ui-labels";
+import type {
+    McpToolUsage,
+    Message,
+    Source,
+} from "../types/chat.types";
 
 const MAX_CHAT_HISTORY_LENGTH = 8;
 const CHAT_STORAGE_KEY = "bisq_chat_messages";
@@ -191,13 +196,14 @@ const parseStoredMessage = (value: unknown): Message | null => {
             typeof value.escalation_user_language === "string"
                 ? value.escalation_user_language
                 : undefined,
+        ui_labels: parseChatUiLabels(value.ui_labels),
         staff_response: parseStaffResponse(value.staff_response),
     };
 };
 
 const parseStaffResponse = (
     value: unknown,
-): { answer: string; responded_at: string; rating?: number } | undefined => {
+): { answer: string; responded_at: string; rating?: number; rate_token?: string } | undefined => {
     if (!isJsonRecord(value)) {
         return undefined;
     }
@@ -206,6 +212,8 @@ const parseStaffResponse = (
             answer: value.answer,
             responded_at: value.responded_at,
             rating: isFiniteNumber(value.rating) ? value.rating : undefined,
+            rate_token:
+                typeof value.rate_token === "string" ? value.rate_token : undefined,
         };
     }
     return undefined;
@@ -486,6 +494,11 @@ export const useChatMessages = () => {
                         typeof payload.escalation_message_id === "string"
                             ? payload.escalation_message_id
                             : undefined,
+                    escalation_user_language:
+                        typeof payload.user_language === "string"
+                            ? payload.user_language
+                            : undefined,
+                    ui_labels: parseChatUiLabels(payload.ui_labels),
                 };
 
                 setMessages((prev) => [...prev, assistantMessage]);

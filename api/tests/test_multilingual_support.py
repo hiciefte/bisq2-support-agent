@@ -675,6 +675,43 @@ class TestTranslationService:
         assert "error" not in result
         assert invoke_llm.invoke_calls == 1
 
+    @pytest.mark.asyncio
+    async def test_translate_query_short_bisq_entity_passthrough(
+        self, translation_service, mock_llm_provider
+    ):
+        """Short Bisq entity queries should bypass translation to preserve intent."""
+        mock_llm_provider.generate = AsyncMock(
+            return_value="Please provide the text you want translated."
+        )
+
+        result = await translation_service.translate_query(
+            "Bisq Easy",
+            source_lang="de",
+        )
+
+        assert result["translated_text"] == "Bisq Easy"
+        assert result["source_lang"] == "de"
+        assert result["skipped"] is False
+        assert result["cached"] is False
+        mock_llm_provider.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_translate_query_does_not_passthrough_non_entity_bisq_phrase(
+        self, translation_service, mock_llm_provider
+    ):
+        """Only exact short Bisq entity phrases should bypass translation."""
+        mock_llm_provider.generate = AsyncMock(return_value="I love Bisq")
+
+        result = await translation_service.translate_query(
+            "Ich liebe Bisq",
+            source_lang="de",
+        )
+
+        assert result["translated_text"] == "I love Bisq"
+        assert result["source_lang"] == "de"
+        assert result["skipped"] is False
+        mock_llm_provider.generate.assert_awaited_once()
+
 
 # =============================================================================
 # TASK 10.6: BGE-M3 EMBEDDINGS TESTS

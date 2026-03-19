@@ -120,6 +120,8 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                             <Rating
                                 className="self-end sm:self-auto flex-shrink-0"
                                 onRate={(rating) => onRating(message.id!, rating)}
+                                promptText={message.ui_labels?.helpful_prompt}
+                                thankYouText={message.ui_labels?.helpful_thank_you}
                             />
                         )}
                     </div>
@@ -127,7 +129,9 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
 
                 {/* Escalation indicators */}
                 {isAssistant && message.requires_human && !message.staff_response && message.escalation_resolution !== "closed" && (
-                    <HumanReviewBadge />
+                    <HumanReviewBadge
+                        label={message.ui_labels?.support_team_notified}
+                    />
                 )}
                 {isAssistant && message.escalation_resolution === "closed" && (
                     <HumanClosedSection
@@ -138,6 +142,8 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                 {isAssistant && message.staff_response && (
                     <HumanResponseSection
                         response={message.staff_response}
+                        language={message.escalation_user_language}
+                        uiLabels={message.ui_labels}
                         onRate={onStaffRate && message.escalation_message_id
                             ? (rating) => onStaffRate(
                                 message.escalation_message_id!,

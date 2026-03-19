@@ -7,6 +7,7 @@
 import { CheckCircle } from "lucide-react"
 import { MarkdownContent } from "./markdown-content"
 import { Rating } from "@/components/ui/rating"
+import type { ChatUiLabels } from "../types/chat.types"
 
 interface StaffResponse {
   answer: string
@@ -19,18 +20,43 @@ interface HumanResponseSectionProps {
   response: StaffResponse
   onRate?: (rating: number) => void
   messageId?: string
+  language?: string | null
+  uiLabels?: ChatUiLabels
 }
 
-function formatResponseDate(timestamp: string): string {
-  return new Date(timestamp).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+function formatResponseDate(timestamp: string, language?: string | null): string {
+  const parsedDate = new Date(timestamp)
+  if (Number.isNaN(parsedDate.getTime())) {
+    return timestamp
+  }
+
+  try {
+    return new Intl.DateTimeFormat(language || undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(parsedDate)
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(parsedDate)
+  }
 }
 
-export function HumanResponseSection({ response, onRate }: HumanResponseSectionProps) {
+export function HumanResponseSection({
+  response,
+  onRate,
+  language,
+  uiLabels,
+}: HumanResponseSectionProps) {
+  const staffResponseLabel = uiLabels?.staff_response_label || "Staff Response"
+  const staffHelpfulPrompt = uiLabels?.staff_helpful_prompt || "Was the staff response helpful?"
+  const thankYouText = uiLabels?.helpful_thank_you || "Thank you for your feedback!"
+
   return (
     <section
       aria-label="Staff response"
@@ -39,7 +65,7 @@ export function HumanResponseSection({ response, onRate }: HumanResponseSectionP
       <div className="flex items-center gap-1.5 mb-1.5">
         <CheckCircle aria-hidden="true" className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
         <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-          Staff Response
+          {staffResponseLabel}
         </span>
       </div>
       <MarkdownContent
@@ -50,15 +76,15 @@ export function HumanResponseSection({ response, onRate }: HumanResponseSectionP
         dateTime={response.responded_at}
         className="block text-[10px] text-emerald-600/70 dark:text-emerald-400/60 mt-1.5"
       >
-        {formatResponseDate(response.responded_at)}
+        {formatResponseDate(response.responded_at, language)}
       </time>
       {onRate && (
         <div className="mt-2 pt-2 border-t border-emerald-200/50 dark:border-emerald-800/50">
           <Rating
             onRate={onRate}
             initialRating={response.rating}
-            promptText="Was the staff response helpful?"
-            thankYouText="Thank you for your feedback!"
+            promptText={staffHelpfulPrompt}
+            thankYouText={thankYouText}
             className="text-xs text-emerald-700 dark:text-emerald-300
                        flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3"
           />

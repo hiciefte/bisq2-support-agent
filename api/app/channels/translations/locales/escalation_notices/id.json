@@ -1,0 +1,6 @@
+{
+  "escalation.notice.generic": "Saya akan menandai ini untuk anggota tim yang dapat meninjau detailnya. Seseorang akan menindaklanjuti di sini segera.",
+  "escalation.notice.web": "Saya akan menandai ini untuk anggota tim yang dapat meninjau detailnya. Seseorang akan menindaklanjuti di sini segera.",
+  "escalation.notice.matrix": "Ini memerlukan perhatian anggota tim. Seseorang akan menindaklanjuti di ruangan ini.",
+  "escalation.notice.bisq2": "Ini memerlukan perhatian anggota tim. Seseorang akan menindaklanjuti dalam percakapan ini."
+}
