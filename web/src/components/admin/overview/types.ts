@@ -1,9 +1,36 @@
 export type ChannelId = "web" | "bisq2" | "matrix";
+export type EscalationNotificationChannel = "public_room" | "staff_room" | "none";
 
 export interface ChannelAutoresponsePolicy {
   channel_id: ChannelId;
   enabled: boolean;
   generation_enabled: boolean;
+  ai_response_mode: "autonomous" | "hitl";
+  hitl_approval_timeout_seconds: number;
+  draft_assistant_enabled: boolean;
+  knowledge_amplifier_enabled: boolean;
+  staff_assist_surface: "none" | "staff_room" | "admin_ui" | "both";
+  first_response_delay_seconds: number;
+  staff_active_cooldown_seconds: number;
+  max_proactive_ai_replies_per_question: number;
+  public_escalation_notice_enabled: boolean;
+  acknowledgment_mode: "none" | "reaction" | "message";
+  acknowledgment_reaction_key: string;
+  acknowledgment_message_template: string;
+  group_clarification_immediate: boolean;
+  escalation_user_notice_template: string;
+  escalation_user_notice_mode: "none" | "message";
+  dispatch_failure_message_template: string;
+  escalation_notification_channel: EscalationNotificationChannel;
+  explicit_invocation_enabled: boolean;
+  explicit_invocation_user_rate_limit_per_5m: number;
+  explicit_invocation_room_rate_limit_per_min: number;
+  community_response_cancels_ai: boolean;
+  community_substantive_min_chars: number;
+  staff_presence_aware_delay: boolean;
+  min_delay_no_staff_seconds: number;
+  mandatory_escalation_topics: string[];
+  timer_jitter_max_seconds: number;
   updated_at: string;
 }
 

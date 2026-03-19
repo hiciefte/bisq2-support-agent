@@ -63,6 +63,12 @@ def test_get_channel_autoresponse_policy(tmp_path) -> None:
     assert response.json()["channel_id"] == "bisq2"
     assert response.json()["enabled"] is False
     assert response.json()["generation_enabled"] is False
+    assert response.json()["ai_response_mode"] == "autonomous"
+    assert response.json()["acknowledgment_mode"] == "message"
+    assert response.json()["public_escalation_notice_enabled"] is False
+    assert response.json()["escalation_notification_channel"] == "staff_room"
+    assert response.json()["escalation_user_notice_mode"] == "message"
+    assert response.json()["group_clarification_immediate"] is False
 
 
 def test_update_channel_autoresponse_policy(tmp_path) -> None:
@@ -77,6 +83,7 @@ def test_update_channel_autoresponse_policy(tmp_path) -> None:
     assert response.json()["channel_id"] == "matrix"
     assert response.json()["enabled"] is False
     assert response.json()["generation_enabled"] is True
+    assert response.json()["ai_response_mode"] == "autonomous"
 
     reloaded = service.get_policy("matrix")
     assert reloaded.generation_enabled is True
@@ -92,6 +99,36 @@ def test_update_channel_autoresponse_policy_requires_one_field(tmp_path) -> None
         json={},
     )
     assert response.status_code == 422
+
+
+def test_update_channel_autoresponse_policy_hitl_fields(tmp_path) -> None:
+    service = ChannelAutoResponsePolicyService(db_path=str(tmp_path / "feedback.db"))
+    client = TestClient(_build_test_app(service))
+
+    response = client.put(
+        "/admin/channels/autoresponse/matrix",
+        json={
+            "ai_response_mode": "hitl",
+            "hitl_approval_timeout_seconds": 900,
+            "staff_assist_surface": "admin_ui",
+            "public_escalation_notice_enabled": False,
+            "acknowledgment_mode": "message",
+            "escalation_user_notice_mode": "none",
+            "escalation_notification_channel": "staff_room",
+            "timer_jitter_max_seconds": 20,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ai_response_mode"] == "hitl"
+    assert payload["hitl_approval_timeout_seconds"] == 900
+    assert payload["staff_assist_surface"] == "admin_ui"
+    assert payload["public_escalation_notice_enabled"] is False
+    assert payload["acknowledgment_mode"] == "message"
+    assert payload["escalation_user_notice_mode"] == "none"
+    assert payload["escalation_notification_channel"] == "staff_room"
+    assert payload["timer_jitter_max_seconds"] == 20
 
 
 def test_rejects_unsupported_channel(tmp_path) -> None:

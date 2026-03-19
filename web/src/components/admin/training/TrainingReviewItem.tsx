@@ -11,16 +11,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -73,7 +63,7 @@ interface ConversationMessage {
 interface TrainingReviewItemProps {
   pair: UnifiedCandidate;
   onApprove: () => Promise<void>;
-  onReject: (reason: string) => Promise<void>;
+  onReject: (reason: string, reasonNote?: string) => Promise<void>;
   onSkip: () => Promise<void>;
   onUpdateCandidate: (updates: { edited_staff_answer?: string; edited_question_text?: string; category?: string }) => Promise<void>;
   onRegenerateAnswer: (protocol: ProtocolType) => Promise<void>;
@@ -86,6 +76,7 @@ const REJECT_REASONS = [
   { value: "incorrect", label: "Incorrect information" },
   { value: "outdated", label: "Outdated content" },
   { value: "too_vague", label: "Too vague" },
+  { value: "too_niche_edge_case", label: "Too niche / edge case" },
   { value: "off_topic", label: "Off-topic" },
   { value: "duplicate", label: "Duplicate FAQ exists" },
   { value: "other", label: "Other reason" },
@@ -186,8 +177,7 @@ export function TrainingReviewItem({
   const [isSavingCategory, setIsSavingCategory] = useState(false);
   const [answerRating, setAnswerRating] = useState<'good' | 'needs_improvement' | null>(null);
   const [isRatingAnswer, setIsRatingAnswer] = useState(false);
-  // P3: Confirmation dialog state for reject action
-  const [pendingRejectReason, setPendingRejectReason] = useState<string | null>(null);
+  const [rejectReasonNote, setRejectReasonNote] = useState("");
   const isCalibrationItem = pair.routing === 'AUTO_APPROVE';
 
   // Real-time similarity checking state (Feedback Immediacy principle)
@@ -207,6 +197,7 @@ export function TrainingReviewItem({
   // Reset answer rating when candidate changes OR answer regenerates (P1 + Cycle 21 fix)
   useEffect(() => {
     setAnswerRating(null);
+    setRejectReasonNote("");
   }, [pair.id, pair.generated_answer]);
 
   // Reset conversation view based on smart auto-expand logic when candidate changes
@@ -228,34 +219,11 @@ export function TrainingReviewItem({
   }, [openRejectMenuSignal, isCalibrationItem]);
 
   // Memoized handlers to prevent unnecessary re-renders (Rule 5.5)
-  // Streamlined reject: Direct rejection for standard reasons (no confirmation dialog)
-  // Only "Other" reason shows confirmation dialog for custom input
   const handleDirectReject = useCallback((reason: string) => {
-    if (reason === 'other') {
-      // Show confirmation dialog only for "Other" reason
-      setPendingRejectReason(reason);
-      setShowRejectSelect(false);
-    } else {
-      // Direct rejection for standard reasons (Speed Through Subtraction principle)
-      onReject(reason);
-      setShowRejectSelect(false);
-    }
-  }, [onReject]);
-
-  // Confirm rejection for "Other" reason
-  const handleConfirmReject = useCallback(() => {
-    if (pendingRejectReason) {
-      onReject(pendingRejectReason);
-      setPendingRejectReason(null);
-      setShowRejectSelect(false);
-    }
-  }, [pendingRejectReason, onReject]);
-
-  // Cancel rejection - clear pending state
-  const handleCancelReject = useCallback(() => {
-    setPendingRejectReason(null);
+    void onReject(reason, rejectReasonNote.trim() || undefined);
+    setRejectReasonNote("");
     setShowRejectSelect(false);
-  }, []);
+  }, [onReject, rejectReasonNote]);
 
   // Handle protocol change - intentionally does NOT update currentProtocol
   // This allows ProtocolSelector to detect that protocol has changed (selectedProtocol !== currentProtocol)
@@ -549,7 +517,7 @@ export function TrainingReviewItem({
         {/* Original Conversation - FIRST for context (Think in Flows principle) */}
         {/* Shows pre-LLM transformation content to help reviewer understand context */}
         {(pair.original_user_question || pair.original_staff_answer) && (
-          <Collapsible defaultOpen={false}>
+          <Collapsible defaultOpen>
             <CollapsibleTrigger asChild>
               <button className="w-full flex items-center justify-between p-3 hover:bg-muted/50 rounded-lg transition-colors border border-transparent hover:border-border">
                 <div className="flex items-center gap-2">
@@ -563,7 +531,7 @@ export function TrainingReviewItem({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="space-y-3 px-3 pb-3">
+              <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 px-3 pb-3 pt-3">
                 {pair.original_user_question && (
                   <div>
                     <div className="flex items-center gap-2 mb-1">
@@ -735,65 +703,51 @@ export function TrainingReviewItem({
                     isCalibrationItem ? "text-foreground font-medium" : "text-muted-foreground"
                   )}>
                     {isCalibrationItem
-                      ? "Rate this answer for auto-send calibration:"
-                      : "Would this answer be good enough to auto-send?"}
+                      ? "Generated Answer Rating (auto-response quality):"
+                      : "Generated Answer Rating (auto-response quality):"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {answerRating ? (
-                    <div className="flex items-center gap-2" role="status" aria-live="polite">
-                      {answerRating === 'good' ? (
-                        <ThumbsUp className="h-4 w-4 text-green-500" aria-hidden="true" />
-                      ) : (
-                        <ThumbsDown className="h-4 w-4 text-amber-500" aria-hidden="true" />
-                      )}
-                      <span className={cn(
-                        "text-sm font-medium",
-                        answerRating === 'good' ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"
-                      )}>
-                        {answerRating === 'good' ? 'Rated: Good' : 'Rated: Needs Improvement'}
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <Button
-                        variant={isCalibrationItem ? "outline" : "outline"}
-                        size={isCalibrationItem ? "default" : "sm"}
-                        onClick={() => handleRateGeneratedAnswer('needs_improvement')}
-                        disabled={isRatingAnswer || isLoading}
-                        className={cn(
-                          "text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950",
-                          isCalibrationItem && "border-amber-300 dark:border-amber-700"
-                        )}
-                        aria-label="Rate this generated answer as needs improvement - not suitable for auto-send"
-                      >
-                        {isRatingAnswer ? (
-                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <ThumbsDown className={cn("mr-1", isCalibrationItem ? "h-5 w-5" : "h-4 w-4")} aria-hidden="true" />
-                        )}
-                        Needs Work
-                      </Button>
-                      <Button
-                        variant={isCalibrationItem ? "outline" : "outline"}
-                        size={isCalibrationItem ? "default" : "sm"}
-                        onClick={() => handleRateGeneratedAnswer('good')}
-                        disabled={isRatingAnswer || isLoading}
-                        className={cn(
-                          "text-green-600 hover:text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950",
-                          isCalibrationItem && "border-green-300 dark:border-green-700"
-                        )}
-                        aria-label="Rate this generated answer as good - suitable for auto-send"
-                      >
-                        {isRatingAnswer ? (
-                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <ThumbsUp className={cn("mr-1", isCalibrationItem ? "h-5 w-5" : "h-4 w-4")} aria-hidden="true" />
-                        )}
-                        Good Answer
-                      </Button>
-                    </>
-                  )}
+                  <Button
+                    variant={answerRating === 'needs_improvement' ? "default" : "outline"}
+                    size={isCalibrationItem ? "default" : "sm"}
+                    onClick={() => handleRateGeneratedAnswer('needs_improvement')}
+                    disabled={isRatingAnswer || isLoading}
+                    className={cn(
+                      answerRating === 'needs_improvement'
+                        ? "bg-amber-600 text-white hover:bg-amber-700"
+                        : "text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950",
+                      isCalibrationItem && answerRating !== 'needs_improvement' && "border-amber-300 dark:border-amber-700"
+                    )}
+                    aria-label="Rate this generated answer as needs improvement - not suitable for auto-send"
+                  >
+                    {isRatingAnswer ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ThumbsDown className={cn("mr-1", isCalibrationItem ? "h-5 w-5" : "h-4 w-4")} aria-hidden="true" />
+                    )}
+                    Needs Work
+                  </Button>
+                  <Button
+                    variant={answerRating === 'good' ? "default" : "outline"}
+                    size={isCalibrationItem ? "default" : "sm"}
+                    onClick={() => handleRateGeneratedAnswer('good')}
+                    disabled={isRatingAnswer || isLoading}
+                    className={cn(
+                      answerRating === 'good'
+                        ? "bg-green-600 text-white hover:bg-green-700"
+                        : "text-green-600 hover:text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950",
+                      isCalibrationItem && answerRating !== 'good' && "border-green-300 dark:border-green-700"
+                    )}
+                    aria-label="Rate this generated answer as good - suitable for auto-send"
+                  >
+                    {isRatingAnswer ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ThumbsUp className={cn("mr-1", isCalibrationItem ? "h-5 w-5" : "h-4 w-4")} aria-hidden="true" />
+                    )}
+                    Good Answer
+                  </Button>
                 </div>
               </div>
             )}
@@ -939,7 +893,7 @@ export function TrainingReviewItem({
               <div className="space-y-1">
                 <p className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
                   <PlusCircle className="h-4 w-4 text-primary/70" />
-                  FAQ Creation Settings
+                  FAQ Decision (knowledge base)
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Set FAQ classification before approving this candidate.
@@ -1049,7 +1003,16 @@ export function TrainingReviewItem({
                     </TooltipContent>
                   </Tooltip>
                   <PopoverContent align="end" className="w-60 p-2">
-                    <div className="space-y-1">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Note (optional)
+                      </label>
+                      <textarea
+                        value={rejectReasonNote}
+                        onChange={(event) => setRejectReasonNote(event.target.value)}
+                        placeholder="Optional context for analysis"
+                        className="min-h-[72px] w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+                      />
                       {REJECT_REASONS.map((reason) => (
                         <Button
                           key={reason.value}
@@ -1069,7 +1032,10 @@ export function TrainingReviewItem({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setShowRejectSelect(false)}
+                        onClick={() => {
+                          setShowRejectSelect(false);
+                          setRejectReasonNote("");
+                        }}
                         className="w-full justify-start"
                       >
                         Cancel
@@ -1104,30 +1070,6 @@ export function TrainingReviewItem({
           </TooltipProvider>
         </div>
       </CardFooter>
-
-      {/* Reject Confirmation Dialog - Only for "Other" reason */}
-      <AlertDialog open={pendingRejectReason === 'other'} onOpenChange={(open) => !open && handleCancelReject()}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reject with &quot;Other&quot; Reason</AlertDialogTitle>
-            <AlertDialogDescription>
-              You selected &quot;Other&quot; as the rejection reason. This will reject the FAQ candidate with a generic reason.
-              <span className="block mt-2 text-muted-foreground text-xs">
-                Tip: If possible, use a specific reason like &quot;Incorrect information&quot; or &quot;Outdated content&quot; for better tracking.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleCancelReject}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmReject}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Reject FAQ
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Card>
   );
 }

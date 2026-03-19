@@ -34,8 +34,8 @@ export function CalibrationBanner({ status }: CalibrationBannerProps) {
                 Calibration Complete
               </p>
               <p className="text-sm text-muted-foreground">
-                Auto-approve enabled for scores {"\u2265"} {(status.auto_approve_threshold * 100).toFixed(0)}%.
-                Spot-check for {"\u2265"} {(status.spot_check_threshold * 100).toFixed(0)}%.
+                Training candidates scoring {"\u2265"} {(status.auto_approve_threshold * 100).toFixed(0)}% are eligible for automatic approval.
+                Training candidates scoring {"\u2265"} {(status.spot_check_threshold * 100).toFixed(0)}% go to spot-check review.
               </p>
             </div>
             <div className="text-right">
@@ -62,7 +62,7 @@ export function CalibrationBanner({ status }: CalibrationBannerProps) {
               Calibration In Progress
             </p>
             <p className="text-sm text-muted-foreground mb-2">
-              Human review required until {status.samples_required} samples collected.
+              Human review is required for training candidates until {status.samples_required} samples are collected.
             </p>
             <Progress
               value={progress}

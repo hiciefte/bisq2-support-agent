@@ -290,37 +290,200 @@ class TestMultilingualClarification:
         )
 
     @pytest.mark.asyncio
-    async def test_translate_query_receives_prior_language_from_history(
-        self, rag_service
-    ):
-        """Translation query should receive prior language context from chat history metadata."""
+    async def test_short_follow_up_uses_chat_history_language_hint(self, rag_service):
+        """Short follow-ups inherit language context from recent user chat history."""
         rag_service.version_detector.detect_version = AsyncMock(
             return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
         )
 
+        detector = MagicMock()
+        detector.detect_with_metadata = AsyncMock(
+            return_value=MagicMock(language_code="de", confidence=0.93)
+        )
+
         rag_service.translation_service = MagicMock()
+        rag_service.translation_service.detector = detector
         rag_service.translation_service.translate_query = AsyncMock(
             return_value={
-                "translated_text": "How can I buy BTC?",
+                "translated_text": "Bisq easy",
                 "source_lang": "de",
                 "skipped": False,
             }
         )
         rag_service.translation_service.translate_response = AsyncMock(
-            return_value={"translated_text": "Meinst du Bisq 1 oder Bisq 2?"}
+            return_value={
+                "translated_text": "Meinst du Bisq 1 oder Bisq 2?",
+                "target_lang": "de",
+            }
         )
 
         chat_history = [
-            {"role": "user", "content": "Hallo", "original_language": "de"},
-            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "Wie kann ich aktuell BTC mit Euro kaufen?"},
+            {
+                "role": "assistant",
+                "content": "Verwenden Sie Bisq 1 Handel oder Bisq Easy (Bisq 2)?",
+            },
+        ]
+        await rag_service.query("Bisq easy", chat_history=chat_history)
+
+        rag_service.translation_service.translate_query.assert_awaited_once_with(
+            "Bisq easy",
+            source_lang="de",
+            prior_language=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_english_heuristic_detection_is_overridden_by_chat_history_hint(
+        self, rag_service
+    ):
+        """When detector reports english_heuristic, prefer stable non-English history language."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        detector = MagicMock()
+        detector.detect_with_metadata = AsyncMock(
+            return_value=MagicMock(language_code="de", confidence=0.93)
+        )
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.detector = detector
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "Wie ist der aktuell BTC Preis in Euro?",
+                "source_lang": "en",
+                "skipped": True,
+                "detection_backend": "english_heuristic",
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={
+                "translated_text": "Meinst du Bisq 1 oder Bisq 2?",
+                "target_lang": "de",
+            }
+        )
+
+        chat_history = [
+            {"role": "user", "content": "Wie kann ich aktuell BTC mit Euro kaufen?"},
+            {
+                "role": "assistant",
+                "content": "Verwenden Sie Bisq 1 Handel oder Bisq Easy (Bisq 2)?",
+            },
+            {"role": "user", "content": "Bisq easy"},
         ]
 
-        result = await rag_service.query("Hallo?!", chat_history=chat_history)
+        result = await rag_service.query(
+            "Wie ist der aktuell BTC Preis in Euro?",
+            chat_history=chat_history,
+        )
 
-        assert result["needs_clarification"] is True
+        assert result["answer"] == "Meinst du Bisq 1 oder Bisq 2?"
+        assert result["original_language"] == "de"
+        rag_service.translation_service.translate_response.assert_awaited_once_with(
+            "Do you mean Bisq 1 or Bisq 2?",
+            target_lang="de",
+        )
+
+    @pytest.mark.asyncio
+    async def test_short_follow_up_ignores_duplicated_current_turn_in_history(
+        self, rag_service
+    ):
+        """If current user turn is duplicated in history, use prior context for language hint."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        def _detect_side_effect(text: str):
+            if str(text).strip().lower() == "bisq easy":
+                return MagicMock(language_code="tl", confidence=1.0)
+            return MagicMock(language_code="de", confidence=0.93)
+
+        detector = MagicMock()
+        detector.detect_with_metadata = AsyncMock(side_effect=_detect_side_effect)
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.detector = detector
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "Bisq easy",
+                "source_lang": "de",
+                "skipped": False,
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={
+                "translated_text": "Meinst du Bisq 1 oder Bisq 2?",
+                "target_lang": "de",
+            }
+        )
+
+        chat_history = [
+            {"role": "user", "content": "Wie kann ich aktuell BTC mit Euro kaufen?"},
+            {
+                "role": "assistant",
+                "content": "Verwenden Sie Bisq 1 Handel oder Bisq Easy (Bisq 2)?",
+            },
+            {"role": "user", "content": "Bisq easy"},
+        ]
+        await rag_service.query("Bisq easy", chat_history=chat_history)
+
         rag_service.translation_service.translate_query.assert_awaited_once_with(
-            "Hallo?!",
-            prior_language="de",
+            "Bisq easy",
+            source_lang="de",
+            prior_language=None,
+        )
+        inspected_texts = [
+            str(call.args[0]).strip().lower()
+            for call in detector.detect_with_metadata.await_args_list
+        ]
+        assert "bisq easy" not in inspected_texts
+
+    @pytest.mark.asyncio
+    async def test_long_query_does_not_force_chat_history_language_hint(
+        self, rag_service
+    ):
+        """Long/explicit queries should not force language inheritance from history."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        detector = MagicMock()
+        detector.detect_with_metadata = AsyncMock(
+            return_value=MagicMock(language_code="de", confidence=0.93)
+        )
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.detector = detector
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "What is the current BTC price?",
+                "source_lang": "en",
+                "skipped": True,
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={
+                "translated_text": "Do you mean Bisq 1 or Bisq 2?",
+                "target_lang": "en",
+            }
+        )
+
+        chat_history = [
+            {"role": "user", "content": "Wie kann ich aktuell BTC mit Euro kaufen?"},
+            {
+                "role": "assistant",
+                "content": "Verwenden Sie Bisq 1 Handel oder Bisq Easy (Bisq 2)?",
+            },
+        ]
+        await rag_service.query(
+            "What is the current BTC price?",
+            chat_history=chat_history,
+        )
+
+        rag_service.translation_service.translate_query.assert_awaited_once_with(
+            "What is the current BTC price?",
+            source_lang=None,
+            prior_language=None,
         )
 
 
@@ -344,6 +507,67 @@ class TestPromptManagement:
         assert isinstance(prompt, str)  # context_only_prompt returns a string
         assert len(prompt) > 0
         assert "Test question" in prompt  # Question should be in prompt
+
+
+class TestMcpLiveDataFallbackReconciliation:
+    """Ensure tool results and response text stay logically consistent."""
+
+    def test_replaces_offer_unavailable_with_no_offers_when_tool_says_empty(
+        self, rag_service
+    ):
+        response = (
+            "I'm unable to fetch live offer data at the moment. "
+            "Please try again later or check directly in the Bisq 2 application "
+            "for current offers to buy BTC with Euro."
+        )
+        tool_calls = [
+            {
+                "tool": "get_offerbook",
+                "result": "[No offers currently available for EUR (SELL)]",
+            }
+        ]
+
+        reconciled = rag_service._reconcile_live_data_fallbacks(response, tool_calls)
+
+        assert "No offers currently available for EUR (SELL)." in reconciled
+        assert "unable to fetch live offer data" not in reconciled.lower()
+
+    def test_removes_offer_unavailable_when_live_offerbook_present(self, rag_service):
+        response = (
+            "I'm unable to fetch live offer data at the moment. "
+            "There are currently 5 EUR offers available."
+        )
+        tool_calls = [
+            {
+                "tool": "get_offerbook",
+                "result": "[LIVE OFFERBOOK]\n  BUY: ...\n[TOTAL EUR OFFERS: 5]",
+            }
+        ]
+
+        reconciled = rag_service._reconcile_live_data_fallbacks(response, tool_calls)
+
+        assert "unable to fetch live offer data" not in reconciled.lower()
+        assert "5 EUR offers available" in reconciled
+
+    def test_keeps_localized_text_without_injecting_english_no_offer_prefix(
+        self, rag_service
+    ):
+        response = (
+            "I'm unable to fetch live offer data at the moment. "
+            "Momentan sind keine Verkaufsangebote für den Kauf von BTC mit Euro verfügbar."
+        )
+        tool_calls = [
+            {
+                "tool": "get_offerbook",
+                "result": "[No offers currently available for EUR (SELL)]",
+            }
+        ]
+
+        reconciled = rag_service._reconcile_live_data_fallbacks(response, tool_calls)
+
+        assert "unable to fetch live offer data" not in reconciled.lower()
+        assert reconciled.startswith("Momentan sind keine Verkaufsangebote")
+        assert "No offers currently available for EUR (SELL)." not in reconciled
 
     def test_prompt_includes_feedback_guidance(self, rag_service):
         """Test that prompts include feedback-based guidance."""

@@ -1,7 +1,7 @@
 """Detect Bisq version from user questions and context."""
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -110,31 +110,63 @@ class VersionDetector:
         """Check recent chat history for version context."""
         if not chat_history:
             return None
-        for msg in reversed(chat_history[-5:]):  # Last 5 messages
-            # Handle both dict and Pydantic ChatMessage objects
-            if hasattr(msg, "content"):
-                # Pydantic ChatMessage object
-                content = msg.content.lower()
-            elif isinstance(msg, dict):
-                # Dict format
-                content = msg.get("content", "").lower()
+        recent = chat_history[-5:]
+        user_messages: List[str] = []
+        assistant_messages: List[str] = []
+        for msg in recent:
+            role, content = self._extract_history_message(msg)
+            if not content:
+                continue
+            if role == "user":
+                user_messages.append(content)
             else:
-                content = str(msg).lower()
+                assistant_messages.append(content)
 
-            if "bisq 1" in content or "bisq1" in content:
-                return ("Bisq 1", 0.80)
-            if "bisq 2" in content or "bisq2" in content:
-                return ("Bisq 2", 0.80)
+        for content in reversed(user_messages):
+            detected = self._detect_version_in_history_content(content)
+            if detected is not None:
+                return detected
 
-            # Check for keyword patterns in history
-            bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])
-            bisq2_found = any(kw in content for kw in self.BISQ2_KEYWORDS[:5])
+        for content in reversed(assistant_messages):
+            detected = self._detect_version_in_history_content(content)
+            if detected is not None:
+                return detected
 
-            if bisq1_found and not bisq2_found:
-                return ("Bisq 1", 0.70)
-            if bisq2_found and not bisq1_found:
-                return ("Bisq 2", 0.70)
+        return None
 
+    def _extract_history_message(self, message: Any) -> Tuple[str, str]:
+        """Extract normalized role/content from history entry."""
+        if hasattr(message, "content"):
+            content = str(message.content or "").lower()
+            role = str(getattr(message, "role", "") or "").strip().lower()
+            return role, content
+        if isinstance(message, dict):
+            content = str(message.get("content", "") or "").lower()
+            role = str(message.get("role", "") or "").strip().lower()
+            return role, content
+        return "", str(message).lower()
+
+    def _detect_version_in_history_content(
+        self, content: str
+    ) -> Optional[Tuple[str, float]]:
+        """Detect one-sided version hints from a single history message."""
+        has_bisq1 = "bisq 1" in content or "bisq1" in content
+        has_bisq2 = "bisq 2" in content or "bisq2" in content
+        if has_bisq1 and has_bisq2:
+            return None
+        if has_bisq1:
+            return ("Bisq 1", 0.80)
+        if has_bisq2:
+            return ("Bisq 2", 0.80)
+
+        bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])
+        bisq2_found = any(kw in content for kw in self.BISQ2_KEYWORDS[:5])
+        if bisq1_found and bisq2_found:
+            return None
+        if bisq1_found:
+            return ("Bisq 1", 0.70)
+        if bisq2_found:
+            return ("Bisq 2", 0.70)
         return None
 
     def _generate_clarifying_question(self, question: str) -> str:

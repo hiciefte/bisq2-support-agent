@@ -53,6 +53,95 @@ from langchain_core.documents import Document
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_GROUP_CHANNELS = {"matrix", "bisq2"}
+_GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
+_DEFINITION_QUESTION_PATTERNS = (
+    r"^\s*what\s+is\b",
+    r"^\s*what'?s\b",
+    r"^\s*who\s+is\b",
+)
+
+
+def _normalize_support_answer_text(answer_text: str) -> str:
+    text = (answer_text or "").strip()
+    if not text:
+        return ""
+
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
+def _is_definition_question(question_text: Optional[str]) -> bool:
+    question = str(question_text or "").strip().lower()
+    if not question:
+        return False
+    return any(
+        re.search(pattern, question) for pattern in _DEFINITION_QUESTION_PATTERNS
+    )
+
+
+def _compress_simple_fact_answer(answer_text: str) -> str:
+    text = _normalize_support_answer_text(answer_text)
+    if not text:
+        return ""
+    if "\n" in text or re.search(r"(?m)^\s*\d+\.\s", text):
+        return text
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+    if len(sentences) <= 2 and len(text) <= 280:
+        return text
+
+    compact = " ".join(sentences[:2]).strip() if sentences else text
+    if len(compact) > 280:
+        compact = compact[:277].rstrip(" ,;:\n") + "..."
+    return compact
+
+
+def apply_support_answer_style(
+    answer_text: str,
+    *,
+    question_text: Optional[str] = None,
+    detection_source: Optional[str],
+) -> str:
+    """Normalize support answers for concise, readable delivery."""
+    text = _normalize_support_answer_text(answer_text)
+    if _is_definition_question(question_text):
+        text = _compress_simple_fact_answer(text)
+
+    source = str(detection_source or "").strip().lower()
+    if source not in _GROUP_CHANNELS:
+        return text
+
+    if len(text) <= _GROUP_CHANNEL_MAX_ANSWER_LENGTH:
+        return text
+
+    limit = _GROUP_CHANNEL_MAX_ANSWER_LENGTH - 3
+    clipped = text[:limit]
+    preferred_break = max(
+        clipped.rfind(". "),
+        clipped.rfind("! "),
+        clipped.rfind("? "),
+        clipped.rfind("\n"),
+    )
+    if preferred_break > 220:
+        clipped = clipped[:preferred_break]
+
+    return clipped.rstrip(" ,;:\n") + "..."
+
+
+def apply_group_channel_answer_style(
+    answer_text: str,
+    detection_source: Optional[str],
+) -> str:
+    """Backward-compatible wrapper for existing group-room tests/callers."""
+    return apply_support_answer_style(
+        answer_text,
+        question_text=None,
+        detection_source=detection_source,
+    )
+
 
 class SimplifiedRAGService:
     """Simplified RAG-based support assistant for Bisq 2."""
@@ -602,6 +691,204 @@ class SimplifiedRAGService:
             return None
         return display_name, float(confidence)
 
+    @staticmethod
+    def _is_short_ambiguous_follow_up(question: str) -> bool:
+        """Return True for short follow-ups where language detection is often ambiguous."""
+        text = str(question or "").strip()
+        if not text:
+            return False
+        if len(text) > 18:
+            return False
+        # Restrict to compact alpha phrases (e.g. "Bisq easy", "ja", "ok danke").
+        tokens = re.findall(r"[A-Za-zÀ-ÿ]+", text)
+        if not tokens or len(tokens) > 3:
+            return False
+        return bool(re.fullmatch(r"[A-Za-zÀ-ÿ0-9\s\-_./]+", text))
+
+    @staticmethod
+    def _extract_last_tool_result(
+        tool_calls: Optional[List[Dict[str, Any]]],
+        tool_name: str,
+    ) -> str:
+        """Return the most recent non-empty result for a given tool name."""
+        if not tool_calls:
+            return ""
+        for call in reversed(tool_calls):
+            if str(call.get("tool", "") or "").strip() != tool_name:
+                continue
+            result = str(call.get("result", "") or "").strip()
+            if result:
+                return result
+        return ""
+
+    @staticmethod
+    def _strip_bracket_wrapper(text: str) -> str:
+        value = str(text or "").strip()
+        if value.startswith("[") and value.endswith("]") and len(value) >= 2:
+            return value[1:-1].strip()
+        return value
+
+    def _reconcile_live_data_fallbacks(
+        self,
+        response_text: str,
+        tool_calls: Optional[List[Dict[str, Any]]],
+    ) -> str:
+        """Prevent contradiction: successful/no-offer tool results vs fetch-failure text."""
+        text = str(response_text or "").strip()
+        if not text:
+            return text
+
+        def _strip_offer_unavailable_phrases(value: str) -> str:
+            value = re.sub(
+                r"(?i)i'm unable to fetch live offer data at the moment\.\s*",
+                "",
+                value,
+                count=1,
+            )
+            value = re.sub(
+                (
+                    r"(?i)please try again later or check directly in the bisq 2 application"
+                    r"(?: for current offers to buy btc with (?:euro|euros|eur))?\.\s*"
+                ),
+                "",
+                value,
+                count=1,
+            )
+            return value
+
+        def _strip_price_unavailable_phrases(value: str) -> str:
+            value = re.sub(
+                r"(?i)i'm unable to fetch current market prices right now\.\s*",
+                "",
+                value,
+                count=1,
+            )
+            value = re.sub(
+                (
+                    r"(?i)please try again later or check directly in the bisq 2 application"
+                    r"(?: for current prices)?\.\s*"
+                ),
+                "",
+                value,
+                count=1,
+            )
+            return value
+
+        offer_result = self._extract_last_tool_result(tool_calls, "get_offerbook")
+        if offer_result:
+            normalized_offer = self._strip_bracket_wrapper(offer_result)
+            if normalized_offer.lower().startswith("no offers currently available"):
+                stripped = _strip_offer_unavailable_phrases(text).strip()
+                if stripped:
+                    text = stripped
+                else:
+                    text = f"{normalized_offer}."
+            elif offer_result.startswith("[LIVE OFFERBOOK]"):
+                text = _strip_offer_unavailable_phrases(text).strip()
+
+        price_result = self._extract_last_tool_result(tool_calls, "get_market_prices")
+        if price_result:
+            normalized_price = self._strip_bracket_wrapper(price_result)
+            if normalized_price.lower().startswith("no price data available"):
+                stripped = _strip_price_unavailable_phrases(text).strip()
+                if stripped:
+                    text = stripped
+                else:
+                    text = f"{normalized_price}."
+            elif price_result.startswith("[LIVE MARKET PRICES]"):
+                text = _strip_price_unavailable_phrases(text).strip()
+
+        text = re.sub(r"\s{2,}", " ", text).strip()
+        return text
+
+    @staticmethod
+    def _normalize_chat_entry(entry: Any) -> Optional[Dict[str, str]]:
+        """Normalize one chat history entry to a plain role/content dict."""
+        if isinstance(entry, dict):
+            role = str(entry.get("role", "") or "").strip().lower()
+            content = str(entry.get("content", "") or "").strip()
+        else:
+            role = str(getattr(entry, "role", "") or "").strip().lower()
+            content = str(getattr(entry, "content", "") or "").strip()
+        if not role or not content:
+            return None
+        return {"role": role, "content": content}
+
+    def _normalize_chat_history(
+        self,
+        question: str,
+        chat_history: Optional[List[Dict[str, str]]],
+    ) -> List[Dict[str, str]]:
+        """Normalize history and drop duplicated trailing current user turn.
+
+        Some clients include the current question in `chat_history`. The current
+        question is already passed separately, so keeping it in history causes
+        follow-up rewriting/language inference to look at the wrong turn.
+        """
+        normalized_question = str(question or "").strip()
+        normalized: List[Dict[str, str]] = []
+        for raw_entry in chat_history or []:
+            entry = self._normalize_chat_entry(raw_entry)
+            if entry is not None:
+                normalized.append(entry)
+
+        if not normalized:
+            return []
+
+        last = normalized[-1]
+        if (
+            normalized_question
+            and last.get("role") == "user"
+            and last.get("content", "").strip().casefold()
+            == normalized_question.casefold()
+        ):
+            return normalized[:-1]
+        return normalized
+
+    async def _infer_language_hint_from_chat_history(
+        self, chat_history: List[Dict[str, str]]
+    ) -> Optional[str]:
+        """Infer a non-English language hint from recent user turns."""
+        if not self.translation_service:
+            return None
+        detector = getattr(self.translation_service, "detector", None)
+        detect_with_metadata = (
+            getattr(detector, "detect_with_metadata", None) if detector else None
+        )
+        if not callable(detect_with_metadata):
+            return None
+
+        inspected = 0
+        for raw_entry in reversed(chat_history[-8:]):
+            role = str(raw_entry.get("role", "") or "").strip().lower()
+            if role != "user":
+                continue
+            content = str(raw_entry.get("content", "") or "").strip()
+            if len(content) < 6:
+                continue
+
+            inspected += 1
+            if inspected > 3:
+                break
+
+            try:
+                details = await detect_with_metadata(content)
+            except Exception:
+                logger.debug(
+                    "Language hint detection failed for history turn",
+                    exc_info=True,
+                )
+                continue
+
+            language_code = (
+                str(getattr(details, "language_code", "") or "").strip().lower()
+            )
+            confidence = float(getattr(details, "confidence", 0.0) or 0.0)
+            if language_code and language_code != "en" and confidence >= 0.80:
+                return language_code
+
+        return None
+
     async def query(
         self,
         question: str,
@@ -628,7 +915,7 @@ class SimplifiedRAGService:
 
         # Track request rate
         RAG_REQUEST_RATE.inc()
-        chat_history = chat_history or []
+        chat_history = self._normalize_chat_history(question, chat_history)
 
         try:
             # Used for feedback entries created by this service when no upstream message_id exists.
@@ -658,12 +945,44 @@ class SimplifiedRAGService:
                     prior_language = self._extract_prior_language_from_history(
                         chat_history
                     )
+                    source_lang_hint: str | None = None
+                    if chat_history and self._is_short_ambiguous_follow_up(
+                        preprocessed_question
+                    ):
+                        source_lang_hint = (
+                            await self._infer_language_hint_from_chat_history(
+                                chat_history
+                            )
+                        )
                     translation_result = await self.translation_service.translate_query(
                         preprocessed_question,
+                        source_lang=source_lang_hint,
                         prior_language=prior_language,
                     )
                     original_language = translation_result.get("source_lang", "en")
                     was_translated = not translation_result.get("skipped", True)
+                    detection_backend = (
+                        str(translation_result.get("detection_backend", "") or "")
+                        .strip()
+                        .lower()
+                    )
+                    if (
+                        original_language == "en"
+                        and not was_translated
+                        and detection_backend == "english_heuristic"
+                        and chat_history
+                    ):
+                        history_lang_hint = (
+                            await self._infer_language_hint_from_chat_history(
+                                chat_history
+                            )
+                        )
+                        if history_lang_hint and history_lang_hint != "en":
+                            original_language = history_lang_hint
+                            logger.info(
+                                "Overriding english_heuristic language with chat history hint: %s",
+                                history_lang_hint,
+                            )
                     if was_translated:
                         preprocessed_question = translation_result["translated_text"]
                         logger.info(
@@ -933,6 +1252,10 @@ class SimplifiedRAGService:
                         raise RuntimeError("MCP tool invocation failed")
 
                     response_text = tool_result.content
+                    response_text = self._reconcile_live_data_fallbacks(
+                        response_text=response_text,
+                        tool_calls=tool_result.tool_calls_made,
+                    )
                     mcp_invocation_succeeded = True
 
                     # Return detailed tool usage info if LLM actually called tools
@@ -1133,6 +1456,12 @@ class SimplifiedRAGService:
                         final_response = (
                             "Difference between Bisq 1 and Bisq 2:\n\n" + final_response
                         )
+
+            final_response = apply_support_answer_style(
+                final_response,
+                question_text=preprocessed_question,
+                detection_source=detection_source,
+            )
 
             # Update error rate (success)
             update_error_rate(is_error=False)

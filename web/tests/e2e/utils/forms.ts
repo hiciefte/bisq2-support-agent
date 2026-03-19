@@ -23,11 +23,19 @@ import { type Page } from "@playwright/test";
  * ```
  */
 export async function selectCategory(page: Page, category: string) {
-    // 1. Open the combobox popover - match button text with or without dots
-    // The Sheet/Add form uses "Select category..." while edit mode might use different text
-    const comboboxButton = page.locator('button[role="combobox"]').filter({
-        hasText: /Select category/,
-    });
+    const visibleDialog = page.getByRole("dialog").last();
+    const dialogVisible = await visibleDialog.isVisible().catch(() => false);
+    const scope = dialogVisible ? visibleDialog : page;
+
+    // The current FAQ create dialog defaults to "General". If the target category is already
+    // selected, no further interaction is needed.
+    const comboboxButton = scope.locator('button[role="combobox"]').first();
+    const buttonLabel = ((await comboboxButton.textContent()) || "").trim();
+    if (buttonLabel === category) {
+        return;
+    }
+
+    // 1. Open the combobox popover.
     await comboboxButton.click();
 
     // 2. Wait for command input to be visible (replaces arbitrary 300ms timeout)

@@ -55,6 +55,7 @@ class UnifiedCandidateResponse(BaseModel):
     reviewed_by: Optional[str]
     reviewed_at: Optional[str]
     rejection_reason: Optional[str]
+    rejection_note: Optional[str] = None
     faq_id: Optional[str]
     is_calibration_sample: bool
     created_at: str
@@ -81,13 +82,45 @@ ALLOWED_REJECT_REASONS = {
     "incorrect",
     "outdated",
     "too_vague",
+    "too_niche_edge_case",
     "off_topic",
     "duplicate",
     "other",
 }
 MAX_REJECTION_REASON_LENGTH = 500
+MAX_REJECTION_NOTE_LENGTH = 2000
 MAX_PAGE_SIZE = 100
 MAX_BATCH_SIZE = 50
+
+
+def _normalize_review_admin_action(admin_action: str) -> str:
+    """Normalize legacy review action aliases to LearningEngine action set."""
+    normalized = str(admin_action or "").strip().lower()
+    if normalized == "answer_approved":
+        return "approved"
+    if normalized == "answer_rejected":
+        return "rejected"
+    return normalized or "rejected"
+
+
+def _build_learning_review_metadata(
+    *,
+    source: str,
+    comparison_score: Optional[float],
+    reviewer: str,
+    review_kind: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build consistent metadata payload for LearningEngine review records."""
+    metadata: Dict[str, Any] = {
+        "source": source,
+        "comparison_score": comparison_score,
+        "reviewer": reviewer,
+        "review_kind": review_kind,
+    }
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 class UnifiedRejectRequest(BaseModel):
@@ -95,6 +128,10 @@ class UnifiedRejectRequest(BaseModel):
 
     reviewer: str = Field(description="Reviewer username")
     reason: str = Field(description="Rejection reason")
+    reason_note: Optional[str] = Field(
+        default=None,
+        description="Optional free-form note with additional rejection context",
+    )
 
 
 class UpdateCandidateRequest(BaseModel):
@@ -226,6 +263,10 @@ class LearningMetricsResponse(BaseModel):
     std_confidence: Optional[float] = None
     min_confidence: Optional[float] = None
     max_confidence: Optional[float] = None
+    faq_reviews_total: int = 0
+    answer_quality_reviews_total: int = 0
+    answer_quality_good_rate: float = 0.0
+    answer_quality_needs_work_rate: float = 0.0
 
 
 class LaunchReadinessResponse(BaseModel):
@@ -503,13 +544,14 @@ async def approve_candidate(
             learning_engine.record_review(
                 question_id=str(candidate_id),
                 confidence=candidate.generation_confidence,  # Use RAG confidence, NOT comparison score
-                admin_action="approved",
+                admin_action=_normalize_review_admin_action("approved"),
                 routing_action=candidate.routing,
-                metadata={
-                    "source": candidate.source,
-                    "comparison_score": candidate.final_score,  # Keep for analysis
-                    "reviewer": request_body.reviewer,
-                },
+                metadata=_build_learning_review_metadata(
+                    source=candidate.source,
+                    comparison_score=candidate.final_score,  # Keep for analysis
+                    reviewer=request_body.reviewer,
+                    review_kind="faq_decision",
+                ),
             )
             logger.debug(
                 f"Recorded approval to LearningEngine: candidate={candidate_id}, "
@@ -585,14 +627,15 @@ async def batch_approve_candidates(
                 learning_engine.record_review(
                     question_id=str(candidate_id),
                     confidence=candidate.generation_confidence,
-                    admin_action="approved",
+                    admin_action=_normalize_review_admin_action("approved"),
                     routing_action=candidate.routing,
-                    metadata={
-                        "source": candidate.source,
-                        "comparison_score": candidate.final_score,
-                        "reviewer": request_body.reviewer,
-                        "batch_approve": True,
-                    },
+                    metadata=_build_learning_review_metadata(
+                        source=candidate.source,
+                        comparison_score=candidate.final_score,
+                        reviewer=request_body.reviewer,
+                        review_kind="faq_decision",
+                        extra={"batch_approve": True},
+                    ),
                 )
 
             approved_count += 1
@@ -649,6 +692,12 @@ async def reject_candidate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Custom rejection reason must be at least 3 characters",
         )
+    reason_note = (request_body.reason_note or "").strip() or None
+    if reason_note and len(reason_note) > MAX_REJECTION_NOTE_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Rejection note too long (max {MAX_REJECTION_NOTE_LENGTH} characters)",
+        )
 
     try:
         # Get candidate first to record generation_confidence for learning
@@ -665,6 +714,7 @@ async def reject_candidate(
             candidate_id=candidate_id,
             reviewer=request_body.reviewer,
             reason=reason,
+            reason_note=reason_note,
         )
 
         # Record feedback to LearningEngine using generation_confidence (not final_score)
@@ -673,14 +723,18 @@ async def reject_candidate(
             learning_engine.record_review(
                 question_id=str(candidate_id),
                 confidence=candidate.generation_confidence,  # Use RAG confidence, NOT comparison score
-                admin_action="rejected",
+                admin_action=_normalize_review_admin_action("rejected"),
                 routing_action=candidate.routing,
-                metadata={
-                    "source": candidate.source,
-                    "comparison_score": candidate.final_score,  # Keep for analysis
-                    "reviewer": request_body.reviewer,
-                    "rejection_reason": reason,
-                },
+                metadata=_build_learning_review_metadata(
+                    source=candidate.source,
+                    comparison_score=candidate.final_score,  # Keep for analysis
+                    reviewer=request_body.reviewer,
+                    review_kind="faq_decision",
+                    extra={
+                        "rejection_reason": reason,
+                        "rejection_note": reason_note,
+                    },
+                ),
             )
             logger.debug(
                 f"Recorded rejection to LearningEngine: candidate={candidate_id}, "
@@ -818,23 +872,29 @@ async def rate_generated_answer(
             # Map rating to admin_action for the LearningEngine
             # "good" means the answer would be acceptable to auto-send
             # "needs_improvement" means it requires human review
-            admin_action = (
+            admin_action = _normalize_review_admin_action(
                 "answer_approved"
                 if request_body.rating == "good"
                 else "answer_rejected"
             )
+            reviewer_key = str(request_body.reviewer or "").strip() or "admin"
 
             learning_engine.record_review(
-                question_id=str(candidate_id),
+                question_id=f"answer_rating:{candidate_id}:{reviewer_key}",
                 confidence=candidate.generation_confidence,
                 admin_action=admin_action,
                 routing_action=candidate.routing,
-                metadata={
-                    "source": candidate.source,
-                    "comparison_score": candidate.final_score,
-                    "reviewer": request_body.reviewer,
-                    "rating_type": "generated_answer_quality",
-                },
+                metadata=_build_learning_review_metadata(
+                    source=candidate.source,
+                    comparison_score=candidate.final_score,
+                    reviewer=reviewer_key,
+                    review_kind="answer_quality",
+                    extra={
+                        "rating_type": "generated_answer_quality",
+                        "idempotent": True,
+                        "rating": request_body.rating,
+                    },
+                ),
             )
             logger.info(
                 f"Recorded answer rating to LearningEngine: candidate={candidate_id}, "
@@ -1118,6 +1178,12 @@ async def get_learning_metrics(request: Request):
         std_confidence=metrics.get("std_confidence"),
         min_confidence=metrics.get("min_confidence"),
         max_confidence=metrics.get("max_confidence"),
+        faq_reviews_total=metrics.get("faq_reviews_total", 0),
+        answer_quality_reviews_total=metrics.get("answer_quality_reviews_total", 0),
+        answer_quality_good_rate=metrics.get("answer_quality_good_rate", 0.0),
+        answer_quality_needs_work_rate=metrics.get(
+            "answer_quality_needs_work_rate", 0.0
+        ),
     )
 
 
@@ -1346,6 +1412,7 @@ def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
         "reviewed_by": candidate.reviewed_by,
         "reviewed_at": candidate.reviewed_at,
         "rejection_reason": candidate.rejection_reason,
+        "rejection_note": getattr(candidate, "rejection_note", None),
         "faq_id": candidate.faq_id,
         "is_calibration_sample": candidate.is_calibration_sample,
         "created_at": candidate.created_at,

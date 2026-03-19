@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import { loginWithApiKey, makeAuthenticatedRequest, registerSessionTimeoutCallback } from '@/lib/auth';
+import { checkAuthStatus, loginWithApiKey, registerSessionTimeoutCallback } from '@/lib/auth';
 
 interface SecureAuthProps {
   children: React.ReactNode;
@@ -49,9 +49,7 @@ export function SecureAuth({ children, onAuthChange }: SecureAuthProps) {
 
   const checkAuthentication = async () => {
     try {
-      // Try to make an authenticated request to check if we're logged in
-      const response = await makeAuthenticatedRequest('/admin/dashboard/overview');
-      const authenticated = response.ok;
+      const authenticated = await checkAuthStatus();
       setIsAuthenticated(authenticated);
       onAuthChange?.(authenticated);
     } catch (error) {

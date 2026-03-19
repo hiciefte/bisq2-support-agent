@@ -57,7 +57,7 @@ These variables configure the application services running inside Docker contain
 
 ### Bisq2 API Authorization Variables
 
-When Bisq2 API is configured with `authorizationRequired=true`, the support-agent must be configured for pairing/session bootstrap.
+When Bisq2 API is configured with `authorizationRequired=true`, the support-agent must be configured for durable client credentials plus session bootstrap.
 
 * **`BISQ_API_URL`**
   * Description: Base URL used by support-agent to call Bisq2 API.
@@ -69,7 +69,7 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
   * Description: Enables authenticated Bisq2 API request flow.
   * Default: `false`
 * **`BISQ_API_PAIRING_QR_FILE`**
-  * Description: Pairing QR payload file path (relative to `DATA_DIR` if not absolute). Recommended bootstrap path.
+  * Description: Pairing QR payload file path (relative to `DATA_DIR` if not absolute). Use this for initial bootstrap only.
   * Example: `pairing_qr_code.txt`
 * **`BISQ_API_PAIRING_CODE_ID`**
   * Description: Optional direct pairing code ID. Use this only if not using `BISQ_API_PAIRING_QR_FILE`.
@@ -78,19 +78,23 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
   * Description: Client name sent during pairing bootstrap.
   * Default: `bisq-support-agent`
 * **`BISQ_API_AUTH_STATE_FILE`**
-  * Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute).
+  * Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute). Partial state is ignored.
   * Default: `bisq_api_auth.json`
 * **`BISQ_API_CLIENT_ID`**
-  * Description: Optional manual override for Bisq2 API client ID. Use when bypassing QR bootstrap (`BISQ_API_PAIRING_QR_FILE`) and persisted auth state (`BISQ_API_AUTH_STATE_FILE`).
+  * Description: Recommended durable Bisq2 API client ID for production. When paired with `BISQ_API_CLIENT_SECRET`, the support agent can recreate sessions after restart without relying on QR files.
   * Default: empty
 * **`BISQ_API_CLIENT_SECRET`**
-  * Description: Optional manual override for Bisq2 API client secret. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are used instead of pairing-file bootstrap/session restore.
+  * Description: Recommended durable Bisq2 API client secret for production. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are preferred over pairing-file bootstrap.
+  * Default: empty
+* **`BISQ2_STAFF_NOTIFICATION_TARGET`**
+  * Description: Optional Bisq2 channel ID used when the Bisq2 Internal Notice Target is set to `staff_room`.
   * Default: empty
 
 Notes:
-* On first startup with auth enabled, support-agent reads pairing QR/code, pairs, then persists credentials/session to `BISQ_API_AUTH_STATE_FILE`.
-* `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` are optional manual overrides and typically should not be set when using pairing-file bootstrap.
-* In Dockerized production, copy the current Bisq2 pairing QR payload to `${BISQ_SUPPORT_INSTALL_DIR}/api/data/pairing_qr_code.txt` and set `BISQ_API_PAIRING_QR_FILE=pairing_qr_code.txt`.
+* On first startup with auth enabled, support-agent can read pairing QR/code, pair once, then persist credentials/session to `BISQ_API_AUTH_STATE_FILE`.
+* For production, treat QR/code input as bootstrap only. Persist the paired `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` in the deployment environment so sessions can be recreated after restart without depending on a stale QR payload.
+* `BISQ_API_AUTH_STATE_FILE` must contain both `client_id` and `client_secret`; incomplete state is ignored and counted as an auth failure.
+* In Dockerized production, bootstrap once if needed, then move the durable client credentials into the deploy environment and keep `BISQ_API_AUTH_STATE_FILE` as a session cache rather than the sole source of truth.
 
 ### Matrix Variables (Sync vs Alerts)
 
@@ -112,6 +116,10 @@ The Matrix integration uses lane-specific names to separate support-channel inge
 *   **`MATRIX_SYNC_ROOMS`**
     *   Description: Comma-separated room IDs polled for support Q/A ingestion.
     *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
+*   **`MATRIX_STAFF_ROOM`**
+    *   Description: Dedicated Matrix staff room used by the `staff_room` escalation-notification channel.
+    *   Required: Optional
+    *   Note: In local testing, this can be set to the same room as `MATRIX_ALERT_ROOM`.
 *   **`MATRIX_SYNC_SESSION_FILE`**
     *   Description: Session file for Matrix sync lane.
     *   Default: `matrix_session.json` (resolved under `DATA_DIR`)
@@ -122,11 +130,19 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Dedicated password for alert lane.
     *   Required: Yes (when `MATRIX_ALERT_ROOM` is set)
 *   **`MATRIX_ALERT_ROOM`**
-    *   Description: Destination room for operational alerts.
+    *   Description: Destination room for operational alerts (Alertmanager lane).
     *   Required: Optional
 *   **`MATRIX_ALERT_SESSION_FILE`**
     *   Description: Session file for Matrix alert lane.
     *   Default: `matrix_alert_session.json` (resolved under `DATA_DIR`)
+
+### Local Matrix Testing Example
+
+For local testing with separate public/staff routing:
+
+* `MATRIX_SYNC_ROOMS=!ilodKeOTMMMDTlGhkf:matrix.org` (public support test room)
+* `MATRIX_STAFF_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org` (staff-room escalation notices)
+* `MATRIX_ALERT_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org` (same room reused for alerts in local testing)
 *   **`RETRIEVER_BACKEND`**
     *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
     *   Default in app settings: `qdrant`

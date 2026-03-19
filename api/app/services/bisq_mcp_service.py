@@ -22,8 +22,14 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Dict, List, Optional, Pattern, Tuple
+from urllib.parse import ParseResult, urlparse, urlunparse
 
 import httpx
+from app.channels.plugins.bisq2.client.api import (
+    CLIENT_ID_HEADER,
+    SESSION_ID_HEADER,
+    Bisq2API,
+)
 from app.core.config import Settings
 from cachetools import TTLCache  # type: ignore[import-untyped]
 from tenacity import (
@@ -91,6 +97,32 @@ else:
 
 CircuitBreaker = CircuitBreakerClass
 CircuitBreakerError = CircuitBreakerErrorClass
+
+
+def _record_bisq2_probe_health(
+    probe: str, is_healthy: bool, response_time: Optional[float] = None
+) -> None:
+    """Record Bisq probe metrics lazily to avoid tight coupling during import."""
+    try:
+        from app.metrics.task_metrics import record_bisq2_api_probe
+
+        record_bisq2_api_probe(
+            probe=probe,
+            is_healthy=is_healthy,
+            response_time=response_time,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not record Bisq probe health for %s: %s", probe, exc)
+
+
+def _get_bisq_readiness_snapshot(enabled: bool) -> Dict[str, Any]:
+    try:
+        from app.metrics.task_metrics import get_bisq2_api_readiness_snapshot
+
+        return get_bisq2_api_readiness_snapshot(enabled=enabled)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not read Bisq readiness snapshot: %s", exc)
+        return {"enabled": enabled, "status": "unknown", "checks": {}}
 
 
 # =============================================================================
@@ -401,6 +433,39 @@ def get_five_system_score(total_score: int) -> float:
 class Bisq2MCPService:
     """Service for fetching live Bisq 2 data with caching and resilience."""
 
+    @staticmethod
+    def _replace_host(parsed: ParseResult, host: str) -> str:
+        auth_prefix = ""
+        if parsed.username:
+            auth_prefix = parsed.username
+            if parsed.password:
+                auth_prefix += f":{parsed.password}"
+            auth_prefix += "@"
+        port_suffix = f":{parsed.port}" if parsed.port is not None else ""
+        netloc = f"{auth_prefix}{host}{port_suffix}"
+        return urlunparse(parsed._replace(netloc=netloc))
+
+    @classmethod
+    def _build_base_url_candidates(cls, configured_url: str) -> list[str]:
+        primary = (
+            str(configured_url or "").strip().rstrip("/") or "http://bisq2-api:8090"
+        )
+        parsed = urlparse(primary)
+        host = (parsed.hostname or "").strip().lower()
+        candidates = [primary]
+
+        fallback_hosts: list[str] = []
+        if host in {"bisq2-api", "host.docker.internal"}:
+            fallback_hosts = ["localhost", "127.0.0.1"]
+        elif host in {"localhost", "127.0.0.1"}:
+            fallback_hosts = ["host.docker.internal"]
+
+        for fallback_host in fallback_hosts:
+            fallback = cls._replace_host(parsed, fallback_host)
+            if fallback not in candidates:
+                candidates.append(fallback)
+        return candidates
+
     def __init__(self, settings: Settings):
         """Initialize the Bisq 2 MCP Service.
 
@@ -408,11 +473,15 @@ class Bisq2MCPService:
             settings: Application settings containing API configuration
         """
         self.settings = settings
-        self.base_url = getattr(
-            settings, "BISQ_API_URL", "http://bisq2-api:8090"
-        ).rstrip("/")
+        configured_base_url = getattr(settings, "BISQ_API_URL", "http://bisq2-api:8090")
+        self.base_urls = self._build_base_url_candidates(configured_base_url)
+        self.active_base_url = self.base_urls[0]
+        # Keep legacy attribute for compatibility with existing tests/callers.
+        self.base_url = self.active_base_url
         self.timeout = getattr(settings, "BISQ_API_TIMEOUT", 5)
         self.enabled = getattr(settings, "ENABLE_BISQ_MCP_INTEGRATION", False)
+        self._auth_enabled = self._setting_bool("BISQ_API_AUTH_ENABLED", False)
+        self._auth_api: Optional[Bisq2API] = None
 
         # Initialize HTTP client with connection pooling
         self._client: Optional[httpx.AsyncClient] = None
@@ -432,25 +501,66 @@ class Bisq2MCPService:
         cache_ttl_tx = getattr(settings, "BISQ_CACHE_TTL_TRANSACTIONS", 60)
         self._transaction_cache: TTLCache = TTLCache(maxsize=100, ttl=cache_ttl_tx)
 
-        # Initialize circuit breaker
-        self._circuit_breaker = CircuitBreaker(
-            fail_max=5,  # Open after 5 failures
-            reset_timeout=60,  # Try again after 60 seconds
-        )
+        # Initialize one circuit breaker per candidate endpoint.
+        self._circuit_breakers: dict[str, Any] = {
+            base_url: CircuitBreaker(
+                fail_max=5,  # Open after 5 failures
+                reset_timeout=60,  # Try again after 60 seconds
+            )
+            for base_url in self.base_urls
+        }
+        # Backward-compatible alias used by tests that introspect circuit state.
+        self._circuit_breaker = self._circuit_breakers[self.active_base_url]
 
         # Rate limiting semaphore
         self._rate_limiter = None  # Will be initialized on first use
 
         logger.info(
             f"Bisq2MCPService initialized (enabled={self.enabled}, "
-            f"base_url={self.base_url}, timeout={self.timeout}s)"
+            f"base_urls={self.base_urls}, timeout={self.timeout}s)"
         )
+
+    def _setting_bool(self, name: str, default: bool = False) -> bool:
+        value = getattr(self.settings, name, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    async def _build_authenticated_headers(
+        self, base_url: str
+    ) -> Dict[str, str] | None:
+        if not self._auth_enabled:
+            return None
+
+        if self._auth_api is None:
+            self._auth_api = Bisq2API(settings=self.settings)
+
+        await self._auth_api._ensure_authenticated(base_url)  # noqa: SLF001
+
+        client_id = str(getattr(self._auth_api, "_client_id", "") or "").strip()
+        session_id = str(getattr(self._auth_api, "_session_id", "") or "").strip()
+        if not client_id or not session_id:
+            raise RuntimeError(
+                "Bisq MCP auth is enabled but client/session credentials are unavailable."
+            )
+        return {
+            CLIENT_ID_HEADER: client_id,
+            SESSION_ID_HEADER: session_id,
+        }
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client with connection pooling."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                base_url=self.base_url,
+                base_url=self.active_base_url,
                 timeout=httpx.Timeout(self.timeout),
                 limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             )
@@ -462,7 +572,13 @@ class Bisq2MCPService:
             self._rate_limiter = asyncio.Semaphore(5)  # Max 5 concurrent requests
         return self._rate_limiter
 
-    def _sync_request_wrapper(self, endpoint: str, params: Optional[Dict] = None):
+    def _sync_request_wrapper(
+        self,
+        base_url: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ):
         """Synchronous wrapper for the circuit breaker.
 
         This wrapper allows pybreaker to track success/failure of our requests.
@@ -478,12 +594,54 @@ class Bisq2MCPService:
         # Use synchronous httpx to avoid event loop conflicts
         # The circuit breaker and retry decorators are sync, so this fits better
         with httpx.Client(
-            base_url=self.base_url,
+            base_url=base_url,
             timeout=httpx.Timeout(self.timeout),
         ) as client:
-            response = client.get(endpoint, params=params)
+            response = client.get(endpoint, params=params, headers=headers)
             response.raise_for_status()
             return response.json()
+
+    async def _request_via_candidate(
+        self,
+        base_url: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        breaker = self._circuit_breakers.setdefault(
+            base_url,
+            CircuitBreaker(
+                fail_max=5,
+                reset_timeout=60,
+            ),
+        )
+        headers = await self._build_authenticated_headers(base_url)
+        try:
+            return await asyncio.to_thread(
+                breaker.call,
+                self._sync_request_wrapper,
+                base_url,
+                endpoint,
+                params,
+                headers,
+            )
+        except httpx.HTTPStatusError as exc:
+            if (
+                self._auth_enabled
+                and exc.response is not None
+                and exc.response.status_code in {401, 403}
+                and self._auth_api is not None
+            ):
+                self._auth_api._session_id = ""  # noqa: SLF001
+                refreshed_headers = await self._build_authenticated_headers(base_url)
+                return await asyncio.to_thread(
+                    breaker.call,
+                    self._sync_request_wrapper,
+                    base_url,
+                    endpoint,
+                    params,
+                    refreshed_headers,
+                )
+            raise
 
     @retry(
         stop=stop_after_attempt(3),
@@ -513,23 +671,55 @@ class Bisq2MCPService:
         rate_limiter = await self._get_rate_limiter()
 
         async with rate_limiter:
-            try:
-                # Use circuit breaker's call method which automatically
-                # tracks failures and successes.
-                # Wrap in asyncio.to_thread to avoid blocking the event loop
-                # since circuit_breaker.call and _sync_request_wrapper are sync.
-                return await asyncio.to_thread(
-                    self._circuit_breaker.call,
-                    self._sync_request_wrapper,
-                    endpoint,
-                    params,
-                )
-            except CircuitBreakerError:
-                logger.warning(f"Circuit breaker open for request to {endpoint}")
-                raise
-            except (httpx.HTTPError, httpx.TimeoutException) as e:
-                logger.warning(f"Request to {endpoint} failed: {e}")
-                raise
+            ordered_base_urls = [self.active_base_url] + [
+                candidate
+                for candidate in self.base_urls
+                if candidate != self.active_base_url
+            ]
+            last_error: Exception | None = None
+
+            for base_url in ordered_base_urls:
+                try:
+                    payload = await self._request_via_candidate(
+                        base_url=base_url,
+                        endpoint=endpoint,
+                        params=params,
+                    )
+                    if base_url != self.active_base_url:
+                        logger.info(
+                            "Bisq MCP endpoint failover succeeded; switching active_base_url from %s to %s",
+                            self.active_base_url,
+                            base_url,
+                        )
+                    self.active_base_url = base_url
+                    self.base_url = base_url
+                    self._circuit_breaker = self._circuit_breakers.setdefault(
+                        base_url,
+                        CircuitBreaker(
+                            fail_max=5,
+                            reset_timeout=60,
+                        ),
+                    )
+                    return payload
+                except CircuitBreakerError as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Circuit breaker open for Bisq MCP endpoint %s (endpoint=%s)",
+                        base_url,
+                        endpoint,
+                    )
+                except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Bisq MCP request failed for endpoint %s on %s: %s",
+                        endpoint,
+                        base_url,
+                        exc,
+                    )
+
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(f"Bisq MCP request failed for endpoint {endpoint}")
 
     # =========================================================================
     # Core API Methods
@@ -561,6 +751,7 @@ class Bisq2MCPService:
             return self._price_cache[cache_key]
 
         try:
+            start_time = asyncio.get_running_loop().time()
             # Correct Bisq 2 endpoint: /api/v1/market-price/quotes
             response = await self._make_request("/api/v1/market-price/quotes")
 
@@ -593,15 +784,22 @@ class Bisq2MCPService:
 
             # Cache result
             self._price_cache[cache_key] = api_result
+            _record_bisq2_probe_health(
+                "market_prices",
+                is_healthy=True,
+                response_time=asyncio.get_running_loop().time() - start_time,
+            )
             return api_result
 
         except CircuitBreakerError:
+            _record_bisq2_probe_health("market_prices", is_healthy=False)
             return {
                 "success": False,
                 "error": "Service temporarily unavailable (circuit breaker open)",
                 "prices": [],
             }
         except Exception as e:
+            _record_bisq2_probe_health("market_prices", is_healthy=False)
             return SecureErrorHandler.handle_api_error(e, "get_market_prices")
 
     async def get_offerbook(
@@ -649,6 +847,7 @@ class Bisq2MCPService:
             return self._offers_cache[cache_key]
 
         try:
+            start_time = asyncio.get_running_loop().time()
             # Correct Bisq 2 endpoint: /api/v1/offerbook/markets/{currencyCode}/offers
             response = await self._make_request(
                 f"/api/v1/offerbook/markets/{currency}/offers"
@@ -730,15 +929,22 @@ class Bisq2MCPService:
 
             # Cache result
             self._offers_cache[cache_key] = api_result
+            _record_bisq2_probe_health(
+                "offerbook",
+                is_healthy=True,
+                response_time=asyncio.get_running_loop().time() - start_time,
+            )
             return api_result
 
         except CircuitBreakerError:
+            _record_bisq2_probe_health("offerbook", is_healthy=False)
             return {
                 "success": False,
                 "error": "Service temporarily unavailable (circuit breaker open)",
                 "offers": [],
             }
         except Exception as e:
+            _record_bisq2_probe_health("offerbook", is_healthy=False)
             return SecureErrorHandler.handle_api_error(e, "get_offerbook")
 
     async def get_reputation(self, profile_id: str) -> Dict[str, Any]:
@@ -1255,6 +1461,9 @@ class Bisq2MCPService:
             await self._client.aclose()
             self._client = None
             logger.info("Bisq2MCPService HTTP client closed")
+        if self._auth_api is not None:
+            await self._auth_api.cleanup()
+            self._auth_api = None
 
     async def health_check(self) -> Dict[str, Any]:
         """Check service health.
@@ -1271,6 +1480,7 @@ class Bisq2MCPService:
                 "reputation": len(self._reputation_cache),
                 "transactions": len(self._transaction_cache),
             },
+            "readiness": _get_bisq_readiness_snapshot(enabled=self.enabled),
         }
 
         if self.enabled:

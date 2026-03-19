@@ -4,10 +4,46 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ChannelAutoresponsePolicy,
   type ChannelId,
+  type EscalationNotificationChannel,
 } from "@/components/admin/overview/types";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 
 export type ChannelResponseMode = "off" | "review" | "auto";
+export type ChannelAcknowledgmentMode = ChannelAutoresponsePolicy["acknowledgment_mode"];
+export type ChannelEscalationUserNoticeMode = ChannelAutoresponsePolicy["escalation_user_notice_mode"];
+type ChannelPolicyPatch = Partial<
+  Pick<
+    ChannelAutoresponsePolicy,
+    | "enabled"
+    | "generation_enabled"
+    | "ai_response_mode"
+    | "hitl_approval_timeout_seconds"
+    | "draft_assistant_enabled"
+    | "knowledge_amplifier_enabled"
+    | "staff_assist_surface"
+    | "first_response_delay_seconds"
+    | "staff_active_cooldown_seconds"
+    | "max_proactive_ai_replies_per_question"
+    | "public_escalation_notice_enabled"
+    | "acknowledgment_mode"
+    | "acknowledgment_reaction_key"
+    | "acknowledgment_message_template"
+    | "group_clarification_immediate"
+    | "escalation_user_notice_template"
+    | "escalation_user_notice_mode"
+    | "dispatch_failure_message_template"
+    | "escalation_notification_channel"
+    | "explicit_invocation_enabled"
+    | "explicit_invocation_user_rate_limit_per_5m"
+    | "explicit_invocation_room_rate_limit_per_min"
+    | "community_response_cancels_ai"
+    | "community_substantive_min_chars"
+    | "staff_presence_aware_delay"
+    | "min_delay_no_staff_seconds"
+    | "mandatory_escalation_topics"
+    | "timer_jitter_max_seconds"
+  >
+>;
 
 const CHANNEL_ORDER: ChannelId[] = ["web", "bisq2", "matrix"];
 const EMPTY_SAVING_STATE: Record<ChannelId, boolean> = {
@@ -27,7 +63,7 @@ function sortPolicies(policies: ChannelAutoresponsePolicy[]): ChannelAutorespons
 
 function applyPatch(
   policy: ChannelAutoresponsePolicy,
-  patch: Partial<Pick<ChannelAutoresponsePolicy, "enabled" | "generation_enabled">>,
+  patch: ChannelPolicyPatch,
 ): ChannelAutoresponsePolicy {
   return {
     ...policy,
@@ -36,11 +72,14 @@ function applyPatch(
 }
 
 function normalizePatch(
-  patch: Partial<Pick<ChannelAutoresponsePolicy, "enabled" | "generation_enabled">>,
-): Partial<Pick<ChannelAutoresponsePolicy, "enabled" | "generation_enabled">> {
+  patch: ChannelPolicyPatch,
+): ChannelPolicyPatch {
   const normalizedPatch = { ...patch };
   if (normalizedPatch.generation_enabled === false) {
     normalizedPatch.enabled = false;
+    if (typeof normalizedPatch.ai_response_mode !== "string") {
+      normalizedPatch.ai_response_mode = "autonomous";
+    }
   }
   return normalizedPatch;
 }
@@ -92,12 +131,38 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
 
   const updateChannelPolicy = useCallback(async (
     channelId: ChannelId,
-    patch: Partial<Pick<ChannelAutoresponsePolicy, "enabled" | "generation_enabled">>,
+    patch: ChannelPolicyPatch,
   ) => {
     const normalizedPatch = normalizePatch(patch);
     if (
       typeof normalizedPatch.enabled !== "boolean"
       && typeof normalizedPatch.generation_enabled !== "boolean"
+      && typeof normalizedPatch.ai_response_mode !== "string"
+      && typeof normalizedPatch.hitl_approval_timeout_seconds !== "number"
+      && typeof normalizedPatch.draft_assistant_enabled !== "boolean"
+      && typeof normalizedPatch.knowledge_amplifier_enabled !== "boolean"
+      && typeof normalizedPatch.staff_assist_surface !== "string"
+      && typeof normalizedPatch.first_response_delay_seconds !== "number"
+      && typeof normalizedPatch.staff_active_cooldown_seconds !== "number"
+      && typeof normalizedPatch.max_proactive_ai_replies_per_question !== "number"
+      && typeof normalizedPatch.public_escalation_notice_enabled !== "boolean"
+      && typeof normalizedPatch.acknowledgment_mode !== "string"
+      && typeof normalizedPatch.acknowledgment_reaction_key !== "string"
+      && typeof normalizedPatch.acknowledgment_message_template !== "string"
+      && typeof normalizedPatch.group_clarification_immediate !== "boolean"
+      && typeof normalizedPatch.escalation_user_notice_template !== "string"
+      && typeof normalizedPatch.escalation_user_notice_mode !== "string"
+      && typeof normalizedPatch.dispatch_failure_message_template !== "string"
+      && typeof normalizedPatch.escalation_notification_channel !== "string"
+      && typeof normalizedPatch.explicit_invocation_enabled !== "boolean"
+      && typeof normalizedPatch.explicit_invocation_user_rate_limit_per_5m !== "number"
+      && typeof normalizedPatch.explicit_invocation_room_rate_limit_per_min !== "number"
+      && typeof normalizedPatch.community_response_cancels_ai !== "boolean"
+      && typeof normalizedPatch.community_substantive_min_chars !== "number"
+      && typeof normalizedPatch.staff_presence_aware_delay !== "boolean"
+      && typeof normalizedPatch.min_delay_no_staff_seconds !== "number"
+      && !Array.isArray(normalizedPatch.mandatory_escalation_topics)
+      && typeof normalizedPatch.timer_jitter_max_seconds !== "number"
     ) {
       return true;
     }
@@ -184,19 +249,67 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
         return updateChannelPolicy(channelId, {
           generation_enabled: false,
           enabled: false,
+          ai_response_mode: "autonomous",
         });
       }
       if (mode === "review") {
         return updateChannelPolicy(channelId, {
           generation_enabled: true,
-          enabled: false,
+          enabled: true,
+          ai_response_mode: "hitl",
         });
       }
       return updateChannelPolicy(channelId, {
         generation_enabled: true,
         enabled: true,
+        ai_response_mode: "autonomous",
       });
     },
+    [updateChannelPolicy],
+  );
+
+  const setEscalationNotificationChannel = useCallback(
+    async (channelId: ChannelId, escalationNotificationChannel: EscalationNotificationChannel) => (
+      updateChannelPolicy(channelId, {
+        escalation_notification_channel: escalationNotificationChannel,
+      })
+    ),
+    [updateChannelPolicy],
+  );
+
+  const setAcknowledgmentMode = useCallback(
+    async (channelId: ChannelId, acknowledgmentMode: ChannelAcknowledgmentMode) => (
+      updateChannelPolicy(channelId, {
+        acknowledgment_mode: acknowledgmentMode,
+      })
+    ),
+    [updateChannelPolicy],
+  );
+
+  const setAcknowledgmentReactionKey = useCallback(
+    async (channelId: ChannelId, acknowledgmentReactionKey: string) => (
+      updateChannelPolicy(channelId, {
+        acknowledgment_reaction_key: acknowledgmentReactionKey,
+      })
+    ),
+    [updateChannelPolicy],
+  );
+
+  const setAcknowledgmentMessageTemplate = useCallback(
+    async (channelId: ChannelId, acknowledgmentMessageTemplate: string) => (
+      updateChannelPolicy(channelId, {
+        acknowledgment_message_template: acknowledgmentMessageTemplate,
+      })
+    ),
+    [updateChannelPolicy],
+  );
+
+  const setEscalationUserNoticeMode = useCallback(
+    async (channelId: ChannelId, escalationUserNoticeMode: ChannelEscalationUserNoticeMode) => (
+      updateChannelPolicy(channelId, {
+        escalation_user_notice_mode: escalationUserNoticeMode,
+      })
+    ),
     [updateChannelPolicy],
   );
 
@@ -214,5 +327,10 @@ export function useChannelAutoresponsePolicies(initialPolicies: ChannelAutorespo
     setChannelEnabled,
     setChannelGenerationEnabled,
     setChannelMode,
+    setEscalationNotificationChannel,
+    setAcknowledgmentMode,
+    setAcknowledgmentReactionKey,
+    setAcknowledgmentMessageTemplate,
+    setEscalationUserNoticeMode,
   };
 }

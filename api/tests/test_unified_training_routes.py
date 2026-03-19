@@ -334,14 +334,21 @@ class TestRejectEndpoint:
         """Cycle 3.3.2: Test POST /candidates/{id}/reject."""
         response = client.post(
             "/admin/training/candidates/1/reject",
-            json={"reviewer": "admin", "reason": "Incorrect information"},
+            json={
+                "reviewer": "admin",
+                "reason": "Incorrect information",
+                "reason_note": "Mentions obsolete release flow",
+            },
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         mock_pipeline_service.reject_candidate.assert_called_once_with(
-            candidate_id=1, reviewer="admin", reason="Incorrect information"
+            candidate_id=1,
+            reviewer="admin",
+            reason="Incorrect information",
+            reason_note="Mentions obsolete release flow",
         )
 
     def test_reject_candidate_error(self, client, mock_pipeline_service):
@@ -416,6 +423,7 @@ class TestRejectEndpoint:
             "incorrect",
             "outdated",
             "too_vague",
+            "too_niche_edge_case",
             "off_topic",
             "duplicate",
             "other",
@@ -428,6 +436,56 @@ class TestRejectEndpoint:
             )
 
             assert response.status_code == 200, f"Failed for reason: {reason}"
+
+
+class TestRateGeneratedAnswerEndpoint:
+    """Test generated answer rating endpoint behavior."""
+
+    def test_rate_generated_answer_records_idempotent_review(
+        self, client, mock_pipeline_service, sample_candidate
+    ):
+        """Should map rating into LearningEngine action and overwrite by reviewer."""
+        sample_candidate.generated_answer = "Candidate answer text"
+        sample_candidate.generation_confidence = 0.82
+        sample_candidate.final_score = 0.77
+        sample_candidate.routing = "SPOT_CHECK"
+        sample_candidate.source = "matrix"
+
+        mock_pipeline_service.repository = MagicMock()
+        mock_pipeline_service.repository.get_by_id.return_value = sample_candidate
+
+        learning_engine = MagicMock()
+        app = client.app
+        app.state.learning_engine = learning_engine
+
+        response = client.post(
+            "/admin/training/candidates/1/rate-answer",
+            json={"rating": "needs_improvement", "reviewer": "alice"},
+        )
+
+        assert response.status_code == 200
+        learning_engine.record_review.assert_called_once()
+        kwargs = learning_engine.record_review.call_args.kwargs
+        assert kwargs["admin_action"] == "rejected"
+        assert kwargs["question_id"] == "answer_rating:1:alice"
+        assert kwargs["metadata"]["idempotent"] is True
+        assert kwargs["metadata"]["review_kind"] == "answer_quality"
+
+    def test_rate_generated_answer_rejects_missing_generated_answer(
+        self, client, mock_pipeline_service, sample_candidate
+    ):
+        """Should return 400 when no generated answer exists."""
+        sample_candidate.generated_answer = None
+        mock_pipeline_service.repository = MagicMock()
+        mock_pipeline_service.repository.get_by_id.return_value = sample_candidate
+        client.app.state.learning_engine = MagicMock()
+
+        response = client.post(
+            "/admin/training/candidates/1/rate-answer",
+            json={"rating": "good", "reviewer": "admin"},
+        )
+
+        assert response.status_code == 400
 
 
 class TestSkipEndpoint:

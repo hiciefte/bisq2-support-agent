@@ -47,6 +47,7 @@ class UnifiedFAQCandidate:
         reviewed_by: Username of reviewer
         reviewed_at: Timestamp of review
         rejection_reason: Reason for rejection (if rejected)
+        rejection_note: Optional reviewer note with extra context
         faq_id: ID of created FAQ (if approved)
         is_calibration_sample: Whether this is a calibration sample
         created_at: When the candidate was created
@@ -73,6 +74,7 @@ class UnifiedFAQCandidate:
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[str] = None
     rejection_reason: Optional[str] = None
+    rejection_note: Optional[str] = None
     faq_id: Optional[str] = None
     is_calibration_sample: bool = True
     created_at: str = ""
@@ -253,6 +255,7 @@ class UnifiedFAQCandidateRepository:
                 reviewed_by TEXT,
                 reviewed_at TEXT,
                 rejection_reason TEXT,
+                rejection_note TEXT,
                 faq_id TEXT,
                 is_calibration_sample BOOLEAN DEFAULT TRUE,
                 created_at TEXT NOT NULL,
@@ -446,6 +449,12 @@ class UnifiedFAQCandidateRepository:
                 "ALTER TABLE unified_faq_candidates ADD COLUMN has_correction INTEGER DEFAULT 0"
             )
             logger.info("Added 'has_correction' column to unified_faq_candidates")
+
+        if "rejection_note" not in columns:
+            cursor.execute(
+                "ALTER TABLE unified_faq_candidates ADD COLUMN rejection_note TEXT"
+            )
+            logger.info("Added 'rejection_note' column to unified_faq_candidates")
 
         # Add correction_reason column to conversation_threads (Cycle 17)
         cursor.execute("PRAGMA table_info(conversation_threads)")
@@ -818,13 +827,20 @@ class UnifiedFAQCandidateRepository:
         conn.commit()
         conn.close()
 
-    def reject(self, candidate_id: int, reviewer: str, reason: str) -> None:
+    def reject(
+        self,
+        candidate_id: int,
+        reviewer: str,
+        reason: str,
+        reason_note: Optional[str] = None,
+    ) -> None:
         """Reject a candidate with a reason.
 
         Args:
             candidate_id: The candidate's database ID
             reviewer: Username of the reviewer
             reason: Reason for rejection
+            reason_note: Optional reviewer note with additional context
         """
         now = datetime.now(timezone.utc).isoformat()
 
@@ -838,10 +854,11 @@ class UnifiedFAQCandidateRepository:
                 reviewed_by = ?,
                 reviewed_at = ?,
                 rejection_reason = ?,
+                rejection_note = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (reviewer, now, reason, now, candidate_id),
+            (reviewer, now, reason, reason_note, now, candidate_id),
         )
 
         conn.commit()
@@ -894,6 +911,7 @@ class UnifiedFAQCandidateRepository:
                 reviewed_by = NULL,
                 reviewed_at = NULL,
                 rejection_reason = NULL,
+                rejection_note = NULL,
                 faq_id = NULL,
                 skip_order = 0,
                 updated_at = ?
@@ -1218,6 +1236,9 @@ class UnifiedFAQCandidateRepository:
             reviewed_by=row["reviewed_by"],
             reviewed_at=row["reviewed_at"],
             rejection_reason=row["rejection_reason"],
+            rejection_note=(
+                row["rejection_note"] if "rejection_note" in row.keys() else None
+            ),
             faq_id=row["faq_id"],
             is_calibration_sample=bool(row["is_calibration_sample"]),
             created_at=row["created_at"],

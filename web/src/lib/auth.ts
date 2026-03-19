@@ -14,6 +14,16 @@ export interface LogoutResponse {
   authenticated: boolean;
 }
 
+interface AuthStatusResponse {
+  authenticated: boolean;
+}
+
+const ADMIN_AUTH_ENDPOINTS = {
+  login: '/admin/auth/login',
+  logout: '/admin/auth/logout',
+  status: '/admin/auth/status',
+} as const;
+
 // Session timeout callback - will be set by SecureAuth component
 let sessionTimeoutCallback: (() => void) | null = null;
 
@@ -43,7 +53,7 @@ function handleSessionTimeout(): void {
  * Login with API key using secure cookie-based authentication
  */
 export async function loginWithApiKey(apiKey: string): Promise<LoginResponse> {
-  const response = await fetch(`${API_BASE_URL}/admin/auth/login`, {
+  const response = await fetch(`${API_BASE_URL}${ADMIN_AUTH_ENDPOINTS.login}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -66,7 +76,7 @@ export async function loginWithApiKey(apiKey: string): Promise<LoginResponse> {
  * Logout and clear authentication cookie
  */
 export async function logout(): Promise<LogoutResponse> {
-  const response = await fetch(`${API_BASE_URL}/admin/auth/logout`, {
+  const response = await fetch(`${API_BASE_URL}${ADMIN_AUTH_ENDPOINTS.logout}`, {
     method: 'POST',
     credentials: 'include', // Important: include cookies in requests
   });
@@ -116,8 +126,13 @@ export async function makeAuthenticatedRequest(
  */
 export async function checkAuthStatus(): Promise<boolean> {
   try {
-    const response = await makeAuthenticatedRequest('/admin/dashboard/overview');
-    return response.ok;
+    const response = await makeAuthenticatedRequest(ADMIN_AUTH_ENDPOINTS.status);
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = (await response.json()) as AuthStatusResponse;
+    return payload.authenticated === true;
   } catch {
     return false;
   }

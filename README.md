@@ -40,14 +40,23 @@ BISQ_API_URL=http://host.docker.internal:8090 ./run-local.sh
 
 Important: the Bisq2 API process must be reachable from Docker (bind host `0.0.0.0`, not only `127.0.0.1`).
 
+For Matrix local testing, keep public support sync and staff notifications separated:
+
+```bash
+MATRIX_SYNC_ROOMS=!ilodKeOTMMMDTlGhkf:matrix.org
+MATRIX_STAFF_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org
+# local testing can reuse the same room for alerts
+MATRIX_ALERT_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org
+```
+
 If the Bisq2 API runs with `authorizationRequired=true`, enable authenticated support-agent access:
 
 ```bash
 BISQ_API_AUTH_ENABLED=true
-# Either provide existing client credentials...
+# Prefer durable client credentials in production...
 BISQ_API_CLIENT_ID=...
 BISQ_API_CLIENT_SECRET=...
-# ...or provide pairing bootstrap input:
+# ...and use pairing data only for first bootstrap if needed:
 # BISQ_API_PAIRING_CODE_ID=...
 # BISQ_API_PAIRING_QR_FILE=/path/to/pairing_qr_code.txt
 ```
@@ -193,10 +202,15 @@ The project uses the following data directories within `api/data/`:
 -   `wiki/`: Contains wiki documents for the RAG knowledge base.
 -   `feedback.db`: SQLite database storing user feedback (automatically created on first run).
 -   `faqs.db`: SQLite database storing FAQs (authoritative source, automatically created on first run).
+-   `unified_training.db`: SQLite database storing unified FAQ candidates, review decisions, calibration state, and learning thresholds. This is the training pipeline source of truth.
 -   `bm25_vocabulary.json`: BM25 vocabulary used by the hybrid retriever (runtime-generated).
 -   `qdrant_index_metadata.json`: Qdrant index build metadata (runtime-generated).
 
 These are automatically created during deployment. For local development, create the wiki directory if needed: `mkdir -p api/data/wiki`.
+
+Legacy note:
+-   `faq_candidates.db` and `unified_candidates.db` may still exist on older environments, but the current application does not use them at runtime.
+-   The live unified training and review pipeline reads and writes `unified_training.db`.
 
 ### Feedback Storage Migration
 

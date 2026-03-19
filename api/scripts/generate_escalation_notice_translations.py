@@ -13,7 +13,6 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import aisuite as ai  # type: ignore[import-untyped]
 
@@ -22,8 +21,10 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from app.channels.translations.catalog import normalize_locale_tag
-from app.channels.translations.supported_locales import BISQ2_SUPPORTED_LOCALES_WITH_EN
+from app.channels.translations.catalog import normalize_locale_tag  # noqa: E402
+from app.channels.translations.supported_locales import (  # noqa: E402
+    BISQ2_SUPPORTED_LOCALES_WITH_EN,
+)
 
 MODEL_DEFAULT = "openai:gpt-4o-mini"
 CATALOG_DIR = (

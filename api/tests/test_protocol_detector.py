@@ -57,6 +57,22 @@ class TestProtocolDetection:
         assert protocol == "multisig_v1"
         assert confidence >= 0.7
 
+    def test_detect_protocol_from_text_bisq1_error_term(self, detector):
+        """Bisq 1-specific trade error terms should force multisig_v1."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "What does BuyerVerifiesPreparedDelayedPayoutTx mean?"
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_detect_protocol_from_text_bisq1_deposit_transaction(self, detector):
+        """Deposit transaction wording should map to Bisq 1/multisig flows."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "If the deposit transaction is confirmed on-chain but the trade is stuck"
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
     def test_detect_protocol_from_text_bisq2_keywords(self, detector):
         """Bisq Easy keywords should return bisq_easy protocol."""
         protocol, confidence = detector.detect_protocol_from_text(
@@ -229,6 +245,80 @@ class TestLegacyCompatibility:
         )
         assert version == "Bisq 1"
         assert confidence >= 0.7
+
+
+class TestHistorySignals:
+    """Test version detection behavior for mixed history prompts."""
+
+    @pytest.mark.asyncio
+    async def test_prefers_user_history_signal_over_mixed_assistant_prompt(
+        self, detector
+    ):
+        """User history saying Bisq Easy should not be overridden by assistant compare prompt."""
+        history = [
+            {"role": "user", "content": "Ich nutze Bisq Easy"},
+            {
+                "role": "assistant",
+                "content": "Verwenden Sie Bisq 1 oder Bisq Easy (Bisq 2)?",
+            },
+        ]
+        version, confidence, _ = await detector.detect_version(
+            "Wie kann ich BTC mit Euro kaufen?",
+            history,
+        )
+        assert version == "Bisq 2"
+        assert confidence >= 0.7
+
+    @pytest.mark.asyncio
+    async def test_mixed_assistant_prompt_only_does_not_force_bisq1(self, detector):
+        """Assistant compare prompts mentioning both versions should not force Bisq 1."""
+        history = [
+            {
+                "role": "assistant",
+                "content": "Are you using Bisq 1 or Bisq Easy (Bisq 2)?",
+            },
+        ]
+        version, confidence, clarifying = await detector.detect_version(
+            "How can I buy Bitcoin?",
+            history,
+        )
+        assert version == "Unknown"
+        assert confidence == 0.30
+        assert clarifying is not None
+
+
+class TestOperationalSupportQuestions:
+    """Operational support questions should not force version clarification."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("question"),
+        [
+            "How can I open a mediation?",
+            "How can I cancel a trade if I haven't received payment?",
+            "Can I cancel a trade if the delivery address is invalid?",
+            "What should I do if my Bisq wallet fails to restore from seed?",
+            "Can I start trading after installing an update, or is there something I should be aware of?",
+            "I wanna talk to a manager!!",
+        ],
+    )
+    async def test_operational_support_question_skips_version_clarification(
+        self, detector, question
+    ):
+        version, confidence, clarifying = await detector.detect_version(question, [])
+        assert version == "Unknown"
+        assert confidence == 0.45
+        assert clarifying is None
+
+    @pytest.mark.asyncio
+    async def test_generic_question_still_requests_clarification(self, detector):
+        version, confidence, clarifying = await detector.detect_version(
+            "What are the fees?",
+            [],
+        )
+        assert version == "Unknown"
+        assert confidence == 0.30
+        assert clarifying is not None
 
 
 class TestExplicitVersionProtocol:

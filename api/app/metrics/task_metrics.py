@@ -17,7 +17,7 @@ container restarts, deployments, and crashes.
 import logging
 import time
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
@@ -41,6 +41,75 @@ BISQ2_API_RESPONSE_TIME = Gauge(
     "bisq2_api_response_time_seconds",
     "Response time of Bisq2 API health check in seconds",
 )
+
+BISQ2_API_EXPORT_READINESS_STATUS = Gauge(
+    "bisq2_api_export_readiness_status",
+    "Authenticated export readiness of the Bisq2 API (1=healthy, 0=unhealthy)",
+)
+
+BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP = Gauge(
+    "bisq2_api_export_last_check_timestamp",
+    "Unix timestamp of last authenticated Bisq2 export readiness check",
+)
+
+BISQ2_API_EXPORT_RESPONSE_TIME = Gauge(
+    "bisq2_api_export_response_time_seconds",
+    "Response time of authenticated Bisq2 export readiness check in seconds",
+)
+
+BISQ2_API_MARKET_PRICES_READINESS_STATUS = Gauge(
+    "bisq2_api_market_prices_readiness_status",
+    "Live market-prices readiness of the Bisq2 API (1=healthy, 0=unhealthy)",
+)
+
+BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP = Gauge(
+    "bisq2_api_market_prices_last_check_timestamp",
+    "Unix timestamp of last Bisq2 live market-prices readiness check",
+)
+
+BISQ2_API_MARKET_PRICES_RESPONSE_TIME = Gauge(
+    "bisq2_api_market_prices_response_time_seconds",
+    "Response time of Bisq2 live market-prices readiness check in seconds",
+)
+
+BISQ2_API_OFFERBOOK_READINESS_STATUS = Gauge(
+    "bisq2_api_offerbook_readiness_status",
+    "Live offerbook readiness of the Bisq2 API (1=healthy, 0=unhealthy)",
+)
+
+BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP = Gauge(
+    "bisq2_api_offerbook_last_check_timestamp",
+    "Unix timestamp of last Bisq2 live offerbook readiness check",
+)
+
+BISQ2_API_OFFERBOOK_RESPONSE_TIME = Gauge(
+    "bisq2_api_offerbook_response_time_seconds",
+    "Response time of Bisq2 live offerbook readiness check in seconds",
+)
+
+BISQ2_API_AUTH_FAILURES = Counter(
+    "bisq2_api_auth_failures_total",
+    "Total number of Bisq2 API authentication failures",
+    ["reason"],
+)
+
+BISQ2_PROBE_METRICS: Dict[str, Dict[str, Gauge]] = {
+    "export": {
+        "status": BISQ2_API_EXPORT_READINESS_STATUS,
+        "timestamp": BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP,
+        "response_time": BISQ2_API_EXPORT_RESPONSE_TIME,
+    },
+    "market_prices": {
+        "status": BISQ2_API_MARKET_PRICES_READINESS_STATUS,
+        "timestamp": BISQ2_API_MARKET_PRICES_LAST_CHECK_TIMESTAMP,
+        "response_time": BISQ2_API_MARKET_PRICES_RESPONSE_TIME,
+    },
+    "offerbook": {
+        "status": BISQ2_API_OFFERBOOK_READINESS_STATUS,
+        "timestamp": BISQ2_API_OFFERBOOK_LAST_CHECK_TIMESTAMP,
+        "response_time": BISQ2_API_OFFERBOOK_RESPONSE_TIME,
+    },
+}
 
 # =============================================================================
 # Wiki Update Metrics
@@ -335,14 +404,71 @@ def record_bisq2_api_health(
         is_healthy: True if API responded successfully, False otherwise
         response_time: API response time in seconds (optional)
     """
-    BISQ2_API_HEALTH_STATUS.set(1 if is_healthy else 0)
-    BISQ2_API_LAST_CHECK_TIMESTAMP.set(time.time())
+    record_bisq2_api_probe("export", is_healthy=is_healthy, response_time=response_time)
 
+
+def record_bisq2_api_probe(
+    probe: str,
+    is_healthy: bool,
+    response_time: Optional[float] = None,
+) -> None:
+    """Record readiness for one Bisq2 dependency probe."""
+    if probe not in BISQ2_PROBE_METRICS:
+        raise ValueError(f"Unsupported Bisq2 probe: {probe}")
+
+    metric_set = BISQ2_PROBE_METRICS[probe]
+    metric_set["status"].set(1 if is_healthy else 0)
+    metric_set["timestamp"].set(time.time())
     if response_time is not None:
-        BISQ2_API_RESPONSE_TIME.set(response_time)
+        metric_set["response_time"].set(response_time)
 
-    # Persist to database
+    _update_bisq2_aggregate_metrics(response_time)
     _persist_bisq2_api_metrics()
+
+
+def record_bisq2_api_auth_failure(reason: str) -> None:
+    """Increment Bisq2 API auth failure counter with a normalized reason label."""
+    normalized_reason = reason.strip().lower().replace(" ", "_") or "unknown"
+    BISQ2_API_AUTH_FAILURES.labels(reason=normalized_reason).inc()
+
+
+def get_bisq2_api_readiness_snapshot(enabled: Optional[bool] = None) -> Dict[str, Any]:
+    """Return a structured snapshot of Bisq readiness checks."""
+    checks: Dict[str, Dict[str, Any]] = {}
+    checked_statuses: list[bool] = []
+    checked_timestamps: list[float] = []
+
+    for probe, metric_set in BISQ2_PROBE_METRICS.items():
+        status_value = float(metric_set["status"]._value.get())
+        timestamp_value = float(metric_set["timestamp"]._value.get())
+        response_time_value = float(metric_set["response_time"]._value.get())
+        is_checked = timestamp_value > 0
+        is_healthy = bool(status_value) if is_checked else None
+        status = "not_checked"
+        if is_checked:
+            status = "healthy" if bool(status_value) else "unhealthy"
+            checked_statuses.append(bool(status_value))
+            checked_timestamps.append(timestamp_value)
+
+        checks[probe] = {
+            "status": status,
+            "healthy": is_healthy,
+            "last_check_timestamp": timestamp_value,
+            "response_time_seconds": response_time_value,
+        }
+
+    overall_status = "unknown"
+    if enabled is False:
+        overall_status = "disabled"
+    elif checked_statuses:
+        overall_status = "healthy" if all(checked_statuses) else "degraded"
+
+    return {
+        "enabled": enabled,
+        "status": overall_status,
+        "last_check_timestamp": max(checked_timestamps, default=0.0),
+        "checks": checks,
+    }
 
 
 # =============================================================================
@@ -428,7 +554,6 @@ def _persist_bisq2_api_metrics() -> None:
 
     persistence = get_persistence()
 
-    # Collect metrics, filtering out None values
     metrics = {
         "bisq2_api_health_status": REGISTRY.get_sample_value("bisq2_api_health_status"),
         "bisq2_api_last_check_timestamp": REGISTRY.get_sample_value(
@@ -439,7 +564,17 @@ def _persist_bisq2_api_metrics() -> None:
         ),
     }
 
-    # Filter out None values and ensure float type
+    for probe, metric_set in BISQ2_PROBE_METRICS.items():
+        metrics[f"bisq2_api_{probe}_readiness_status"] = REGISTRY.get_sample_value(
+            metric_set["status"]._name
+        )
+        metrics[f"bisq2_api_{probe}_last_check_timestamp"] = REGISTRY.get_sample_value(
+            metric_set["timestamp"]._name
+        )
+        metrics[f"bisq2_api_{probe}_response_time_seconds"] = REGISTRY.get_sample_value(
+            metric_set["response_time"]._name
+        )
+
     valid_metrics = {
         name: float(value) for name, value in metrics.items() if value is not None
     }
@@ -495,7 +630,34 @@ def restore_metrics_from_database() -> None:
         if "bisq2_api_response_time_seconds" in metrics:
             BISQ2_API_RESPONSE_TIME.set(metrics["bisq2_api_response_time_seconds"])
 
+        for probe, metric_set in BISQ2_PROBE_METRICS.items():
+            readiness_key = f"bisq2_api_{probe}_readiness_status"
+            timestamp_key = f"bisq2_api_{probe}_last_check_timestamp"
+            response_time_key = f"bisq2_api_{probe}_response_time_seconds"
+            if readiness_key in metrics:
+                metric_set["status"].set(metrics[readiness_key])
+            if timestamp_key in metrics:
+                metric_set["timestamp"].set(metrics[timestamp_key])
+            if response_time_key in metrics:
+                metric_set["response_time"].set(metrics[response_time_key])
+
         logger.info(f"Restored {len(metrics)} metrics from database")
 
     except Exception:  # noqa: BLE001
         logger.exception("Failed to restore metrics from database")
+
+
+def _update_bisq2_aggregate_metrics(response_time: Optional[float] = None) -> None:
+    snapshot = get_bisq2_api_readiness_snapshot()
+    checked_checks = [
+        check
+        for check in snapshot["checks"].values()
+        if check["status"] != "not_checked"
+    ]
+
+    if checked_checks:
+        aggregate_healthy = all(bool(check["healthy"]) for check in checked_checks)
+        BISQ2_API_HEALTH_STATUS.set(1 if aggregate_healthy else 0)
+        BISQ2_API_LAST_CHECK_TIMESTAMP.set(snapshot["last_check_timestamp"])
+        if response_time is not None:
+            BISQ2_API_RESPONSE_TIME.set(response_time)

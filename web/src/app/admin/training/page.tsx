@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { AlertCircle, BarChart3, Eye, LayoutGrid, List, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { makeAuthenticatedRequest } from '@/lib/auth';
+import { scrollWindowToTop } from '@/lib/scroll';
 import { Button } from '@/components/ui/button';
 import { CalibrationBanner } from '@/components/admin/training/CalibrationBanner';
 import { AdminQueueShell } from '@/components/admin/queue/AdminQueueShell';
@@ -336,6 +337,7 @@ export default function TrainingPage() {
         });
         // Refresh data after action
         await Promise.all([fetchQueueCounts(), fetchCurrentItem()]);
+        scrollWindowToTop();
         if (calibrationStatus && !calibrationStatus.is_complete) {
           await fetchCalibrationStatus();
         }
@@ -364,7 +366,7 @@ export default function TrainingPage() {
   };
 
   // Handle reject action - unified endpoint
-  const handleReject = async (reason: string) => {
+  const handleReject = async (reason: string, reasonNote?: string) => {
     if (!currentItem) return;
 
     const candidateId = currentItem.id;
@@ -375,7 +377,7 @@ export default function TrainingPage() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reviewer: 'admin', reason })
+          body: JSON.stringify({ reviewer: 'admin', reason, reason_note: reasonNote })
         }
       );
 
@@ -398,7 +400,7 @@ export default function TrainingPage() {
         }, 5000);
         // Show toast with undo option
         toast('Candidate rejected', {
-          description: `Reason: ${reason}`,
+          description: reasonNote ? `Reason: ${reason} (${reasonNote})` : `Reason: ${reason}`,
           duration: 5000,
           action: {
             label: 'Undo',
@@ -406,6 +408,7 @@ export default function TrainingPage() {
           }
         });
         await Promise.all([fetchQueueCounts(), fetchCurrentItem()]);
+        scrollWindowToTop();
       } else {
         const errorData = await response.json();
         setError(errorData.detail || 'Failed to reject');
@@ -436,6 +439,7 @@ export default function TrainingPage() {
           duration: 2000
         });
         await fetchCurrentItem();
+        scrollWindowToTop();
       }
     } catch (err) {
       console.error('Failed to skip:', err);
@@ -470,6 +474,7 @@ export default function TrainingPage() {
         });
         // Refresh data
         await Promise.all([fetchQueueCounts(), fetchCurrentItem()]);
+        scrollWindowToTop();
       } else {
         toast.error('Failed to undo', {
           description: 'The action could not be undone',
@@ -621,6 +626,7 @@ export default function TrainingPage() {
           }
         });
         await Promise.all([fetchQueueCounts(), fetchCurrentItem()]);
+        scrollWindowToTop();
         if (calibrationStatus && !calibrationStatus.is_complete) {
           await fetchCalibrationStatus();
         }

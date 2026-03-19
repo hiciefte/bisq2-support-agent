@@ -349,3 +349,9 @@ class AdminLoginResponse(BaseModel):
 
     message: str = Field(description="Login success message")
     authenticated: bool = Field(description="Authentication status")
+
+
+class AdminAuthStatusResponse(BaseModel):
+    """Response model for admin authentication status checks."""
+
+    authenticated: bool = Field(description="Authentication status")
