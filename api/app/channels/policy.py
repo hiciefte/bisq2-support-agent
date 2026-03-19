@@ -277,6 +277,9 @@ def get_escalation_user_notice_mode(
 ) -> str:
     normalized = str(channel_id or "").strip().lower()
     default = str(DEFAULT_ESCALATION_USER_NOTICE_MODE.get(normalized, "message"))
+    invalid_value_fallback = (
+        "public_reply" if normalized in {"matrix", "bisq2"} else default
+    )
     if policy_service is None:
         return default
     try:
@@ -286,7 +289,11 @@ def get_escalation_user_notice_mode(
             .strip()
             .lower()
         )
-        return value if value in {"none", "message", "public_reply"} else default
+        return (
+            value
+            if value in {"none", "message", "public_reply"}
+            else invalid_value_fallback
+        )
     except Exception:
         logger.exception(
             "Failed to read escalation_user_notice_mode for channel=%s; falling back to default=%s",
