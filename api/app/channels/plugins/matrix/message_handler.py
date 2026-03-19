@@ -137,8 +137,6 @@ class MatrixMessageHandler:
         await self._record_trust_event(
             room_id=room_id, event=effective_event, sender_id=sender_id, room=room
         )
-        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
-            return
         if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
             await self._maybe_handle_staff_command(
@@ -146,6 +144,8 @@ class MatrixMessageHandler:
                 event=effective_event,
                 sender_id=sender_id,
             )
+            return
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
             return
         if room_id not in self.allowed_room_ids:
             return
@@ -433,6 +433,31 @@ class MatrixMessageHandler:
         )
         if not callable(resolve_optional):
             return False
+        command_text = self._extract_event_text(event)
+        chatops_adapter = resolve_optional("matrix_chatops_adapter")
+        handle_chatops = (
+            getattr(chatops_adapter, "handle_event", None)
+            if chatops_adapter is not None
+            else None
+        )
+        if callable(handle_chatops):
+            try:
+                handled = await handle_chatops(
+                    room_id=room_id,
+                    event_id=str(getattr(event, "event_id", "") or "").strip(),
+                    sender=sender_id,
+                    text=command_text,
+                )
+                if handled:
+                    return True
+            except Exception:
+                logger.debug(
+                    "Failed processing Matrix ChatOps command room_id=%s sender=%s",
+                    room_id,
+                    sender_id,
+                    exc_info=True,
+                )
+
         command_handler = resolve_optional("matrix_reaction_handler")
         handle_staff_command = (
             getattr(command_handler, "handle_staff_command", None)
@@ -442,7 +467,6 @@ class MatrixMessageHandler:
         if not callable(handle_staff_command):
             return False
         reply_to_event_id = self._extract_reply_to_event_id(event)
-        command_text = self._extract_event_text(event)
         try:
             return bool(
                 await handle_staff_command(

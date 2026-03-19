@@ -8,13 +8,16 @@ from app.models.escalation import (
     DuplicateEscalationError,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCountsResponse,
     EscalationCreate,
     EscalationDeliveryStatus,
     EscalationFilters,
+    EscalationInvalidStateError,
     EscalationListResponse,
     EscalationNotFoundError,
     EscalationNotRespondedError,
+    EscalationPriority,
     EscalationStatus,
     EscalationUpdate,
     UserPollResponse,
@@ -104,6 +107,9 @@ class EscalationService:
         if escalation is None:
             raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
 
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
+
         # Already claimed by same staff — idempotent
         if escalation.staff_id == staff_id and escalation.status in (
             EscalationStatus.IN_REVIEW,
@@ -140,6 +146,33 @@ class EscalationService:
             ),
         )
 
+    async def unclaim_escalation(self, escalation_id: int, staff_id: str) -> Escalation:
+        """Release an escalation back to the pending queue."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
+
+        if escalation.status != EscalationStatus.IN_REVIEW:
+            raise EscalationInvalidStateError(
+                f"Escalation {escalation_id} cannot be unclaimed from {escalation.status}"
+            )
+
+        if escalation.staff_id and escalation.staff_id != staff_id:
+            if escalation.claimed_at and not self._is_claim_expired(
+                escalation.claimed_at
+            ):
+                raise EscalationAlreadyClaimedError(
+                    f"Escalation {escalation_id} claimed by {escalation.staff_id}"
+                )
+
+        return await self.repository.unclaim(
+            escalation_id,
+            EscalationStatus.PENDING,
+        )
+
     def _is_claim_expired(self, claimed_at: datetime) -> bool:
         ttl_minutes = getattr(self.settings, "ESCALATION_CLAIM_TTL_MINUTES", 30)
         expiry = claimed_at + timedelta(minutes=ttl_minutes)
@@ -166,7 +199,7 @@ class EscalationService:
 
         # Closed — cannot respond
         if escalation.status == EscalationStatus.CLOSED:
-            raise EscalationNotFoundError(f"Escalation {escalation_id} is closed")
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
 
         # Must be claimed by this staff (or pending)
         if (
@@ -470,6 +503,22 @@ class EscalationService:
                 status=EscalationStatus.CLOSED,
                 closed_at=now,
             ),
+        )
+
+    async def prioritize_escalation(
+        self,
+        escalation_id: int,
+        priority: EscalationPriority,
+    ) -> Escalation:
+        """Update escalation priority."""
+        escalation = await self.repository.get_by_id(escalation_id)
+        if escalation is None:
+            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+        if escalation.status == EscalationStatus.CLOSED:
+            raise EscalationClosedError(f"Escalation {escalation_id} is closed")
+        return await self.repository.update(
+            escalation_id,
+            EscalationUpdate(priority=priority),
         )
 
     # ------------------------------------------------------------------

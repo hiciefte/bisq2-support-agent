@@ -33,12 +33,12 @@ const nextConfig = {
     // In local docker dev we expose Next.js directly on :3000 (no nginx in front),
     // but the client code uses same-origin `/api/...` paths. Proxy those to the API.
     async rewrites() {
-        const apiInternal = process.env.API_URL_INTERNAL;
-        if (!apiInternal || typeof apiInternal !== "string" || !apiInternal.startsWith("http")) {
+        const apiTarget = process.env.API_URL_INTERNAL || process.env.NEXT_PUBLIC_API_URL;
+        if (!apiTarget || typeof apiTarget !== "string" || !apiTarget.startsWith("http")) {
             return [];
         }
 
-        const trimmed = apiInternal.replace(/\/+$/, "");
+        const trimmed = apiTarget.replace(/\/+$/, "");
         const base = trimmed.replace(/\/api$/, "");
 
         return [

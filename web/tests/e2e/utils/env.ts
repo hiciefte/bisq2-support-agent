@@ -27,6 +27,11 @@ const getDefaultApiUrl = (): string => {
 const DEFAULT_API_URL = getDefaultApiUrl();
 
 /**
+ * Web application base URL
+ */
+export const WEB_BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
+
+/**
  * Normalize API URL to ensure it's absolute
  *
  * Handles cases where NEXT_PUBLIC_API_URL might be:
@@ -41,10 +46,9 @@ export const normalizeApiUrl = (url: string | undefined): string => {
   const defaultUrl = DEFAULT_API_URL;
   if (!url) return defaultUrl;
 
-  // If URL starts with '/', prepend base origin
+  // Relative URLs are normalized to the computed default backend URL.
   if (url.startsWith('/')) {
-    const baseOrigin = process.env.TEST_BASE_ORIGIN || DEFAULT_API_URL;
-    return `${baseOrigin}${url}`;
+    return defaultUrl;
   }
 
   // If it's already absolute (starts with http:// or https://), return as-is
@@ -60,11 +64,6 @@ export const normalizeApiUrl = (url: string | undefined): string => {
  * API base URL - normalized to ensure absolute URL
  */
 export const API_BASE_URL = normalizeApiUrl(process.env.NEXT_PUBLIC_API_URL);
-
-/**
- * Web application base URL
- */
-export const WEB_BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
 
 /**
  * Admin API key for authentication

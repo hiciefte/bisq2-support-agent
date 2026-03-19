@@ -8,7 +8,9 @@ from app.models.escalation import (
     DuplicateEscalationError,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCreate,
+    EscalationInvalidStateError,
     EscalationNotFoundError,
     EscalationNotRespondedError,
     EscalationPriority,
@@ -48,6 +50,7 @@ def mock_repository():
     repo.get_by_id = AsyncMock()
     repo.get_by_message_id = AsyncMock()
     repo.update = AsyncMock()
+    repo.unclaim = AsyncMock()
     repo.update_rating = AsyncMock()
     repo.list_escalations = AsyncMock()
     repo.get_counts = AsyncMock()
@@ -397,6 +400,66 @@ class TestEscalationServiceClaim:
         result = await service.claim_escalation(1, "staff_2")
         assert result.staff_id == "staff_2"
 
+    @pytest.mark.asyncio
+    async def test_claim_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.claim_escalation(1, "staff_1")
+
+
+class TestEscalationServiceUnclaim:
+    """Test unclaim logic."""
+
+    @pytest.mark.asyncio
+    async def test_unclaim_clears_staff_assignment(self, service, mock_repository):
+        claimed = _make_escalation(
+            status=EscalationStatus.IN_REVIEW,
+            staff_id="staff_1",
+            claimed_at=datetime.now(timezone.utc),
+        )
+        released = _make_escalation(
+            status=EscalationStatus.PENDING,
+            staff_id=None,
+            claimed_at=None,
+        )
+        mock_repository.get_by_id.return_value = claimed
+        mock_repository.unclaim.return_value = released
+
+        result = await service.unclaim_escalation(1, "staff_1")
+
+        mock_repository.unclaim.assert_awaited_once_with(1, EscalationStatus.PENDING)
+        assert result.status == EscalationStatus.PENDING
+        assert result.staff_id is None
+        assert result.claimed_at is None
+
+    @pytest.mark.asyncio
+    async def test_unclaim_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.unclaim_escalation(1, "staff_1")
+
+    @pytest.mark.asyncio
+    async def test_unclaim_non_review_escalation_raises_invalid_state(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_id="staff_1",
+        )
+
+        with pytest.raises(EscalationInvalidStateError):
+            await service.unclaim_escalation(1, "staff_1")
+
 
 # ---------------------------------------------------------------------------
 # Respond
@@ -515,6 +578,21 @@ class TestEscalationServiceRespond:
 
         with pytest.raises(EscalationNotFoundError):
             await service.respond_to_escalation(99999, "Answer", "staff_1")
+
+
+class TestEscalationServicePrioritize:
+    """Test priority update logic."""
+
+    @pytest.mark.asyncio
+    async def test_prioritize_closed_escalation_raises_specific_error(
+        self, service, mock_repository
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.CLOSED
+        )
+
+        with pytest.raises(EscalationClosedError):
+            await service.prioritize_escalation(1, EscalationPriority.HIGH)
 
 
 # ---------------------------------------------------------------------------

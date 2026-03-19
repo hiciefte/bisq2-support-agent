@@ -19,6 +19,8 @@ test.describe("Similar FAQ Check", () => {
     // Track created FAQs for cleanup
     const createdFaqQuestions: string[] = [];
 
+    const similarFaqRoutePatterns = ["**/admin/faqs/check-similar", `${API_BASE_URL}/admin/faqs/check-similar`];
+
     /**
      * Mock the /admin/faqs/check-similar endpoint with sample data
      */
@@ -33,13 +35,15 @@ test.describe("Similar FAQ Check", () => {
             protocol?: string;
         }>
     ) => {
-        await page.route(`${API_BASE_URL}/admin/faqs/check-similar`, async (route: Route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ similar_faqs: similarFaqs }),
+        for (const pattern of similarFaqRoutePatterns) {
+            await page.route(pattern, async (route: Route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ similar_faqs: similarFaqs }),
+                });
             });
-        });
+        }
     };
 
     /**
@@ -278,18 +282,20 @@ test.describe("Similar FAQ Check", () => {
 
     test("shows loading state while checking for similar FAQs", async ({ page }) => {
         // Mock with delayed response
-        await page.route(`${API_BASE_URL}/admin/faqs/check-similar`, async (route: Route) => {
-            await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s delay
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    similar_faqs: [
-                        { id: 1, question: "Test", answer: "Test", similarity: 0.8 },
-                    ],
-                }),
+        for (const pattern of similarFaqRoutePatterns) {
+            await page.route(pattern, async (route: Route) => {
+                await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s delay
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        similar_faqs: [
+                            { id: 1, question: "Test", answer: "Test", similarity: 0.8 },
+                        ],
+                    }),
+                });
             });
-        });
+        }
 
         await page.click('button:has-text("Add New FAQ")');
         await page.fill("input#question", "Test question for loading");
@@ -325,14 +331,16 @@ test.describe("Similar FAQ Check", () => {
             return;
         }
 
-        await page.route(`${API_BASE_URL}/admin/faqs/check-similar`, async (route: Route, request: Request) => {
-            capturedRequestBody = request.postData();
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ similar_faqs: [] }),
+        for (const pattern of similarFaqRoutePatterns) {
+            await page.route(pattern, async (route: Route, request: Request) => {
+                capturedRequestBody = request.postData();
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ similar_faqs: [] }),
+                });
             });
-        });
+        }
 
         // Find an existing FAQ and enter edit mode
         const faqCard = faqCards.first();
@@ -420,13 +428,15 @@ test.describe("Similar FAQ Check", () => {
 
     test("handles API errors gracefully", async ({ page }) => {
         // Mock error response
-        await page.route(`${API_BASE_URL}/admin/faqs/check-similar`, async (route: Route) => {
-            await route.fulfill({
-                status: 500,
-                contentType: "application/json",
-                body: JSON.stringify({ detail: "Internal server error" }),
+        for (const pattern of similarFaqRoutePatterns) {
+            await page.route(pattern, async (route: Route) => {
+                await route.fulfill({
+                    status: 500,
+                    contentType: "application/json",
+                    body: JSON.stringify({ detail: "Internal server error" }),
+                });
             });
-        });
+        }
 
         await page.click('button:has-text("Add New FAQ")');
         await page.fill("input#question", "Question that causes error");
@@ -470,14 +480,16 @@ test.describe("Similar FAQ Check", () => {
     test("uses debounced search (doesn't fire on every keystroke)", async ({ page }) => {
         let requestCount = 0;
 
-        await page.route(`${API_BASE_URL}/admin/faqs/check-similar`, async (route: Route) => {
-            requestCount++;
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ similar_faqs: [] }),
+        for (const pattern of similarFaqRoutePatterns) {
+            await page.route(pattern, async (route: Route) => {
+                requestCount++;
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ similar_faqs: [] }),
+                });
             });
-        });
+        }
 
         await page.click('button:has-text("Add New FAQ")');
 

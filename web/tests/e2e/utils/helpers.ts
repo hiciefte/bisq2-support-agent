@@ -5,7 +5,7 @@
  */
 
 import { APIRequestContext, expect, Page } from "@playwright/test";
-import { API_BASE_URL } from "./env";
+import { API_BASE_URL, WEB_BASE_URL } from "./env";
 
 const SUBMIT_BUTTON_SELECTOR = "button[type=\"submit\"]";
 const ENABLED_INPUT_SELECTOR = "input:not([disabled]), textarea:not([disabled])";
@@ -144,26 +144,39 @@ export async function waitForAssistantMessage(
 /**
  * Wait for the API to be healthy and ready to accept requests.
  *
- * Polls the /health endpoint until it returns 200 status.
+ * Polls both the direct API health endpoint and the web proxy health endpoint
+ * until one returns HTTP 200 or the timeout expires.
  *
  * @param requestContext - Playwright APIRequestContext or Page
- * @param timeout - Maximum time to wait in milliseconds (default: 60000)
+ * @param timeout - Maximum time to wait in milliseconds (default: 180000)
  */
 export async function waitForApiReady(
     requestContext: APIRequestContext | Page,
-    timeout: number = 60000,
+    timeout: number = 180000,
 ): Promise<void> {
     const request = "request" in requestContext ? requestContext.request : requestContext;
+    const healthUrls = [
+        `${API_BASE_URL}/health`,
+        `${WEB_BASE_URL}/api/health`,
+    ];
+    const deadline = Date.now() + timeout;
 
     await expect
         .poll(
             async () => {
-                try {
-                    const response = await request.get(`${API_BASE_URL}/health`);
-                    return response.status();
-                } catch {
-                    return 0;
+                for (const url of healthUrls) {
+                    try {
+                        const response = await request.get(url, {
+                            timeout: Math.min(5000, Math.max(1, deadline - Date.now())),
+                        });
+                        if (response.status() === 200) {
+                            return 200;
+                        }
+                    } catch {
+                        // Try the next candidate.
+                    }
                 }
+                return 0;
             },
             { timeout, intervals: [1000, 2000, 3000] },
         )

@@ -81,6 +81,7 @@ class MatrixChannel(ChannelBase):
         except Exception:
             ENCRYPTION_ENABLED = False
 
+        from app.channels.plugins.matrix.chatops_adapter import MatrixChatOpsAdapter
         from app.channels.plugins.matrix.client.connection_manager import (
             ConnectionManager,
         )
@@ -176,6 +177,20 @@ class MatrixChannel(ChannelBase):
             ),
             allow_override=True,
         )
+
+        chatops_rooms = normalize_room_ids(
+            getattr(settings, "MATRIX_CHATOPS_ROOM_IDS", None)
+        ) or normalize_room_ids(getattr(settings, "MATRIX_STAFF_ROOM", None))
+        if chatops_rooms:
+            runtime.register(
+                "matrix_chatops_adapter",
+                MatrixChatOpsAdapter(
+                    runtime=runtime,
+                    enabled=bool(getattr(settings, "MATRIX_CHATOPS_ENABLED", False)),
+                    allowed_room_ids=set(chatops_rooms),
+                ),
+                allow_override=True,
+            )
 
         trust_monitor_service = runtime.resolve_optional("trust_monitor_service")
         if trust_monitor_service is not None:

@@ -62,3 +62,13 @@ def test_get_escalation_user_notice_mode_falls_back_for_invalid_value() -> None:
     mode = get_escalation_user_notice_mode(policy_service, "matrix")
 
     assert mode == "public_reply"
+
+
+def test_get_escalation_user_notice_mode_uses_channel_default_on_read_error() -> None:
+    policy_service = SimpleNamespace(
+        get_policy=lambda _channel_id: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    mode = get_escalation_user_notice_mode(policy_service, "matrix")
+
+    assert mode == "message"

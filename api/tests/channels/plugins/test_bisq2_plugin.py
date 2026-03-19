@@ -1258,6 +1258,115 @@ class TestBisq2ChannelPolling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_poll_conversations_executes_staff_chatops_command_when_adapter_registered(
+        self,
+    ):
+        """Trusted staff `!case` commands should be handled in-channel and not enter RAG."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        staff_resolver = MagicMock()
+        staff_resolver.is_staff.side_effect = lambda value: value == "staff-001"
+        arbitration_service = MagicMock()
+        arbitration_service.record_staff_activity = AsyncMock()
+        chatops_adapter = MagicMock()
+        chatops_adapter.handle_message = AsyncMock(return_value=True)
+
+        def resolve_optional(name: str):
+            if name == "staff_resolver":
+                return staff_resolver
+            if name == "arbitration_service":
+                return arbitration_service
+            if name == "bisq2_chatops_adapter":
+                return chatops_adapter
+            return None
+
+        runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+        channel = Bisq2Channel(runtime)
+
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "staff-cmd-1",
+                    "channelId": "support.staff",
+                    "conversationId": "support.staff",
+                    "senderUserProfileId": "staff-001",
+                    "author": "Support Staff",
+                    "text": "!case claim 241",
+                    "timestamp": 1760000000000,
+                },
+            }
+        )
+
+        messages = await channel.poll_conversations()
+
+        assert messages == []
+        chatops_adapter.handle_message.assert_awaited_once()
+        handled_payload = chatops_adapter.handle_message.await_args.args[0]
+        assert handled_payload["messageId"] == "staff-cmd-1"
+        assert handled_payload["channelId"] == "support.staff"
+        assert handled_payload["conversationId"] == "support.staff"
+        assert handled_payload["authorId"] == "staff-001"
+        assert handled_payload["message"] == "!case claim 241"
+        arbitration_service.record_staff_activity.assert_awaited_once_with(
+            room_or_conversation_id="support.staff",
+            staff_id="staff-001",
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_poll_conversations_keeps_existing_staff_suppression_when_chatops_disabled(
+        self,
+    ):
+        """Trusted staff non-command messages stay suppressed when no adapter is present."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        staff_resolver = MagicMock()
+        staff_resolver.is_staff.side_effect = lambda value: value == "staff-001"
+        arbitration_service = MagicMock()
+        arbitration_service.record_staff_activity = AsyncMock()
+
+        def resolve_optional(name: str):
+            if name == "staff_resolver":
+                return staff_resolver
+            if name == "arbitration_service":
+                return arbitration_service
+            return None
+
+        runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+        channel = Bisq2Channel(runtime)
+
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "staff-msg-2",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "senderUserProfileId": "staff-001",
+                    "author": "Support Staff",
+                    "text": "Please share logs.",
+                    "timestamp": 1760000000000,
+                },
+            }
+        )
+
+        messages = await channel.poll_conversations()
+
+        assert messages == []
+        arbitration_service.record_staff_activity.assert_awaited_once_with(
+            room_or_conversation_id="support.support",
+            staff_id="staff-001",
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_poll_conversations_filters_non_question_noise_messages(self):
         """Non-question chatter should be dropped before invoking RAG."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel

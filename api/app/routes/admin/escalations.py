@@ -10,7 +10,9 @@ from app.models.escalation import (
     ClaimRequest,
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCountsResponse,
+    EscalationInvalidStateError,
     EscalationListResponse,
     EscalationNotFoundError,
     EscalationNotRespondedError,
@@ -191,6 +193,11 @@ async def claim_escalation(
         escalation = await service.claim_escalation(escalation_id, request.staff_id)
         logger.info(f"Escalation {escalation_id} claimed by {request.staff_id}")
         return escalation
+    except EscalationClosedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Escalation {escalation_id} is closed",
+        ) from exc
     except EscalationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -238,6 +245,16 @@ async def respond_to_escalation(
         )
         logger.info(f"Escalation {escalation_id} responded by {request.staff_id}")
         return escalation
+    except EscalationClosedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Escalation {escalation_id} is closed",
+        ) from exc
+    except EscalationInvalidStateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except EscalationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

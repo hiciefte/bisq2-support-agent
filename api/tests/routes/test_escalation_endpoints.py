@@ -39,8 +39,10 @@ except ImportError:
 from app.models.escalation import (
     Escalation,
     EscalationAlreadyClaimedError,
+    EscalationClosedError,
     EscalationCountsResponse,
     EscalationDeliveryStatus,
+    EscalationInvalidStateError,
     EscalationListResponse,
     EscalationNotFoundError,
     EscalationNotRespondedError,
@@ -369,6 +371,16 @@ class TestClaimEndpoint:
         response = admin_client.post("/admin/escalations/999/claim", json=claim_request)
         assert response.status_code == 404
 
+    def test_claim_closed_returns_409(self, admin_client, mock_escalation_service):
+        """Test that claiming a closed escalation returns 409."""
+        mock_escalation_service.claim_escalation.side_effect = EscalationClosedError(
+            "Closed"
+        )
+
+        claim_request = {"staff_id": "admin1"}
+        response = admin_client.post("/admin/escalations/1/claim", json=claim_request)
+        assert response.status_code == 409
+
 
 @admin_router_tests
 class TestRespondEndpoint:
@@ -421,6 +433,38 @@ class TestRespondEndpoint:
             "/admin/escalations/999/respond", json=respond_request
         )
         assert response.status_code == 404
+
+    def test_respond_closed_returns_409(self, admin_client, mock_escalation_service):
+        """Test that responding to a closed escalation returns 409."""
+        mock_escalation_service.respond_to_escalation.side_effect = (
+            EscalationClosedError("Closed")
+        )
+
+        respond_request = {
+            "staff_answer": "Here is the answer...",
+            "staff_id": "admin1",
+        }
+        response = admin_client.post(
+            "/admin/escalations/1/respond", json=respond_request
+        )
+        assert response.status_code == 409
+
+    def test_respond_invalid_state_returns_409(
+        self, admin_client, mock_escalation_service
+    ):
+        """Test that responding from an invalid state returns 409."""
+        mock_escalation_service.respond_to_escalation.side_effect = (
+            EscalationInvalidStateError("Invalid state")
+        )
+
+        respond_request = {
+            "staff_answer": "Here is the answer...",
+            "staff_id": "admin1",
+        }
+        response = admin_client.post(
+            "/admin/escalations/1/respond", json=respond_request
+        )
+        assert response.status_code == 409
 
 
 @admin_router_tests

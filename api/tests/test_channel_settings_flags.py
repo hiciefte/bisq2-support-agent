@@ -15,3 +15,13 @@ def test_channel_enabled_defaults_are_stable(monkeypatch):
     settings = Settings(_env_file=None)
     assert settings.BISQ2_CHANNEL_ENABLED is False
     assert settings.WEB_CHANNEL_ENABLED is True
+
+
+def test_bisq2_chatops_settings_are_parsed(monkeypatch):
+    monkeypatch.setenv("BISQ2_CHATOPS_ENABLED", "true")
+    monkeypatch.setenv("BISQ2_CHATOPS_CHANNEL_IDS", "support.staff, support.ops")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.BISQ2_CHATOPS_ENABLED is True
+    assert settings.BISQ2_CHATOPS_CHANNEL_IDS == ["support.staff", "support.ops"]

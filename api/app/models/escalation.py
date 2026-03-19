@@ -266,6 +266,14 @@ class EscalationNotFoundError(Exception):
     pass
 
 
+class EscalationClosedError(Exception):
+    pass
+
+
+class EscalationInvalidStateError(Exception):
+    pass
+
+
 class EscalationAlreadyClaimedError(Exception):
     pass
 
