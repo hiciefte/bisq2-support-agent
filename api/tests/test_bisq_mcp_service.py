@@ -405,6 +405,66 @@ class TestAuthentication:
         assert result == {"ok": True}
         assert mock_sync.call_args.args[3] is None
 
+    @pytest.mark.asyncio
+    async def test_request_via_candidate_recovers_credentials_after_unauthorized(
+        self, mock_settings
+    ):
+        mock_settings.BISQ_API_AUTH_ENABLED = True
+        service = Bisq2MCPService(mock_settings)
+
+        auth_api = MagicMock()
+        auth_api._ensure_authenticated = AsyncMock()
+        auth_api._recover_authentication = AsyncMock()
+        auth_api._client_id = "stale-client"
+        auth_api._session_id = "stale-session"
+
+        async def recover(base_url: str) -> bool:
+            auth_api._client_id = "fresh-client"
+            auth_api._session_id = "fresh-session"
+            return True
+
+        auth_api._recover_authentication.side_effect = recover
+        service._auth_api = auth_api
+
+        unauthorized = httpx.HTTPStatusError(
+            "403 Forbidden",
+            request=httpx.Request(
+                "GET", "http://test-bisq-api:8090/api/v1/market-price/quotes"
+            ),
+            response=httpx.Response(
+                403,
+                request=httpx.Request(
+                    "GET", "http://test-bisq-api:8090/api/v1/market-price/quotes"
+                ),
+            ),
+        )
+
+        with patch.object(service, "_sync_request_wrapper") as mock_sync:
+            mock_sync.side_effect = [unauthorized, {"ok": True}]
+
+            result = await service._request_via_candidate(
+                base_url="http://test-bisq-api:8090",
+                endpoint="/api/v1/market-price/quotes",
+            )
+
+        assert result == {"ok": True}
+        auth_api._ensure_authenticated.assert_awaited_once_with(
+            "http://test-bisq-api:8090"
+        )
+        auth_api._recover_authentication.assert_awaited_once_with(
+            "http://test-bisq-api:8090"
+        )
+        first_headers = mock_sync.call_args_list[0].args[3]
+        second_headers = mock_sync.call_args_list[1].args[3]
+        assert first_headers == {
+            "Bisq-Client-Id": "stale-client",
+            "Bisq-Session-Id": "stale-session",
+        }
+        assert second_headers == {
+            "Bisq-Client-Id": "fresh-client",
+            "Bisq-Session-Id": "fresh-session",
+        }
+
 
 # =============================================================================
 # Circuit Breaker Tests

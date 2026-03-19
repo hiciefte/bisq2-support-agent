@@ -48,13 +48,30 @@ class InboundMessageOrchestrator:
         self.thread_state_ttl_seconds = max(1.0, float(thread_state_ttl_seconds))
 
     async def process_incoming(self, incoming: Any) -> bool:
+        canonical = CanonicalInboundEvent.from_incoming(self.channel_id, incoming)
+        incoming = await self._prepare_incoming(
+            incoming,
+            thread_id=canonical.thread_id,
+        )
+        classification = getattr(incoming, "classification", None)
+        if classification is not None and not bool(
+            getattr(classification, "should_process", True)
+        ):
+            logger.debug(
+                "Skipping inbound event after shared classification channel=%s thread=%s event=%s reasons=%s",
+                self.channel_id,
+                canonical.thread_id,
+                canonical.event_id,
+                getattr(classification, "reasons", []),
+            )
+            await self._update_thread_state(canonical, incoming=incoming)
+            return False
+
         if await self._consume_feedback_followup(incoming):
             return True
 
         if self.channel is None:
             return False
-
-        canonical = CanonicalInboundEvent.from_incoming(self.channel_id, incoming)
 
         lock_key = thread_lock_key(canonical.channel_id, canonical.thread_id)
         lock_token = await self._acquire_lock(lock_key)
@@ -115,7 +132,7 @@ class InboundMessageOrchestrator:
                 )
                 response = apply_autosend_policy(response, autosend_enabled)
                 sent = bool(await self.dispatcher.dispatch(incoming, response))
-            await self._update_thread_state(canonical)
+            await self._update_thread_state(canonical, incoming=incoming)
             return sent
         except Exception:
             logger.exception(
@@ -199,15 +216,22 @@ class InboundMessageOrchestrator:
         if inspect.isawaitable(result):
             await result
 
-    async def _update_thread_state(self, canonical: CanonicalInboundEvent) -> None:
+    async def _update_thread_state(
+        self,
+        canonical: CanonicalInboundEvent,
+        *,
+        incoming: Any | None = None,
+    ) -> None:
         if self.coordination_store is None:
             return
 
         key = thread_state_key(canonical.channel_id, canonical.thread_id)
+        locale_context = getattr(incoming, "locale_context", None) if incoming else None
         state = {
             "last_event_id": canonical.event_id,
             "last_user_id": canonical.user_id,
             "last_processed_at": datetime.now(timezone.utc).isoformat(),
+            "last_language_code": getattr(locale_context, "language_code", None),
         }
         result = self.coordination_store.set_thread_state(
             key,
@@ -237,6 +261,47 @@ class InboundMessageOrchestrator:
             return None
         enqueue = getattr(arbitration, "enqueue", None)
         return arbitration if callable(enqueue) else None
+
+    async def _prepare_incoming(self, incoming: Any, *, thread_id: str) -> Any:
+        channel = self.channel
+        runtime = getattr(channel, "runtime", None) if channel is not None else None
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
+        if not callable(resolve_optional):
+            return incoming
+        ingress_service = resolve_optional("ingress_context_service")
+        if (
+            ingress_service is None
+            or inspect.getattr_static(ingress_service, "prepare_incoming", _MISSING)
+            is _MISSING
+        ):
+            return incoming
+        prepare_incoming = getattr(ingress_service, "prepare_incoming", None)
+        if not callable(prepare_incoming):
+            return incoming
+        thread_language_hint = await self._resolve_thread_language_hint(thread_id)
+        result = prepare_incoming(
+            incoming,
+            thread_language_hint=thread_language_hint,
+        )
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _resolve_thread_language_hint(self, thread_id: str) -> str | None:
+        if self.coordination_store is None:
+            return None
+        key = thread_state_key(self.channel_id, thread_id)
+        result: Any = self.coordination_store.get_thread_state(key)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, dict):
+            return None
+        language_code = str(result.get("last_language_code", "") or "").strip().lower()
+        if not language_code:
+            return None
+        return language_code
 
     def _derive_arbitration_keys(
         self,

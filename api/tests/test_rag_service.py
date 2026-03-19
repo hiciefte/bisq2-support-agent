@@ -486,6 +486,43 @@ class TestMultilingualClarification:
             prior_language=None,
         )
 
+    @pytest.mark.asyncio
+    async def test_language_hint_is_preferred_over_history_for_ambiguous_follow_up(
+        self, rag_service
+    ):
+        """An upstream ingress locale hint should drive translation for ambiguous follow-ups."""
+        rag_service.version_detector.detect_version = AsyncMock(
+            return_value=("unknown", 0.2, "Do you mean Bisq 1 or Bisq 2?")
+        )
+
+        rag_service.translation_service = MagicMock()
+        rag_service.translation_service.translate_query = AsyncMock(
+            return_value={
+                "translated_text": "Bisq easy",
+                "source_lang": "de",
+                "skipped": False,
+            }
+        )
+        rag_service.translation_service.translate_response = AsyncMock(
+            return_value={
+                "translated_text": "Meinst du Bisq 1 oder Bisq 2?",
+                "target_lang": "de",
+            }
+        )
+
+        await rag_service.query(
+            "Bisq easy",
+            chat_history=[],
+            language_hint="de",
+            language_hint_confidence=0.95,
+        )
+
+        rag_service.translation_service.translate_query.assert_awaited_once_with(
+            "Bisq easy",
+            source_lang="de",
+            prior_language=None,
+        )
+
 
 class TestPromptManagement:
     """Test prompt creation and management."""

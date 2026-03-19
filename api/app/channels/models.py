@@ -89,6 +89,33 @@ class ChatMessage(BaseModel):
         return v.strip()
 
 
+class LocaleContext(BaseModel):
+    """Resolved locale context for an inbound conversation turn."""
+
+    language_code: Optional[str] = Field(default=None, min_length=2, max_length=8)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    source: str = Field(default="unknown", max_length=64)
+    inherited_from_history: bool = False
+    translation_target_language: Optional[str] = Field(
+        default=None, min_length=2, max_length=8
+    )
+    fallback_policy: str = Field(
+        default="preserve_detected_language",
+        max_length=64,
+    )
+
+
+class ClassificationDecision(BaseModel):
+    """Typed live-ingress classification result shared across channels."""
+
+    should_process: bool = True
+    is_question_candidate: bool = True
+    is_explicit_invocation: bool = False
+    is_substantive_message: bool = True
+    topic_risk: Literal["low", "elevated", "high"] = "low"
+    reasons: List[str] = Field(default_factory=list)
+
+
 class IncomingMessage(BaseModel):
     """Standardized incoming message from any channel.
 
@@ -112,6 +139,8 @@ class IncomingMessage(BaseModel):
 
     # Channel-specific data
     channel_metadata: Dict[str, str] = Field(default_factory=dict)
+    locale_context: Optional[LocaleContext] = Field(default=None)
+    classification: Optional[ClassificationDecision] = Field(default=None)
 
     # Authentication
     channel_signature: Optional[str] = Field(

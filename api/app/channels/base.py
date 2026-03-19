@@ -328,6 +328,18 @@ class ChannelBase(ABC):
                 question=message.question,
                 chat_history=chat_history,
                 detection_source=self.channel_id,
+                language_hint=(
+                    getattr(
+                        getattr(message, "locale_context", None), "language_code", None
+                    )
+                ),
+                language_hint_confidence=(
+                    getattr(
+                        getattr(message, "locale_context", None),
+                        "confidence",
+                        None,
+                    )
+                ),
             )
 
             # Build response components

@@ -472,6 +472,129 @@ class TestBisqApiAuth:
             assert headers["Bisq-Client-Id"] == "client-2"
             assert headers["Bisq-Session-Id"] == "session-created"
 
+    @pytest.mark.asyncio
+    async def test_re_pairs_when_configured_credentials_can_no_longer_create_session(
+        self, tmp_path
+    ):
+        auth_state_file = tmp_path / "bisq_api_auth.json"
+
+        settings = MagicMock()
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ_API_AUTH_ENABLED = True
+        settings.BISQ_API_CLIENT_ID = "stale-client"
+        settings.BISQ_API_CLIENT_SECRET = "stale-secret"
+        settings.BISQ_API_SESSION_ID = ""
+        settings.BISQ_API_PAIRING_CODE_ID = "pairing-code-id-1"
+        settings.BISQ_API_PAIRING_CLIENT_NAME = "support-agent-test"
+        settings.BISQ_API_PAIRING_QR_FILE = ""
+        settings.BISQ_API_AUTH_STATE_FILE = str(auth_state_file)
+
+        api = Bisq2API(settings=settings)
+
+        with patch.object(
+            api, "_request_access", new_callable=AsyncMock
+        ) as mock_access:
+            mock_access.side_effect = [
+                aiohttp.ClientResponseError(
+                    request_info=MagicMock(
+                        real_url="http://localhost:8090/api/v1/access/session"
+                    ),
+                    history=(),
+                    status=401,
+                    message="Unauthorized",
+                    headers={},
+                ),
+                {
+                    "clientId": "paired-client",
+                    "clientSecret": "paired-secret",
+                    "sessionId": "paired-session",
+                },
+            ]
+            mock_session = AsyncMock()
+            mock_session.request = MagicMock(
+                return_value=self._json_response({"messages": []})
+            )
+            api._session = mock_session
+
+            await api._make_request("GET", "/api/v1/support/export")
+
+            assert mock_access.call_count == 2
+            assert mock_access.call_args_list[0].args[1] == "/api/v1/access/session"
+            assert mock_access.call_args_list[1].args[1] == "/api/v1/access/pairing"
+            headers = mock_session.request.call_args.kwargs["headers"]
+            assert headers["Bisq-Client-Id"] == "paired-client"
+            assert headers["Bisq-Session-Id"] == "paired-session"
+            saved = json.loads(auth_state_file.read_text(encoding="utf-8"))
+            assert saved["client_id"] == "paired-client"
+            assert saved["client_secret"] == "paired-secret"
+            assert saved["session_id"] == "paired-session"
+
+    @pytest.mark.asyncio
+    async def test_recreates_session_after_unauthorized_request_without_reusing_stale_session(
+        self, tmp_path
+    ):
+        auth_state_file = tmp_path / "bisq_api_auth.json"
+        auth_state_file.write_text(
+            json.dumps(
+                {
+                    "client_id": "state-client",
+                    "client_secret": "state-secret",
+                    "session_id": "stale-session",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings = MagicMock()
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ_API_AUTH_ENABLED = True
+        settings.BISQ_API_CLIENT_ID = ""
+        settings.BISQ_API_CLIENT_SECRET = ""
+        settings.BISQ_API_SESSION_ID = ""
+        settings.BISQ_API_PAIRING_CODE_ID = ""
+        settings.BISQ_API_PAIRING_QR_FILE = ""
+        settings.BISQ_API_AUTH_STATE_FILE = str(auth_state_file)
+
+        api = Bisq2API(settings=settings)
+
+        unauthorized = AsyncMock()
+        unauthorized.status = 403
+        unauthorized.headers = {"content-type": "application/json"}
+        unauthorized.raise_for_status = MagicMock(
+            side_effect=aiohttp.ClientResponseError(
+                request_info=MagicMock(
+                    real_url="http://localhost:8090/api/v1/support/export"
+                ),
+                history=(),
+                status=403,
+                message="Forbidden",
+                headers={},
+            )
+        )
+        unauthorized.__aenter__ = AsyncMock(return_value=unauthorized)
+        unauthorized.__aexit__ = AsyncMock(return_value=False)
+
+        success = self._json_response({"messages": []})
+
+        with patch.object(
+            api,
+            "_request_access",
+            new_callable=AsyncMock,
+            return_value={"sessionId": "fresh-session"},
+        ) as mock_access:
+            mock_session = AsyncMock()
+            mock_session.request = MagicMock(side_effect=[unauthorized, success])
+            api._session = mock_session
+
+            await api._make_request("GET", "/api/v1/support/export")
+
+            assert mock_access.call_count == 1
+            assert mock_access.call_args.args[1] == "/api/v1/access/session"
+            first_headers = mock_session.request.call_args_list[0].kwargs["headers"]
+            second_headers = mock_session.request.call_args_list[1].kwargs["headers"]
+            assert first_headers["Bisq-Session-Id"] == "stale-session"
+            assert second_headers["Bisq-Session-Id"] == "fresh-session"
+
     def test_loads_auth_state_on_init_when_enabled(self, tmp_path):
         auth_state_file = tmp_path / "bisq_api_auth.json"
         auth_state_file.write_text(
