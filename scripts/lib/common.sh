@@ -94,8 +94,12 @@ source_env_file() {
 
     if [ -f "$env_file" ]; then
         log_info "Sourcing environment variables from $env_file"
+        # Export sourced values so docker compose interpolation sees deploy.env
+        # without requiring operators to duplicate everything into docker/.env.
+        set -a
         # shellcheck disable=SC1090,SC1091
         source "$env_file"
+        set +a
         return 0
     else
         log_warning "Environment file $env_file not found. Using defaults."

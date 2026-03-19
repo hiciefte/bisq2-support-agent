@@ -7,8 +7,12 @@ set -e
 ENV_FILE="/etc/bisq-support/deploy.env"
 if [ -f "$ENV_FILE" ]; then
     echo "Sourcing environment variables from $ENV_FILE..."
+    # Export sourced values so docker compose sees deploy-time overrides on the
+    # first install without needing a second copy in docker/.env.
+    set -a
     # shellcheck disable=SC1090,SC1091
     source "$ENV_FILE"
+    set +a
 fi
 # --- End Source Environment Configuration --- #
 

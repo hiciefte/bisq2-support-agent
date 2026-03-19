@@ -18,8 +18,10 @@ echo "========================================================"
 PROD_ENV_FILE="/etc/bisq-support/deploy.env"
 if [ -f "$PROD_ENV_FILE" ]; then
     echo "Sourcing production environment variables from $PROD_ENV_FILE..."
+    set -a
     # shellcheck disable=SC1090,SC1091
     source "$PROD_ENV_FILE"
+    set +a
 else
     echo "WARNING: Production environment file not found at $PROD_ENV_FILE."
     echo "Proceeding with defaults. This may not be a complete configuration."

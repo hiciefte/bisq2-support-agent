@@ -17,8 +17,10 @@ echo "========================================================"
 PROD_ENV_FILE="/etc/bisq-support/deploy.env"
 if [ -f "$PROD_ENV_FILE" ]; then
     echo "Sourcing production environment variables from $PROD_ENV_FILE..."
-    # shellcheck disable=SC1090,SC1-91
+    set -a
+    # shellcheck disable=SC1090,SC1091
     source "$PROD_ENV_FILE"
+    set +a
 fi
 # --- End Source Environment Configuration --- #
 
