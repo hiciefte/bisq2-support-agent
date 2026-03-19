@@ -119,13 +119,22 @@ ensure_repository_update_safe() {
 stash_changes() {
     local repo_dir="${1:-.}"
     local stash_message="${2:-Auto-stashed by script on $(date)}"
+    local before_ref=""
+    local after_ref=""
 
     cd "$repo_dir" || return 1
 
     log_warning "Local changes detected. Stashing changes..."
+    before_ref=$(git rev-parse -q --verify refs/stash 2>/dev/null || true)
     if ! git stash push -m "$stash_message"; then
         log_error "Failed to stash local changes. Please commit or discard your changes."
         return 1
+    fi
+    after_ref=$(git rev-parse -q --verify refs/stash 2>/dev/null || true)
+
+    if [ "$before_ref" = "$after_ref" ]; then
+        log_warning "Git reported local changes but did not create a new stash entry."
+        return 2
     fi
 
     log_success "Local changes stashed successfully"
@@ -416,10 +425,14 @@ update_repository() {
 
     # Check for local changes and stash if needed
     if check_local_changes "$repo_dir"; then
-        if ! stash_changes "$repo_dir"; then
+        local stash_status
+        stash_changes "$repo_dir"
+        stash_status=$?
+        if [ $stash_status -eq 0 ]; then
+            stashed=true
+        elif [ $stash_status -ne 2 ]; then
             return 1
         fi
-        stashed=true
     else
         log_success "No local changes detected"
     fi

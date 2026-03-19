@@ -138,6 +138,29 @@ def test_ensure_repository_update_safe_rejects_unmerged_paths(tmp_path: Path) ->
     assert "Repository has unmerged paths" in result.stdout
 
 
+def test_stash_changes_returns_noop_when_no_new_stash_is_created(
+    tmp_path: Path,
+) -> None:
+    init_git_repo(tmp_path)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True
+    )
+
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        stash_changes "{tmp_path}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "did not create a new stash entry" in result.stdout
+
+
 def test_restart_service_with_deps_starts_qdrant_for_api(tmp_path: Path) -> None:
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
