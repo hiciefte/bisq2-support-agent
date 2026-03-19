@@ -176,4 +176,89 @@ describe("SecurityAlertsClient", () => {
     expect(screen.getByText("audit:1/1")).toBeInTheDocument();
     expect(screen.getByText("detail:42")).toBeInTheDocument();
   });
+
+  test("shows bootstrap recovery warning when some bootstrap endpoints fail", async () => {
+    mockedMakeAuthenticatedRequest.mockImplementation(async (endpoint: string) => {
+      switch (endpoint) {
+        case "/admin/security/findings":
+          return jsonResponse({
+            total: 1,
+            items: [{
+              id: 42,
+              detector_key: "staff_name_collision",
+              channel_id: "matrix",
+              space_id: "!public:matrix.org",
+              suspect_actor_id: "@copycat:matrix.org",
+              suspect_display_name: "Bisq Moderator",
+              score: 0.91,
+              status: "open",
+              alert_surface: "admin_ui",
+              evidence_summary: { collisions: 4 },
+              created_at: "2026-03-19T10:00:00Z",
+              updated_at: "2026-03-19T10:05:00Z",
+              last_notified_at: null,
+              notification_count: 0,
+            }],
+          });
+        case "/admin/security/findings/counts":
+          return { ok: false } as Response;
+        case "/admin/security/trust-monitor/policy":
+          return jsonResponse({
+            enabled: true,
+            name_collision_enabled: true,
+            silent_observer_enabled: true,
+            alert_surface: "admin_ui",
+            matrix_public_room_ids: ["!public:matrix.org"],
+            matrix_staff_room_id: "!staff:matrix.org",
+            silent_observer_window_days: 14,
+            early_read_window_seconds: 30,
+            minimum_observations: 10,
+            minimum_early_read_hits: 8,
+            read_to_reply_ratio_threshold: 12,
+            evidence_ttl_days: 7,
+            aggregate_ttl_days: 30,
+            finding_ttl_days: 30,
+            updated_at: "2026-03-19T10:10:00Z",
+          });
+        case "/admin/security/trust-monitor/ops":
+          return jsonResponse({
+            monitored_public_rooms: ["!public:matrix.org"],
+            staff_room_id: "!staff:matrix.org",
+            evidence_events_count: 8,
+            actor_aggregates_count: 2,
+            findings_count: 1,
+            oldest_evidence_age_seconds: 120,
+            oldest_aggregate_age_seconds: 320,
+            oldest_finding_age_seconds: 600,
+            last_retention_run: null,
+          });
+        case "/admin/security/trust-monitor/access-audit":
+          return jsonResponse({ items: [{ id: 1 }] });
+        case "/admin/security/chatops/audit":
+          return jsonResponse({ items: [{ id: 2 }] });
+        default:
+          throw new Error(`Unexpected endpoint: ${endpoint}`);
+      }
+    });
+
+    const initialData: SecurityAlertsInitialData = {
+      findings: null,
+      counts: null,
+      policy: null,
+      ops: null,
+      trustAudit: null,
+      chatopsAudit: null,
+    };
+
+    await act(async () => {
+      render(<SecurityAlertsClient initialData={initialData} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("findings:42")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Partial bootstrap recovery")).toBeInTheDocument();
+    expect(screen.getByText(/Missing: counts/i)).toBeInTheDocument();
+  });
 });

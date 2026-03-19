@@ -1,7 +1,16 @@
 "use client";
 
-import { Clock3, Radar, ShieldAlert, Siren } from "lucide-react";
+import { Clock3 } from "lucide-react";
 import type { TrustFinding } from "@/components/admin/security/types";
+import {
+  DETECTOR_DESCRIPTIONS,
+  DETECTOR_ICONS,
+  DETECTOR_LABELS,
+  FALLBACK_DETECTOR_ICON,
+  formatRelativeTime,
+  formatStatus,
+  STATUS_STYLES,
+} from "@/components/admin/security/securityUi";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -9,52 +18,6 @@ interface SecurityFindingsListProps {
   findings: TrustFinding[];
   selectedFindingId: number | null;
   onSelect: (findingId: number) => void;
-}
-
-const DETECTOR_LABELS: Record<TrustFinding["detector_key"], string> = {
-  staff_name_collision: "Staff Name Collision",
-  silent_early_observer: "Silent Observer",
-};
-
-const DETECTOR_DESCRIPTIONS: Record<TrustFinding["detector_key"], string> = {
-  staff_name_collision: "Trusted identity mismatch in a public support room.",
-  silent_early_observer: "High read activity with unusually low reply participation.",
-};
-
-const DETECTOR_ICONS = {
-  staff_name_collision: ShieldAlert,
-  silent_early_observer: Radar,
-} satisfies Record<TrustFinding["detector_key"], typeof ShieldAlert>;
-
-const STATUS_STYLES: Record<TrustFinding["status"], string> = {
-  open: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  resolved: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-  false_positive: "border-sky-500/30 bg-sky-500/10 text-sky-200",
-  suppressed: "border-zinc-500/30 bg-zinc-500/10 text-zinc-200",
-  benign: "border-violet-500/30 bg-violet-500/10 text-violet-200",
-};
-
-function formatStatus(status: TrustFinding["status"]): string {
-  return status.replace(/_/g, " ");
-}
-
-function formatRelativeTime(value: string): string {
-  const diffMs = Date.now() - new Date(value).getTime();
-  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
-
-  if (diffMinutes < 1) {
-    return "just now";
-  }
-  if (diffMinutes < 60) {
-    return `${diffMinutes}m ago`;
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    return `${diffHours}h ago`;
-  }
-
-  return `${Math.floor(diffHours / 24)}d ago`;
 }
 
 function scoreTone(score: number): string {
@@ -99,7 +62,7 @@ function FindingListItem({
   isSelected: boolean;
   onSelect: (findingId: number) => void;
 }) {
-  const Icon = DETECTOR_ICONS[finding.detector_key] ?? Siren;
+  const Icon = DETECTOR_ICONS[finding.detector_key] ?? FALLBACK_DETECTOR_ICON;
   const displayName = finding.suspect_display_name || finding.suspect_actor_id;
 
   return (

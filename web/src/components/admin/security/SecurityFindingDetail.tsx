@@ -1,8 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Activity, BellRing, Clock3, Radar, ShieldAlert, Siren, UserRoundX } from "lucide-react";
+import { Activity, BellRing, Clock3, ShieldAlert } from "lucide-react";
 import type { TrustFinding } from "@/components/admin/security/types";
+import {
+  DETECTOR_ICONS,
+  DETECTOR_LABELS,
+  FALLBACK_DETECTOR_ICON,
+  formatStatus,
+  STATUS_STYLES,
+} from "@/components/admin/security/securityUi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,28 +18,6 @@ interface SecurityFindingDetailProps {
   finding: TrustFinding | null;
   isMutating: boolean;
   onAction: (action: "resolve" | "false-positive" | "suppress" | "mark-benign") => void;
-}
-
-const DETECTOR_LABELS: Record<TrustFinding["detector_key"], string> = {
-  staff_name_collision: "Staff Name Collision",
-  silent_early_observer: "Silent Observer",
-};
-
-const DETECTOR_ICONS = {
-  staff_name_collision: UserRoundX,
-  silent_early_observer: Radar,
-} satisfies Record<TrustFinding["detector_key"], typeof UserRoundX>;
-
-const STATUS_STYLES: Record<TrustFinding["status"], string> = {
-  open: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  resolved: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-  false_positive: "border-sky-500/30 bg-sky-500/10 text-sky-200",
-  suppressed: "border-zinc-500/30 bg-zinc-500/10 text-zinc-200",
-  benign: "border-violet-500/30 bg-violet-500/10 text-violet-200",
-};
-
-function formatStatus(status: TrustFinding["status"]): string {
-  return status.replace(/_/g, " ");
 }
 
 function formatAlertSurface(surface: TrustFinding["alert_surface"]): string {
@@ -55,7 +40,7 @@ export function SecurityFindingDetail({ finding, isMutating, onAction }: Securit
     );
   }
 
-  const Icon = DETECTOR_ICONS[finding.detector_key] ?? Siren;
+  const Icon = DETECTOR_ICONS[finding.detector_key] ?? FALLBACK_DETECTOR_ICON;
   const displayName = finding.suspect_display_name || finding.suspect_actor_id;
 
   return (

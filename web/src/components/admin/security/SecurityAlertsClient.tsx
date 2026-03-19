@@ -91,6 +91,15 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
           return;
         }
 
+        const failedEndpoints = [
+          findingsResponse.ok ? null : "findings",
+          countsResponse.ok ? null : "counts",
+          policyResponse.ok ? null : "policy",
+          opsResponse.ok ? null : "ops",
+          trustAuditResponse.ok ? null : "trust-audit",
+          chatopsAuditResponse.ok ? null : "chatops-audit",
+        ].filter((value): value is string => value !== null);
+
         if (findingsResponse.ok) {
           const payload = (await findingsResponse.json()) as SecurityAlertsInitialData["findings"];
           setFindings(payload?.items ?? []);
@@ -102,7 +111,7 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
           setPolicy((await policyResponse.json()) as TrustMonitorPolicy);
         }
         if (opsResponse.ok) {
-          setOps(await opsResponse.json());
+          setOps((await opsResponse.json()) as SecurityAlertsInitialData["ops"]);
         }
         if (trustAuditResponse.ok) {
           const payload = await trustAuditResponse.json();
@@ -111,6 +120,9 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
         if (chatopsAuditResponse.ok) {
           const payload = await chatopsAuditResponse.json();
           setChatopsAudit(payload.items ?? []);
+        }
+        if (failedEndpoints.length > 0) {
+          setBootstrapError(`Security review loaded with partial API data. Missing: ${failedEndpoints.join(", ")}.`);
         }
       } catch (error) {
         if (!isCancelled) {
