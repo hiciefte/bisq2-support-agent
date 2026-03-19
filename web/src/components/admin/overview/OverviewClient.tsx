@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ChannelAutoresponseCard } from "@/components/admin/overview/ChannelAutoresponseCard";
 import { OverviewSkeleton } from "@/components/admin/overview/OverviewSkeleton";
+import { TrustMonitoringCard } from "@/components/admin/overview/TrustMonitoringCard";
 import type { OverviewInitialData } from "@/components/admin/overview/types";
 import {
   type ChannelId,
@@ -21,6 +22,7 @@ import {
   useChannelAutoresponsePolicies,
 } from "@/hooks/useChannelAutoresponsePolicies";
 import { useOverviewData } from "@/hooks/useOverviewData";
+import { useTrustMonitorPolicy } from "@/hooks/useTrustMonitorPolicy";
 import { usePeriodStorage } from "@/hooks/usePeriodStorage";
 import { cn } from "@/lib/utils";
 import { type Period } from "@/types/dashboard";
@@ -86,12 +88,24 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
     setEscalationUserNoticeMode,
   } = useChannelAutoresponsePolicies(initialData.channelPolicies);
 
+  const {
+    policy: trustMonitorPolicy,
+    isLoading: isTrustMonitorLoading,
+    isSaving: isTrustMonitorSaving,
+    error: trustMonitorError,
+    refresh: refreshTrustMonitorPolicy,
+    setEnabled: setTrustMonitorEnabled,
+    setDetectorEnabled: setTrustMonitorDetectorEnabled,
+    setAlertSurface: setTrustMonitorAlertSurface,
+  } = useTrustMonitorPolicy(initialData.trustMonitorPolicy);
+
   const handleRefresh = useCallback(() => {
-    void Promise.all([
+    void Promise.allSettled([
       refresh({ background: true }),
       refreshAutoresponsePolicies(),
+      refreshTrustMonitorPolicy(),
     ]);
-  }, [refresh, refreshAutoresponsePolicies]);
+  }, [refresh, refreshAutoresponsePolicies, refreshTrustMonitorPolicy]);
 
   const handleModeChange = useCallback(
     (channelId: ChannelId, mode: "off" | "review" | "auto") => {
@@ -506,6 +520,28 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
               </div>
             </CardContent>
           </Card>
+        </section>
+
+
+        <section>
+          <TrustMonitoringCard
+            policy={trustMonitorPolicy}
+            isLoading={isTrustMonitorLoading}
+            isSaving={isTrustMonitorSaving}
+            error={trustMonitorError}
+            onRetry={() => {
+              void refreshTrustMonitorPolicy();
+            }}
+            onEnabledChange={(enabled) => {
+              void setTrustMonitorEnabled(enabled);
+            }}
+            onDetectorToggle={(detector, value) => {
+              void setTrustMonitorDetectorEnabled(detector, value);
+            }}
+            onAlertSurfaceChange={(surface) => {
+              void setTrustMonitorAlertSurface(surface);
+            }}
+          />
         </section>
 
         <section>

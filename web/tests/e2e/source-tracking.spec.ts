@@ -1,6 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
 import {
-  API_BASE_URL,
   WEB_BASE_URL,
   ADMIN_API_KEY,
   dismissPrivacyNotice,
@@ -197,7 +196,7 @@ test.describe('Source Tracking in Feedback', () => {
     await page.waitForTimeout(2000); // Allow database write to complete
 
     // Verify sources persisted in database via API
-    const statsResponse = await page.request.get(`${API_BASE_URL}/admin/feedback/stats`, {
+    const statsResponse = await page.request.get(`${WEB_BASE_URL}/api/admin/feedback/stats`, {
       headers: {
         'X-API-Key': ADMIN_API_KEY
       }
@@ -217,6 +216,7 @@ test.describe('Source Tracking in Feedback', () => {
   });
 
   test('should make source effectiveness metrics available in Prometheus', async ({ page }) => {
+    test.slow();
     // This test verifies that Prometheus metrics are available regardless of sources
 
     // Give some feedback first (sources optional)
@@ -247,7 +247,7 @@ test.describe('Source Tracking in Feedback', () => {
     await page.waitForTimeout(2000); // Allow database write
 
     // Fetch Prometheus metrics endpoint
-    const metricsResponse = await page.request.get(`${API_BASE_URL}/metrics`);
+    const metricsResponse = await page.request.get(`${WEB_BASE_URL}/api/metrics`);
     expect(metricsResponse.ok()).toBe(true);
 
     const metricsText = await metricsResponse.text();
@@ -261,7 +261,7 @@ test.describe('Source Tracking in Feedback', () => {
 
     // Verify metrics can be scraped (values will exist after metrics calculation)
     // Note: Metrics are calculated when /metrics is accessed, based on database
-    const statsResponse = await page.request.get(`${API_BASE_URL}/admin/feedback/stats`, {
+    const statsResponse = await page.request.get(`${WEB_BASE_URL}/api/admin/feedback/stats`, {
       headers: {
         'X-API-Key': ADMIN_API_KEY
       }

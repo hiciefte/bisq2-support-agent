@@ -219,6 +219,8 @@ export async function loginAsAdmin(
 ): Promise<void> {
     let lastError: Error | null = null;
 
+    await waitForApiReady(page, 60000);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             await page.goto(`${baseUrl}/admin`, {
@@ -243,7 +245,7 @@ export async function loginAsAdmin(
 
             await page.fill("input#apiKey", apiKey);
             await page.click("button:has-text(\"Login\")");
-            await dashboard.first().waitFor({ timeout: 15000 });
+            await dashboard.first().waitFor({ timeout: 30000 });
             return;
         } catch (error) {
             lastError = error as Error;

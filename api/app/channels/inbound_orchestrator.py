@@ -270,7 +270,15 @@ class InboundMessageOrchestrator:
         )
         if not callable(resolve_optional):
             return incoming
-        ingress_service = resolve_optional("ingress_context_service")
+        try:
+            ingress_service = resolve_optional("ingress_context_service")
+        except Exception:
+            logger.debug(
+                "Failed resolving ingress_context_service for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return incoming
         if (
             ingress_service is None
             or inspect.getattr_static(ingress_service, "prepare_incoming", _MISSING)

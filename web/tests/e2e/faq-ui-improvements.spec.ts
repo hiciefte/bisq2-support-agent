@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { ADMIN_API_KEY, WEB_BASE_URL } from "./utils";
+import { ADMIN_API_KEY, WEB_BASE_URL, loginAsAdmin } from "./utils";
 
 /**
  * FAQ UI Improvements Tests (Phase 1)
@@ -14,12 +14,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
     const FAQ_CARD_SELECTOR = ".bg-card.border.rounded-lg";
 
     test.beforeEach(async ({ page }) => {
-        // Navigate and login
-        await page.goto(`${WEB_BASE_URL}/admin`);
-        await page.getByLabel('API Key').waitFor({ timeout: 10000 });
-        await page.getByLabel('API Key').fill(ADMIN_API_KEY);
-        await page.click('button:has-text("Login")');
-        await page.waitForSelector("nav a[href='/admin/overview']", { timeout: 10000 });
+        await loginAsAdmin(page, ADMIN_API_KEY, WEB_BASE_URL);
 
         // Navigate to FAQ management
         await page.click('a[href="/admin/manage-faqs"]');
@@ -50,15 +45,24 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         // Wait for debounced search to trigger (300ms debounce)
         await page.waitForTimeout(500);
 
+        await expect(page.locator("text=Search: Bisq").first()).toBeVisible();
+
         // Verify FAQs are filtered
         const faqCards = page.locator(FAQ_CARD_SELECTOR);
-        const count = await faqCards.count();
+        const cardTexts = await faqCards.evaluateAll((nodes) =>
+            nodes
+                .map((node) => (node.textContent ?? "").trim().toLowerCase())
+                .filter((text) => text.length > 0),
+        );
 
-        if (count > 0) {
-            // Verify visible FAQs contain search term
-            const firstCardText = await faqCards.first().textContent();
-            expect(firstCardText?.toLowerCase()).toContain("bisq");
+        if (cardTexts.length > 0) {
+            if (!cardTexts.some((text) => text.includes("bisq"))) {
+                throw new Error(`Expected at least one FAQ card to contain "bisq"; found cards: ${cardTexts.join(" | ")}`);
+            }
+            return;
         }
+
+        await expect(page.locator("text=No FAQs found").first()).toBeVisible();
     });
 
     test("should show clear button when search has text", async ({ page }) => {
@@ -209,7 +213,7 @@ test.describe("FAQ UI Improvements - Phase 1", () => {
         await inlineAnswerField.clear();
         await inlineAnswerField.fill("Updated via inline edit");
 
-        const saveButton = page.locator('button:has-text("Save")');
+        const saveButton = page.getByRole("button", { name: "Save", exact: true });
         const updateResponsePromise = page.waitForResponse(
             (response) =>
                 response.url().includes("/admin/faqs/") &&

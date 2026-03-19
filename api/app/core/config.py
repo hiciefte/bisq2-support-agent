@@ -142,6 +142,23 @@ class Settings(BaseSettings):
     MATRIX_ALERT_ROOM: str = ""  # Room ID for Alertmanager notifications
     MATRIX_ALERT_SESSION_FILE: str = "matrix_alert_session.json"
 
+    # Trust monitoring settings
+    TRUST_MONITOR_ENABLED: bool = True
+    TRUST_MONITOR_NAME_COLLISION_ENABLED: bool = True
+    TRUST_MONITOR_SILENT_OBSERVER_ENABLED: bool = True
+    TRUST_MONITOR_ALERT_SURFACE: str = "admin_ui"
+    TRUST_MONITOR_MATRIX_PUBLIC_ROOMS: str | list[str] = ""
+    TRUST_MONITOR_MATRIX_STAFF_ROOM: str = ""
+    TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS: int = 14
+    TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS: int = 30
+    TRUST_MONITOR_MINIMUM_OBSERVATIONS: int = 10
+    TRUST_MONITOR_MINIMUM_EARLY_READ_HITS: int = 8
+    TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD: float = 12.0
+    TRUST_MONITOR_EVIDENCE_TTL_DAYS: int = 7
+    TRUST_MONITOR_AGGREGATE_TTL_DAYS: int = 30
+    TRUST_MONITOR_FINDING_TTL_DAYS: int = 30
+    TRUST_MONITOR_ACTOR_KEY_SECRET: str = ""
+
     # Tor hidden service settings
     TOR_HIDDEN_SERVICE: str = ""  # .onion address if Tor hidden service is configured
 
@@ -809,6 +826,17 @@ class Settings(BaseSettings):
         # Fallback for unexpected types
         return []
 
+    @field_validator("TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", mode="before")
+    @classmethod
+    def parse_trust_monitor_matrix_public_rooms(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, list):
+            return [
+                room.strip() for room in v if isinstance(room, str) and room.strip()
+            ]
+        if isinstance(v, str):
+            return [room.strip() for room in v.split(",") if room.strip()]
+        return []
+
     @field_validator("SUPPORT_AGENT_NICKNAMES", mode="before")
     @classmethod
     def parse_support_agent_nicknames(cls, v: str | list[str]) -> list[str]:
@@ -1093,6 +1121,36 @@ class Settings(BaseSettings):
                 "MATRIX_ALERT_PASSWORD is required when MATRIX_ALERT_ROOM is set."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_trust_monitor_settings(self) -> "Settings":
+        if not self.TRUST_MONITOR_ENABLED:
+            return self
+        environment = str(self.ENVIRONMENT or "").strip().lower()
+        if environment == "prod":
+            environment = "production"
+        if (
+            environment == "production"
+            and not self.TRUST_MONITOR_ACTOR_KEY_SECRET.strip()
+        ):
+            raise ValueError(
+                "TRUST_MONITOR_ACTOR_KEY_SECRET required when TRUST_MONITOR_ENABLED is true in production"
+            )
+        integer_fields = {
+            "TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS": self.TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS,
+            "TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS": self.TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS,
+            "TRUST_MONITOR_MINIMUM_OBSERVATIONS": self.TRUST_MONITOR_MINIMUM_OBSERVATIONS,
+            "TRUST_MONITOR_MINIMUM_EARLY_READ_HITS": self.TRUST_MONITOR_MINIMUM_EARLY_READ_HITS,
+            "TRUST_MONITOR_EVIDENCE_TTL_DAYS": self.TRUST_MONITOR_EVIDENCE_TTL_DAYS,
+            "TRUST_MONITOR_AGGREGATE_TTL_DAYS": self.TRUST_MONITOR_AGGREGATE_TTL_DAYS,
+            "TRUST_MONITOR_FINDING_TTL_DAYS": self.TRUST_MONITOR_FINDING_TTL_DAYS,
+        }
+        for name, value in integer_fields.items():
+            if value < 1:
+                raise ValueError(f"{name} must be >= 1")
+        if self.TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD <= 0:
+            raise ValueError("TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD must be > 0")
         return self
 
     @model_validator(mode="after")

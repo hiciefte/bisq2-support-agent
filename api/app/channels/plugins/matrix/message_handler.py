@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 from contextlib import suppress
+from datetime import datetime, timezone
 from typing import Any
 
 from app.channels.inbound_orchestrator import InboundMessageOrchestrator
@@ -53,6 +54,7 @@ class MatrixMessageHandler:
         staff_command_room_ids: Any | None = None,
         channel_id: str = "matrix",
         sync_timeout_ms: int = 30000,
+        trust_monitor_service: Any | None = None,
     ) -> None:
         self.client = client
         self.connection_manager = connection_manager
@@ -66,6 +68,7 @@ class MatrixMessageHandler:
             self.staff_command_room_ids = normalize_room_ids(staff_command_room_ids)
         self.sync_timeout_ms = sync_timeout_ms
         self._sync_task: asyncio.Task[Any] | None = None
+        self.trust_monitor_service = trust_monitor_service
         self._callback_registered = False
         self._dispatcher: ChannelResponseDispatcher | None = None
         self._orchestrator: InboundMessageOrchestrator | None = None
@@ -102,9 +105,6 @@ class MatrixMessageHandler:
 
     async def _on_message(self, room: Any, event: Any) -> None:
         """Process Matrix message events through the standard channel pipeline."""
-        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
-            return
-
         channel = self.channel
         if channel is None:
             logger.debug("Skipping Matrix message because channel is not attached")
@@ -133,6 +133,11 @@ class MatrixMessageHandler:
             getattr(getattr(incoming, "user", None), "user_id", "") or ""
         ).strip()
         if self._is_self_sender(sender_id):
+            return
+        await self._record_trust_event(
+            room_id=room_id, event=effective_event, sender_id=sender_id, room=room
+        )
+        if not is_generation_enabled(self.autoresponse_policy_service, self.channel_id):
             return
         if self._is_staff_sender(room=room, event=effective_event, sender_id=sender_id):
             await self._record_staff_activity(room_id=room_id, staff_id=sender_id)
@@ -318,6 +323,69 @@ class MatrixMessageHandler:
         except Exception:
             return ""
         return resolved if isinstance(resolved, str) else ""
+
+    async def _record_trust_event(
+        self, *, room_id: str, event: Any, sender_id: str, room: Any
+    ) -> None:
+        service = self.trust_monitor_service
+        if service is None:
+            channel = self.channel
+            runtime = getattr(channel, "runtime", None) if channel is not None else None
+            resolve_optional = (
+                getattr(runtime, "resolve_optional", None) if runtime else None
+            )
+            if callable(resolve_optional):
+                try:
+                    service = resolve_optional("trust_monitor_service")
+                except Exception:
+                    logger.debug(
+                        "Failed resolving trust_monitor_service for room_id=%s",
+                        room_id,
+                        exc_info=True,
+                    )
+                    return
+        if service is None:
+            return
+        try:
+            from app.channels.trust_monitor.events import TrustEvent
+            from app.channels.trust_monitor.models import TrustEventType
+
+            reply_to_event_id = self._extract_reply_to_event_id(event)
+            event_type = (
+                TrustEventType.MESSAGE_REPLIED
+                if reply_to_event_id
+                else TrustEventType.MESSAGE_SENT
+            )
+            timestamp_ms = getattr(event, "server_timestamp", None) or 0
+            occurred_at = (
+                datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                if timestamp_ms
+                else datetime.now(timezone.utc)
+            )
+            service.ingest_event(
+                TrustEvent(
+                    channel_id=self.channel_id,
+                    space_id=room_id,
+                    actor_id=sender_id,
+                    actor_display_name=self._resolve_sender_display_name(
+                        room=room,
+                        sender_id=sender_id,
+                    ),
+                    event_type=event_type,
+                    occurred_at=occurred_at,
+                    external_event_id=str(getattr(event, "event_id", "") or ""),
+                    target_message_id=reply_to_event_id
+                    or str(getattr(event, "event_id", "") or ""),
+                    metadata={"body_length": len(self._extract_event_text(event))},
+                )
+            )
+        except Exception:
+            logger.debug(
+                "Failed recording Matrix trust-monitor event room_id=%s sender_id=%s",
+                room_id,
+                sender_id,
+                exc_info=True,
+            )
 
     async def _record_staff_activity(self, *, room_id: str, staff_id: str) -> None:
         channel = self.channel

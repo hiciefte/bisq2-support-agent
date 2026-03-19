@@ -17,6 +17,7 @@ from app.channels.models import (
     SendResult,
 )
 from app.channels.plugins.matrix.room_filter import (
+    normalize_room_ids,
     resolve_allowed_reaction_rooms,
     resolve_allowed_sync_rooms,
 )
@@ -86,6 +87,9 @@ class MatrixChannel(ChannelBase):
         from app.channels.plugins.matrix.client.session_manager import SessionManager
         from app.channels.plugins.matrix.message_handler import MatrixMessageHandler
         from app.channels.plugins.matrix.reaction_handler import MatrixReactionHandler
+        from app.channels.plugins.matrix.trust_monitor_handler import (
+            MatrixTrustMonitorHandler,
+        )
 
         matrix_user = str(
             getattr(settings, "MATRIX_SYNC_USER_RESOLVED", "")
@@ -168,9 +172,30 @@ class MatrixChannel(ChannelBase):
                 allowed_room_ids=allowed_room_ids,
                 staff_command_room_ids=reaction_allowed_room_ids,
                 channel_id="matrix",
+                trust_monitor_service=runtime.resolve_optional("trust_monitor_service"),
             ),
             allow_override=True,
         )
+
+        trust_monitor_service = runtime.resolve_optional("trust_monitor_service")
+        if trust_monitor_service is not None:
+            trust_rooms = (
+                getattr(settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", [])
+                or allowed_room_ids
+            )
+            runtime.register(
+                "matrix_trust_monitor_handler",
+                MatrixTrustMonitorHandler(
+                    client=matrix_client,
+                    trust_monitor_service=trust_monitor_service,
+                    allowed_room_ids=trust_rooms,
+                    staff_room_id=(
+                        getattr(settings, "TRUST_MONITOR_MATRIX_STAFF_ROOM", "")
+                        or getattr(settings, "MATRIX_STAFF_ROOM", "")
+                    ),
+                ),
+                allow_override=True,
+            )
 
         reaction_processor = runtime.resolve_optional("reaction_processor")
         if reaction_processor is not None:
@@ -267,6 +292,16 @@ class MatrixChannel(ChannelBase):
             except Exception as e:
                 self._logger.warning(f"Failed to start message handler: {e}")
 
+        trust_monitor_handler = self.runtime.resolve_optional(
+            "matrix_trust_monitor_handler"
+        )
+        if trust_monitor_handler:
+            try:
+                await trust_monitor_handler.start()
+                self._logger.info("Matrix trust monitor handler started")
+            except Exception as e:
+                self._logger.warning(f"Failed to start trust monitor handler: {e}")
+
         # Wire reaction handler if registered
         reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
         if reaction_handler:
@@ -277,7 +312,16 @@ class MatrixChannel(ChannelBase):
                 self._logger.warning(f"Failed to start reaction handler: {e}")
 
         runtime_settings = getattr(self.runtime, "settings", None)
-        allowed_rooms = resolve_allowed_sync_rooms(runtime_settings)
+        allowed_rooms = set(resolve_allowed_sync_rooms(runtime_settings))
+        trust_rooms = normalize_room_ids(
+            getattr(runtime_settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", "")
+        )
+        allowed_rooms.update(trust_rooms)
+        trust_staff_room = str(
+            getattr(runtime_settings, "TRUST_MONITOR_MATRIX_STAFF_ROOM", "") or ""
+        ).strip()
+        if trust_staff_room:
+            allowed_rooms.add(trust_staff_room)
         for room_id in allowed_rooms:
             await self.join_room(str(room_id))
 
@@ -295,6 +339,15 @@ class MatrixChannel(ChannelBase):
                 await conn_manager.disconnect()
             except Exception as e:
                 self._logger.exception(f"Error disconnecting from Matrix: {e}")
+
+        trust_monitor_handler = self.runtime.resolve_optional(
+            "matrix_trust_monitor_handler"
+        )
+        if trust_monitor_handler:
+            try:
+                await trust_monitor_handler.stop()
+            except Exception as e:
+                self._logger.warning(f"Failed to stop trust monitor handler: {e}")
 
         # Stop reaction handler if registered
         reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
