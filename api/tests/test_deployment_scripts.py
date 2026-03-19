@@ -191,3 +191,31 @@ def test_reconcile_runtime_services_falls_back_to_start(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     lines = log_file.read_text(encoding="utf-8").splitlines()
     assert lines == ["repair-failed", "start-called", "repair-succeeded"]
+
+
+def test_refresh_runtime_services_includes_qdrant(tmp_path: Path) -> None:
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    log_file = tmp_path / "refresh.log"
+    docker = fakebin / "docker"
+    docker.write_text(
+        "#!/bin/bash\n" f'echo "$*" >> "{log_file}"\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        export RETRIEVER_BACKEND=qdrant
+        refresh_runtime_services "{tmp_path}" "docker-compose.yml"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    logged = log_file.read_text(encoding="utf-8")
+    assert (
+        "compose -f docker-compose.yml up -d qdrant api web nginx bisq2-api" in logged
+    )

@@ -329,6 +329,24 @@ rebuild_services() {
     return 0
 }
 
+refresh_runtime_services() {
+    local docker_dir="${1:-$DOCKER_DIR}"
+    local compose_file="${2:-docker-compose.yml}"
+    local services=("api" "web" "nginx" "bisq2-api")
+
+    if uses_qdrant_runtime; then
+        services=("qdrant" "${services[@]}")
+    fi
+
+    cd "$docker_dir" || {
+        log_error "Failed to change to Docker directory: $docker_dir"
+        return 1
+    }
+
+    log_info "Refreshing runtime services to apply environment and compose changes..."
+    docker compose -f "$compose_file" up -d "${services[@]}"
+}
+
 reconcile_runtime_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
@@ -522,6 +540,7 @@ export -f ensure_dependent_services
 export -f start_services
 export -f stop_services
 export -f rebuild_services
+export -f refresh_runtime_services
 export -f reconcile_runtime_services
 export -f test_chat_endpoint
 export -f show_service_status

@@ -483,9 +483,14 @@ apply_updates() {
         # Check if no service changes are needed
         if check_no_changes_needed; then
             if [ "${NO_REPO_UPDATES:-false}" = "true" ]; then
-                log_info "Repository is already current. Reconciling runtime health instead of exiting early."
+                log_info "Repository is already current. Refreshing runtime services to apply deploy.env changes."
             else
-                log_info "No service rebuilds or restarts needed. Verifying runtime health."
+                log_info "No service rebuilds or restarts needed. Refreshing runtime services before health verification."
+            fi
+
+            if ! refresh_runtime_services "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                log_error "Runtime service refresh failed"
+                return 1
             fi
 
             if ! reconcile_runtime_services "$DOCKER_DIR" "$COMPOSE_FILE"; then
