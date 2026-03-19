@@ -1,7 +1,16 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { SecurityAlertsPolicyBar } from "./SecurityAlertsPolicyBar";
 import type { TrustMonitorPolicy } from "@/components/admin/security/types";
+
+jest.mock("lucide-react", () => {
+  const MockIcon = ({ className }: { className?: string }) => <svg className={className} />;
+  return {
+    Radar: MockIcon,
+    ShieldAlert: MockIcon,
+    ShieldCheck: MockIcon,
+    SlidersHorizontal: MockIcon,
+  };
+});
 
 jest.mock("next/link", () => {
   function MockLink({ children, href }: { children: React.ReactNode; href: string }) {
@@ -29,47 +38,19 @@ const POLICY: TrustMonitorPolicy = {
 };
 
 describe("SecurityAlertsPolicyBar", () => {
-  test("renders rollout badge and quick actions", async () => {
-    const user = userEvent.setup();
-    const onAlertSurfaceChange = jest.fn();
-    const onPolicyPatch = jest.fn().mockResolvedValue(true);
-    render(
-      <SecurityAlertsPolicyBar
-        policy={POLICY}
-        isSaving={false}
-        onAlertSurfaceChange={onAlertSurfaceChange}
-        onPolicyPatch={onPolicyPatch}
-      />,
-    );
+  test("renders read-only rollout summary and overview link", () => {
+    render(<SecurityAlertsPolicyBar policy={POLICY} />);
 
-    expect(screen.getByText("Admin UI Shadow")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Promote to Staff Room" }));
-    expect(onAlertSurfaceChange).toHaveBeenCalledWith("staff_room");
+    expect(screen.getByRole("heading", { name: "Security Alerts" })).toBeInTheDocument();
+    expect(screen.getAllByText("Admin UI Shadow")).toHaveLength(2);
+    expect(screen.getByText("Rollout mode")).toBeInTheDocument();
+    expect(screen.getByText("Enabled detectors")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Configure in Overview" })).toHaveAttribute("href", "/admin/overview");
   });
 
-  test("submits advanced policy changes", async () => {
-    const user = userEvent.setup();
-    const onPolicyPatch = jest.fn().mockResolvedValue(true);
-    render(
-      <SecurityAlertsPolicyBar
-        policy={POLICY}
-        isSaving={false}
-        onAlertSurfaceChange={jest.fn()}
-        onPolicyPatch={onPolicyPatch}
-      />,
-    );
+  test("shows disabled guidance when trust monitoring is off", () => {
+    render(<SecurityAlertsPolicyBar policy={{ ...POLICY, enabled: false }} />);
 
-    await user.click(screen.getByText("Advanced controls"));
-    const windowField = screen.getByLabelText("Window (days)");
-    await user.clear(windowField);
-    await user.type(windowField, "21");
-    await user.click(screen.getByRole("button", { name: "Save advanced controls" }));
-
-    expect(onPolicyPatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        silent_observer_window_days: 21,
-      }),
-    );
+    expect(screen.getByText(/detector pipeline is currently disabled/i)).toBeInTheDocument();
   });
 });

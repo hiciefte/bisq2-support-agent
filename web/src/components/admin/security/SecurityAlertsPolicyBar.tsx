@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Radar, ShieldAlert, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import type { ReactNode } from "react";
 import type { TrustAlertSurface, TrustMonitorPolicy } from "@/components/admin/security/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 interface SecurityAlertsPolicyBarProps {
   policy: TrustMonitorPolicy | null;
-  isSaving: boolean;
-  onAlertSurfaceChange: (surface: TrustAlertSurface) => void;
-  onPolicyPatch: (patch: Partial<TrustMonitorPolicy>) => Promise<boolean>;
 }
 
 function surfaceLabel(surface: TrustAlertSurface | undefined): string {
@@ -26,158 +24,130 @@ function surfaceLabel(surface: TrustAlertSurface | undefined): string {
   }
 }
 
-export function SecurityAlertsPolicyBar({
-  policy,
-  isSaving,
-  onAlertSurfaceChange,
-  onPolicyPatch,
-}: SecurityAlertsPolicyBarProps) {
+function rolloutDescription(policy: TrustMonitorPolicy | null): string {
+  if (!policy?.enabled) {
+    return "Trust monitoring is disabled. Configure rollout and detector thresholds from Overview before relying on this review queue.";
+  }
+  if (policy.alert_surface === "staff_room" || policy.alert_surface === "both") {
+    return "Findings can already surface into the staff room. Review the queue here, but keep rollout and threshold changes centralized in Overview.";
+  }
+  return "Review trust-monitor findings here. Configuration stays on Overview so rollout, detector state, and thresholds have one source of truth.";
+}
+
+function enabledDetectors(policy: TrustMonitorPolicy | null): string {
+  if (!policy?.enabled) {
+    return "Disabled";
+  }
+  const detectors = [];
+  if (policy.name_collision_enabled) {
+    detectors.push("Name Collision");
+  }
+  if (policy.silent_observer_enabled) {
+    detectors.push("Silent Observer");
+  }
+  return detectors.length > 0 ? detectors.join(" + ") : "No detectors enabled";
+}
+
+function roomSummary(policy: TrustMonitorPolicy | null): string {
+  const publicRooms = policy?.matrix_public_room_ids?.length ?? 0;
+  const staffRoom = policy?.matrix_staff_room_id ? "Configured" : "Missing";
+  return `${publicRooms} public room${publicRooms === 1 ? "" : "s"} · Staff ${staffRoom}`;
+}
+
+function thresholdSummary(policy: TrustMonitorPolicy | null): string {
+  if (!policy) {
+    return "Window 14d · Early read 30s";
+  }
+  return `Window ${policy.silent_observer_window_days}d · Early read ${policy.early_read_window_seconds}s`;
+}
+
+export function SecurityAlertsPolicyBar({ policy }: SecurityAlertsPolicyBarProps) {
   const currentSurface = policy?.alert_surface ?? "admin_ui";
-  const [draft, setDraft] = useState({
-    silent_observer_window_days: policy?.silent_observer_window_days ?? 14,
-    early_read_window_seconds: policy?.early_read_window_seconds ?? 30,
-    minimum_observations: policy?.minimum_observations ?? 10,
-    minimum_early_read_hits: policy?.minimum_early_read_hits ?? 8,
-    read_to_reply_ratio_threshold: policy?.read_to_reply_ratio_threshold ?? 12,
-    evidence_ttl_days: policy?.evidence_ttl_days ?? 7,
-    aggregate_ttl_days: policy?.aggregate_ttl_days ?? 30,
-    finding_ttl_days: policy?.finding_ttl_days ?? 30,
-  });
-
-  useEffect(() => {
-    setDraft({
-      silent_observer_window_days: policy?.silent_observer_window_days ?? 14,
-      early_read_window_seconds: policy?.early_read_window_seconds ?? 30,
-      minimum_observations: policy?.minimum_observations ?? 10,
-      minimum_early_read_hits: policy?.minimum_early_read_hits ?? 8,
-      read_to_reply_ratio_threshold: policy?.read_to_reply_ratio_threshold ?? 12,
-      evidence_ttl_days: policy?.evidence_ttl_days ?? 7,
-      aggregate_ttl_days: policy?.aggregate_ttl_days ?? 30,
-      finding_ttl_days: policy?.finding_ttl_days ?? 30,
-    });
-  }, [policy]);
-
-  const hasAdvancedChanges = Boolean(
-    policy && (
-      draft.silent_observer_window_days !== policy.silent_observer_window_days
-      || draft.early_read_window_seconds !== policy.early_read_window_seconds
-      || draft.minimum_observations !== policy.minimum_observations
-      || draft.minimum_early_read_hits !== policy.minimum_early_read_hits
-      || draft.read_to_reply_ratio_threshold !== policy.read_to_reply_ratio_threshold
-      || draft.evidence_ttl_days !== policy.evidence_ttl_days
-      || draft.aggregate_ttl_days !== policy.aggregate_ttl_days
-      || draft.finding_ttl_days !== policy.finding_ttl_days
-    )
-  );
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/70 px-4 py-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">Security Alerts</h1>
-            <Badge variant="secondary" className="border border-border/60 bg-background/70 text-xs text-muted-foreground">
-              {surfaceLabel(currentSurface)}
-            </Badge>
+    <section className="rounded-3xl border border-border/70 bg-card/80 p-5 shadow-sm">
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">Security Alerts</h1>
+              <Badge variant="secondary" className="border border-border/60 bg-background/70 text-xs text-muted-foreground">
+                {surfaceLabel(currentSurface)}
+              </Badge>
+            </div>
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              {rolloutDescription(policy)}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Review trust-monitor findings before promoting them into the staff room.
+          <Button asChild size="sm" className="self-start rounded-xl px-4 xl:self-auto">
+            <Link href="/admin/overview">Configure in Overview</Link>
+          </Button>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <SummaryCard
+            icon={<ShieldCheck aria-hidden="true" className="h-4 w-4 text-emerald-300" />}
+            label="Rollout mode"
+            value={surfaceLabel(currentSurface)}
+            hint="Overview owns alert-surface changes."
+          />
+          <SummaryCard
+            icon={<Radar aria-hidden="true" className="h-4 w-4 text-sky-300" />}
+            label="Enabled detectors"
+            value={enabledDetectors(policy)}
+            hint="Keep detector toggles centralized on Overview."
+          />
+          <SummaryCard
+            icon={<SlidersHorizontal aria-hidden="true" className="h-4 w-4 text-amber-300" />}
+            label="Threshold snapshot"
+            value={thresholdSummary(policy)}
+            hint={roomSummary(policy)}
+          />
+        </div>
+
+        {!policy?.enabled ? (
+          <div className="rounded-2xl border border-amber-500/25 bg-amber-500/6 px-4 py-3 text-sm text-amber-100/90">
+            The review queue is available, but the detector pipeline is currently disabled. Re-enable trust monitoring from Overview before acting on this page operationally.
+          </div>
+        ) : null}
+
+        <div className="rounded-2xl border border-border/70 bg-background/35 px-4 py-3">
+          <div className="inline-flex items-center gap-2 text-sm font-medium">
+            <ShieldAlert aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+            Review workflow
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Use this page to triage findings, inspect evidence, and apply review decisions. Use Overview for rollout, detector, and threshold changes.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isSaving || currentSurface === "staff_room"}
-            onClick={() => onAlertSurfaceChange("staff_room")}
-          >
-            Promote to Staff Room
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isSaving || currentSurface === "admin_ui"}
-            onClick={() => onAlertSurfaceChange("admin_ui")}
-          >
-            Return to Admin UI Only
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isSaving || currentSurface === "both"}
-            onClick={() => onAlertSurfaceChange("both")}
-          >
-            Mirror to Both
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isSaving || currentSurface === "none"}
-            onClick={() => onAlertSurfaceChange("none")}
-          >
-            Mute Alerts
-          </Button>
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/overview">Overview controls</Link>
-          </Button>
-        </div>
       </div>
-
-      <details className="mt-4 rounded-xl border border-border/70 bg-background/35 px-4 py-3">
-        <summary className="cursor-pointer list-none text-sm font-medium">
-          Advanced controls
-        </summary>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Tune thresholds and retention directly from admin without changing env config.
-        </p>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <NumberField label="Window (days)" value={draft.silent_observer_window_days} onChange={(value) => setDraft((current) => ({ ...current, silent_observer_window_days: value }))} />
-          <NumberField label="Early read (s)" value={draft.early_read_window_seconds} onChange={(value) => setDraft((current) => ({ ...current, early_read_window_seconds: value }))} />
-          <NumberField label="Min observations" value={draft.minimum_observations} onChange={(value) => setDraft((current) => ({ ...current, minimum_observations: value }))} />
-          <NumberField label="Min hits" value={draft.minimum_early_read_hits} onChange={(value) => setDraft((current) => ({ ...current, minimum_early_read_hits: value }))} />
-          <NumberField label="Read/reply ratio" value={draft.read_to_reply_ratio_threshold} step="0.5" onChange={(value) => setDraft((current) => ({ ...current, read_to_reply_ratio_threshold: value }))} />
-          <NumberField label="Evidence TTL (days)" value={draft.evidence_ttl_days} onChange={(value) => setDraft((current) => ({ ...current, evidence_ttl_days: value }))} />
-          <NumberField label="Aggregate TTL (days)" value={draft.aggregate_ttl_days} onChange={(value) => setDraft((current) => ({ ...current, aggregate_ttl_days: value }))} />
-          <NumberField label="Finding TTL (days)" value={draft.finding_ttl_days} onChange={(value) => setDraft((current) => ({ ...current, finding_ttl_days: value }))} />
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground">
-            Public rooms: {(policy?.matrix_public_room_ids ?? []).join(", ") || "Not configured"} · Staff room: {policy?.matrix_staff_room_id || "Not configured"}
-          </div>
-          <Button
-            size="sm"
-            disabled={isSaving || !hasAdvancedChanges}
-            onClick={() => void onPolicyPatch(draft)}
-          >
-            Save advanced controls
-          </Button>
-        </div>
-      </details>
-    </div>
+    </section>
   );
 }
 
-function NumberField({
+function SummaryCard({
+  icon,
   label,
   value,
-  step,
-  onChange,
+  hint,
 }: {
+  icon: ReactNode;
   label: string;
-  value: number;
-  step?: string;
-  onChange: (value: number) => void;
+  value: string;
+  hint: string;
 }) {
   return (
-    <label className="space-y-2 text-sm">
-      <span className="font-medium">{label}</span>
-      <input
-        type="number"
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-      />
-    </label>
+    <div className="rounded-2xl border border-border/70 bg-background/40 px-4 py-4">
+      <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-3 text-base font-semibold tracking-tight text-foreground/95">
+        {value}
+      </div>
+      <div className="mt-1 text-xs text-muted-foreground">
+        {hint}
+      </div>
+    </div>
   );
 }

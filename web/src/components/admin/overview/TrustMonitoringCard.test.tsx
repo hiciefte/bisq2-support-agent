@@ -1,3 +1,4 @@
+import { cloneElement, createContext, isValidElement, useContext, useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TrustMonitoringCard } from "./TrustMonitoringCard";
@@ -7,12 +8,39 @@ jest.mock("lucide-react", () => {
   const MockIcon = ({ className }: { className?: string }) => <svg className={className} />;
   return {
     AlertTriangle: MockIcon,
+    ChevronDown: MockIcon,
     Loader2: MockIcon,
     Radar: MockIcon,
     ShieldAlert: MockIcon,
     ShieldCheck: MockIcon,
   };
 });
+
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
+}));
+
+jest.mock("@/components/ui/badge", () => ({
+  Badge: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+jest.mock("@/components/ui/button", () => ({
+  Button: ({
+    children,
+    asChild,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }) => (
+    asChild ? <div>{children}</div> : <button {...props}>{children}</button>
+  ),
+}));
+
+jest.mock("@/components/ui/card", () => ({
+  Card: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CardHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CardContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CardTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
 
 jest.mock("@/components/ui/checkbox", () => ({
   Checkbox: ({ checked, onCheckedChange, ...props }: { checked?: boolean; onCheckedChange?: (checked: boolean) => void }) => (
@@ -24,6 +52,82 @@ jest.mock("@/components/ui/checkbox", () => ({
       {...props}
     />
   ),
+}));
+
+const ToggleGroupContext = createContext<((value: string) => void) | null>(null);
+
+jest.mock("@/components/ui/toggle-group", () => ({
+  ToggleGroup: ({
+    children,
+    onValueChange,
+  }: {
+    children: React.ReactNode;
+    onValueChange?: (value: string) => void;
+  }) => (
+    <ToggleGroupContext.Provider value={onValueChange ?? null}>
+      <div>{children}</div>
+    </ToggleGroupContext.Provider>
+  ),
+  ToggleGroupItem: ({
+    children,
+    value,
+    "aria-checked": ariaChecked,
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { value?: string }) => {
+    const onValueChange = useContext(ToggleGroupContext);
+    return (
+      <button
+        type="button"
+        role="radio"
+        aria-checked={ariaChecked}
+        aria-label={typeof children === "string" ? children : value}
+        onClick={() => {
+          if (value) {
+            onValueChange?.(value);
+          }
+        }}
+      >
+        {children}
+      </button>
+    );
+  },
+}));
+
+const CollapsibleContext = createContext<{ open: boolean; setOpen: (open: boolean) => void } | null>(null);
+
+jest.mock("@/components/ui/collapsible", () => ({
+  Collapsible: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    const [internalOpen, setInternalOpen] = useState(Boolean(open));
+    const setOpen = (next: boolean) => {
+      setInternalOpen(next);
+      onOpenChange?.(next);
+    };
+    return (
+      <CollapsibleContext.Provider value={{ open: internalOpen, setOpen }}>
+        <div>{children}</div>
+      </CollapsibleContext.Provider>
+    );
+  },
+  CollapsibleContent: ({ children }: { children: React.ReactNode }) => {
+    const context = useContext(CollapsibleContext);
+    return context?.open ? <div>{children}</div> : null;
+  },
+  CollapsibleTrigger: ({ children }: { children: React.ReactNode }) => {
+    const context = useContext(CollapsibleContext);
+    if (isValidElement(children)) {
+      return cloneElement(children, {
+        onClick: () => context?.setOpen(!context.open),
+      });
+    }
+    return <div>{children}</div>;
+  },
 }));
 
 const POLICY: TrustMonitorPolicy = {
@@ -82,5 +186,28 @@ describe("TrustMonitoringCard", () => {
 
     await user.click(screen.getByRole("radio", { name: "Staff Room" }));
     expect(onAlertSurfaceChange).toHaveBeenCalledWith("staff_room");
+  });
+
+  test("starts collapsed when requested", async () => {
+    const user = userEvent.setup();
+    render(
+      <TrustMonitoringCard
+        policy={POLICY}
+        isLoading={false}
+        isSaving={false}
+        error={null}
+        onRetry={() => undefined}
+        onEnabledChange={() => undefined}
+        onDetectorToggle={() => undefined}
+        onAlertSurfaceChange={() => undefined}
+        defaultCollapsed
+      />,
+    );
+
+    expect(screen.queryByText("Alert destination")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /show controls/i }));
+
+    expect(screen.getByText("Alert destination")).toBeInTheDocument();
   });
 });
