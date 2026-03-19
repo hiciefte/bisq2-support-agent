@@ -118,13 +118,31 @@ After deployment, you must configure the following settings in `/opt/bisq-suppor
    - Configuration is automatically applied via `docker-compose.yml`
    - **No additional setup required** - security headers work out of the box
 
-5. **Restart services** after making changes:
+5. **Dark-deploy new operator surfaces first**:
+   ```bash
+   TRUST_MONITOR_ENABLED=false
+   MATRIX_CHATOPS_ENABLED=false
+   BISQ2_CHATOPS_ENABLED=false
+   BISQ_API_AUTH_STATE_SECRET=replace-with-a-generated-secret
+   ```
+
+   Later canaries:
+   ```bash
+   TRUST_MONITOR_ENABLED=true
+   TRUST_MONITOR_ALERT_SURFACE=admin_ui
+   TRUST_MONITOR_ACTOR_KEY_SECRET=replace-with-a-generated-secret
+
+   MATRIX_CHATOPS_ENABLED=true
+   MATRIX_CHATOPS_ROOM_IDS=!your-staff-room:matrix.org
+   ```
+
+6. **Restart services** after making changes:
    ```bash
    cd /opt/bisq-support/scripts/
    ./restart.sh
    ```
 
-6. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
+7. **Access admin interface**: Navigate to `http://YOUR_SERVER_IP/admin` and use the `ADMIN_API_KEY` from the `.env` file
 
 #### Optional: Tor Hidden Service Deployment
 

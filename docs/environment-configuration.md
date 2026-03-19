@@ -80,6 +80,10 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 * **`BISQ_API_AUTH_STATE_FILE`**
   * Description: Auth state file for persisted `clientId`/`clientSecret`/`sessionId` (relative to `DATA_DIR` if not absolute). Partial state is ignored.
   * Default: `bisq_api_auth.json`
+* **`BISQ_API_AUTH_STATE_SECRET`**
+  * Description: Secret used to encrypt the persisted Bisq auth-state cache at rest.
+  * Default: empty
+  * Production recommendation: set this explicitly instead of relying on fallback secrets
 * **`BISQ_API_CLIENT_ID`**
   * Description: Recommended durable Bisq2 API client ID for production. When paired with `BISQ_API_CLIENT_SECRET`, the support agent can recreate sessions after restart without relying on QR files.
   * Default: empty
@@ -120,6 +124,12 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Dedicated Matrix staff room used by the `staff_room` escalation-notification channel.
     *   Required: Optional
     *   Note: In local testing, this can be set to the same room as `MATRIX_ALERT_ROOM`.
+*   **`MATRIX_CHATOPS_ENABLED`**
+    *   Description: Enables Matrix `!case` command handling in staff rooms.
+    *   Default: `false`
+*   **`MATRIX_CHATOPS_ROOM_IDS`**
+    *   Description: Comma-separated Matrix room IDs where ChatOps commands are accepted.
+    *   Required: Yes (when `MATRIX_CHATOPS_ENABLED=true`)
 *   **`MATRIX_SYNC_SESSION_FILE`**
     *   Description: Session file for Matrix sync lane.
     *   Default: `matrix_session.json` (resolved under `DATA_DIR`)
@@ -143,6 +153,62 @@ For local testing with separate public/staff routing:
 * `MATRIX_SYNC_ROOMS=!ilodKeOTMMMDTlGhkf:matrix.org` (public support test room)
 * `MATRIX_STAFF_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org` (staff-room escalation notices)
 * `MATRIX_ALERT_ROOM=!KQdmdCuJsNAjLhkIre:matrix.org` (same room reused for alerts in local testing)
+
+### Trust Monitor and ChatOps Rollout Variables
+
+Use a dark deploy first, then enable operator-facing features in phases.
+
+* **`TRUST_MONITOR_ENABLED`**
+  * Description: Enables trust-monitor detectors and admin review APIs.
+  * Default: `true` in app settings
+  * Production recommendation: set `false` for the first code deploy, then enable later
+* **`TRUST_MONITOR_ACTOR_KEY_SECRET`**
+  * Description: Secret used to pseudonymize monitored actor identities.
+  * Required: Yes when `TRUST_MONITOR_ENABLED=true` in production
+* **`TRUST_MONITOR_ALERT_SURFACE`**
+  * Description: Delivery surface for findings.
+  * Default: `admin_ui`
+  * Production recommendation: start with `admin_ui`
+* **`TRUST_MONITOR_MATRIX_PUBLIC_ROOMS`**
+  * Description: Comma-separated Matrix room IDs monitored for trust signals.
+* **`TRUST_MONITOR_MATRIX_STAFF_ROOM`**
+  * Description: Matrix room ID excluded from public-room monitoring and optionally used for staff-facing notices.
+* **`TRUST_MONITOR_NAME_COLLISION_ENABLED`**
+  * Description: Enables staff-name collision detector.
+  * Default: `true`
+* **`TRUST_MONITOR_SILENT_OBSERVER_ENABLED`**
+  * Description: Enables silent-early-observer detector.
+  * Default: `true`
+* **`TRUST_MONITOR_SILENT_OBSERVER_WINDOW_DAYS`**
+  * Description: Lookback window for silent-observer analysis.
+  * Default: `14`
+* **`TRUST_MONITOR_EARLY_READ_WINDOW_SECONDS`**
+  * Description: Maximum read-delay window counted as an early read.
+  * Default: `30`
+* **`TRUST_MONITOR_MINIMUM_OBSERVATIONS`**
+  * Description: Minimum observation count before emitting a silent-observer finding.
+  * Default: `10`
+* **`TRUST_MONITOR_MINIMUM_EARLY_READ_HITS`**
+  * Description: Minimum early-read count before emitting a silent-observer finding.
+  * Default: `8`
+* **`TRUST_MONITOR_READ_TO_REPLY_RATIO_THRESHOLD`**
+  * Description: Ratio threshold used by the silent-observer detector.
+  * Default: `12.0`
+* **`TRUST_MONITOR_EVIDENCE_TTL_DAYS`**
+  * Description: Retention window for raw evidence rows.
+  * Default: `7`
+* **`TRUST_MONITOR_AGGREGATE_TTL_DAYS`**
+  * Description: Retention window for detector aggregates.
+  * Default: `30`
+* **`TRUST_MONITOR_FINDING_TTL_DAYS`**
+  * Description: Retention window for persisted findings.
+  * Default: `30`
+* **`BISQ2_CHATOPS_ENABLED`**
+  * Description: Enables Bisq2 ChatOps command handling.
+  * Default: `false`
+* **`BISQ2_CHATOPS_CHANNEL_IDS`**
+  * Description: Comma-separated Bisq2 channel IDs where ChatOps commands are accepted.
+  * Required: Yes (when `BISQ2_CHATOPS_ENABLED=true`)
 *   **`RETRIEVER_BACKEND`**
     *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
     *   Default in app settings: `qdrant`
