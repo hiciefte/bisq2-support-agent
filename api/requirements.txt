@@ -40,7 +40,7 @@ appdirs==1.4.4
     # via ragas
 atomicwrites==1.4.1
     # via matrix-nio
-attrs==25.4.0
+attrs==26.1.0
     # via
     #   aiohttp
     #   jsonschema
@@ -175,7 +175,7 @@ idna==3.11
     #   httpx
     #   requests
     #   yarl
-importlib-metadata==8.7.1
+importlib-metadata==8.8.0
     # via litellm
 iniconfig==2.3.0
     # via pytest
