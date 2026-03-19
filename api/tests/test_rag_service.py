@@ -520,6 +520,7 @@ class TestMultilingualClarification:
         rag_service.translation_service.translate_query.assert_awaited_once_with(
             "Bisq easy",
             source_lang="de",
+            prior_language=None,
         )
 
 
