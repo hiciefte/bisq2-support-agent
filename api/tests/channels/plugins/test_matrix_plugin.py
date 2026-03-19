@@ -8,6 +8,7 @@ Note: Matrix channel wraps the existing Matrix integration components:
 - Matrix nio AsyncClient for room operations
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -48,6 +49,32 @@ class TestMatrixChannelProperties:
         runtime = MagicMock(spec=ChannelRuntime)
         channel = MatrixChannel(runtime)
         assert ChannelCapability.PERSISTENT_CONNECTION in channel.capabilities
+
+    @pytest.mark.unit
+    def test_staff_notification_target_prefers_matrix_staff_room(self):
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(
+            MATRIX_STAFF_ROOM="!staff:matrix.org",
+            MATRIX_ALERT_ROOM="!alert:matrix.org",
+        )
+        channel = MatrixChannel(runtime)
+
+        target = channel.get_staff_notification_target({})
+
+        assert target == "!staff:matrix.org"
+
+    @pytest.mark.unit
+    def test_staff_notification_target_falls_back_to_alert_room(self):
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(
+            MATRIX_STAFF_ROOM="",
+            MATRIX_ALERT_ROOM="!alert:matrix.org",
+        )
+        channel = MatrixChannel(runtime)
+
+        target = channel.get_staff_notification_target({})
+
+        assert target == "!alert:matrix.org"
 
 
 class TestMatrixChannelLifecycle:
@@ -215,6 +242,7 @@ class TestMatrixChannelMessageHandling:
         mock_response = MagicMock()
         mock_response.event_id = "$event123"
         mock_client.room_send = AsyncMock(return_value=mock_response)
+        mock_client.rooms = {"!room:matrix.org": MagicMock()}
 
         runtime = MagicMock(spec=ChannelRuntime)
         runtime.resolve_optional = MagicMock(return_value=mock_client)
@@ -226,7 +254,7 @@ class TestMatrixChannelMessageHandling:
         outgoing.in_reply_to = "$question-event"
         result = await channel.send_message("!room:matrix.org", outgoing)
 
-        assert result is True
+        assert bool(result) is True
         mock_client.room_send.assert_called_once()
         sent_content = mock_client.room_send.call_args.kwargs["content"]
         assert sent_content["format"] == "org.matrix.custom.html"
@@ -241,6 +269,36 @@ class TestMatrixChannelMessageHandling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_send_message_recovers_missing_room_and_retries(self):
+        """send_message retries once after recovering missing local room state."""
+
+        class MockRoomSendError:
+            message = "No such room with id !room:matrix.org found."
+
+        mock_client = MagicMock()
+        mock_client.rooms = {}
+        success = MagicMock()
+        success.event_id = "$event456"
+        mock_client.room_send = AsyncMock(side_effect=[MockRoomSendError(), success])
+        mock_client.sync = AsyncMock(return_value=MagicMock())
+        mock_client.join = AsyncMock(return_value=MagicMock(room_id="!room:matrix.org"))
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=mock_client)
+
+        channel = MatrixChannel(runtime)
+
+        outgoing = MagicMock(spec=OutgoingMessage)
+        outgoing.answer = "Test response"
+        result = await channel.send_message("!room:matrix.org", outgoing)
+
+        assert bool(result) is True
+        assert mock_client.room_send.await_count == 2
+        mock_client.sync.assert_called_once()
+        mock_client.join.assert_called_once_with("!room:matrix.org")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_send_message_honors_ignore_unverified_toggle(self):
         """send_message can enforce verified devices when explicitly configured."""
 
@@ -248,6 +306,7 @@ class TestMatrixChannelMessageHandling:
         mock_response = MagicMock()
         mock_response.event_id = "$event123"
         mock_client.room_send = AsyncMock(return_value=mock_response)
+        mock_client.rooms = {"!room:matrix.org": MagicMock()}
 
         runtime = MagicMock(spec=ChannelRuntime)
         runtime.resolve_optional = MagicMock(return_value=mock_client)
@@ -260,10 +319,36 @@ class TestMatrixChannelMessageHandling:
         outgoing.answer = "Test response"
         result = await channel.send_message("!room:matrix.org", outgoing)
 
-        assert result is True
+        assert bool(result) is True
         assert (
             mock_client.room_send.call_args.kwargs["ignore_unverified_devices"] is False
         )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_send_message_uses_notice_msgtype_for_staff_notice(self):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.event_id = "$event123"
+        mock_client.room_send = AsyncMock(return_value=mock_response)
+        mock_client.rooms = {"!room:matrix.org": MagicMock()}
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=mock_client)
+
+        channel = MatrixChannel(runtime)
+
+        outgoing = MagicMock(spec=OutgoingMessage)
+        outgoing.answer = "Escalation #123 queued"
+        outgoing.in_reply_to = "$question-event"
+        outgoing.metadata = MagicMock()
+        outgoing.metadata.routing_action = "staff_escalation_notice"
+
+        result = await channel.send_message("!room:matrix.org", outgoing)
+
+        assert bool(result) is True
+        sent_content = mock_client.room_send.call_args.kwargs["content"]
+        assert sent_content["msgtype"] == "m.notice"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -279,7 +364,7 @@ class TestMatrixChannelMessageHandling:
         outgoing.answer = "Test response"
         result = await channel.send_message("!room:matrix.org", outgoing)
 
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -303,7 +388,48 @@ class TestMatrixChannelMessageHandling:
         outgoing.answer = "Test response"
         result = await channel.send_message("!room:matrix.org", outgoing)
 
-        assert result is False
+        assert bool(result) is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_send_reaction_sends_matrix_reaction_event(self):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.event_id = "$reaction123"
+        mock_client.room_send = AsyncMock(return_value=mock_response)
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=mock_client)
+
+        channel = MatrixChannel(runtime)
+
+        sent = await channel.send_reaction(
+            room_id="!room:matrix.org",
+            event_id="$target123",
+            key="👀",
+        )
+
+        assert bool(sent) is True
+        call_kwargs = mock_client.room_send.call_args.kwargs
+        assert call_kwargs["room_id"] == "!room:matrix.org"
+        assert call_kwargs["message_type"] == "m.reaction"
+        assert call_kwargs["content"]["m.relates_to"]["event_id"] == "$target123"
+        assert call_kwargs["content"]["m.relates_to"]["key"] == "👀"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_send_reaction_returns_false_without_matrix_client(self):
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(return_value=None)
+
+        channel = MatrixChannel(runtime)
+
+        sent = await channel.send_reaction(
+            room_id="!room:matrix.org",
+            event_id="$target123",
+            key="👀",
+        )
+        assert sent is False
 
 
 class TestMatrixChannelRoomManagement:
@@ -326,7 +452,7 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.join_room("!room:matrix.org")
 
-        assert result is True
+        assert bool(result) is True
         mock_client.join.assert_called_once_with("!room:matrix.org")
 
     @pytest.mark.unit
@@ -340,7 +466,7 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.join_room("!room:matrix.org")
 
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -360,7 +486,7 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.join_room("!room:matrix.org")
 
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -379,7 +505,7 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.leave_room("!room:matrix.org")
 
-        assert result is True
+        assert bool(result) is True
         mock_client.room_leave.assert_called_once_with("!room:matrix.org")
 
     @pytest.mark.unit
@@ -393,7 +519,7 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.leave_room("!room:matrix.org")
 
-        assert result is False
+        assert bool(result) is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -413,4 +539,4 @@ class TestMatrixChannelRoomManagement:
         channel = MatrixChannel(runtime)
         result = await channel.leave_room("!room:matrix.org")
 
-        assert result is False
+        assert bool(result) is False

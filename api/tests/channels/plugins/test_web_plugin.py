@@ -186,4 +186,4 @@ class TestWebChannelMessageHandling:
         result = await channel.send_message("web_user", outgoing)
 
         # Web channel doesn't actively push, so send_message is a no-op
-        assert result is True
+        assert bool(result) is True

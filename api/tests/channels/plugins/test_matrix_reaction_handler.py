@@ -9,6 +9,7 @@ Covers:
 - Error handling for malformed events
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -266,6 +267,56 @@ class TestMatrixReactionEventProcessing:
         assert reaction_event.rating == ReactionRating.POSITIVE
 
     @pytest.mark.asyncio
+    async def test_staff_escalation_reaction_uses_current_room_for_confirmation(
+        self, handler, mock_runtime
+    ):
+        room = self._make_room(room_id="!room:server")
+        event = self._make_reaction_event(
+            relates_to_event_id="$staff-notice:server",
+            key="\U0001f44d",
+            sender="@staff:server",
+        )
+
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-42",
+            answer="Escalation #42",
+            delivery_target="",
+        )
+        escalation_service = MagicMock()
+        escalation_service.respond_to_escalation = AsyncMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(ai_draft_answer="AI draft")
+        )
+        client = MagicMock()
+        client.room_send = AsyncMock()
+        runtime_settings = SimpleNamespace(MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES=True)
+
+        def resolve_optional(name: str):
+            if name == "sent_message_tracker":
+                return tracker
+            if name == "staff_resolver":
+                resolver = MagicMock()
+                resolver.is_staff.return_value = True
+                return resolver
+            if name == "escalation_service":
+                return escalation_service
+            if name == "matrix_client":
+                return client
+            return None
+
+        mock_runtime.resolve_optional.side_effect = resolve_optional
+        mock_runtime.settings = runtime_settings
+
+        await handler._on_reaction_event(room, event)
+
+        client = mock_runtime.resolve_optional("matrix_client")
+        client.room_send.assert_awaited_once()
+        assert client.room_send.await_args.kwargs["room_id"] == "!room:server"
+
+    @pytest.mark.asyncio
     async def test_processes_rocket_reaction_as_positive(self, handler, mock_processor):
         """Rocket emoji maps to POSITIVE for quick-reaction parity."""
         room = self._make_room()
@@ -418,6 +469,195 @@ class TestMatrixReactionRedaction:
 
         mock_processor.revoke_reaction.assert_not_called()
 
+
+class TestMatrixReactionStaffActions:
+    """Test staff-room escalation actions via thumbs reactions."""
+
+    def _make_reaction_event(
+        self,
+        *,
+        key="\U0001f44d",
+        target_event_id="$staff-msg:server",
+        sender="@staff:server",
+    ):
+        event = MagicMock()
+        event.event_id = "$reaction-staff:server"
+        event.sender = sender
+        event.server_timestamp = 1704067200000
+        event.source = {
+            "content": {
+                "m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": target_event_id,
+                    "key": key,
+                }
+            }
+        }
+        return event
+
+    def _make_room(self, room_id="!room:server"):
+        room = MagicMock()
+        room.room_id = room_id
+        return room
+
+    @pytest.mark.asyncio
+    async def test_thumbs_up_approves_staff_escalation_notice(
+        self, handler, mock_runtime, mock_processor
+    ):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-321",
+            answer="Escalation #321 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(ai_draft_answer="AI draft response")
+        )
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
+            )
+        )
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f44d")
+
+        await handler._on_reaction_event(room, event)
+
+        escalation_service.respond_to_escalation.assert_awaited_once_with(
+            321, "AI draft response", "@staff:server"
+        )
+        escalation_service.close_escalation.assert_not_awaited()
+        mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_thumbs_down_dismisses_staff_escalation_notice(
+        self, handler, mock_runtime, mock_processor
+    ):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-654",
+            answer="Escalation #654 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
+            )
+        )
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f44e")
+
+        await handler._on_reaction_event(room, event)
+
+        escalation_service.close_escalation.assert_awaited_once_with(654)
+        escalation_service.respond_to_escalation.assert_not_awaited()
+        mock_processor.process.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_staff_reaction_falls_back_to_feedback_for_non_staff_notice(
+        self, handler, mock_runtime, mock_processor
+    ):
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="auto_send",
+            internal_message_id="msg-1",
+            answer="Regular answer",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
+            )
+        )
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f44d")
+
+        await handler._on_reaction_event(room, event)
+
+        mock_processor.process.assert_called_once()
+        escalation_service.respond_to_escalation.assert_not_awaited()
+        escalation_service.close_escalation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_staff_reaction_on_staff_notice_is_ignored(
+        self, handler, mock_runtime, mock_processor
+    ):
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-700",
+            answer="Escalation #700 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        staff_resolver = SimpleNamespace(is_staff=lambda _sender: False)
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
+            )
+        )
+        room = self._make_room()
+        event = self._make_reaction_event(key="\U0001f44d", sender="@alice:server")
+
+        await handler._on_reaction_event(room, event)
+
+        escalation_service.respond_to_escalation.assert_not_awaited()
+        escalation_service.close_escalation.assert_not_awaited()
+        mock_processor.process.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_on_redaction_ignores_unknown(self, handler, mock_processor):
         """Redaction of unknown reaction is silently ignored."""
@@ -434,3 +674,217 @@ class TestMatrixReactionRedaction:
         await handler._on_redaction_event(room, event)
 
         mock_processor.revoke_reaction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_staff_command_send_uses_custom_reply_text(
+        self, handler, mock_runtime
+    ):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-111",
+            answer="Escalation #111 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(ai_draft_answer="Draft from AI")
+        )
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        matrix_client = MagicMock()
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
+            )
+        )
+
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="/send Edited reply from staff",
+            sender="@staff:server",
+        )
+
+        assert handled is True
+        escalation_service.respond_to_escalation.assert_awaited_once_with(
+            111, "Edited reply from staff", "@staff:server"
+        )
+        escalation_service.close_escalation.assert_not_awaited()
+        matrix_client.room_send.assert_awaited_once()
+        sent_content = matrix_client.room_send.call_args.kwargs["content"]
+        assert sent_content["msgtype"] == "m.notice"
+        assert sent_content["m.relates_to"]["rel_type"] == "m.thread"
+        assert (
+            sent_content["m.relates_to"]["m.in_reply_to"]["event_id"]
+            == "$staff-msg:server"
+        )
+
+    @pytest.mark.asyncio
+    async def test_staff_command_send_without_text_uses_ai_draft(
+        self, handler, mock_runtime
+    ):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-112",
+            answer="Escalation #112 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(ai_draft_answer="Draft from AI")
+        )
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        matrix_client = MagicMock()
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
+            )
+        )
+
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="/send",
+            sender="@staff:server",
+        )
+
+        assert handled is True
+        escalation_service.respond_to_escalation.assert_awaited_once_with(
+            112, "Draft from AI", "@staff:server"
+        )
+        escalation_service.close_escalation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_staff_command_dismiss_closes_escalation(self, handler, mock_runtime):
+        staff_resolver = SimpleNamespace(
+            is_staff=lambda sender: str(sender or "").strip() == "@staff:server"
+        )
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-113",
+            answer="Escalation #113 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        matrix_client = MagicMock()
+        matrix_client.room_send = AsyncMock(
+            return_value=SimpleNamespace(event_id="$ok")
+        )
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else (
+                        matrix_client
+                        if name == "matrix_client"
+                        else staff_resolver if name == "staff_resolver" else None
+                    )
+                )
+            )
+        )
+
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="/dismiss",
+            sender="@staff:server",
+        )
+
+        assert handled is True
+        escalation_service.close_escalation.assert_awaited_once_with(113)
+        escalation_service.respond_to_escalation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_staff_command_returns_false_for_non_command(self, handler):
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="plain staff chat message",
+            sender="@staff:server",
+        )
+        assert handled is False
+
+    @pytest.mark.asyncio
+    async def test_non_staff_command_on_staff_notice_is_ignored(
+        self, handler, mock_runtime
+    ):
+        tracker = MagicMock()
+        tracker.lookup.return_value = SimpleNamespace(
+            routing_action="staff_escalation_notice",
+            internal_message_id="staff-escalation-114",
+            answer="Escalation #114 queued",
+        )
+        escalation_service = MagicMock()
+        escalation_service.repository = MagicMock()
+        escalation_service.repository.get_by_id = AsyncMock(return_value=MagicMock())
+        escalation_service.respond_to_escalation = AsyncMock(return_value=MagicMock())
+        escalation_service.close_escalation = AsyncMock(return_value=MagicMock())
+        staff_resolver = SimpleNamespace(is_staff=lambda _sender: False)
+
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                tracker
+                if name == "sent_message_tracker"
+                else (
+                    escalation_service
+                    if name == "escalation_service"
+                    else staff_resolver if name == "staff_resolver" else None
+                )
+            )
+        )
+
+        handled = await handler.handle_staff_command(
+            room_id="!staff:server",
+            reply_to_event_id="$staff-msg:server",
+            command_text="/send",
+            sender="@alice:server",
+        )
+
+        assert handled is True
+        escalation_service.respond_to_escalation.assert_not_awaited()
+        escalation_service.close_escalation.assert_not_awaited()

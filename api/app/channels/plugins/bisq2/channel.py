@@ -25,6 +25,7 @@ from app.channels.models import (
     ChatMessage,
     IncomingMessage,
     OutgoingMessage,
+    SendResult,
     UserContext,
 )
 from app.channels.plugins.support_markdown import (
@@ -36,7 +37,11 @@ from app.channels.question_prefilter import (
     QuestionPrefilterProtocol,
 )
 from app.channels.registry import register_channel
-from app.channels.staff import StaffResolver, collect_trusted_staff_ids
+from app.channels.staff import (
+    StaffResolver,
+    collect_staff_display_names,
+    collect_trusted_staff_ids,
+)
 
 
 @register_channel("bisq2")
@@ -92,7 +97,11 @@ class Bisq2Channel(ChannelBase):
             url=build_bisq_websocket_url(getattr(settings, "BISQ_API_URL", "")),
         )
         staff_resolver = StaffResolver(
-            trusted_staff_ids=collect_trusted_staff_ids(settings),
+            trusted_staff_ids=collect_trusted_staff_ids(
+                settings,
+                channel_id="bisq2",
+            ),
+            display_names=collect_staff_display_names(settings),
         )
         runtime.register("bisq2_api", bisq_api, allow_override=True)
         runtime.register("bisq2_websocket_client", ws_client, allow_override=True)
@@ -125,6 +134,25 @@ class Bisq2Channel(ChannelBase):
     def channel_type(self) -> ChannelType:
         """Return channel type for outgoing messages."""
         return ChannelType.BISQ2
+
+    def get_staff_notification_target(
+        self, metadata: dict[str, Any] | None = None
+    ) -> str:
+        """Resolve Bisq2 staff-notification target for escalation notices.
+
+        Priority:
+        1) Per-message metadata override (`staff_room_id`)
+        2) Static fallback (`BISQ2_STAFF_NOTIFICATION_TARGET`)
+        """
+        payload = metadata if isinstance(metadata, dict) else {}
+        metadata_target = str(payload.get("staff_room_id", "") or "").strip()
+        if metadata_target:
+            return metadata_target
+
+        settings = getattr(self.runtime, "settings", None)
+        return str(
+            getattr(settings, "BISQ2_STAFF_NOTIFICATION_TARGET", "") or ""
+        ).strip()
 
     async def start(self) -> None:
         """Start the Bisq2 channel.
@@ -215,7 +243,7 @@ class Bisq2Channel(ChannelBase):
         self._is_connected = False
         self._logger.info("Bisq2 channel stopped")
 
-    async def send_message(self, target: str, message: OutgoingMessage) -> bool:
+    async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send response back to Bisq2 conversation via REST API.
 
         Args:
@@ -230,7 +258,7 @@ class Bisq2Channel(ChannelBase):
             self._logger.warning(
                 "Bisq2API not registered in runtime, cannot send message"
             )
-            return False
+            return SendResult(sent=False, error="bisq2_api_unavailable")
 
         try:
             _meta = getattr(message, "metadata", None)
@@ -238,6 +266,7 @@ class Bisq2Channel(ChannelBase):
                 message.answer,
                 sources=getattr(message, "sources", []),
                 confidence_score=getattr(_meta, "confidence_score", None),
+                channel_format="bisq2",
             )
             citation = self._resolve_visible_citation(
                 getattr(message, "original_question", None)
@@ -253,7 +282,7 @@ class Bisq2Channel(ChannelBase):
                 self._logger.warning(
                     "Bisq2 API send_support_message returned no messageId"
                 )
-                return False
+                return SendResult(sent=False, error="missing_external_message_id")
 
             # Mark self-sent messages as seen immediately so polling does not
             # feed them back as new incoming user questions.
@@ -290,13 +319,17 @@ class Bisq2Channel(ChannelBase):
                 target,
                 external_message_id,
             )
-            return True
+            return SendResult(
+                sent=True,
+                external_message_id=str(external_message_id),
+                editable=False,
+            )
 
         except Exception:
             self._logger.exception(
                 "Failed to send message to Bisq2 conversation %s", target
             )
-            return False
+            return SendResult(sent=False, error="bisq2_send_failed")
 
     def get_delivery_target(self, metadata: dict[str, Any]) -> str:
         """Extract Bisq2 delivery target from metadata.
@@ -723,6 +756,7 @@ class Bisq2Channel(ChannelBase):
         for msg in new_messages:
             message_id = self._derive_message_id(msg)
             if self._is_staff_message(msg):
+                await self._record_staff_activity_from_message(msg)
                 self._mark_seen(message_id)
                 continue
 
@@ -750,6 +784,35 @@ class Bisq2Channel(ChannelBase):
                 source_name,
             )
         return incoming_messages
+
+    async def _record_staff_activity_from_message(self, msg: Dict[str, Any]) -> None:
+        """Forward trusted Bisq2 staff activity to arbitration service."""
+        arbitration = self.runtime.resolve_optional("arbitration_service")
+        if arbitration is None:
+            return
+        record_staff_activity = getattr(arbitration, "record_staff_activity", None)
+        if not callable(record_staff_activity):
+            return
+        room_or_conversation_id = str(
+            msg.get("conversationId", msg.get("channelId", "")) or ""
+        ).strip()
+        staff_id = self._resolve_sender_profile_id(msg).strip()
+        if not room_or_conversation_id or not staff_id:
+            return
+        try:
+            result = record_staff_activity(
+                room_or_conversation_id=room_or_conversation_id,
+                staff_id=staff_id,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            self._logger.debug(
+                "Failed recording Bisq2 staff activity conversation=%s staff_id=%s",
+                room_or_conversation_id,
+                staff_id,
+                exc_info=True,
+            )
 
     def _resolve_ws_fallback_interval(self) -> float:
         """Read REST fallback interval used when websocket client is configured."""
@@ -969,11 +1032,7 @@ class Bisq2Channel(ChannelBase):
             return False
 
         sender_id = message.sender_id.strip()
-        sender_alias = message.sender_alias.strip()
-        return bool(
-            (sender_id and staff_resolver.is_staff(sender_id))
-            or (sender_alias and staff_resolver.is_staff(sender_alias))
-        )
+        return bool(sender_id and staff_resolver.is_staff(sender_id))
 
     def _is_staff_message(self, msg: Dict[str, Any]) -> bool:
         """Return True when message author is trusted staff or support agent identity."""

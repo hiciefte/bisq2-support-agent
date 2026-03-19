@@ -21,6 +21,71 @@ DEFAULT_GENERATION_ENABLED: Dict[str, bool] = {
     "matrix": False,
     "bisq2": False,
 }
+DEFAULT_AI_RESPONSE_MODE: Dict[str, str] = {
+    "web": "autonomous",
+    "matrix": "hitl",
+    "bisq2": "hitl",
+}
+DEFAULT_FIRST_RESPONSE_DELAY_SECONDS: Dict[str, int] = {
+    "web": 0,
+    "matrix": 300,
+    "bisq2": 300,
+}
+DEFAULT_STAFF_ACTIVE_COOLDOWN_SECONDS: Dict[str, int] = {
+    "web": 0,
+    "matrix": 900,
+    "bisq2": 900,
+}
+DEFAULT_HITL_APPROVAL_TIMEOUT_SECONDS: Dict[str, int] = {
+    "web": 0,
+    "matrix": 3600,
+    "bisq2": 3600,
+}
+DEFAULT_PUBLIC_ESCALATION_NOTICE_ENABLED: Dict[str, bool] = {
+    "web": False,
+    "matrix": False,
+    "bisq2": False,
+}
+DEFAULT_ACKNOWLEDGMENT_MODE: Dict[str, str] = {
+    "web": "none",
+    "matrix": "reaction",
+    "bisq2": "message",
+}
+DEFAULT_ACKNOWLEDGMENT_REACTION_KEY: Dict[str, str] = {
+    "web": "👀",
+    "matrix": "👀",
+    "bisq2": "👀",
+}
+DEFAULT_ACKNOWLEDGMENT_MESSAGE_TEMPLATE: Dict[str, str] = {
+    "web": "Thanks for your question. A team member or our assistant will respond shortly.",
+    "matrix": "Thanks for your question. A team member or our assistant will respond shortly.",
+    "bisq2": "Thanks for your question. A team member or our assistant will respond shortly.",
+}
+DEFAULT_ESCALATION_USER_NOTICE_TEMPLATE: Dict[str, str] = {
+    "web": "This question needs a team member's attention. Someone will follow up.",
+    "matrix": "This question needs a team member's attention. Someone will follow up.",
+    "bisq2": "This question needs a team member's attention. Someone will follow up.",
+}
+DEFAULT_ESCALATION_USER_NOTICE_MODE: Dict[str, str] = {
+    "web": "public_reply",
+    "matrix": "public_reply",
+    "bisq2": "public_reply",
+}
+DEFAULT_ESCALATION_NOTIFICATION_CHANNEL: Dict[str, str] = {
+    "web": "public_room",
+    "matrix": "staff_room",
+    "bisq2": "staff_room",
+}
+DEFAULT_DISPATCH_FAILURE_MESSAGE_TEMPLATE: Dict[str, str] = {
+    "web": "I wasn't able to send the automated reply. A team member will follow up.",
+    "matrix": "I wasn't able to send the automated reply. A team member will follow up.",
+    "bisq2": "I wasn't able to send the automated reply. A team member will follow up.",
+}
+DEFAULT_TIMER_JITTER_MAX_SECONDS: Dict[str, int] = {
+    "web": 0,
+    "matrix": 0,
+    "bisq2": 0,
+}
 
 
 def _normalized_channel_ids(ids: Iterable[str]) -> list[str]:

@@ -28,3 +28,24 @@ def resolve_allowed_sync_rooms(settings: Any | None) -> frozenset[str]:
     if settings is None:
         return frozenset()
     return normalize_room_ids(getattr(settings, "MATRIX_SYNC_ROOMS", None))
+
+
+def resolve_allowed_reaction_rooms(settings: Any | None) -> frozenset[str]:
+    """Read and normalize reaction rooms from settings-like objects.
+
+    Reaction handling must include:
+    - Sync rooms (user feedback reactions)
+    - Staff room (HITL approve/dismiss reactions)
+    - Alert room fallback (local/dev setups)
+    """
+    if settings is None:
+        return frozenset()
+
+    rooms = set(resolve_allowed_sync_rooms(settings))
+    staff_room = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
+    alert_room = str(getattr(settings, "MATRIX_ALERT_ROOM", "") or "").strip()
+    if staff_room:
+        rooms.add(staff_room)
+    if alert_room:
+        rooms.add(alert_room)
+    return frozenset(rooms)

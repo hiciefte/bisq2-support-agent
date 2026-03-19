@@ -75,13 +75,46 @@ class InboundMessageOrchestrator:
                     canonical.event_id,
                 )
                 return False
-            response = await self.channel.handle_incoming(incoming)
-            autosend_enabled = is_autosend_enabled(
-                self.autoresponse_policy_service,
-                self.channel_id,
-            )
-            response = apply_autosend_policy(response, autosend_enabled)
-            sent = bool(await self.dispatcher.dispatch(incoming, response))
+            arbitration = self._resolve_arbitration_service()
+            if arbitration is not None:
+                thread_id, room_or_conversation_id = self._derive_arbitration_keys(
+                    canonical=canonical,
+                    incoming=incoming,
+                )
+
+                async def _on_release(queued_incoming: Any) -> Any:
+                    response = await self.channel.handle_incoming(queued_incoming)
+                    autosend_enabled = is_autosend_enabled(
+                        self.autoresponse_policy_service,
+                        self.channel_id,
+                    )
+                    return apply_autosend_policy(response, autosend_enabled)
+
+                async def _on_dispatch(queued_incoming: Any, response: Any) -> bool:
+                    return bool(
+                        await self.dispatcher.dispatch(queued_incoming, response)
+                    )
+
+                enqueue_result = arbitration.enqueue(
+                    incoming=incoming,
+                    thread_id=thread_id,
+                    room_or_conversation_id=room_or_conversation_id,
+                    on_release=_on_release,
+                    on_dispatch=_on_dispatch,
+                    channel=self.channel,
+                )
+                if inspect.isawaitable(enqueue_result):
+                    sent = bool(await enqueue_result)
+                else:
+                    sent = bool(enqueue_result)
+            else:
+                response = await self.channel.handle_incoming(incoming)
+                autosend_enabled = is_autosend_enabled(
+                    self.autoresponse_policy_service,
+                    self.channel_id,
+                )
+                response = apply_autosend_policy(response, autosend_enabled)
+                sent = bool(await self.dispatcher.dispatch(incoming, response))
             await self._update_thread_state(canonical)
             return sent
         except Exception:
@@ -183,6 +216,47 @@ class InboundMessageOrchestrator:
         )
         if inspect.isawaitable(result):
             await result
+
+    def _resolve_arbitration_service(self) -> Any | None:
+        runtime = getattr(self.channel, "runtime", None)
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
+        if not callable(resolve_optional):
+            return None
+        try:
+            arbitration = resolve_optional("arbitration_service")
+        except Exception:
+            logger.debug(
+                "Failed resolving arbitration_service for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return None
+        if arbitration is None:
+            return None
+        enqueue = getattr(arbitration, "enqueue", None)
+        return arbitration if callable(enqueue) else None
+
+    def _derive_arbitration_keys(
+        self,
+        *,
+        canonical: CanonicalInboundEvent,
+        incoming: Any,
+    ) -> tuple[str | tuple[str, str], str]:
+        metadata = getattr(incoming, "channel_metadata", {}) or {}
+        room_or_conversation_id = (
+            str(metadata.get("room_id", "") or "").strip()
+            or str(metadata.get("conversation_id", "") or "").strip()
+            or str(metadata.get("channel_id", "") or "").strip()
+            or canonical.thread_id
+        )
+        user_id = str(
+            getattr(getattr(incoming, "user", None), "user_id", "") or ""
+        ).strip()
+        if room_or_conversation_id and user_id:
+            return (room_or_conversation_id, user_id), room_or_conversation_id
+        return canonical.thread_id, room_or_conversation_id or canonical.thread_id
 
     @staticmethod
     def _normalize_coordination_store(store: Any) -> CoordinationStore | None:

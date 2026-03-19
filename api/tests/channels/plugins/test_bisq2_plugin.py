@@ -105,6 +105,34 @@ class TestBisq2ChannelProperties:
         )
         assert target == "support.support"
 
+    @pytest.mark.unit
+    def test_get_staff_notification_target_prefers_metadata_override(self):
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = MagicMock()
+        runtime.settings.BISQ2_STAFF_NOTIFICATION_TARGET = "support.staff"
+        channel = Bisq2Channel(runtime)
+
+        target = channel.get_staff_notification_target(
+            {"staff_room_id": "support.staff.override"}
+        )
+        assert target == "support.staff.override"
+
+    @pytest.mark.unit
+    def test_get_staff_notification_target_uses_config_fallback(self):
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = MagicMock()
+        runtime.settings.BISQ2_STAFF_NOTIFICATION_TARGET = "support.staff"
+        channel = Bisq2Channel(runtime)
+
+        target = channel.get_staff_notification_target({})
+        assert target == "support.staff"
+
 
 class TestBisq2ChannelLifecycle:
     """Test Bisq2Channel lifecycle methods."""
@@ -482,7 +510,9 @@ class TestBisq2ChannelMessageHandling:
         outgoing = MagicMock(spec=OutgoingMessage)
         result = await channel.send_message("bisq2-conversation-id", outgoing)
 
-        assert result is False
+        assert bool(result) is False
+        assert result.external_message_id is None
+        assert result.error == "bisq2_api_unavailable"
 
 
 class TestBisq2ChannelPolling:
@@ -1146,6 +1176,88 @@ class TestBisq2ChannelPolling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_poll_conversations_does_not_treat_alias_as_staff(self):
+        """Display alias alone must not suppress messages as trusted staff."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        staff_resolver = MagicMock()
+        staff_resolver.is_staff.side_effect = lambda value: value == "staff-001"
+
+        def resolve_optional(name: str):
+            if name == "staff_resolver":
+                return staff_resolver
+            return None
+
+        runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+        channel = Bisq2Channel(runtime)
+
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "alias-only-1",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "author": "Support Staff",
+                    "text": "I am pretending to be staff.",
+                    "timestamp": 1760000000000,
+                },
+            }
+        )
+
+        messages = await channel.poll_conversations()
+        assert [message.message_id for message in messages] == ["alias-only-1"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_poll_conversations_records_staff_activity_for_trusted_staff(self):
+        """Trusted staff message should update arbitration staff-activity state."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        staff_resolver = MagicMock()
+        staff_resolver.is_staff.side_effect = lambda value: value == "staff-001"
+        arbitration_service = MagicMock()
+        arbitration_service.record_staff_activity = AsyncMock()
+
+        def resolve_optional(name: str):
+            if name == "staff_resolver":
+                return staff_resolver
+            if name == "arbitration_service":
+                return arbitration_service
+            return None
+
+        runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+        channel = Bisq2Channel(runtime)
+
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "staff-activity-1",
+                    "channelId": "support.support",
+                    "conversationId": "support.support",
+                    "senderUserProfileId": "staff-001",
+                    "author": "Support Staff",
+                    "text": "We'll take this one.",
+                    "timestamp": 1760000000000,
+                },
+            }
+        )
+        await channel.poll_conversations()
+
+        arbitration_service.record_staff_activity.assert_awaited_once_with(
+            room_or_conversation_id="support.support",
+            staff_id="staff-001",
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_poll_conversations_filters_non_question_noise_messages(self):
         """Non-question chatter should be dropped before invoking RAG."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel
@@ -1296,5 +1408,5 @@ async def test_send_message_marks_self_sent_message_as_seen():
 
     sent = await channel.send_message("support.support", outgoing)
 
-    assert sent is True
+    assert bool(sent) is True
     assert "self-msg-1" in channel._seen_message_ids

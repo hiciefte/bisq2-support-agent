@@ -42,6 +42,8 @@ def compose_support_answer_markdown(
     answer_text: str,
     sources: Iterable[DocumentReference] | None,
     confidence_score: Optional[float],
+    channel_format: str = "admin",
+    include_confidence: bool | None = None,
 ) -> str:
     """Append deterministic confidence/sources markdown to a support answer.
 
@@ -55,8 +57,27 @@ def compose_support_answer_markdown(
         return base_answer
 
     source_entries = _build_source_entries(sources)
-    confidence_value = _render_confidence_value(confidence_score)
-    source_mix = _render_source_mix(source_entries)
+    normalized_format = str(channel_format or "admin").strip().lower() or "admin"
+    should_include_confidence = (
+        normalized_format == "admin"
+        if include_confidence is None
+        else bool(include_confidence)
+    )
+    confidence_value = (
+        _render_confidence_value(confidence_score)
+        if should_include_confidence
+        else None
+    )
+    source_mix = (
+        _render_source_mix(source_entries) if normalized_format == "admin" else None
+    )
+
+    if normalized_format == "matrix":
+        return _render_matrix_answer(base_answer, source_entries)
+    if normalized_format == "bisq2":
+        return _render_bisq2_answer(base_answer, source_entries)
+    if normalized_format == "web":
+        return _render_web_answer(base_answer, source_entries)
 
     footer_lines: list[str] = []
     if confidence_value or source_mix:
@@ -77,6 +98,57 @@ def compose_support_answer_markdown(
     if not footer_lines:
         return base_answer
     return f"{base_answer}\n\n" + "\n".join(footer_lines)
+
+
+def _render_matrix_answer(
+    base_answer: str,
+    source_entries: list[_RenderedSource],
+) -> str:
+    if not source_entries:
+        return base_answer
+
+    links: list[str] = []
+    for entry in source_entries:
+        title = _escape_markdown_inline(entry.title)
+        if entry.url:
+            links.append(f"[{title}]({entry.url})")
+        else:
+            links.append(title)
+
+    if not links:
+        return base_answer
+    return f"{base_answer}\n\nsources: {', '.join(links)}"
+
+
+def _render_bisq2_answer(
+    base_answer: str,
+    source_entries: list[_RenderedSource],
+) -> str:
+    if not source_entries:
+        return base_answer
+    entry = source_entries[0]
+    title = _escape_markdown_inline(entry.title)
+    source_type = _escape_markdown_inline(entry.source_type)
+    if entry.url:
+        return f"{base_answer}\n\nsource: [{source_type}] [{title}]({entry.url})"
+    return f"{base_answer}\n\nsource: [{source_type}] {title}"
+
+
+def _render_web_answer(
+    base_answer: str,
+    source_entries: list[_RenderedSource],
+) -> str:
+    if not source_entries:
+        return base_answer
+    lines = ["---", "", "Sources"]
+    for entry in source_entries:
+        source_type = _escape_markdown_inline(entry.source_type)
+        title = _escape_markdown_inline(entry.title)
+        if entry.url:
+            lines.append(f"- [{source_type}] [{title}]({entry.url})")
+        else:
+            lines.append(f"- [{source_type}] {title}")
+    return f"{base_answer}\n\n" + "\n".join(lines)
 
 
 def serialize_sources_for_tracking(
@@ -165,16 +237,23 @@ def render_plain_text_from_markdown(markdown_text: str) -> str:
     return _strip_dangerous_chars(text) or ""
 
 
-def build_matrix_message_content(markdown_text: str) -> dict[str, Any]:
+def build_matrix_message_content(
+    markdown_text: str,
+    *,
+    msgtype: str = "m.text",
+) -> dict[str, Any]:
     """Build Matrix payload with plain-text fallback plus rich HTML body."""
     source = (markdown_text or "").strip()
+    normalized_msgtype = str(msgtype or "m.text").strip().lower()
+    if normalized_msgtype not in {"m.text", "m.notice"}:
+        normalized_msgtype = "m.text"
     if not source:
-        return {"msgtype": "m.text", "body": ""}
+        return {"msgtype": normalized_msgtype, "body": ""}
 
     plain_body = render_plain_text_from_markdown(source) or source
     html_body = render_markdown_for_matrix(source)
     content: dict[str, Any] = {
-        "msgtype": "m.text",
+        "msgtype": normalized_msgtype,
         "body": plain_body,
     }
     if html_body:

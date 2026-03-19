@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.channels.arbitration.coordinator import ArbitrationCoordinator
 from app.channels.coordination import InMemoryCoordinationStore
 from app.channels.events import thread_lock_key
 from app.channels.inbound_orchestrator import InboundMessageOrchestrator
@@ -255,3 +256,117 @@ async def test_orchestrator_handles_missing_runtime_resolve_optional():
 
     assert processed is True
     channel.handle_incoming.assert_awaited_once_with(incoming)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_delegates_to_arbitration_when_available():
+    feedback_followup = MagicMock()
+    feedback_followup.consume_if_pending = AsyncMock(return_value=False)
+
+    arbitration = MagicMock()
+    arbitration.enqueue = AsyncMock(return_value=False)
+    arbitration.record_staff_activity = AsyncMock()
+
+    def resolve_optional(name: str):
+        if name == "feedback_followup_coordinator":
+            return feedback_followup
+        if name == "arbitration_service":
+            return arbitration
+        return None
+
+    runtime = MagicMock()
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    channel = MagicMock()
+    channel.channel_id = "matrix"
+    channel.runtime = runtime
+    channel.handle_incoming = AsyncMock()
+
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(return_value=True)
+
+    incoming = SimpleNamespace(
+        message_id="$evt1",
+        channel=SimpleNamespace(value="matrix"),
+        channel_metadata={"room_id": "!room:server"},
+        question="Need help",
+        user=SimpleNamespace(user_id="@user:server"),
+    )
+
+    orchestrator = InboundMessageOrchestrator(
+        channel=channel,
+        channel_id="matrix",
+        dispatcher=dispatcher,
+        autoresponse_policy_service=None,
+        coordination_store=InMemoryCoordinationStore(),
+    )
+
+    processed = await orchestrator.process_incoming(incoming)
+
+    assert processed is False
+    arbitration.enqueue.assert_awaited_once()
+    channel.handle_incoming.assert_not_awaited()
+    dispatcher.dispatch.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_sends_acknowledgment_reaction_before_arbitration_enqueue():
+    feedback_followup = MagicMock()
+    feedback_followup.consume_if_pending = AsyncMock(return_value=False)
+
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = SimpleNamespace(
+        enabled=True,
+        generation_enabled=True,
+        first_response_delay_seconds=300,
+        acknowledgment_mode="reaction",
+        acknowledgment_reaction_key="👀",
+        acknowledgment_message_template=(
+            "Thanks for your question. A team member or our assistant will respond shortly."
+        ),
+    )
+
+    runtime = MagicMock()
+
+    channel = MagicMock()
+    channel.channel_id = "matrix"
+    channel.runtime = runtime
+    channel.send_reaction = AsyncMock(return_value=True)
+    channel.get_delivery_target = MagicMock(return_value="!room:server")
+    channel.handle_incoming = AsyncMock()
+
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(return_value=True)
+
+    incoming = SimpleNamespace(
+        message_id="$evt2",
+        channel=SimpleNamespace(value="matrix"),
+        channel_metadata={"room_id": "!room:server"},
+        question="Need help",
+        user=SimpleNamespace(user_id="@user:server"),
+    )
+    arbitration = ArbitrationCoordinator(policy_service=policy_service)
+
+    def resolve_optional(name: str):
+        if name == "arbitration_service":
+            return arbitration
+        if name == "feedback_followup_coordinator":
+            return feedback_followup
+        return None
+
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    orchestrator = InboundMessageOrchestrator(
+        channel=channel,
+        channel_id="matrix",
+        dispatcher=dispatcher,
+        autoresponse_policy_service=policy_service,
+        coordination_store=InMemoryCoordinationStore(),
+    )
+
+    processed = await orchestrator.process_incoming(incoming)
+
+    assert processed is False
+    channel.send_reaction.assert_awaited_once_with("!room:server", "$evt2", "👀")

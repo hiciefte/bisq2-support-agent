@@ -10,15 +10,27 @@ from typing import Any, Set
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
-from app.channels.models import ChannelCapability, ChannelType, OutgoingMessage
-from app.channels.plugins.matrix.room_filter import resolve_allowed_sync_rooms
+from app.channels.models import (
+    ChannelCapability,
+    ChannelType,
+    OutgoingMessage,
+    SendResult,
+)
+from app.channels.plugins.matrix.room_filter import (
+    resolve_allowed_reaction_rooms,
+    resolve_allowed_sync_rooms,
+)
 from app.channels.plugins.support_markdown import (
     build_matrix_message_content,
     compose_support_answer_markdown,
     serialize_sources_for_tracking,
 )
 from app.channels.registry import register_channel
-from app.channels.staff import StaffResolver, collect_trusted_staff_ids
+from app.channels.staff import (
+    StaffResolver,
+    collect_staff_display_names,
+    collect_trusted_staff_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +100,7 @@ class MatrixChannel(ChannelBase):
         if not matrix_user:
             return
         allowed_room_ids = resolve_allowed_sync_rooms(settings)
+        reaction_allowed_room_ids = resolve_allowed_reaction_rooms(settings)
         session_path = Path(str(settings.MATRIX_SYNC_SESSION_PATH)).expanduser()
         store_dir = session_path.parent / f"{session_path.stem}_store"
         encryption_enabled = bool(ENCRYPTION_ENABLED)
@@ -135,7 +148,11 @@ class MatrixChannel(ChannelBase):
         )
 
         matrix_staff_resolver = StaffResolver(
-            trusted_staff_ids=collect_trusted_staff_ids(settings),
+            trusted_staff_ids=collect_trusted_staff_ids(
+                settings,
+                channel_id="matrix",
+            ),
+            display_names=collect_staff_display_names(settings),
         )
         runtime.register("staff_resolver", matrix_staff_resolver, allow_override=True)
 
@@ -149,6 +166,7 @@ class MatrixChannel(ChannelBase):
                     "channel_autoresponse_policy_service"
                 ),
                 allowed_room_ids=allowed_room_ids,
+                staff_command_room_ids=reaction_allowed_room_ids,
                 channel_id="matrix",
             ),
             allow_override=True,
@@ -161,7 +179,7 @@ class MatrixChannel(ChannelBase):
                 MatrixReactionHandler(
                     runtime=runtime,
                     processor=reaction_processor,
-                    allowed_room_ids=allowed_room_ids,
+                    allowed_room_ids=reaction_allowed_room_ids,
                 ),
                 allow_override=True,
             )
@@ -187,6 +205,28 @@ class MatrixChannel(ChannelBase):
     def channel_type(self) -> ChannelType:
         """Return channel type for outgoing messages."""
         return ChannelType.MATRIX
+
+    def get_staff_notification_target(
+        self, metadata: dict[str, Any] | None = None
+    ) -> str:
+        """Resolve staff notification room target for escalation notices.
+
+        Priority:
+        1) Per-message metadata override (`staff_room_id`)
+        2) Dedicated Matrix staff room (`MATRIX_STAFF_ROOM`)
+        3) Matrix alert room fallback (`MATRIX_ALERT_ROOM`) for local/dev testing
+        """
+        payload = metadata if isinstance(metadata, dict) else {}
+        metadata_target = str(payload.get("staff_room_id", "") or "").strip()
+        if metadata_target:
+            return metadata_target
+
+        settings = getattr(self.runtime, "settings", None)
+        staff_room = str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
+        if staff_room:
+            return staff_room
+
+        return str(getattr(settings, "MATRIX_ALERT_ROOM", "") or "").strip()
 
     async def start(self) -> None:
         """Start the Matrix channel.
@@ -275,7 +315,7 @@ class MatrixChannel(ChannelBase):
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
 
-    async def send_message(self, target: str, message: OutgoingMessage) -> bool:
+    async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send response to Matrix room.
 
         Uses Matrix nio AsyncClient to send text message to room.
@@ -295,7 +335,7 @@ class MatrixChannel(ChannelBase):
             self._logger.warning(
                 "Matrix client not registered in runtime, cannot send message"
             )
-            return False
+            return SendResult(sent=False, error="matrix_client_unavailable")
 
         try:
             _meta = getattr(message, "metadata", None)
@@ -303,8 +343,10 @@ class MatrixChannel(ChannelBase):
                 message.answer,
                 sources=getattr(message, "sources", []),
                 confidence_score=getattr(_meta, "confidence_score", None),
+                channel_format="matrix",
             )
-            content = build_matrix_message_content(rendered_answer)
+            msgtype = self._resolve_message_msgtype(_meta)
+            content = build_matrix_message_content(rendered_answer, msgtype=msgtype)
             in_reply_to = str(getattr(message, "in_reply_to", "") or "").strip()
             if in_reply_to:
                 content["m.relates_to"] = {"m.in_reply_to": {"event_id": in_reply_to}}
@@ -327,6 +369,19 @@ class MatrixChannel(ChannelBase):
                 ),
                 timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
             )
+            response, was_recovered = await self._recover_and_retry_room_send_if_needed(
+                client=client,
+                target=target,
+                response=response,
+                message_type="m.room.message",
+                content=content,
+                ignore_unverified_devices=ignore_unverified_devices,
+            )
+            if was_recovered:
+                self._logger.info(
+                    "Recovered Matrix room state and retried message send room_id=%s",
+                    target,
+                )
 
             # Check for successful send (has event_id)
             if hasattr(response, "event_id") and response.event_id:
@@ -358,24 +413,231 @@ class MatrixChannel(ChannelBase):
                         )
                     except Exception as e:
                         self._logger.warning(f"Failed to track sent message: {e}")
-                return True
+                return SendResult(
+                    sent=True,
+                    external_message_id=str(response.event_id),
+                    editable=True,
+                )
             else:
                 # Error response
                 error_msg = getattr(response, "message", "Unknown error")
                 self._logger.error(f"Failed to send message to {target}: {error_msg}")
-                return False
+                return SendResult(sent=False, error=str(error_msg))
 
         except asyncio.TimeoutError:
             self._logger.error(
                 f"Timed out sending message to Matrix room {target} "
                 f"after {self.MATRIX_OP_TIMEOUT_SECONDS}s"
             )
-            return False
+            return SendResult(sent=False, error="matrix_send_timeout")
         except Exception as e:
+            if self._is_missing_room_error(str(e)):
+                recovered = await self._recover_missing_room_state(client, target)
+                if recovered:
+                    try:
+                        runtime_settings = getattr(self.runtime, "settings", None)
+                        ignore_unverified_devices = bool(
+                            getattr(
+                                runtime_settings,
+                                "MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES",
+                                True,
+                            )
+                        )
+                        retry_response = await asyncio.wait_for(
+                            client.room_send(
+                                room_id=target,
+                                message_type="m.room.message",
+                                content=content,
+                                ignore_unverified_devices=ignore_unverified_devices,
+                            ),
+                            timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+                        )
+                        if (
+                            hasattr(retry_response, "event_id")
+                            and retry_response.event_id
+                        ):
+                            self._logger.info(
+                                "Recovered Matrix room state after send exception "
+                                "room_id=%s",
+                                target,
+                            )
+                            return SendResult(
+                                sent=True,
+                                external_message_id=str(retry_response.event_id),
+                                editable=True,
+                            )
+                    except Exception:
+                        self._logger.debug(
+                            "Matrix send retry after room recovery failed room_id=%s",
+                            target,
+                            exc_info=True,
+                        )
             self._logger.exception(
                 f"Error sending message to Matrix room {target}: {e}"
             )
+            return SendResult(sent=False, error=str(e))
+
+    @staticmethod
+    def _resolve_message_msgtype(metadata: Any | None) -> str:
+        routing_action = (
+            str(getattr(metadata, "routing_action", "") or "").strip().lower()
+        )
+        if routing_action.endswith("_notice"):
+            return "m.notice"
+        return "m.text"
+
+    async def send_reaction(self, room_id: str, event_id: str, key: str) -> bool:
+        """Send Matrix ``m.reaction`` annotation for a room event."""
+        client = self.runtime.resolve_optional("matrix_client")
+        if not client:
+            self._logger.warning(
+                "Matrix client not registered in runtime, cannot send reaction"
+            )
             return False
+
+        normalized_room_id = str(room_id or "").strip()
+        normalized_event_id = str(event_id or "").strip()
+        normalized_key = str(key or "").strip()
+        if not normalized_room_id or not normalized_event_id or not normalized_key:
+            return False
+
+        runtime_settings = getattr(self.runtime, "settings", None)
+        ignore_unverified_devices = bool(
+            getattr(runtime_settings, "MATRIX_SYNC_IGNORE_UNVERIFIED_DEVICES", True)
+        )
+        content = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": normalized_event_id,
+                "key": normalized_key,
+            }
+        }
+        try:
+            response = await asyncio.wait_for(
+                client.room_send(
+                    room_id=normalized_room_id,
+                    message_type="m.reaction",
+                    content=content,
+                    ignore_unverified_devices=ignore_unverified_devices,
+                ),
+                timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self._logger.error(
+                "Timed out sending Matrix reaction room_id=%s event_id=%s",
+                normalized_room_id,
+                normalized_event_id,
+            )
+            return False
+        except Exception:
+            self._logger.exception(
+                "Failed to send Matrix reaction room_id=%s event_id=%s",
+                normalized_room_id,
+                normalized_event_id,
+            )
+            return False
+
+        return bool(getattr(response, "event_id", None))
+
+    @staticmethod
+    def _is_missing_room_error(error_message: str) -> bool:
+        normalized = str(error_message or "").strip().lower()
+        return normalized.startswith("no such room with id")
+
+    async def _recover_missing_room_state(self, client: Any, room_id: str) -> bool:
+        """Try to make a room available in the nio client local room cache."""
+        normalized_room_id = str(room_id or "").strip()
+        if not normalized_room_id:
+            return False
+
+        room_known_before = self._client_knows_room(client, normalized_room_id)
+        if room_known_before is True:
+            return True
+
+        recovered = False
+        sync = getattr(client, "sync", None)
+        if callable(sync):
+            try:
+                await asyncio.wait_for(
+                    sync(timeout=0, full_state=True),
+                    timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+                )
+                recovered = True
+            except Exception:
+                self._logger.debug(
+                    "Matrix full-state sync failed while recovering room_id=%s",
+                    normalized_room_id,
+                    exc_info=True,
+                )
+
+        room_known_after_sync = self._client_knows_room(client, normalized_room_id)
+        if room_known_after_sync is True:
+            return True
+
+        join = getattr(client, "join", None)
+        if callable(join):
+            try:
+                join_response = await asyncio.wait_for(
+                    join(normalized_room_id),
+                    timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+                )
+                if getattr(join_response, "room_id", ""):
+                    recovered = True
+            except Exception:
+                self._logger.debug(
+                    "Matrix join failed while recovering room_id=%s",
+                    normalized_room_id,
+                    exc_info=True,
+                )
+
+        room_known_after_join = self._client_knows_room(client, normalized_room_id)
+        if room_known_after_join is True:
+            return True
+
+        return recovered
+
+    @staticmethod
+    def _client_knows_room(client: Any, room_id: str) -> bool | None:
+        """Check whether the nio client currently tracks a given room."""
+        rooms = getattr(client, "rooms", None)
+        if rooms is None:
+            return None
+        try:
+            return bool(room_id in rooms)
+        except Exception:
+            return None
+
+    async def _recover_and_retry_room_send_if_needed(
+        self,
+        client: Any,
+        target: str,
+        response: Any,
+        message_type: str,
+        content: dict[str, Any],
+        ignore_unverified_devices: bool,
+    ) -> tuple[Any, bool]:
+        """Retry room_send once if nio says the room is missing from local cache."""
+        if hasattr(response, "event_id") and getattr(response, "event_id", None):
+            return response, False
+
+        error_message = str(getattr(response, "message", "") or "").strip()
+        if not self._is_missing_room_error(error_message):
+            return response, False
+
+        recovered = await self._recover_missing_room_state(client, target)
+        if not recovered:
+            return response, False
+
+        retry_response = await asyncio.wait_for(
+            client.room_send(
+                room_id=target,
+                message_type=message_type,
+                content=content,
+                ignore_unverified_devices=ignore_unverified_devices,
+            ),
+            timeout=self.MATRIX_OP_TIMEOUT_SECONDS,
+        )
+        return retry_response, True
 
     def get_delivery_target(self, metadata: dict[str, Any]) -> str:
         """Extract Matrix room ID from channel metadata."""

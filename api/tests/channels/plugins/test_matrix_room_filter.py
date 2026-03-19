@@ -2,6 +2,7 @@
 
 from app.channels.plugins.matrix.room_filter import (
     normalize_room_ids,
+    resolve_allowed_reaction_rooms,
     resolve_allowed_sync_rooms,
 )
 
@@ -21,3 +22,14 @@ def test_resolve_allowed_sync_rooms_from_settings_object() -> None:
         MATRIX_SYNC_ROOMS = ["!sync:matrix.org"]
 
     assert resolve_allowed_sync_rooms(_Settings()) == frozenset({"!sync:matrix.org"})
+
+
+def test_resolve_allowed_reaction_rooms_includes_sync_staff_and_alert() -> None:
+    class _Settings:
+        MATRIX_SYNC_ROOMS = ["!sync:matrix.org"]
+        MATRIX_STAFF_ROOM = "!staff:matrix.org"
+        MATRIX_ALERT_ROOM = "!alert:matrix.org"
+
+    assert resolve_allowed_reaction_rooms(_Settings()) == frozenset(
+        {"!sync:matrix.org", "!staff:matrix.org", "!alert:matrix.org"}
+    )

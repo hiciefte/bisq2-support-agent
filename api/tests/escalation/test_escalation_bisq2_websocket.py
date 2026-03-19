@@ -102,7 +102,7 @@ class TestBisq2DeliveryViaREST:
         msg = _make_outgoing()
         result = await channel.send_message("conv-123", msg)
 
-        assert result is True
+        assert bool(result) is True
         bisq_api.send_support_message.assert_called_once()
 
     @pytest.mark.asyncio
@@ -115,7 +115,7 @@ class TestBisq2DeliveryViaREST:
         msg = _make_outgoing()
         result = await channel.send_message("conv-123", msg)
 
-        assert result is False
+        assert bool(result) is False
 
 
 class TestBisq2WebSocketComposition:

@@ -25,6 +25,31 @@ def _matrix_event(
     return room, event
 
 
+def _matrix_reply_event(
+    *,
+    room_id: str = "!room:server",
+    sender: str = "@staff:server",
+    event_id: str = "$evt-reply:server",
+    body: str = "/send Edited message",
+    reply_to_event_id: str = "$staff-notice:server",
+) -> tuple[MagicMock, MagicMock]:
+    room = MagicMock()
+    room.room_id = room_id
+    event = MagicMock()
+    event.sender = sender
+    event.event_id = event_id
+    event.body = body
+    event.source = {
+        "content": {
+            "body": body,
+            "m.relates_to": {
+                "m.in_reply_to": {"event_id": reply_to_event_id},
+            },
+        }
+    }
+    return room, event
+
+
 def _outgoing_response(*, routing_action: str = "auto_send") -> MagicMock:
     outgoing = MagicMock()
     outgoing.metadata = MagicMock()
@@ -40,7 +65,14 @@ def _outgoing_response(*, routing_action: str = "auto_send") -> MagicMock:
 
 def _enabled_policy_service() -> MagicMock:
     svc = MagicMock()
-    svc.get_policy.return_value = MagicMock(enabled=True, generation_enabled=True)
+    svc.get_policy.return_value = MagicMock(
+        enabled=True,
+        generation_enabled=True,
+        ai_response_mode="autonomous",
+        first_response_delay_seconds=0,
+        staff_active_cooldown_seconds=300,
+        hitl_approval_timeout_seconds=3600,
+    )
     return svc
 
 
@@ -277,6 +309,47 @@ async def test_on_message_skips_on_encrypted_decrypt_error(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_message_treats_staff_resolver_failures_as_non_staff() -> None:
+    client = MagicMock()
+    client.user_id = "@agent:server"
+    connection_manager = MagicMock()
+    connection_manager.sync_forever = AsyncMock()
+
+    outgoing = _outgoing_response(routing_action="auto_send")
+    runtime = MagicMock()
+
+    def resolve_optional(name: str):
+        if name == "feedback_followup_coordinator":
+            return None
+        if name == "staff_resolver":
+            raise RuntimeError("resolver unavailable")
+        return None
+
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.handle_incoming = AsyncMock(return_value=outgoing)
+    channel.get_delivery_target = MagicMock(return_value="!room:server")
+    channel.send_message = AsyncMock(return_value=True)
+
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
+        allowed_room_ids=["!room:server"],
+        channel_id="matrix",
+    )
+
+    room, event = _matrix_event(sender="@user:server")
+    await handler._on_message(room, event)
+
+    channel.handle_incoming.assert_awaited_once()
+    channel.send_message.assert_awaited_once_with("!room:server", outgoing)
+
+
+@pytest.mark.asyncio
 async def test_on_message_queues_when_autosend_disabled() -> None:
     client = MagicMock()
     client.user_id = "@agent:server"
@@ -392,6 +465,7 @@ async def test_on_message_ignores_sender_when_same_as_matrix_user() -> None:
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
     )
 
@@ -412,12 +486,16 @@ async def test_on_message_ignores_staff_sender() -> None:
     staff_resolver.is_staff.return_value = True
 
     runtime = MagicMock()
+    arbitration_service = MagicMock()
+    arbitration_service.record_staff_activity = AsyncMock()
 
     def resolve_optional(name: str):
         if name == "staff_resolver":
             return staff_resolver
         if name == "feedback_followup_coordinator":
             return None
+        if name == "arbitration_service":
+            return arbitration_service
         return None
 
     runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
@@ -430,6 +508,7 @@ async def test_on_message_ignores_staff_sender() -> None:
         client=client,
         connection_manager=connection_manager,
         channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
         allowed_room_ids=["!room:server"],
     )
 
@@ -437,6 +516,65 @@ async def test_on_message_ignores_staff_sender() -> None:
     await handler._on_message(room, event)
 
     channel.handle_incoming.assert_not_awaited()
+    arbitration_service.record_staff_activity.assert_awaited_once_with(
+        room_or_conversation_id="!room:server",
+        staff_id="@support:server",
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_message_handles_staff_command_in_staff_room() -> None:
+    client = MagicMock()
+    client.user_id = "@agent:server"
+    connection_manager = MagicMock()
+    connection_manager.sync_forever = AsyncMock()
+
+    staff_resolver = MagicMock()
+    staff_resolver.is_staff.return_value = True
+    matrix_reaction_handler = MagicMock()
+    matrix_reaction_handler.handle_staff_command = AsyncMock(return_value=True)
+
+    runtime = MagicMock()
+    arbitration_service = MagicMock()
+    arbitration_service.record_staff_activity = AsyncMock()
+
+    def resolve_optional(name: str):
+        if name == "staff_resolver":
+            return staff_resolver
+        if name == "feedback_followup_coordinator":
+            return None
+        if name == "arbitration_service":
+            return arbitration_service
+        if name == "matrix_reaction_handler":
+            return matrix_reaction_handler
+        return None
+
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.handle_incoming = AsyncMock()
+
+    handler = MatrixMessageHandler(
+        client=client,
+        connection_manager=connection_manager,
+        channel=channel,
+        autoresponse_policy_service=_enabled_policy_service(),
+        allowed_room_ids=["!sync:server"],
+        staff_command_room_ids=["!staff:server"],
+    )
+
+    room, event = _matrix_reply_event(room_id="!staff:server", sender="@support:server")
+    await handler._on_message(room, event)
+
+    matrix_reaction_handler.handle_staff_command.assert_awaited_once_with(
+        room_id="!staff:server",
+        reply_to_event_id="$staff-notice:server",
+        command_text="/send Edited message",
+        sender="@support:server",
+    )
+    channel.handle_incoming.assert_not_awaited()
+    arbitration_service.record_staff_activity.assert_awaited_once()
 
 
 @pytest.mark.asyncio
