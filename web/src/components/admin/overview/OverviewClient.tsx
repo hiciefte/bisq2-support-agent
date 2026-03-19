@@ -541,6 +541,7 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
             onAlertSurfaceChange={(surface) => {
               void setTrustMonitorAlertSurface(surface);
             }}
+            defaultCollapsed
           />
         </section>
 

@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { Loader2, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ChevronDown, Loader2, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { TrustAlertSurface, TrustMonitorPolicy } from "@/components/admin/security/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -20,6 +21,7 @@ interface TrustMonitoringCardProps {
   onEnabledChange: (enabled: boolean) => void;
   onDetectorToggle: (detector: "name_collision_enabled" | "silent_observer_enabled", value: boolean) => void;
   onAlertSurfaceChange: (surface: TrustAlertSurface) => void;
+  defaultCollapsed?: boolean;
 }
 
 const TRUST_ALERT_SURFACES: readonly TrustAlertSurface[] = [
@@ -54,127 +56,146 @@ export function TrustMonitoringCard({
   onEnabledChange,
   onDetectorToggle,
   onAlertSurfaceChange,
+  defaultCollapsed = false,
 }: TrustMonitoringCardProps) {
   const rollout = rolloutState(policy);
   const showPromotionWarning = policy?.enabled && (policy.alert_surface === "staff_room" || policy.alert_surface === "both");
+  const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 
   return (
-    <Card className="border-border/70 bg-card/70">
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-1">
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Card className="border-border/70 bg-card/70">
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg">Trust Monitoring</CardTitle>
+                <Badge variant="secondary" className="border border-border/60 bg-background/70 text-xs text-muted-foreground">
+                  {rollout.label}
+                </Badge>
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+              </div>
+              <p className="text-sm text-muted-foreground">{rollout.description}</p>
+            </div>
             <div className="flex items-center gap-2">
-              <CardTitle className="text-lg">Trust Monitoring</CardTitle>
-              <Badge variant="secondary" className="border border-border/60 bg-background/70 text-xs text-muted-foreground">
-                {rollout.label}
-              </Badge>
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+              {error ? (
+                <Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>
+              ) : null}
+              <CollapsibleTrigger asChild>
+                <Button variant="outline" size="sm">
+                  {isOpen ? "Hide controls" : "Show controls"}
+                  <ChevronDown
+                    className={cn(
+                      "ml-2 h-4 w-4 transition-transform duration-200",
+                      isOpen ? "rotate-180" : "rotate-0",
+                    )}
+                  />
+                </Button>
+              </CollapsibleTrigger>
             </div>
-            <p className="text-sm text-muted-foreground">{rollout.description}</p>
           </div>
-          {error ? (
-            <Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>
-          ) : null}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {error ? (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-            {error}
-          </div>
-        ) : null}
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent className="space-y-4 pt-0">
+            {error ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+                {error}
+              </div>
+            ) : null}
 
-        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/40 px-4 py-3">
-          <div>
-            <div className="text-sm font-medium">Trust monitoring</div>
-            <div className="text-xs text-muted-foreground">Enable the shared detector pipeline for Matrix support rooms.</div>
-          </div>
-          <Checkbox
-            checked={policy?.enabled ?? false}
-            disabled={isLoading || policy === null}
-            onCheckedChange={(checked) => onEnabledChange(Boolean(checked))}
-            aria-label="Toggle trust monitoring"
-          />
-        </div>
+            <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/40 px-4 py-3">
+              <div>
+                <div className="text-sm font-medium">Trust monitoring</div>
+                <div className="text-xs text-muted-foreground">Enable the shared detector pipeline for Matrix support rooms.</div>
+              </div>
+              <Checkbox
+                checked={policy?.enabled ?? false}
+                disabled={isLoading || policy === null}
+                onCheckedChange={(checked) => onEnabledChange(Boolean(checked))}
+                aria-label="Toggle trust monitoring"
+              />
+            </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <DetectorToggle
-            title="Staff Name Collision"
-            description="Detect accounts using a trusted staff display name with a different user ID."
-            checked={policy?.name_collision_enabled ?? false}
-            disabled={isLoading || policy === null || !policy?.enabled}
-            icon={<ShieldAlert className="h-4 w-4 text-amber-300" />}
-            onChange={(value) => onDetectorToggle("name_collision_enabled", value)}
-          />
-          <DetectorToggle
-            title="Silent Observer"
-            description="Track early readers with low reply activity and keep them in review until validated."
-            checked={policy?.silent_observer_enabled ?? false}
-            disabled={isLoading || policy === null || !policy?.enabled}
-            icon={<Radar className="h-4 w-4 text-blue-300" />}
-            onChange={(value) => onDetectorToggle("silent_observer_enabled", value)}
-          />
-        </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <DetectorToggle
+                title="Staff Name Collision"
+                description="Detect accounts using a trusted staff display name with a different user ID."
+                checked={policy?.name_collision_enabled ?? false}
+                disabled={isLoading || policy === null || !policy?.enabled}
+                icon={<ShieldAlert className="h-4 w-4 text-amber-300" />}
+                onChange={(value) => onDetectorToggle("name_collision_enabled", value)}
+              />
+              <DetectorToggle
+                title="Silent Observer"
+                description="Track early readers with low reply activity and keep them in review until validated."
+                checked={policy?.silent_observer_enabled ?? false}
+                disabled={isLoading || policy === null || !policy?.enabled}
+                icon={<Radar className="h-4 w-4 text-blue-300" />}
+                onChange={(value) => onDetectorToggle("silent_observer_enabled", value)}
+              />
+            </div>
 
-        <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <ShieldCheck className="h-4 w-4 text-emerald-300" />
-            Alert destination
-          </div>
-          <ToggleGroup
-            type="single"
-            value={policy?.alert_surface ?? "admin_ui"}
-            onValueChange={(value) => {
-              if (TRUST_ALERT_SURFACES.includes(value as TrustAlertSurface)) {
-                onAlertSurfaceChange(value as TrustAlertSurface);
-              }
-            }}
-            className="justify-start"
-          >
-            <ToggleGroupItem value="admin_ui" variant="outline" size="sm">Admin UI</ToggleGroupItem>
-            <ToggleGroupItem value="staff_room" variant="outline" size="sm">Staff Room</ToggleGroupItem>
-            <ToggleGroupItem value="both" variant="outline" size="sm">Both</ToggleGroupItem>
-            <ToggleGroupItem value="none" variant="outline" size="sm">None</ToggleGroupItem>
-          </ToggleGroup>
-          {policy?.silent_observer_enabled && policy.alert_surface === "admin_ui" ? (
-            <div className="text-xs text-muted-foreground">
-              Silent Observer is active in shadow mode. Findings are visible in Admin UI only.
+            <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <ShieldCheck className="h-4 w-4 text-emerald-300" />
+                Alert destination
+              </div>
+              <ToggleGroup
+                type="single"
+                value={policy?.alert_surface ?? "admin_ui"}
+                onValueChange={(value) => {
+                  if (TRUST_ALERT_SURFACES.includes(value as TrustAlertSurface)) {
+                    onAlertSurfaceChange(value as TrustAlertSurface);
+                  }
+                }}
+                className="justify-start"
+              >
+                <ToggleGroupItem value="admin_ui" variant="outline" size="sm">Admin UI</ToggleGroupItem>
+                <ToggleGroupItem value="staff_room" variant="outline" size="sm">Staff Room</ToggleGroupItem>
+                <ToggleGroupItem value="both" variant="outline" size="sm">Both</ToggleGroupItem>
+                <ToggleGroupItem value="none" variant="outline" size="sm">None</ToggleGroupItem>
+              </ToggleGroup>
+              {policy?.silent_observer_enabled && policy.alert_surface === "admin_ui" ? (
+                <div className="text-xs text-muted-foreground">
+                  Silent Observer is active in shadow mode. Findings are visible in Admin UI only.
+                </div>
+              ) : null}
+              {showPromotionWarning ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+                  Promotion is live. Findings may now interrupt staff in Matrix. Keep thresholds conservative.
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          {showPromotionWarning ? (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-              Promotion is live. Findings may now interrupt staff in Matrix. Keep thresholds conservative.
-            </div>
-          ) : null}
-        </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3">
-            <div className="text-sm font-medium">Room scope</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Public rooms: {(policy?.matrix_public_room_ids ?? []).join(", ") || "Not configured"}
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3">
+                <div className="text-sm font-medium">Room scope</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Public rooms: {(policy?.matrix_public_room_ids ?? []).join(", ") || "Not configured"}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Staff room: {policy?.matrix_staff_room_id || "Not configured"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3">
+                <div className="text-sm font-medium">Thresholds</div>
+                <div className="mt-1 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div>Window: {policy?.silent_observer_window_days ?? 0}d</div>
+                  <div>Early read: {policy?.early_read_window_seconds ?? 0}s</div>
+                  <div>Min observations: {policy?.minimum_observations ?? 0}</div>
+                  <div>Min hits: {policy?.minimum_early_read_hits ?? 0}</div>
+                </div>
+              </div>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Staff room: {policy?.matrix_staff_room_id || "Not configured"}
+            <div className="flex justify-end">
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/admin/security/alerts">Open security review</Link>
+              </Button>
             </div>
-          </div>
-          <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3">
-            <div className="text-sm font-medium">Thresholds</div>
-            <div className="mt-1 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-              <div>Window: {policy?.silent_observer_window_days ?? 0}d</div>
-              <div>Early read: {policy?.early_read_window_seconds ?? 0}s</div>
-              <div>Min observations: {policy?.minimum_observations ?? 0}</div>
-              <div>Min hits: {policy?.minimum_early_read_hits ?? 0}</div>
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/security/alerts">Open security review</Link>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
 
