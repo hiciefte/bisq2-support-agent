@@ -205,8 +205,10 @@ perform_update() {
 
     # Update repository with stash handling
     local update_status
+    set +e
     update_repository "$INSTALL_DIR" "$GIT_REMOTE" "$GIT_BRANCH"
     update_status=$?
+    set -e
 
     if [ $update_status -eq 2 ]; then
         # No updates available
