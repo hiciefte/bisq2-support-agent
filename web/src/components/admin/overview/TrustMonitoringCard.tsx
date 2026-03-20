@@ -70,7 +70,9 @@ export function TrustMonitoringCard({
   const showPromotionWarning = policy?.enabled && (policy.alert_surface === "staff_room" || policy.alert_surface === "both");
   const [isOpen, setIsOpen] = useState(!defaultCollapsed);
   const trustMonitoringDescription = policy === null
-    ? "Policy state is loading. The browser will retry if the server bootstrap missed it."
+    ? (isLoading
+      ? "Policy state is loading. The browser will retry if the server bootstrap missed it."
+      : "Policy state is unavailable. Retry to fetch the latest policy.")
     : "Enable the shared detector pipeline for Matrix support rooms.";
 
   return (
