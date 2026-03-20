@@ -78,6 +78,64 @@ def test_actor_key_generation_is_stable(tmp_path) -> None:
     assert left != other
 
 
+def test_policy_service_syncs_runtime_fields_from_settings_on_restart(tmp_path) -> None:
+    db_path = tmp_path / "feedback.db"
+    initial = _policy_service(
+        tmp_path,
+        _settings(
+            TRUST_MONITOR_ENABLED=False,
+            TRUST_MONITOR_ALERT_SURFACE="none",
+            TRUST_MONITOR_MATRIX_PUBLIC_ROOMS=[],
+            TRUST_MONITOR_MATRIX_STAFF_ROOM="",
+        ),
+    )
+    initial.set_policy(
+        silent_observer_window_days=21,
+        minimum_observations=9,
+    )
+
+    restarted = TrustMonitorPolicyService(
+        db_path=str(db_path),
+        settings=_settings(
+            TRUST_MONITOR_ENABLED=True,
+            TRUST_MONITOR_ALERT_SURFACE="staff_room",
+            TRUST_MONITOR_MATRIX_PUBLIC_ROOMS=["!prod-support:matrix.org"],
+            TRUST_MONITOR_MATRIX_STAFF_ROOM="!private-staff:matrix.org",
+        ),
+    )
+    policy = restarted.get_policy()
+
+    assert policy.enabled is True
+    assert policy.alert_surface == TrustAlertSurface.STAFF_ROOM
+    assert policy.matrix_public_room_ids == ["!prod-support:matrix.org"]
+    assert policy.matrix_staff_room_id == "!private-staff:matrix.org"
+    assert policy.silent_observer_window_days == 21
+    assert policy.minimum_observations == 9
+
+
+def test_policy_service_preserves_admin_detector_toggles_on_restart(tmp_path) -> None:
+    db_path = tmp_path / "feedback.db"
+    initial = _policy_service(tmp_path, _settings())
+    initial.set_policy(
+        name_collision_enabled=False,
+        silent_observer_enabled=False,
+    )
+
+    restarted = TrustMonitorPolicyService(
+        db_path=str(db_path),
+        settings=_settings(
+            TRUST_MONITOR_ENABLED=True,
+            TRUST_MONITOR_ALERT_SURFACE="admin_ui",
+            TRUST_MONITOR_MATRIX_PUBLIC_ROOMS=["!support:matrix.org"],
+            TRUST_MONITOR_MATRIX_STAFF_ROOM="!staff:matrix.org",
+        ),
+    )
+    policy = restarted.get_policy()
+
+    assert policy.name_collision_enabled is False
+    assert policy.silent_observer_enabled is False
+
+
 def test_detector_result_uses_fresh_default_timestamp() -> None:
     left = DetectorResult(
         detector_key="x",
