@@ -210,4 +210,28 @@ describe("TrustMonitoringCard", () => {
 
     expect(screen.getByText("Alert destination")).toBeInTheDocument();
   });
+
+  test("does not label missing policy state as off", () => {
+    render(
+      <TrustMonitoringCard
+        policy={null}
+        isLoading={true}
+        isSaving={false}
+        error={null}
+        onRetry={() => undefined}
+        onEnabledChange={() => undefined}
+        onDetectorToggle={() => undefined}
+        onAlertSurfaceChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("Loading")).toBeInTheDocument();
+    expect(screen.queryByText("Off")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Policy state is still loading."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Policy state is loading. The browser will retry if the server bootstrap missed it."),
+    ).toBeInTheDocument();
+  });
 });
