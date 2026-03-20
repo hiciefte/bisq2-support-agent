@@ -210,4 +210,47 @@ describe("TrustMonitoringCard", () => {
 
     expect(screen.getByText("Alert destination")).toBeInTheDocument();
   });
+
+  test("does not label missing policy state as off", () => {
+    render(
+      <TrustMonitoringCard
+        policy={null}
+        isLoading={true}
+        isSaving={false}
+        error={null}
+        onRetry={() => undefined}
+        onEnabledChange={() => undefined}
+        onDetectorToggle={() => undefined}
+        onAlertSurfaceChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("Loading")).toBeInTheDocument();
+    expect(screen.queryByText("Off")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Policy state is still loading."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Policy state is loading. The browser will retry if the server bootstrap missed it."),
+    ).toBeInTheDocument();
+  });
+
+  test("shows unavailable messaging when policy refresh failed", () => {
+    render(
+      <TrustMonitoringCard
+        policy={null}
+        isLoading={false}
+        isSaving={false}
+        error={"Could not load trust-monitor policy."}
+        onRetry={() => undefined}
+        onEnabledChange={() => undefined}
+        onDetectorToggle={() => undefined}
+        onAlertSurfaceChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Policy state could not be read.")).toBeInTheDocument();
+    expect(screen.getByText("Policy state is unavailable. Retry to fetch the latest policy.")).toBeInTheDocument();
+  });
 });

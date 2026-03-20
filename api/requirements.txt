@@ -160,7 +160,7 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.7.1
+huggingface-hub==1.7.2
     # via
     #   datasets
     #   tokenizers

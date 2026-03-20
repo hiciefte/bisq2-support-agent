@@ -31,8 +31,16 @@ const TRUST_ALERT_SURFACES: readonly TrustAlertSurface[] = [
   "none",
 ];
 
-function rolloutState(policy: TrustMonitorPolicy | null): { label: string; description: string } {
-  if (!policy || !policy.enabled) {
+function rolloutState(
+  policy: TrustMonitorPolicy | null,
+  isLoading: boolean,
+): { label: string; description: string } {
+  if (!policy) {
+    return isLoading
+      ? { label: "Loading", description: "Policy state is still loading." }
+      : { label: "Unavailable", description: "Policy state could not be read." };
+  }
+  if (!policy.enabled) {
     return { label: "Off", description: "Detection is disabled." };
   }
   switch (policy.alert_surface) {
@@ -58,9 +66,14 @@ export function TrustMonitoringCard({
   onAlertSurfaceChange,
   defaultCollapsed = false,
 }: TrustMonitoringCardProps) {
-  const rollout = rolloutState(policy);
+  const rollout = rolloutState(policy, isLoading);
   const showPromotionWarning = policy?.enabled && (policy.alert_surface === "staff_room" || policy.alert_surface === "both");
   const [isOpen, setIsOpen] = useState(!defaultCollapsed);
+  const trustMonitoringDescription = policy === null
+    ? (isLoading
+      ? "Policy state is loading. The browser will retry if the server bootstrap missed it."
+      : "Policy state is unavailable. Retry to fetch the latest policy.")
+    : "Enable the shared detector pipeline for Matrix support rooms.";
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -106,7 +119,7 @@ export function TrustMonitoringCard({
             <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/40 px-4 py-3">
               <div>
                 <div className="text-sm font-medium">Trust monitoring</div>
-                <div className="text-xs text-muted-foreground">Enable the shared detector pipeline for Matrix support rooms.</div>
+                <div className="text-xs text-muted-foreground">{trustMonitoringDescription}</div>
               </div>
               <Checkbox
                 checked={policy?.enabled ?? false}

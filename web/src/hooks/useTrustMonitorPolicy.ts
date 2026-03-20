@@ -43,6 +43,13 @@ export function useTrustMonitorPolicy(initialPolicy: TrustMonitorPolicy | null) 
     }
   }, []);
 
+  useEffect(() => {
+    if (initialPolicy !== null) {
+      return;
+    }
+    void refresh();
+  }, [initialPolicy, refresh]);
+
   const updatePolicy = useCallback(async (patch: TrustMonitorPolicyPatch) => {
     if (Object.keys(patch).length === 0) {
       return true;
