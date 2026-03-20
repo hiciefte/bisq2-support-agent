@@ -19,6 +19,13 @@ class TrustMonitorPolicyService:
         self._initialize()
         self._seed_defaults()
 
+    _RUNTIME_SYNC_FIELDS = (
+        "enabled",
+        "alert_surface",
+        "matrix_public_room_ids",
+        "matrix_staff_room_id",
+    )
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row
@@ -101,12 +108,64 @@ class TrustMonitorPolicyService:
     def _seed_defaults(self) -> None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT policy_key FROM trust_monitor_policy WHERE policy_key = 'default'"
+                "SELECT * FROM trust_monitor_policy WHERE policy_key = 'default'"
             ).fetchone()
             if row is not None:
+                self._sync_runtime_policy_fields(conn, self._row_to_policy(row))
+                conn.commit()
                 return
             self._write_policy(conn, self._default_policy())
             conn.commit()
+
+    def _row_to_policy(self, row: sqlite3.Row) -> TrustPolicy:
+        return TrustPolicy(
+            enabled=bool(row["enabled"]),
+            name_collision_enabled=bool(row["name_collision_enabled"]),
+            silent_observer_enabled=bool(row["silent_observer_enabled"]),
+            alert_surface=TrustAlertSurface(row["alert_surface"]),
+            matrix_public_room_ids=list(
+                json.loads(row["matrix_public_room_ids_json"] or "[]")
+            ),
+            matrix_staff_room_id=row["matrix_staff_room_id"],
+            silent_observer_window_days=int(row["silent_observer_window_days"]),
+            early_read_window_seconds=int(row["early_read_window_seconds"]),
+            minimum_observations=int(row["minimum_observations"]),
+            minimum_early_read_hits=int(row["minimum_early_read_hits"]),
+            read_to_reply_ratio_threshold=float(row["read_to_reply_ratio_threshold"]),
+            evidence_ttl_days=int(row["evidence_ttl_days"]),
+            aggregate_ttl_days=int(row["aggregate_ttl_days"]),
+            finding_ttl_days=int(row["finding_ttl_days"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def _sync_runtime_policy_fields(
+        self, conn: sqlite3.Connection, current: TrustPolicy
+    ) -> None:
+        runtime_defaults = self._default_policy()
+        merged = TrustPolicy(
+            enabled=runtime_defaults.enabled,
+            name_collision_enabled=current.name_collision_enabled,
+            silent_observer_enabled=current.silent_observer_enabled,
+            alert_surface=runtime_defaults.alert_surface,
+            matrix_public_room_ids=runtime_defaults.matrix_public_room_ids,
+            matrix_staff_room_id=runtime_defaults.matrix_staff_room_id,
+            silent_observer_window_days=current.silent_observer_window_days,
+            early_read_window_seconds=current.early_read_window_seconds,
+            minimum_observations=current.minimum_observations,
+            minimum_early_read_hits=current.minimum_early_read_hits,
+            read_to_reply_ratio_threshold=current.read_to_reply_ratio_threshold,
+            evidence_ttl_days=current.evidence_ttl_days,
+            aggregate_ttl_days=current.aggregate_ttl_days,
+            finding_ttl_days=current.finding_ttl_days,
+            updated_at=current.updated_at,
+        )
+        if all(
+            getattr(current, field_name) == getattr(merged, field_name)
+            for field_name in self._RUNTIME_SYNC_FIELDS
+        ):
+            return
+        merged.updated_at = datetime.now(UTC)
+        self._write_policy(conn, merged)
 
     def _write_policy(self, conn: sqlite3.Connection, policy: TrustPolicy) -> None:
         conn.execute(
@@ -146,25 +205,7 @@ class TrustMonitorPolicyService:
             ).fetchone()
         if row is None:
             return self._default_policy()
-        return TrustPolicy(
-            enabled=bool(row["enabled"]),
-            name_collision_enabled=bool(row["name_collision_enabled"]),
-            silent_observer_enabled=bool(row["silent_observer_enabled"]),
-            alert_surface=TrustAlertSurface(row["alert_surface"]),
-            matrix_public_room_ids=list(
-                json.loads(row["matrix_public_room_ids_json"] or "[]")
-            ),
-            matrix_staff_room_id=row["matrix_staff_room_id"],
-            silent_observer_window_days=int(row["silent_observer_window_days"]),
-            early_read_window_seconds=int(row["early_read_window_seconds"]),
-            minimum_observations=int(row["minimum_observations"]),
-            minimum_early_read_hits=int(row["minimum_early_read_hits"]),
-            read_to_reply_ratio_threshold=float(row["read_to_reply_ratio_threshold"]),
-            evidence_ttl_days=int(row["evidence_ttl_days"]),
-            aggregate_ttl_days=int(row["aggregate_ttl_days"]),
-            finding_ttl_days=int(row["finding_ttl_days"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-        )
+        return self._row_to_policy(row)
 
     def set_policy(self, **patch: Any) -> TrustPolicy:
         with self._lock:
