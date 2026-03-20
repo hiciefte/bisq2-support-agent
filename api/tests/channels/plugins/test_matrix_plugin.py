@@ -125,6 +125,32 @@ class TestMatrixChannelLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_start_joins_matrix_chatops_rooms(self):
+        mock_conn_manager = MagicMock()
+        mock_conn_manager.connect = AsyncMock()
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                mock_conn_manager if name == "matrix_connection_manager" else None
+            )
+        )
+        runtime.settings = SimpleNamespace(
+            MATRIX_SYNC_ROOMS=["!sync:matrix.org"],
+            TRUST_MONITOR_MATRIX_PUBLIC_ROOMS=[],
+            TRUST_MONITOR_MATRIX_STAFF_ROOM="",
+            MATRIX_CHATOPS_ROOM_IDS=["!private-chatops:matrix.org"],
+        )
+
+        channel = MatrixChannel(runtime)
+        channel.join_room = AsyncMock(return_value=True)
+
+        await channel.start()
+
+        joined = {call.args[0] for call in channel.join_room.call_args_list}
+        assert joined == {"!sync:matrix.org", "!private-chatops:matrix.org"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_start_degraded_without_connection_manager(self):
         """MatrixChannel starts in degraded mode when ConnectionManager not available."""
 

@@ -332,6 +332,10 @@ class MatrixChannel(ChannelBase):
             getattr(runtime_settings, "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS", "")
         )
         allowed_rooms.update(trust_rooms)
+        chatops_rooms = normalize_room_ids(
+            getattr(runtime_settings, "MATRIX_CHATOPS_ROOM_IDS", "")
+        )
+        allowed_rooms.update(chatops_rooms)
         trust_staff_room = str(
             getattr(runtime_settings, "TRUST_MONITOR_MATRIX_STAFF_ROOM", "") or ""
         ).strip()
