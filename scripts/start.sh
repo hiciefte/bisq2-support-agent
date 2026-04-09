@@ -8,6 +8,7 @@ PROJECT_ROOT="$SCRIPT_DIR/.."
 DOCKER_DIR="$PROJECT_ROOT/docker"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
+setup_colors
 
 echo "========================================================"
 echo " Starting Bisq Support Assistant (Production Mode)"

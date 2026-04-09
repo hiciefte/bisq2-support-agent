@@ -15,6 +15,7 @@ echo "========================================================"
 # Only deploy-path vars; docker/.env provides app config to Docker Compose.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
+setup_colors
 source_deploy_paths "/etc/bisq-support/deploy.env" || true
 # --- End Source Environment Configuration --- #
 
