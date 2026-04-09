@@ -21,8 +21,8 @@ init_common_env
 # Display banner
 display_banner "Bisq Support Assistant - Maintenance Script"
 
-# Source environment configuration
-source_env_file
+# Source deploy-path vars only; docker/.env provides app config
+source_deploy_paths
 
 echo "Installation Directory: $INSTALL_DIR"
 

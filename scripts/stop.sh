@@ -11,17 +11,11 @@ echo "========================================================"
 echo " Stopping Bisq Support Assistant (Production Mode)"
 echo "========================================================"
 
-# --- Source Production Environment Configuration --- #
-# This is not strictly necessary for 'down', but included for consistency
-# and to ensure the correct project context is established if needed.
-PROD_ENV_FILE="/etc/bisq-support/deploy.env"
-if [ -f "$PROD_ENV_FILE" ]; then
-    echo "Sourcing production environment variables from $PROD_ENV_FILE..."
-    set -a
-    # shellcheck disable=SC1090,SC1091
-    source "$PROD_ENV_FILE"
-    set +a
-fi
+# --- Source Environment Configuration --- #
+# Only deploy-path vars; docker/.env provides app config to Docker Compose.
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/common.sh"
+source_deploy_paths "/etc/bisq-support/deploy.env" || true
 # --- End Source Environment Configuration --- #
 
 # Navigate to the Docker directory
