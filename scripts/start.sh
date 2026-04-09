@@ -13,24 +13,29 @@ echo "========================================================"
 echo " Starting Bisq Support Assistant (Production Mode)"
 echo "========================================================"
 
-# --- Source Production Environment Configuration --- #
-# This script is for managing a deployed production server.
-# It sources a centralized deployment file for secrets. If this file
-# is not present, it will proceed with defaults, which may not be sufficient.
-PROD_ENV_FILE="/etc/bisq-support/deploy.env"
-if [ -f "$PROD_ENV_FILE" ]; then
-    echo "Sourcing production environment variables from $PROD_ENV_FILE..."
-    set -a
-    # shellcheck disable=SC1090,SC1091
-    source "$PROD_ENV_FILE"
-    set +a
-else
-    echo "WARNING: Production environment file not found at $PROD_ENV_FILE."
-    echo "Proceeding with defaults. This may not be a complete configuration."
+# --- Source Environment Configuration --- #
+# Single source of truth: docker/.env holds ALL app config (secrets, rooms,
+# feature flags).  deploy.env holds ONLY deploy-path vars (repo URLs, install
+# dirs) that scripts need but Docker doesn't.
+#
+# Docker Compose reads docker/.env automatically when we `cd $DOCKER_DIR`.
+# We only source deploy.env for the path vars used by shell scripts.
+DEPLOY_ENV="/etc/bisq-support/deploy.env"
+source_deploy_paths "$DEPLOY_ENV" || true
+
+# Validate docker/.env has required app config
+DOCKER_ENV="$DOCKER_DIR/.env"
+if [ -f "$DOCKER_ENV" ]; then
+    if ! validate_app_env "$DOCKER_ENV"; then
+        echo "Fix the issues in $DOCKER_ENV and retry."
+        exit 1
+    fi
+    # Warn if deploy.env still contains app config that shadows docker/.env
+    detect_env_shadowing "$DEPLOY_ENV" "$DOCKER_ENV" || true
 fi
 # --- End Source Environment Configuration --- #
 
-if ! validate_runtime_configuration; then
+if ! validate_runtime_configuration "$DOCKER_ENV"; then
     exit 1
 fi
 

@@ -33,7 +33,8 @@ matrix-nio[e2e]>=0.21.0
 # AISuite for unified LLM interface with MCP support
 aisuite[mcp]>=0.1.14
 # LiteLLM for vendor-portable embeddings (100+ providers)
-litellm>=1.30.0
+litellm>=1.30.0,<1.83.0  # Pinned <1.83.0: requires httpx>=0.28 and openai>=2.x (breaks aisuite)
+# CVE-2026-35030/35029/GHSA-69x8-hrgq-fjj8 affect litellm proxy (not used here)
 # MCP SDK for building Model Context Protocol servers
 # Note: Using mcp without [cli] extra due to typer version conflict between
 # instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0

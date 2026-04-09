@@ -1,10 +1,27 @@
 # Environment Configuration
 
-This document details the environment variables used by the Bisq Support Agent project. These variables are used by the deployment/update scripts and within the Docker containers.
+This document details the environment variables used by the Bisq Support Agent project.
+
+## Environment Architecture
+
+The project uses a **single source of truth** pattern for configuration:
+
+| File | Purpose | Contains |
+|------|---------|----------|
+| `docker/.env` | **All app config** | Secrets, room IDs, feature flags, API keys |
+| `/etc/bisq-support/deploy.env` | **Deploy-path vars only** | Repo URLs, install directories |
+
+**How it works:**
+- Docker Compose reads `docker/.env` automatically (it sits next to `docker-compose.yml`)
+- Shell scripts (`start.sh`, `update.sh`, etc.) call `source_deploy_paths` to load only the 4 path variables from `deploy.env`
+- App config vars in `deploy.env` are **ignored** to prevent shadowing `docker/.env`
+- `start.sh` runs `validate_app_env` and `detect_env_shadowing` as pre-flight checks
+
+**Migration:** If upgrading from the old dual-file setup, run `scripts/migrate-env.sh --dry-run` first, then `scripts/migrate-env.sh` to consolidate.
 
 ## Deployment/Update Script Variables
 
-These variables are typically set in the shell or sourced from `/etc/bisq-support/deploy.env` before running `scripts/deploy.sh` or `scripts/update.sh`.
+These variables live in `/etc/bisq-support/deploy.env` and are used only by shell scripts (not by Docker containers).
 
 ### Required Script Variables
 
@@ -121,8 +138,8 @@ The Matrix integration uses lane-specific names to separate support-channel inge
     *   Description: Comma-separated room IDs polled for support Q/A ingestion.
     *   Required: Yes (when `MATRIX_SYNC_ENABLED=true`)
 *   **`MATRIX_STAFF_ROOM`**
-    *   Description: Dedicated Matrix staff room used by the `staff_room` escalation-notification channel.
-    *   Required: Optional
+    *   Description: Dedicated Matrix staff room for escalation notifications ("needs human attention" notices) and staff actions.
+    *   Required: **Recommended** (escalation notices are lost if this is empty)
     *   Note: In local testing, this can be set to the same room as `MATRIX_ALERT_ROOM`.
 *   **`MATRIX_CHATOPS_ENABLED`**
     *   Description: Enables Matrix `!case` command handling in staff rooms.

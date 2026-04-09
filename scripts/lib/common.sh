@@ -88,7 +88,7 @@ check_docker_compose() {
     return 0
 }
 
-# Source environment configuration
+# Source environment configuration (legacy — kept for backward compatibility)
 source_env_file() {
     local env_file="${1:-/etc/bisq-support/deploy.env}"
 
@@ -105,6 +105,152 @@ source_env_file() {
         log_warning "Environment file $env_file not found. Using defaults."
         return 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Single-source-of-truth env architecture
+#
+# deploy.env  → deploy-path vars ONLY (repo URLs, install dirs)
+# docker/.env → ALL app config (secrets, room IDs, feature flags)
+#
+# Docker Compose reads docker/.env automatically. Scripts source deploy.env
+# only for the handful of shell-only vars that Docker doesn't need.
+# ---------------------------------------------------------------------------
+
+# Allowed deploy-path variable prefixes/names.
+# Everything else in deploy.env is considered app config (a shadowing risk).
+_DEPLOY_PATH_VARS="BISQ_SUPPORT_INSTALL_DIR|BISQ_SUPPORT_REPO_URL|BISQ2_INSTALL_DIR|BISQ2_REPO_URL"
+
+# Source ONLY deploy-path variables from deploy.env.
+# App config vars are ignored so they cannot shadow docker/.env values.
+source_deploy_paths() {
+    local env_file="${1:-/etc/bisq-support/deploy.env}"
+
+    if [ ! -f "$env_file" ]; then
+        log_warning "Deploy paths file $env_file not found."
+        return 1
+    fi
+
+    log_info "Sourcing deploy-path variables from $env_file"
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line#export }"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        local var_name="${line%%=*}"
+
+        if [[ "$var_name" =~ ^(${_DEPLOY_PATH_VARS})$ ]]; then
+            local var_val="${line#*=}"
+            # Strip surrounding quotes if present
+            var_val="${var_val#\"}" ; var_val="${var_val%\"}"
+            var_val="${var_val#\'}" ; var_val="${var_val%\'}"
+            export "${var_name}=${var_val}"
+        fi
+    done < "$env_file"
+
+    return 0
+}
+
+# Validate that docker/.env (or a given env file) contains required Matrix
+# room configuration. Returns non-zero if critical vars are missing.
+validate_app_env() {
+    local env_file="${1:-}"
+    local errors=0
+    local warnings=0
+
+    if [ -z "$env_file" ]; then
+        log_error "validate_app_env: no env file path provided"
+        return 1
+    fi
+
+    if [ ! -f "$env_file" ]; then
+        log_error "App env file not found: $env_file"
+        return 1
+    fi
+
+    _env_has() { grep -qE "^${1}=.+" "$env_file"; }
+
+    local required_vars=(
+        "MATRIX_SYNC_ROOMS"
+        "MATRIX_STAFF_ROOM"
+    )
+
+    for var in "${required_vars[@]}"; do
+        if ! _env_has "$var"; then
+            log_error "Required variable $var is missing or empty in $env_file"
+            errors=$((errors + 1))
+        fi
+    done
+
+    # Recommended vars (missing = warning)
+    local recommended_vars=(
+        "TRUST_MONITOR_MATRIX_PUBLIC_ROOMS"
+        "TRUST_MONITOR_MATRIX_STAFF_ROOM"
+    )
+
+    for var in "${recommended_vars[@]}"; do
+        if ! _env_has "$var"; then
+            log_warning "Recommended variable $var is missing or empty in $env_file"
+            warnings=$((warnings + 1))
+        fi
+    done
+
+    unset -f _env_has
+
+    if [ $errors -gt 0 ]; then
+        log_error "App env validation failed: $errors error(s), $warnings warning(s)"
+        return 1
+    fi
+
+    if [ $warnings -gt 0 ]; then
+        log_warning "App env validation: $warnings warning(s)"
+    fi
+
+    return 0
+}
+
+# Detect app config vars in deploy.env that would shadow docker/.env.
+# Returns non-zero if shadowing is found.
+detect_env_shadowing() {
+    local deploy_file="${1:-/etc/bisq-support/deploy.env}"
+    local docker_file="${2:-}"
+    local shadow_count=0
+
+    if [ ! -f "$deploy_file" ] || [ ! -f "$docker_file" ]; then
+        return 0  # Nothing to compare
+    fi
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line#export }"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        local var_name="${line%%=*}"
+
+        [[ "$var_name" =~ ^(${_DEPLOY_PATH_VARS})$ ]] && continue
+
+        if grep -qE "^${var_name}=" "$docker_file"; then
+            local deploy_val docker_val
+            deploy_val=$(grep -E "^(export )?${var_name}=" "$deploy_file" | head -1 | sed "s/^[^=]*=//")
+            docker_val=$(grep -E "^${var_name}=" "$docker_file" | head -1 | sed "s/^[^=]*=//")
+
+            if [ "$deploy_val" != "$docker_val" ]; then
+                log_warning "SHADOW CONFLICT: $var_name differs between deploy.env and docker/.env"
+            else
+                log_warning "SHADOW: $var_name exists in both deploy.env and docker/.env (same value)"
+            fi
+            shadow_count=$((shadow_count + 1))
+        fi
+    done < "$deploy_file"
+
+    if [ $shadow_count -gt 0 ]; then
+        log_error "Found $shadow_count app config var(s) in deploy.env that shadow docker/.env"
+        log_info "Move app config to docker/.env and keep only path vars in deploy.env"
+        return 1
+    fi
+
+    return 0
 }
 
 is_env_enabled() {
@@ -127,7 +273,28 @@ uses_qdrant_runtime() {
 }
 
 validate_runtime_configuration() {
-    local backend="${RETRIEVER_BACKEND:-qdrant}"
+    # Reads from env file if given, otherwise falls back to shell env.
+    local env_file="${1:-}"
+    local _rc_cache=""
+
+    # Read entire file once to avoid per-var grep forks
+    if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+        _rc_cache=$(cat "$env_file")
+    fi
+
+    _env_val() {
+        local var="$1" default="${2:-}"
+        if [ -n "$_rc_cache" ]; then
+            local val
+            val=$(echo "$_rc_cache" | grep -E "^${var}=" | head -1 | sed "s/^[^=]*=//" || true)
+            echo "${val:-$default}"
+        else
+            eval "echo \"\${${var}:-${default}}\""
+        fi
+    }
+
+    local backend
+    backend=$(_env_val RETRIEVER_BACKEND qdrant)
 
     case "$backend" in
         qdrant)
@@ -138,21 +305,22 @@ validate_runtime_configuration() {
             ;;
     esac
 
-    if is_env_enabled "${TRUST_MONITOR_ENABLED:-false}" && [ -z "${TRUST_MONITOR_ACTOR_KEY_SECRET:-}" ]; then
+    if is_env_enabled "$(_env_val TRUST_MONITOR_ENABLED false)" && [ -z "$(_env_val TRUST_MONITOR_ACTOR_KEY_SECRET)" ]; then
         log_error "TRUST_MONITOR_ACTOR_KEY_SECRET is required when TRUST_MONITOR_ENABLED=true"
         return 1
     fi
 
-    if is_env_enabled "${MATRIX_CHATOPS_ENABLED:-false}" && [ -z "${MATRIX_CHATOPS_ROOM_IDS:-}" ]; then
+    if is_env_enabled "$(_env_val MATRIX_CHATOPS_ENABLED false)" && [ -z "$(_env_val MATRIX_CHATOPS_ROOM_IDS)" ]; then
         log_error "MATRIX_CHATOPS_ROOM_IDS is required when MATRIX_CHATOPS_ENABLED=true"
         return 1
     fi
 
-    if is_env_enabled "${BISQ2_CHATOPS_ENABLED:-false}" && [ -z "${BISQ2_CHATOPS_CHANNEL_IDS:-}" ]; then
+    if is_env_enabled "$(_env_val BISQ2_CHATOPS_ENABLED false)" && [ -z "$(_env_val BISQ2_CHATOPS_CHANNEL_IDS)" ]; then
         log_error "BISQ2_CHATOPS_CHANNEL_IDS is required when BISQ2_CHATOPS_ENABLED=true"
         return 1
     fi
 
+    unset -f _env_val
     return 0
 }
 
@@ -223,6 +391,9 @@ export -f check_root
 export -f check_docker_daemon
 export -f check_docker_compose
 export -f source_env_file
+export -f source_deploy_paths
+export -f validate_app_env
+export -f detect_env_shadowing
 export -f is_env_enabled
 export -f uses_qdrant_runtime
 export -f validate_runtime_configuration
