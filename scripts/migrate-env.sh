@@ -149,7 +149,7 @@ DEPLOY_HEADER
         stripped="${stripped#export }"
         [[ -z "$stripped" || "$stripped" == \#* ]] && continue
 
-        local var_name="${stripped%%=*}"
+        var_name="${stripped%%=*}"
         if [[ "$var_name" =~ ^(${_DEPLOY_PATH_VARS})$ ]]; then
             echo "export $stripped" >> "$DEPLOY_ENV"
         fi

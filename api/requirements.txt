@@ -8,7 +8,7 @@ aiofiles==24.1.0
     # via matrix-nio
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.13.3
+aiohttp==3.13.5
     # via
     #   -r api/requirements.in
     #   aiohttp-socks
@@ -29,7 +29,7 @@ annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
-anyio==4.12.1
+anyio==4.13.0
     # via
     #   httpx
     #   mcp
@@ -49,7 +49,7 @@ beautifulsoup4==4.14.3
     # via -r api/requirements.in
 black==26.3.1
     # via -r api/requirements.in
-build==1.4.0
+build==1.4.2
     # via pip-tools
 cachetools==5.5.2
     # via
@@ -66,9 +66,9 @@ cffi==2.0.0
     #   python-olm
 cfgv==3.5.0
     # via pre-commit
-charset-normalizer==3.4.6
+charset-normalizer==3.4.7
     # via requests
-click==8.3.1
+click==8.3.2
     # via
     #   black
     #   litellm
@@ -77,13 +77,13 @@ click==8.3.1
     #   uvicorn
 contourpy==1.3.3
     # via matplotlib
-cryptography==46.0.5
+cryptography==46.0.7
     # via pyjwt
 cycler==0.12.1
     # via matplotlib
 dataclasses-json==0.6.7
     # via langchain-community
-datasets==4.8.3
+datasets==4.8.4
     # via
     #   -r api/requirements.in
     #   ragas
@@ -103,7 +103,7 @@ docstring-parser==0.15
     # via
     #   aisuite
     #   instructor
-fastapi==0.135.1
+fastapi==0.135.3
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
@@ -125,9 +125,9 @@ fsspec[http]==2026.2.0
     # via
     #   datasets
     #   huggingface-hub
-greenlet==3.3.2
+greenlet==3.4.0
     # via sqlalchemy
-grpcio==1.78.0
+grpcio==1.80.0
     # via qdrant-client
 h11==0.16.0
     # via
@@ -138,7 +138,7 @@ h2==4.3.0
     # via
     #   httpx
     #   matrix-nio
-hf-xet==1.4.2
+hf-xet==1.4.3
     # via huggingface-hub
 hpack==4.1.0
     # via h2
@@ -160,7 +160,7 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.7.2
+huggingface-hub==1.9.2
     # via
     #   datasets
     #   tokenizers
@@ -193,7 +193,7 @@ jsonable==0.3.1
     # via mwtypes
 jsonpatch==1.33
     # via langchain-core
-jsonpointer==3.0.0
+jsonpointer==3.1.1
     # via jsonpatch
 jsonschema==4.26.0
     # via
@@ -205,13 +205,13 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.5.0
     # via matplotlib
-langchain==1.2.13
+langchain==1.2.15
     # via ragas
 langchain-classic==1.0.3
     # via langchain-community
 langchain-community==0.4.1
     # via ragas
-langchain-core==1.2.20
+langchain-core==1.2.28
     # via
     #   -r api/requirements.in
     #   langchain
@@ -233,17 +233,17 @@ langchain-text-splitters==1.1.1
     #   langchain-classic
 langdetect==1.0.9
     # via -r api/requirements.in
-langgraph==1.1.3
+langgraph==1.1.6
     # via langchain
 langgraph-checkpoint==4.0.1
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.8
+langgraph-prebuilt==1.0.9
     # via langgraph
-langgraph-sdk==0.3.12
+langgraph-sdk==0.3.13
     # via langgraph
-langsmith==0.7.22
+langsmith==0.7.29
     # via
     #   langchain-classic
     #   langchain-community
@@ -264,7 +264,7 @@ matrix-nio[e2e]==0.25.2
     # via -r api/requirements.in
 mccabe==0.7.0
     # via flake8
-mcp==1.26.0
+mcp==1.27.0
     # via
     #   -r api/requirements.in
     #   aisuite
@@ -284,11 +284,11 @@ mwparserfromhell==0.7.2
     # via -r api/requirements.in
 mwtypes==0.4.0
     # via mwxml
-mwxml==0.3.7
+mwxml==0.3.8
     # via
     #   -r api/requirements.in
     #   mwcli
-mypy==1.19.1
+mypy==1.20.0
     # via -r api/requirements.in
 mypy-extensions==1.1.0
     # via
@@ -304,7 +304,7 @@ networkx==3.6.1
     # via ragas
 nodeenv==1.10.0
     # via pre-commit
-numpy==2.4.3
+numpy==2.4.4
     # via
     #   contourpy
     #   datasets
@@ -326,7 +326,7 @@ openai==1.109.1
     #   langchain-openai
     #   litellm
     #   ragas
-orjson==3.11.7
+orjson==3.11.8
     # via
     #   langgraph-sdk
     #   langsmith
@@ -345,7 +345,7 @@ packaging==26.0
     #   pytest
     #   transformers
     #   wheel
-pandas==3.0.1
+pandas==3.0.2
     # via
     #   -r api/requirements.in
     #   datasets
@@ -359,14 +359,14 @@ pathspec==1.0.4
     #   mypy
 peewee==3.19.0
     # via matrix-nio
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   -r api/requirements.in
     #   matplotlib
     #   ragas
 pip-tools==7.5.3
     # via -r api/requirements.in
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   black
     #   python-discovery
@@ -389,7 +389,7 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-protobuf==7.34.0
+protobuf==7.34.1
     # via qdrant-client
 psutil==7.2.2
     # via -r api/requirements.in
@@ -430,7 +430,7 @@ pydantic-settings==2.13.1
     #   mcp
 pyflakes==3.4.0
     # via flake8
-pygments==2.19.2
+pygments==2.20.0
     # via
     #   pytest
     #   rich
@@ -442,7 +442,7 @@ pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
-pytest==9.0.2
+pytest==9.0.3
     # via
     #   -r api/requirements.in
     #   pytest-asyncio
@@ -452,15 +452,15 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
-python-discovery==1.2.0
+python-discovery==1.2.2
     # via virtualenv
 python-dotenv==1.2.2
     # via
     #   litellm
     #   pydantic-settings
-python-json-logger==4.0.0
+python-json-logger==4.1.0
     # via -r api/requirements.in
-python-multipart==0.0.22
+python-multipart==0.0.24
     # via mcp
 python-olm==3.2.16
     # via matrix-nio
@@ -485,11 +485,11 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.2.28
+regex==2026.4.4
     # via
     #   tiktoken
     #   transformers
-requests==2.32.5
+requests==2.33.1
     # via
     #   -r api/requirements.in
     #   datasets
@@ -531,11 +531,11 @@ sniffio==1.3.1
     #   openai
 soupsieve==2.8.3
     # via beautifulsoup4
-sqlalchemy==2.0.48
+sqlalchemy==2.0.49
     # via
     #   langchain-classic
     #   langchain-community
-sse-starlette==3.3.3
+sse-starlette==3.3.4
     # via mcp
 starlette==0.52.1
     # via
@@ -568,7 +568,7 @@ tqdm==4.67.3
     #   openai
     #   ragas
     #   transformers
-transformers==5.3.0
+transformers==5.5.1
     # via -r api/requirements.in
 typer==0.9.4
     # via
@@ -616,7 +616,7 @@ uuid-utils==0.14.1
     # via
     #   langchain-core
     #   langsmith
-uvicorn==0.42.0
+uvicorn==0.44.0
     # via
     #   -r api/requirements.in
     #   mcp

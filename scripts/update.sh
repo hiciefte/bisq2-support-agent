@@ -51,7 +51,7 @@ validate_environment() {
         log_warning "Consider running with sudo if you encounter permission errors"
     fi
 
-    if ! validate_runtime_configuration; then
+    if ! validate_runtime_configuration "$DOCKER_DIR/.env"; then
         exit 1
     fi
 

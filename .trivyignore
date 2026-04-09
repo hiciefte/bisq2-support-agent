@@ -6,3 +6,15 @@
 # Suppressing until a stable 1.0.0 release is available.
 # Reference: https://github.com/advisories/GHSA-m42m-m8cr-8m58
 CVE-2025-6985
+
+# CVE-2026-35030: Authentication bypass in LiteLLM proxy OIDC userinfo cache
+# CVE-2026-35029: Remote code execution in LiteLLM proxy configuration
+# GHSA-69x8-hrgq-fjj8: Password hash exposure in LiteLLM proxy auth
+# These three CVEs affect LiteLLM's proxy server functionality, which we do
+# not use. We use litellm only as an embedding provider abstraction layer.
+# Fix requires litellm>=1.83.0 which depends on httpx>=0.28 and openai>=2.x,
+# breaking aisuite (httpx<0.28) and our openai<2.0.0 pin.
+# Suppressing until aisuite and our openai pin are updated.
+CVE-2026-35030
+CVE-2026-35029
+GHSA-69x8-hrgq-fjj8
