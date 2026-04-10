@@ -1046,9 +1046,14 @@ export function EscalationReviewPanel({
                     variant="outline"
                     size="sm"
                     className="text-muted-foreground hover:text-foreground"
-                    onClick={() => onOpenChange(false)}
+                    onClick={handleClose}
                     disabled={isActionInProgress}
                   >
+                    {isClosing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="mr-2 h-4 w-4" />
+                    )}
                     Close Without FAQ
                   </Button>
                 )}

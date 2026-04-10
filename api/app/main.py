@@ -519,6 +519,66 @@ async def lifespan(app: FastAPI):
     app.state.bisq2_live_chat_service = app.state.channel_polling_services.get("bisq2")
     app.state.matrix_channel = bootstrap_result.registry.get("matrix")
 
+    # Start proactive impersonation scanner (user directory + public room scans)
+    app.state.proactive_scanner = None
+    trust_monitor_service = getattr(app.state, "trust_monitor_service", None)
+    matrix_channel = bootstrap_result.registry.get("matrix")
+    if trust_monitor_service is not None and matrix_channel is not None:
+        matrix_runtime = getattr(matrix_channel, "runtime", None)
+        matrix_client = (
+            matrix_runtime.resolve_optional("matrix_client")
+            if matrix_runtime is not None
+            else None
+        )
+        if matrix_client is not None and getattr(matrix_client, "access_token", None):
+            from app.channels.plugins.matrix.room_filter import (
+                resolve_allowed_sync_rooms,
+            )
+            from app.channels.trust_monitor.proactive_scanner import (
+                ProactiveImpersonationScanner,
+            )
+
+            sync_rooms = resolve_allowed_sync_rooms(settings)
+
+            def _handle_proactive_finding(result):
+                """Persist finding via trust monitor store and publish alert."""
+                try:
+                    space_id = next(iter(sync_rooms), "proactive_scan")
+                    finding = trust_monitor_service.store.upsert_finding(
+                        detector_key=result.detector_key,
+                        channel_id="matrix",
+                        space_id=space_id,
+                        suspect_actor_key=result.suspect_actor_key,
+                        suspect_actor_id=result.suspect_actor_id,
+                        suspect_display_name=result.suspect_display_name,
+                        score=result.score,
+                        alert_surface=result.alert_surface,
+                        evidence_summary=result.evidence_summary,
+                        created_at=result.occurred_at,
+                        notify=True,
+                    )
+                    if trust_monitor_service.publisher:
+                        trust_monitor_service.publisher.publish(finding)
+                except Exception:
+                    logger.warning("Failed to persist proactive finding", exc_info=True)
+
+            scanner = ProactiveImpersonationScanner(
+                homeserver_url=settings.MATRIX_HOMESERVER_URL,
+                access_token=matrix_client.access_token,
+                staff_resolver=trust_monitor_service.staff_resolver,
+                trusted_staff_ids=set(
+                    collect_trusted_staff_ids(settings, channel_id="matrix")
+                ),
+                monitored_room_ids=set(sync_rooms),
+                matrix_client=matrix_client,
+                on_finding=_handle_proactive_finding,
+            )
+            await scanner.start()
+            app.state.proactive_scanner = scanner
+            logger.info("Proactive impersonation scanner started")
+        else:
+            logger.info("Proactive scanner not started (Matrix client not connected)")
+
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
     tor_configured = bool(settings.TOR_HIDDEN_SERVICE)
@@ -610,6 +670,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             # P5: Log error but don't crash shutdown
             logger.error(f"Failed to save LearningEngine state during shutdown: {e}")
+
+    # Stop proactive impersonation scanner
+    scanner = getattr(app.state, "proactive_scanner", None)
+    if scanner is not None:
+        await scanner.stop()
 
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
