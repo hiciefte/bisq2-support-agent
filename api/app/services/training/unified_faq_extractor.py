@@ -724,9 +724,22 @@ TRANSCRIPT:
 
 Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A pairs (confidence >= 0.7)."""
 
-        model_id = self.settings.OPENAI_MODEL
+        model_id = (
+            getattr(self.settings, "LLM_EXTRACTION_MODEL", "")
+            or self.settings.OPENAI_MODEL
+        )
         if ":" not in model_id:
             model_id = f"openai:{model_id}"
+
+        temperature = getattr(
+            self.settings, "LLM_EXTRACTION_TEMPERATURE", self.settings.LLM_TEMPERATURE
+        )
+        max_tokens = min(
+            4096,
+            getattr(
+                self.settings, "LLM_EXTRACTION_MAX_TOKENS", self.settings.MAX_TOKENS
+            ),
+        )
 
         extra_kwargs: Dict[str, Any] = {}
         if model_id.startswith("openai:"):
@@ -734,7 +747,6 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                # AISuite is synchronous, run in executor to avoid blocking
                 loop = asyncio.get_running_loop()
                 response = await loop.run_in_executor(
                     None,
@@ -744,8 +756,8 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                             {"role": "system", "content": FAQ_EXTRACTION_SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
                         ],
-                        temperature=self.settings.LLM_TEMPERATURE,
-                        max_tokens=min(4096, self.settings.MAX_TOKENS),
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                         **extra_kwargs,
                     ),
                 )
