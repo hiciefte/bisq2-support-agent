@@ -1188,3 +1188,315 @@ class TestOriginalAnswerPreservation:
         # simple_messages[0]["message"] = "How do I backup?"
         assert pipeline_data[0]["original_user_question"] == "How do I backup?"
         assert pipeline_data[0]["original_user_question"] != "WRONG QUESTION FROM LLM"
+
+
+# =============================================================================
+# PHASE 12: Duplicate Message ID and Identity Validation Tests
+# =============================================================================
+
+
+class TestDuplicateMessageIdRejection:
+    """Test that FAQs with identical question/answer message IDs are rejected."""
+
+    @pytest.fixture
+    def extractor(self, staff_identifiers):
+        mock_settings = MagicMock()
+        mock_settings.OPENAI_MODEL = "gpt-4o-mini"
+        mock_settings.LLM_TEMPERATURE = 0.1
+        mock_settings.MAX_TOKENS = 4096
+        return UnifiedFAQExtractor(
+            aisuite_client=MagicMock(),
+            settings=mock_settings,
+            staff_identifiers=staff_identifiers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_faq_with_same_question_and_answer_id(self, extractor):
+        """LLM returning same msg ID for question and answer should be filtered."""
+        messages = [
+            {
+                "messageId": "msg_user1",
+                "message": "What if my trade fails?",
+                "author": "user1",
+                "date": "2026-01-15T09:59:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "msg_staff1",
+                "message": "If the trade fails, open mediation.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+        ]
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "What to do if trade fails?",
+                    "answer_text": "Open mediation.",
+                    "question_msg_id": "msg_staff1",
+                    "answer_msg_id": "msg_staff1",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+
+        assert (
+            len(result.faqs) == 0
+        ), "FAQ with question_msg_id == answer_msg_id should be rejected"
+
+    @pytest.mark.asyncio
+    async def test_rejects_faq_with_fabricated_short_id(self, extractor):
+        """LLM returning short/numeric IDs instead of real event IDs should be filtered."""
+        messages = [
+            {
+                "messageId": "msg_q1",
+                "message": "How do I backup?",
+                "author": "user1",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "msg_a1",
+                "message": "Go to Settings > Backup.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:01:00Z",
+                "citation": None,
+            },
+        ]
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I backup?",
+                    "answer_text": "Go to Settings > Backup.",
+                    "question_msg_id": "$3",
+                    "answer_msg_id": "$7",  # Fabricated: "$" + digits only
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+
+        assert len(result.faqs) == 0, "FAQ with fabricated short IDs should be rejected"
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_faq_with_distinct_ids(self, extractor):
+        """Valid FAQ with different question and answer IDs should be accepted."""
+        messages = [
+            {
+                "messageId": "msg_q1",
+                "message": "How do I backup?",
+                "author": "user1",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "msg_a1",
+                "message": "Go to Settings > Backup.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:01:00Z",
+                "citation": None,
+            },
+        ]
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I backup?",
+                    "answer_text": "Go to Settings > Backup.",
+                    "question_msg_id": "msg_q1",
+                    "answer_msg_id": "msg_a1",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+
+        assert len(result.faqs) == 1
+
+
+class TestSameAuthorRejection:
+    """Test that FAQs where question and answer come from same person are filtered."""
+
+    @pytest.fixture
+    def extractor(self, staff_identifiers):
+        mock_settings = MagicMock()
+        mock_settings.OPENAI_MODEL = "gpt-4o-mini"
+        mock_settings.LLM_TEMPERATURE = 0.1
+        mock_settings.MAX_TOKENS = 4096
+        return UnifiedFAQExtractor(
+            aisuite_client=MagicMock(),
+            settings=mock_settings,
+            staff_identifiers=staff_identifiers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_faq_from_same_author(self, extractor):
+        """Both question and answer from same user should be filtered in pipeline format."""
+        messages = [
+            {
+                "messageId": "staff_msg_q1",
+                "message": "How do I backup?",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "staff_msg_a1",
+                "message": "Go to Settings > Backup.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:01:00Z",
+                "citation": None,
+            },
+        ]
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I backup?",
+                    "answer_text": "Go to Settings > Backup.",
+                    "question_msg_id": "staff_msg_q1",
+                    "answer_msg_id": "staff_msg_a1",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+
+        pipeline_items = result.to_pipeline_format()
+        assert (
+            len(pipeline_items) == 0
+        ), "FAQ where question and answer are from same author should be filtered"
+
+    @pytest.mark.asyncio
+    async def test_rejects_identical_original_texts_in_pipeline(self, extractor):
+        """If original_user_question == original_staff_answer, filter in pipeline format."""
+        messages = [
+            {
+                "messageId": "msg_staff",
+                "message": "Open mediation if trade fails.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+        ]
+        # LLM returns different IDs but one doesn't exist in the batch,
+        # so both fall back to same text
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "What if trade fails?",
+                    "answer_text": "Open mediation.",
+                    "question_msg_id": "nonexistent_q",
+                    "answer_msg_id": "nonexistent_a",
+                    "confidence": 0.9,
+                    "original_question_text": "Open mediation if trade fails.",
+                    "original_answer_text": "Open mediation if trade fails.",
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+
+        pipeline_items = result.to_pipeline_format()
+        assert (
+            len(pipeline_items) == 0
+        ), "FAQ with identical original question and answer text should be filtered"
+
+
+class TestPreBatchFiltering:
+    """Test that batches without both user and staff messages are skipped."""
+
+    @pytest.fixture
+    def extractor(self, staff_identifiers):
+        mock_settings = MagicMock()
+        mock_settings.OPENAI_MODEL = "openai:gpt-4.1-nano"
+        mock_settings.LLM_TEMPERATURE = 0.1
+        mock_settings.MAX_TOKENS = 4096
+        return UnifiedFAQExtractor(
+            aisuite_client=MagicMock(),
+            settings=mock_settings,
+            staff_identifiers=staff_identifiers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_staff_only_batch(self, extractor):
+        """Batch with only staff messages should be skipped without LLM call."""
+        messages = [
+            {
+                "messageId": "s1",
+                "message": "Let me check the docs.",
+                "author": "suddenwhipvapor",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+            {
+                "messageId": "s2",
+                "message": "Found it, the limit is 600 USD.",
+                "author": "mwithm",
+                "date": "2026-01-15T10:01:00Z",
+                "citation": None,
+            },
+        ]
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+            mock.assert_not_called()
+
+        assert len(result.faqs) == 0
+
+    @pytest.mark.asyncio
+    async def test_skips_user_only_batch(self, extractor):
+        """Batch with only user messages should be skipped without LLM call."""
+        messages = [
+            {
+                "messageId": "u1",
+                "message": "How do I backup?",
+                "author": "someuser",
+                "date": "2026-01-15T10:00:00Z",
+                "citation": None,
+            },
+        ]
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            result = await extractor.extract_faqs(messages=messages, source="bisq2")
+            mock.assert_not_called()
+
+        assert len(result.faqs) == 0
+
+    @pytest.mark.asyncio
+    async def test_processes_mixed_batch(self, extractor, simple_qa_messages):
+        """Batch with both user and staff messages should be processed."""
+        mock_llm_response = {
+            "faq_pairs": [
+                {
+                    "question_text": "How do I start trading?",
+                    "answer_text": "Go to Trade Wizard.",
+                    "question_msg_id": "msg_q1",
+                    "answer_msg_id": "msg_a1",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        with patch.object(extractor, "_call_llm", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_llm_response
+            result = await extractor.extract_faqs(
+                messages=simple_qa_messages, source="bisq2"
+            )
+            mock.assert_called_once()
+
+        assert len(result.faqs) == 1

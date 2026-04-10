@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     # OpenAI settings (using AISuite for LLM interface)
     OPENAI_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_MODEL: str = "openai:gpt-4o-mini"  # Full model ID with provider prefix
+    OPENAI_MODEL: str = "openai:gpt-4.1-nano"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
 
@@ -184,9 +184,9 @@ class Settings(BaseSettings):
     VOYAGE_API_KEY: str = ""  # API key for Voyage embeddings
 
     # Token pricing (for cost tracking in metrics)
-    # Default values are for GPT-4o-mini as of 2024
-    OPENAI_INPUT_COST_PER_TOKEN: float = 0.00000015  # $0.15 per 1M tokens
-    OPENAI_OUTPUT_COST_PER_TOKEN: float = 0.0000006  # $0.60 per 1M tokens
+    # Default values are for GPT-4.1-nano
+    OPENAI_INPUT_COST_PER_TOKEN: float = 0.0000001  # $0.10 per 1M tokens
+    OPENAI_OUTPUT_COST_PER_TOKEN: float = 0.0000004  # $0.40 per 1M tokens
 
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
@@ -303,12 +303,12 @@ class Settings(BaseSettings):
         description="Enable full LLM extraction (replaces pattern-based)",
     )
     LLM_EXTRACTION_MODEL: str = Field(
-        default="openai:gpt-4o-mini",
+        default="openai:gpt-4.1-nano",
         description="Model for extraction (format: 'provider:model')",
     )
     LLM_EXTRACTION_BATCH_SIZE: int = Field(
         default=2000,
-        description="Maximum number of messages to process in a single LLM batch (gpt-4o-mini supports ~128K tokens)",
+        description="Maximum number of messages to process in a single LLM batch",
     )
     LLM_EXTRACTION_CACHE_TTL: int = Field(
         default=3600,

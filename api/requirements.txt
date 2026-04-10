@@ -160,7 +160,7 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.9.2
+huggingface-hub==1.10.1
     # via
     #   datasets
     #   tokenizers
@@ -243,12 +243,12 @@ langgraph-prebuilt==1.0.9
     # via langgraph
 langgraph-sdk==0.3.13
     # via langgraph
-langsmith==0.7.29
+langsmith==0.7.30
     # via
     #   langchain-classic
     #   langchain-community
     #   langchain-core
-librt==0.8.1
+librt==0.9.0
     # via mypy
 litellm==1.80.0
     # via -r api/requirements.in
@@ -379,7 +379,7 @@ portalocker==3.2.0
     #   qdrant-client
 pre-commit==4.5.1
     # via -r api/requirements.in
-prometheus-client==0.24.1
+prometheus-client==0.25.0
     # via
     #   -r api/requirements.in
     #   prometheus-fastapi-instrumentator
@@ -568,7 +568,7 @@ tqdm==4.67.3
     #   openai
     #   ragas
     #   transformers
-transformers==5.5.1
+transformers==5.5.3
     # via -r api/requirements.in
 typer==0.9.4
     # via
@@ -620,7 +620,7 @@ uvicorn==0.44.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==21.2.0
+virtualenv==21.2.1
     # via pre-commit
 websockets==16.0
     # via -r api/requirements.in
