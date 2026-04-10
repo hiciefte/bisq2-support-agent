@@ -390,12 +390,15 @@ class FAQExtractionResult:
             )
             orig_answer = msg_text_map.get(faq.answer_msg_id, faq.original_answer_text)
 
-            # Skip if original question and answer are identical text
-            if (
-                orig_question
-                and orig_answer
-                and orig_question.strip() == orig_answer.strip()
-            ):
+            # Skip if original question and answer are identical (or near-
+            # identical differing only by trailing punctuation — the LLM
+            # sometimes adds/removes a period on one copy but not the other).
+            if orig_question and orig_answer:
+                q_norm = orig_question.strip().rstrip(".,;:!?")
+                a_norm = orig_answer.strip().rstrip(".,;:!?")
+            else:
+                q_norm = a_norm = None
+            if q_norm and q_norm == a_norm:
                 logger.warning(
                     "Skipping FAQ: original_user_question identical to "
                     "original_staff_answer (event %s). Likely same message "

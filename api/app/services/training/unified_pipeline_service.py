@@ -1724,13 +1724,14 @@ class UnifiedPipelineService:
                 skipped_reason="duplicate",
             )
 
-        # Skip if original question and answer are identical (LLM used same
-        # message for both — a known extraction bug)
-        if (
-            original_user_question
-            and original_staff_answer
-            and original_user_question.strip() == original_staff_answer.strip()
-        ):
+        # Skip if original question and answer are identical or near-identical
+        # (LLM used same message for both — a known extraction bug)
+        if original_user_question and original_staff_answer:
+            q_norm = original_user_question.strip().rstrip(".,;:!?")
+            a_norm = original_staff_answer.strip().rstrip(".,;:!?")
+        else:
+            q_norm = a_norm = None
+        if q_norm and q_norm == a_norm:
             return ProcessingResult(
                 candidate_id=None,
                 source=source,
