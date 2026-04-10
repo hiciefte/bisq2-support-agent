@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -95,6 +96,8 @@ Your task is to extract HIGH-QUALITY FAQ pairs where:
 - Staff-to-staff discussions
 - Unclear or context-dependent exchanges
 - Messages that are only confirmations or agreements
+- Staff messages that have no preceding user question in the transcript
+- Cases where only a staff member is speaking (no user question exists)
 
 ### Handling corrections:
 If a staff member corrects their own answer:
@@ -222,7 +225,15 @@ Return a JSON object with this structure:
   ]
 }
 
-CRITICAL: Both `original_question_text` and `original_answer_text` MUST contain EXACT VERBATIM text:
+CRITICAL MESSAGE ID RULES:
+- `question_msg_id` and `answer_msg_id` MUST be DIFFERENT message IDs
+- `question_msg_id` MUST point to a USER message (User_N), NEVER a staff message
+- `answer_msg_id` MUST point to a STAFF message (Staff_N), NEVER a user message
+- Copy the EXACT ID string from the "(ID: ...)" field in the transcript — do NOT invent, abbreviate, or fabricate IDs
+- If you cannot find a valid user question message for a staff answer, SKIP the pair entirely
+- If you cannot find two distinct messages (one user, one staff), SKIP the pair entirely
+
+CRITICAL VERBATIM TEXT RULES:
 - `original_question_text`: Copy the user's question word-for-word from the message matching question_msg_id
 - `original_answer_text`: Copy the staff's answer word-for-word from the message matching answer_msg_id
 - Include informal language, typos, and original style - NO modifications
@@ -249,6 +260,59 @@ Confidence scoring (considers both extraction quality AND transformation quality
 
 Only include pairs with confidence >= 0.7 for FAQ training data quality.
 """
+
+# Pre-compiled patterns for detecting LLM-fabricated message IDs
+_FABRICATED_ID_PATTERNS = (
+    re.compile(r"\$\d+"),  # "$3", "$50" — fake Matrix event IDs
+    re.compile(r"Msg\s*#?\d+", re.IGNORECASE),  # "Msg #2" — transcript numbering
+    re.compile(r"msg\d+", re.IGNORECASE),  # "msg88" — abbreviated numbering
+)
+
+# Strict JSON schema for OpenAI structured outputs.
+# Guarantees well-formed responses and reduces message ID fabrication.
+_FAQ_EXTRACTION_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "faq_extraction",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "faq_pairs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question_text": {"type": "string"},
+                            "answer_text": {"type": "string"},
+                            "original_question_text": {"type": "string"},
+                            "original_answer_text": {"type": "string"},
+                            "question_msg_id": {"type": "string"},
+                            "answer_msg_id": {"type": "string"},
+                            "confidence": {"type": "number"},
+                            "has_correction": {"type": "boolean"},
+                            "category": {"type": "string"},
+                        },
+                        "required": [
+                            "question_text",
+                            "answer_text",
+                            "original_question_text",
+                            "original_answer_text",
+                            "question_msg_id",
+                            "answer_msg_id",
+                            "confidence",
+                            "has_correction",
+                            "category",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["faq_pairs"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 @dataclass
@@ -306,28 +370,55 @@ class FAQExtractionResult:
                 if text:
                     msg_text_map[msg_id] = text
 
-        return [
-            {
-                "question_text": faq.question_text,
-                "staff_answer": faq.answer_text,
-                "source_event_id": faq.answer_msg_id,
-                "source": self.source,
-                "confidence": faq.confidence,
-                "has_correction": faq.has_correction,
-                # Lookup staff_sender from original message author
-                "staff_sender": msg_author_map.get(faq.answer_msg_id, ""),
-                "category": faq.category,
-                # Original user question: prefer direct lookup, fall back to LLM's copy
-                "original_user_question": msg_text_map.get(
-                    faq.question_msg_id, faq.original_question_text
-                ),
-                # Original staff answer: prefer direct lookup, fall back to LLM's copy
-                "original_staff_answer": msg_text_map.get(
-                    faq.answer_msg_id, faq.original_answer_text
-                ),
-            }
-            for faq in self.faqs
-        ]
+        results = []
+        for faq in self.faqs:
+            question_author = msg_author_map.get(faq.question_msg_id, "")
+            answer_author = msg_author_map.get(faq.answer_msg_id, "")
+
+            # Skip if both IDs resolve to the same author (same person)
+            if question_author and answer_author and question_author == answer_author:
+                logger.warning(
+                    "Skipping FAQ: question and answer from same author '%s' "
+                    "(event %s).",
+                    answer_author,
+                    faq.answer_msg_id,
+                )
+                continue
+
+            orig_question = msg_text_map.get(
+                faq.question_msg_id, faq.original_question_text
+            )
+            orig_answer = msg_text_map.get(faq.answer_msg_id, faq.original_answer_text)
+
+            # Skip if original question and answer are identical text
+            if (
+                orig_question
+                and orig_answer
+                and orig_question.strip() == orig_answer.strip()
+            ):
+                logger.warning(
+                    "Skipping FAQ: original_user_question identical to "
+                    "original_staff_answer (event %s). Likely same message "
+                    "used for both.",
+                    faq.answer_msg_id,
+                )
+                continue
+
+            results.append(
+                {
+                    "question_text": faq.question_text,
+                    "staff_answer": faq.answer_text,
+                    "source_event_id": faq.answer_msg_id,
+                    "source": self.source,
+                    "confidence": faq.confidence,
+                    "has_correction": faq.has_correction,
+                    "staff_sender": answer_author,
+                    "category": faq.category,
+                    "original_user_question": orig_question,
+                    "original_staff_answer": orig_answer,
+                }
+            )
+        return results
 
 
 class UnifiedFAQExtractor:
@@ -364,6 +455,20 @@ class UnifiedFAQExtractor:
         self.settings = settings
         self.staff_identifiers = staff_identifiers or DEFAULT_STAFF_IDENTIFIERS
 
+    def _is_staff_author(self, author: str) -> bool:
+        """Check if author matches any staff identifier.
+
+        Handles Matrix IDs (@user:server), Bisq2 usernames, and partial
+        matches against the local-part of Matrix-style identifiers.
+        """
+        author_lower = author.lower().lstrip("@")
+        # For Matrix IDs like "user:server", extract just the local part
+        author_local = author_lower.split(":")[0]
+        return any(
+            staff_id.lower().lstrip("@").split(":")[0] == author_local
+            for staff_id in self.staff_identifiers
+        )
+
     async def extract_faqs(
         self,
         messages: List[Dict[str, Any]],
@@ -391,8 +496,35 @@ class UnifiedFAQExtractor:
             )
 
         try:
-            # Normalize and anonymize messages
             normalized_messages = self._normalize_messages(messages, source)
+
+            # Without both user and staff messages, the LLM fabricates Q&A
+            # pairs by using staff messages as both question and answer.
+            has_staff = False
+            has_user = False
+            for msg in normalized_messages:
+                if self._is_staff_author(msg.get("author", "")):
+                    has_staff = True
+                else:
+                    has_user = True
+                if has_staff and has_user:
+                    break
+
+            if not has_staff or not has_user:
+                logger.info(
+                    "Skipping batch: missing %s messages (%d total). "
+                    "Need both user and staff messages for Q&A extraction.",
+                    "staff" if not has_staff else "user",
+                    len(normalized_messages),
+                )
+                return FAQExtractionResult(
+                    source=source,
+                    faqs=[],
+                    total_messages=len(messages),
+                    extracted_count=0,
+                    processing_time_ms=int((time.time() - start_time) * 1000),
+                )
+
             anonymized_text, username_mapping = self._anonymize_messages(
                 normalized_messages
             )
@@ -505,22 +637,7 @@ class UnifiedFAQExtractor:
             if author in user_mapping:
                 return user_mapping[author]
 
-            # Check if staff using exact or local-part matching
-            # Extract local part (before @) for Matrix-style identifiers
-            author_lower = author.lower()
-            author_local = author_lower.split("@")[0].lstrip("@")  # Handle @user:server
-
-            is_staff = any(
-                # Exact match (case-insensitive)
-                staff_id.lower() == author_lower
-                # Or local-part match for Matrix IDs like @user:matrix.org
-                or staff_id.lower() == author_local
-                # Or the staff ID is a local part that matches author's local part
-                or staff_id.lower().split("@")[0].lstrip("@") == author_local
-                for staff_id in self.staff_identifiers
-            )
-
-            if is_staff:
+            if self._is_staff_author(author):
                 anon = f"Staff_{staff_counter}"
                 staff_counter += 1
             else:
@@ -593,10 +710,13 @@ TRANSCRIPT:
 
 Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A pairs (confidence >= 0.7)."""
 
-        # Get model ID with provider prefix
         model_id = self.settings.OPENAI_MODEL
         if ":" not in model_id:
             model_id = f"openai:{model_id}"
+
+        extra_kwargs: Dict[str, Any] = {}
+        if model_id.startswith("openai:"):
+            extra_kwargs["response_format"] = _FAQ_EXTRACTION_JSON_SCHEMA
 
         for attempt in range(self.MAX_RETRIES):
             try:
@@ -612,6 +732,7 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                         ],
                         temperature=self.settings.LLM_TEMPERATURE,
                         max_tokens=min(4096, self.settings.MAX_TOKENS),
+                        **extra_kwargs,
                     ),
                 )
 
@@ -687,8 +808,27 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                 )
 
                 # Skip low-confidence or incomplete pairs
-                if faq.confidence >= 0.7 and faq.question_text and faq.answer_text:
-                    faqs.append(faq)
+                if faq.confidence < 0.7 or not faq.question_text or not faq.answer_text:
+                    continue
+
+                # Reject pairs where LLM returned same ID for question and answer
+                if faq.question_msg_id and faq.question_msg_id == faq.answer_msg_id:
+                    logger.warning(
+                        "Rejected FAQ: question_msg_id == answer_msg_id (%s). "
+                        "LLM confused user question with staff answer.",
+                        faq.question_msg_id,
+                    )
+                    continue
+
+                aid = faq.answer_msg_id
+                if aid and any(p.fullmatch(aid) for p in _FABRICATED_ID_PATTERNS):
+                    logger.warning(
+                        "Rejected FAQ: answer_msg_id '%s' looks fabricated.",
+                        aid,
+                    )
+                    continue
+
+                faqs.append(faq)
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse FAQ pair: {e}")

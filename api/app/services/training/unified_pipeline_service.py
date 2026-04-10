@@ -1724,6 +1724,23 @@ class UnifiedPipelineService:
                 skipped_reason="duplicate",
             )
 
+        # Skip if original question and answer are identical (LLM used same
+        # message for both — a known extraction bug)
+        if (
+            original_user_question
+            and original_staff_answer
+            and original_user_question.strip() == original_staff_answer.strip()
+        ):
+            return ProcessingResult(
+                candidate_id=None,
+                source=source,
+                source_event_id=source_event_id,
+                routing="SKIPPED",
+                final_score=0.0,
+                is_calibration_sample=False,
+                skipped_reason="identical_original_texts",
+            )
+
         # Skip if question or answer is too short
         if len(question_text.strip()) < 10 or len(staff_answer.strip()) < 10:
             return ProcessingResult(
