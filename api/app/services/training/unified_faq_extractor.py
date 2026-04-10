@@ -458,16 +458,30 @@ class UnifiedFAQExtractor:
     def _is_staff_author(self, author: str) -> bool:
         """Check if author matches any staff identifier.
 
-        Handles Matrix IDs (@user:server), Bisq2 usernames, and partial
-        matches against the local-part of Matrix-style identifiers.
+        Matching rules (applied per staff_id):
+        1. Full-ID match when both sides have a homeserver
+           (@user:server == @user:server)
+        2. Localpart match when the staff_id is a bare username
+           ("suddenwhipvapor" matches @suddenwhipvapor:matrix.org)
         """
-        author_lower = author.lower().lstrip("@")
-        # For Matrix IDs like "user:server", extract just the local part
-        author_local = author_lower.split(":")[0]
-        return any(
-            staff_id.lower().lstrip("@").split(":")[0] == author_local
-            for staff_id in self.staff_identifiers
-        )
+        author_norm = author.lower().lstrip("@")
+        author_local = author_norm.split(":")[0]
+        author_has_server = ":" in author_norm
+
+        for sid in self.staff_identifiers:
+            sid_norm = sid.lower().lstrip("@")
+            sid_has_server = ":" in sid_norm
+
+            if sid_has_server and author_has_server:
+                # Both are full Matrix IDs — require exact match
+                if sid_norm == author_norm:
+                    return True
+            else:
+                # At least one is a bare username — compare localparts
+                if sid_norm.split(":")[0] == author_local:
+                    return True
+
+        return False
 
     async def extract_faqs(
         self,
@@ -820,12 +834,20 @@ Return a JSON object with the extracted FAQ pairs. Only include high-quality Q&A
                     )
                     continue
 
-                aid = faq.answer_msg_id
-                if aid and any(p.fullmatch(aid) for p in _FABRICATED_ID_PATTERNS):
-                    logger.warning(
-                        "Rejected FAQ: answer_msg_id '%s' looks fabricated.",
-                        aid,
-                    )
+                fabricated = False
+                for label, mid in (
+                    ("question_msg_id", faq.question_msg_id),
+                    ("answer_msg_id", faq.answer_msg_id),
+                ):
+                    if mid and any(p.fullmatch(mid) for p in _FABRICATED_ID_PATTERNS):
+                        logger.warning(
+                            "Rejected FAQ: %s '%s' looks fabricated.",
+                            label,
+                            mid,
+                        )
+                        fabricated = True
+                        break
+                if fabricated:
                     continue
 
                 faqs.append(faq)

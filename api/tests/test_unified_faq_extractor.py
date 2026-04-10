@@ -1215,6 +1215,13 @@ class TestDuplicateMessageIdRejection:
         """LLM returning same msg ID for question and answer should be filtered."""
         messages = [
             {
+                "messageId": "msg_user1",
+                "message": "What if my trade fails?",
+                "author": "user1",
+                "date": "2026-01-15T09:59:00Z",
+                "citation": None,
+            },
+            {
                 "messageId": "msg_staff1",
                 "message": "If the trade fails, open mediation.",
                 "author": "suddenwhipvapor",
