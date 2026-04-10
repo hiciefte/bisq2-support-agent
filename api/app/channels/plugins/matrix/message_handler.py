@@ -263,12 +263,27 @@ class MatrixMessageHandler:
         return candidate
 
     def _is_self_sender(self, sender_id: str) -> bool:
+        """Check if sender is this bot or the companion alert bot.
+
+        Both the sync bot and the alert bot are controlled by us — neither
+        should be treated as a user asking a question.
+        """
         normalized = str(sender_id or "").strip()
         if not normalized:
             return True
 
         own_user_id = str(getattr(self.client, "user_id", "") or "").strip()
-        return bool(own_user_id and normalized == own_user_id)
+        if own_user_id and normalized == own_user_id:
+            return True
+
+        # Also ignore the alert-lane bot to prevent cross-lane feedback loops
+        settings = getattr(self.channel, "runtime", None)
+        settings = getattr(settings, "settings", settings)
+        alert_user = str(getattr(settings, "MATRIX_ALERT_USER", "") or "").strip()
+        if alert_user and normalized == alert_user:
+            return True
+
+        return False
 
     def _is_staff_sender(self, *, room: Any, event: Any, sender_id: str) -> bool:
         channel = self.channel
