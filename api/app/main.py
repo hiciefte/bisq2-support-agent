@@ -560,7 +560,12 @@ async def lifespan(app: FastAPI):
                     if trust_monitor_service.publisher:
                         trust_monitor_service.publisher.publish(finding)
                 except Exception:
-                    logger.warning("Failed to persist proactive finding", exc_info=True)
+                    logger.warning(
+                        "Failed to persist proactive finding for %s (%s)",
+                        result.suspect_actor_id,
+                        result.detector_key,
+                        exc_info=True,
+                    )
 
             scanner = ProactiveImpersonationScanner(
                 homeserver_url=settings.MATRIX_HOMESERVER_URL,

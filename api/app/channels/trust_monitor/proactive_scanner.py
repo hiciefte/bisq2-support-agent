@@ -25,6 +25,14 @@ from app.channels.trust_monitor.detectors.staff_name_collision import (
 )
 from app.channels.trust_monitor.models import TrustAlertSurface
 
+try:
+    from nio import RoomSendResponse
+
+    _NIO_AVAILABLE = True
+except ImportError:
+    _NIO_AVAILABLE = False
+    RoomSendResponse = None
+
 logger = logging.getLogger(__name__)
 
 # Bisq-related keywords for public room scanning
@@ -107,12 +115,17 @@ class ProactiveImpersonationScanner:
         logger.info("Proactive impersonation scanner stopped")
 
     async def _scan_loop(self) -> None:
+        logger.info("Proactive scanner waiting 30s before first scan...")
         await asyncio.sleep(30)
         while self._running:
             try:
                 await self._run_scans()
             except Exception:
-                logger.warning("Proactive scan failed", exc_info=True)
+                logger.warning(
+                    "Proactive scan cycle failed (interval=%ds)",
+                    self.scan_interval_seconds,
+                    exc_info=True,
+                )
             try:
                 await asyncio.sleep(self.scan_interval_seconds)
             except asyncio.CancelledError:
@@ -291,7 +304,7 @@ class ProactiveImpersonationScanner:
 
     async def _post_scam_warning(self) -> None:
         """Post a scam warning in monitored rooms (max once per 24h per room)."""
-        if self.matrix_client is None:
+        if self.matrix_client is None or not _NIO_AVAILABLE:
             return
 
         now = datetime.now(UTC)
@@ -301,8 +314,6 @@ class ProactiveImpersonationScanner:
                 continue
 
             try:
-                from nio import RoomSendResponse
-
                 resp = await self.matrix_client.room_send(
                     room_id=room_id,
                     message_type="m.room.message",
