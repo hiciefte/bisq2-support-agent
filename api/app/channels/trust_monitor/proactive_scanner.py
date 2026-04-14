@@ -4,17 +4,16 @@ Periodically searches the Matrix user directory and public room directory
 for potential impersonation of Bisq staff. Creates trust findings when
 suspicious accounts or rooms are discovered.
 
-Capabilities:
-1. User directory scan — finds accounts with display names matching staff
-2. Public room directory scan — finds rooms with Bisq-related names
-3. Educational warning — posts scam warnings when name collisions are found
+Findings are forwarded via the `on_finding` callback, which routes them
+to the admin UI (always) and the staff room (when the operator policy
+allows). The scanner itself never posts into the observed public rooms.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -24,14 +23,6 @@ from app.channels.trust_monitor.detectors.staff_name_collision import (
     normalize_display_name,
 )
 from app.channels.trust_monitor.models import TrustAlertSurface
-
-try:
-    from nio import RoomSendResponse
-
-    _NIO_AVAILABLE = True
-except ImportError:
-    _NIO_AVAILABLE = False
-    RoomSendResponse = None
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +38,6 @@ _BISQ_ROOM_KEYWORDS = [
 
 # Subset used for the "suspicious room name" filter
 _SUSPICIOUS_ROOM_TERMS = ["bisq support", "bisq help", "bisq easy"]
-
-_SCAM_WARNING = (
-    "\u26a0\ufe0f **Security Notice**: Official Bisq support staff will **NEVER** send "
-    "you a direct message first. If someone DMs you claiming to be Bisq support, "
-    "**do not share your seed phrase, passwords, or send any funds**. "
-    "Report suspicious accounts to the room moderators."
-)
-
-# Minimum interval between scam warnings per room (24 hours)
-_WARNING_COOLDOWN = timedelta(hours=24)
 
 
 class ProactiveImpersonationScanner:
@@ -91,7 +72,6 @@ class ProactiveImpersonationScanner:
         self._running = False
         self._reported_user_ids: set[str] = set()
         self._reported_room_ids: set[str] = set()
-        self._last_warning_per_room: dict[str, datetime] = {}
 
     async def start(self) -> None:
         if self._running:
@@ -147,9 +127,6 @@ class ProactiveImpersonationScanner:
                     self.on_finding(finding)
                 except Exception:
                     logger.warning("on_finding callback failed", exc_info=True)
-
-        if user_findings:
-            await self._post_scam_warning()
 
     # ------------------------------------------------------------------
     # User directory scanning
@@ -349,36 +326,3 @@ class ProactiveImpersonationScanner:
                 except Exception:
                     pass
         return None
-
-    # ------------------------------------------------------------------
-    # Educational warning (rate-limited per room)
-    # ------------------------------------------------------------------
-
-    async def _post_scam_warning(self) -> None:
-        """Post a scam warning in monitored rooms (max once per 24h per room)."""
-        if self.matrix_client is None or not _NIO_AVAILABLE:
-            return
-
-        now = datetime.now(UTC)
-        for room_id in self.monitored_room_ids:
-            last = self._last_warning_per_room.get(room_id)
-            if last is not None and (now - last) < _WARNING_COOLDOWN:
-                continue
-
-            try:
-                resp = await self.matrix_client.room_send(
-                    room_id=room_id,
-                    message_type="m.room.message",
-                    content={"msgtype": "m.notice", "body": _SCAM_WARNING},
-                )
-                if isinstance(resp, RoomSendResponse):
-                    self._last_warning_per_room[room_id] = now
-                    logger.info("Posted scam warning to %s", room_id)
-                else:
-                    logger.warning(
-                        "Failed to post scam warning to %s: %s", room_id, resp
-                    )
-            except Exception:
-                logger.warning(
-                    "Error posting scam warning to %s", room_id, exc_info=True
-                )
