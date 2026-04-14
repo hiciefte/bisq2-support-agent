@@ -165,12 +165,15 @@ class ProactiveImpersonationScanner:
 
         findings: list[DetectorResult] = []
 
+        per_request_timeout = aiohttp.ClientTimeout(total=10)
+
         for name in staff_names:
             normalized_staff = normalize_display_name(name)
             try:
                 resp = await session.post(
                     f"{self.homeserver_url}/_matrix/client/v3/user_directory/search",
                     json={"search_term": name, "limit": 20},
+                    timeout=per_request_timeout,
                 )
                 if resp.status != 200:
                     continue
@@ -215,6 +218,12 @@ class ProactiveImpersonationScanner:
                             occurred_at=datetime.now(UTC),
                         )
                     )
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                logger.debug(
+                    "User directory search timed out or failed for '%s'",
+                    name,
+                    exc_info=True,
+                )
             except Exception:
                 logger.debug(
                     "User directory search error for '%s'", name, exc_info=True
@@ -237,11 +246,14 @@ class ProactiveImpersonationScanner:
         """Search Matrix public room directory for Bisq-related rooms."""
         findings: list[DetectorResult] = []
 
+        per_request_timeout = aiohttp.ClientTimeout(total=10)
+
         for keyword in _BISQ_ROOM_KEYWORDS:
             try:
                 resp = await session.post(
                     f"{self.homeserver_url}/_matrix/client/v3/publicRooms",
                     json={"filter": {"generic_search_term": keyword}, "limit": 50},
+                    timeout=per_request_timeout,
                 )
                 if resp.status != 200:
                     continue
@@ -287,6 +299,12 @@ class ProactiveImpersonationScanner:
                             occurred_at=datetime.now(UTC),
                         )
                     )
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                logger.debug(
+                    "Public room search timed out or failed for '%s'",
+                    keyword,
+                    exc_info=True,
+                )
             except Exception:
                 logger.debug(
                     "Public room search error for '%s'", keyword, exc_info=True
