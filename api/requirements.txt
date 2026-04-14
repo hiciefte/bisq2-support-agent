@@ -160,7 +160,7 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.10.1
+huggingface-hub==1.10.2
     # via
     #   datasets
     #   tokenizers
@@ -243,7 +243,7 @@ langgraph-prebuilt==1.0.9
     # via langgraph
 langgraph-sdk==0.3.13
     # via langgraph
-langsmith==0.7.30
+langsmith==0.7.31
     # via
     #   langchain-classic
     #   langchain-community
