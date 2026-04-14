@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, FilterX, Loader2, ShieldCheck } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SecurityAlertsInitialData, TrustFinding, TrustFindingCounts, TrustMonitorPolicy } from "@/components/admin/security/types";
@@ -42,14 +42,23 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
   const statusFilter = searchParams.get("status") ?? "";
   const detectorFilter = searchParams.get("detector") ?? "";
 
+  // Findings-list identity (status_filter + detector_key affect the server
+  // fetch). Other URL params like findingId are local UI state and must NOT
+  // trigger a state reset, otherwise the detail panel flickers on each click.
+  const findingsCacheKey = `${statusFilter}|${detectorFilter}|${initialData.findings?.total ?? 0}`;
+  const lastSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (lastSyncKeyRef.current === findingsCacheKey) {
+      return;
+    }
+    lastSyncKeyRef.current = findingsCacheKey;
     setFindings(initialData.findings?.items ?? []);
     setCounts(initialData.counts);
     setPolicy(initialData.policy);
     setOps(initialData.ops);
     setTrustAudit(initialData.trustAudit?.items ?? []);
     setChatopsAudit(initialData.chatopsAudit?.items ?? []);
-  }, [initialData]);
+  }, [initialData, findingsCacheKey]);
 
   useEffect(() => {
     const needsBootstrap = (
@@ -156,18 +165,34 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
     return statusMatch && detectorMatch;
   }), [detectorFilter, findings, statusFilter]);
 
-  const selectedFindingId = useMemo(() => {
-    const raw = searchParams.get("findingId");
-    if (raw) {
-      const parsed = Number(raw);
-      if (filteredFindings.some((finding) => finding.id === parsed)) {
-        return parsed;
-      }
-    }
-    return filteredFindings[0]?.id ?? null;
-  }, [filteredFindings, searchParams]);
+  // Selection lives in local state so clicks bypass the Next.js server
+  // refetch that would otherwise reset all data and flicker the detail panel.
+  const [explicitSelectedId, setExplicitSelectedId] = useState<number | null>(
+    () => {
+      if (typeof window === "undefined") return null;
+      const raw = new URLSearchParams(window.location.search).get("findingId");
+      const parsed = raw ? Number(raw) : NaN;
+      return Number.isFinite(parsed) ? parsed : null;
+    },
+  );
+
+  const selectedFindingId =
+    explicitSelectedId !== null
+    && filteredFindings.some((finding) => finding.id === explicitSelectedId)
+      ? explicitSelectedId
+      : filteredFindings[0]?.id ?? null;
   const selectedFinding = filteredFindings.find((finding) => finding.id === selectedFindingId) ?? null;
   const hasActiveFilters = Boolean(statusFilter || detectorFilter);
+
+  const handleSelectFinding = useCallback((findingId: number) => {
+    setExplicitSelectedId(findingId);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      params.set("findingId", String(findingId));
+      const next = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState(window.history.state, "", next);
+    }
+  }, []);
 
   const derivedCounts = useMemo<TrustFindingCounts>(() => findings.reduce<TrustFindingCounts>((summary, finding) => {
     summary.total += 1;
@@ -359,7 +384,7 @@ export function SecurityAlertsClient({ initialData }: SecurityAlertsClientProps)
           <SecurityFindingsList
             findings={filteredFindings}
             selectedFindingId={selectedFindingId}
-            onSelect={(findingId) => updateUrl({ findingId: String(findingId) })}
+            onSelect={handleSelectFinding}
           />
         </section>
         <div className="xl:sticky xl:top-24 xl:self-start">
