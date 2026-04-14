@@ -180,9 +180,13 @@ class ProactiveImpersonationScanner:
 
                 data = await resp.json()
 
+                # Fetch real staff avatar for comparison
+                staff_avatar_url = await self._get_avatar_url(session, name)
+
                 for user in data.get("results", []):
                     user_id = str(user.get("user_id", "")).strip()
                     display_name = str(user.get("display_name", "")).strip()
+                    suspect_avatar = str(user.get("avatar_url", "") or "").strip()
 
                     if not user_id or not display_name:
                         continue
@@ -213,6 +217,8 @@ class ProactiveImpersonationScanner:
                                 "user_id": user_id,
                                 "display_name": display_name,
                                 "detection_method": "user_directory_search",
+                                "suspect_avatar_url": suspect_avatar or None,
+                                "staff_avatar_url": staff_avatar_url or None,
                             },
                             alert_surface=TrustAlertSurface.BOTH,
                             occurred_at=datetime.now(UTC),
@@ -315,6 +321,34 @@ class ProactiveImpersonationScanner:
                 "Proactive room scan found %d suspicious room(s)", len(findings)
             )
         return findings
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _get_avatar_url(
+        self, session: aiohttp.ClientSession, staff_name: str
+    ) -> str | None:
+        """Resolve the avatar MXC URL for a staff display name.
+
+        Searches trusted staff IDs for a matching local-part and fetches
+        their profile. Returns the mxc:// URL or None.
+        """
+        for sid in self.trusted_staff_ids:
+            local = sid.lstrip("@").split(":")[0]
+            if local == staff_name.lower():
+                try:
+                    url = (
+                        f"{self.homeserver_url}/_matrix/client/v3"
+                        f"/profile/{sid}/avatar_url"
+                    )
+                    resp = await session.get(url)
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("avatar_url") or None
+                except Exception:
+                    pass
+        return None
 
     # ------------------------------------------------------------------
     # Educational warning (rate-limited per room)
