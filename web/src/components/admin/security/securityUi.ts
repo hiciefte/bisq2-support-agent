@@ -33,6 +33,35 @@ export function formatStatus(status: TrustFinding["status"]): string {
   return status.replace(/_/g, " ");
 }
 
+/**
+ * Render a Matrix-ish space identifier in a way that is readable in the
+ * admin UI. Full IDs are noisy (`!ilodKeOTMMMDTlGhkf:matrix.org`) but we
+ * cannot resolve them to display names without a backend round-trip.
+ *
+ * Strategy:
+ * - "proactive_scan"            → "proactive scan"
+ * - empty/null                  → "(unknown room)"
+ * - long Matrix room IDs        → "!ilodKeO…:matrix.org"
+ * - everything else             → returned unchanged
+ */
+export function formatRoomIdentifier(spaceId: string | null | undefined): string {
+  if (!spaceId) {
+    return "(unknown room)";
+  }
+  if (spaceId === "proactive_scan") {
+    return "proactive scan";
+  }
+  if (spaceId.startsWith("!")) {
+    const colonIndex = spaceId.indexOf(":");
+    if (colonIndex > 9) {
+      const head = spaceId.slice(0, 9);
+      const tail = spaceId.slice(colonIndex);
+      return `${head}…${tail}`;
+    }
+  }
+  return spaceId;
+}
+
 export function formatRelativeTime(value: string): string {
   const diffMs = Date.now() - new Date(value).getTime();
   const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));

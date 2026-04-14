@@ -115,6 +115,10 @@ async def lifespan(app: FastAPI):
     app.state.trust_monitor_service = None
     app.state.chatops_audit_store = None
 
+    import httpx as _httpx
+
+    app.state.matrix_media_http_client = _httpx.AsyncClient(follow_redirects=True)
+
     # Initialize task metrics persistence and restore values
     logger.info("Initializing task metrics persistence...")
     from app.metrics.task_metrics import restore_metrics_from_database
@@ -445,26 +449,20 @@ async def lifespan(app: FastAPI):
                     ResponseMetadata,
                     UserContext,
                 )
+                from app.channels.trust_monitor.alert_formatting import (
+                    format_trust_alert_for_matrix,
+                )
 
                 target = app.state.trust_monitor_policy_service.get_policy().matrix_staff_room_id or getattr(
                     settings, "MATRIX_STAFF_ROOM", ""
                 )
                 if not target:
                     return
-                summary = finding.evidence_summary
-                lines = [
-                    f"Trust monitor finding: {finding.detector_key}",
-                    f"User: {finding.suspect_actor_id}",
-                    f"Display name: {finding.suspect_display_name or '-'}",
-                    f"Score: {finding.score:.2f}",
-                ]
-                for key, value in summary.items():
-                    lines.append(f"{key}: {value}")
                 message = OutgoingMessage(
                     message_id=f"trust-{finding.id}",
-                    in_reply_to=str(finding.id),
+                    in_reply_to="",  # empty disables m.in_reply_to (no event to reply to)
                     channel=ChannelType.MATRIX,
-                    answer="\n".join(lines),
+                    answer=format_trust_alert_for_matrix(finding),
                     user=UserContext(
                         user_id="trust-monitor",
                         session_id=None,
@@ -540,32 +538,18 @@ async def lifespan(app: FastAPI):
 
             sync_rooms = resolve_allowed_sync_rooms(settings)
 
+            from app.channels.trust_monitor.proactive_persistence import (
+                persist_proactive_finding,
+            )
+
             def _handle_proactive_finding(result):
                 """Persist finding via trust monitor store and publish alert."""
-                try:
-                    space_id = next(iter(sync_rooms), "proactive_scan")
-                    finding = trust_monitor_service.store.upsert_finding(
-                        detector_key=result.detector_key,
-                        channel_id="matrix",
-                        space_id=space_id,
-                        suspect_actor_key=result.suspect_actor_key,
-                        suspect_actor_id=result.suspect_actor_id,
-                        suspect_display_name=result.suspect_display_name,
-                        score=result.score,
-                        alert_surface=result.alert_surface,
-                        evidence_summary=result.evidence_summary,
-                        created_at=result.occurred_at,
-                        notify=True,
-                    )
-                    if trust_monitor_service.publisher:
-                        trust_monitor_service.publisher.publish(finding)
-                except Exception:
-                    logger.warning(
-                        "Failed to persist proactive finding for %s (%s)",
-                        result.suspect_actor_id,
-                        result.detector_key,
-                        exc_info=True,
-                    )
+                persist_proactive_finding(
+                    trust_monitor_service=trust_monitor_service,
+                    sync_rooms=sync_rooms,
+                    result=result,
+                    logger=logger,
+                )
 
             scanner = ProactiveImpersonationScanner(
                 homeserver_url=settings.MATRIX_HOMESERVER_URL,
@@ -730,6 +714,10 @@ async def lifespan(app: FastAPI):
     # For example, rag_service might have a cleanup method
     if hasattr(app.state.rag_service, "cleanup"):
         await app.state.rag_service.cleanup()
+
+    matrix_media_client = getattr(app.state, "matrix_media_http_client", None)
+    if matrix_media_client is not None:
+        await matrix_media_client.aclose()
 
 
 # Create FastAPI application

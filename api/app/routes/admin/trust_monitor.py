@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.security import verify_admin_access
-from fastapi import APIRouter, Depends, HTTPException, Request
+from app.services.matrix_media_proxy import MediaProxyError, fetch_matrix_media
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 router = APIRouter(
@@ -388,6 +389,44 @@ def mark_benign(
         actor_id=(payload.actor_id if payload and payload.actor_id else "admin"),
     )
     return _finding_response(updated)
+
+
+def _matrix_access_token(request: Request) -> str | None:
+    matrix_channel = getattr(request.app.state, "matrix_channel", None)
+    runtime = getattr(matrix_channel, "runtime", None)
+    if runtime is None:
+        return None
+    matrix_client = runtime.resolve_optional("matrix_client")
+    return getattr(matrix_client, "access_token", None) if matrix_client else None
+
+
+@router.get("/matrix-media/{server_name}/{media_id}")
+async def proxy_matrix_media(
+    server_name: str, media_id: str, request: Request
+) -> Response:
+    """Proxy a Matrix mxc:// reference for the admin UI.
+
+    The frontend never sees the access token. Avatars only — small payloads.
+    """
+    settings = request.app.state.settings
+    http_client = request.app.state.matrix_media_http_client
+
+    try:
+        payload = await fetch_matrix_media(
+            homeserver_url=settings.MATRIX_HOMESERVER_URL,
+            access_token=_matrix_access_token(request),
+            server_name=server_name,
+            media_id=media_id,
+            http_client=http_client,
+        )
+    except MediaProxyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    return Response(
+        content=payload.content,
+        media_type=payload.content_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 # Resolve Pydantic forward references for FastAPI response models in isolated test imports.

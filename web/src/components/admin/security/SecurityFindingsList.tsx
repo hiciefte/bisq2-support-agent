@@ -8,6 +8,7 @@ import {
   DETECTOR_LABELS,
   FALLBACK_DETECTOR_ICON,
   formatRelativeTime,
+  formatRoomIdentifier,
   formatStatus,
   STATUS_STYLES,
 } from "@/components/admin/security/securityUi";
@@ -98,7 +99,9 @@ function FindingListItem({
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{finding.channel_id}</span>
             <span>•</span>
-            <span className="truncate">{finding.space_id}</span>
+            <span className="truncate" title={finding.space_id}>
+              {formatRoomIdentifier(finding.space_id)}
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className={cn("font-medium", scoreTone(finding.score))}>
