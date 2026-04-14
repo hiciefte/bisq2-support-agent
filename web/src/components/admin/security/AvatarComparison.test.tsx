@@ -56,7 +56,7 @@ describe("AvatarComparison", () => {
         suspectAvatarUrl={null}
         suspectDisplayName="alice"
         suspectActorId="@bad:matrix.org"
-        staffAvatarUrl="https://example.com/alice.png"
+        staffAvatarUrl="mxc://matrix.org/alicepic"
         staffDisplayName="alice"
       />,
     );
@@ -64,7 +64,9 @@ describe("AvatarComparison", () => {
     const root = screen.getByTestId("avatar-comparison");
     const imgs = root.querySelectorAll("img");
     expect(imgs).toHaveLength(1);
-    expect(imgs[0]?.getAttribute("src")).toBe("https://example.com/alice.png");
+    expect(imgs[0]?.getAttribute("src")).toContain(
+      "/matrix-media/matrix.org/alicepic",
+    );
   });
 
   it("shows 'Unknown' when display name is missing", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { resolveAvatarUrl } from "@/lib/matrix-media";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +45,9 @@ export function MatrixAvatar({
 }: MatrixAvatarProps) {
   const resolved = resolveAvatarUrl(avatarUrl);
   const [errored, setErrored] = useState(false);
+  useEffect(() => {
+    setErrored(false);
+  }, [resolved]);
   const initials = computeInitials(displayName);
   const altName = displayName?.trim() || "Unknown user";
   const showImage = Boolean(resolved) && !errored;

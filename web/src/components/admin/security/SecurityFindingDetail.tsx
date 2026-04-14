@@ -46,7 +46,7 @@ const STRUCTURED_KEYS = new Set([
 ]);
 
 const DETECTION_METHOD_LABELS: Record<string, string> = {
-  user_directory_search: "User directory match",
+  user_directory_search: "User directory search",
   public_room_scan: "Public room scan",
   message_event: "In-room message",
 };
@@ -266,14 +266,20 @@ export function SecurityFindingDetail({
             value={
               finding.notification_count > 0
                 ? `${finding.notification_count}× notified`
-                : "Shadow only"
+                : finding.alert_surface === "none"
+                  ? "Silent"
+                  : "0× notified"
             }
             hint={`Last notified ${formatTimestamp(finding.last_notified_at)}`}
           />
           <DataRow
             icon={<Hash className="h-3.5 w-3.5" />}
             label="Room scope"
-            value={formatRoomScope(finding.channel_id, finding.space_id)}
+            value={
+              <span title={finding.space_id}>
+                {formatRoomScope(finding.channel_id, finding.space_id)}
+              </span>
+            }
           />
           <DataRow
             icon={<Clock3 className="h-3.5 w-3.5" />}
@@ -365,7 +371,7 @@ export function SecurityFindingDetail({
 interface DataRowProps {
   icon: ReactNode;
   label: string;
-  value: string;
+  value: ReactNode;
   hint?: string;
   accent?: boolean;
 }

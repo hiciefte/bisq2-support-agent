@@ -47,10 +47,9 @@ describe("resolveAvatarUrl", () => {
     expect(url).toContain("abc%25foo");
   });
 
-  it("passes through https URLs unchanged", () => {
-    expect(resolveAvatarUrl("https://example.com/a.png")).toBe(
-      "https://example.com/a.png",
-    );
+  it("rejects raw https URLs to prevent third-party tracking of admin viewers", () => {
+    expect(resolveAvatarUrl("https://example.com/a.png")).toBeNull();
+    expect(resolveAvatarUrl("http://example.com/a.png")).toBeNull();
   });
 
   it("returns null for unsupported schemes and empty input", () => {

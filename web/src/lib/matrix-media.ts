@@ -34,22 +34,16 @@ export function parseMxcUri(uri: string | null | undefined): ParsedMxc | null {
 }
 
 /**
- * Convert any avatar URL into something an `<img src=…>` can load.
+ * Convert a Matrix `mxc://` URI into a backend proxy URL the admin UI
+ * can render via `<img src=…>`.
  *
- * - `mxc://server/id` → backend proxy URL
- * - `https://…`       → returned unchanged (already loadable)
- * - everything else   → null (caller should render the fallback)
+ * Only `mxc://` is accepted. Raw `https?://` URLs are intentionally
+ * rejected so untrusted third parties cannot track admin viewers.
  */
 export function resolveAvatarUrl(url: string | null | undefined): string | null {
-  if (!url) {
+  const parsed = parseMxcUri(url);
+  if (!parsed) {
     return null;
   }
-  const parsed = parseMxcUri(url);
-  if (parsed) {
-    return `${API_BASE_URL}/admin/security/matrix-media/${encodeURIComponent(parsed.serverName)}/${encodeURIComponent(parsed.mediaId)}`;
-  }
-  if (url.startsWith("https://") || url.startsWith("http://")) {
-    return url;
-  }
-  return null;
+  return `${API_BASE_URL}/admin/security/matrix-media/${encodeURIComponent(parsed.serverName)}/${encodeURIComponent(parsed.mediaId)}`;
 }

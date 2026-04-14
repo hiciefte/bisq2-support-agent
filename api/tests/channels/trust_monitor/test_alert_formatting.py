@@ -113,3 +113,41 @@ def test_format_starts_with_bold_alert_header() -> None:
     first_line = text.splitlines()[0]
     assert first_line.startswith("**") and first_line.endswith("**")
     assert "Trust monitor alert" in first_line
+
+
+def test_format_strips_newlines_from_display_name() -> None:
+    finding = _make_finding(suspect_display_name="alice\nbob")
+    text = format_trust_alert_for_matrix(finding)
+    assert "**Suspect:** alice bob" in text or "**Suspect:** alice  bob" in text
+
+
+def test_format_neutralizes_room_mention_in_display_name() -> None:
+    finding = _make_finding(suspect_display_name="@room everyone")
+    text = format_trust_alert_for_matrix(finding)
+    assert "@room" not in text
+
+
+def test_format_neutralizes_room_mention_in_evidence_value() -> None:
+    finding = _make_finding(
+        evidence_summary={
+            "matched_staff_name": "@room please",
+            "detection_method": "user_directory_search",
+        }
+    )
+    text = format_trust_alert_for_matrix(finding)
+    assert "@room" not in text
+
+
+def test_format_strips_newlines_from_extra_signal_value() -> None:
+    finding = _make_finding(
+        evidence_summary={
+            "detection_method": "user_directory_search",
+            "matched_staff_name": "alice",
+            "notes": "line one\nline two",
+        }
+    )
+    text = format_trust_alert_for_matrix(finding)
+    notes_lines = [line for line in text.splitlines() if "Notes" in line]
+    assert notes_lines, "Notes line missing from output"
+    for line in notes_lines:
+        assert "line one" in line and "line two" in line

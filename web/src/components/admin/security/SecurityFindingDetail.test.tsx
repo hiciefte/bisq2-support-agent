@@ -75,7 +75,7 @@ describe("SecurityFindingDetail", () => {
     );
     expect(screen.getByText("Why it was flagged")).toBeInTheDocument();
     expect(screen.getByText("Detection method")).toBeInTheDocument();
-    expect(screen.getByText("User directory match")).toBeInTheDocument();
+    expect(screen.getByText("User directory search")).toBeInTheDocument();
     expect(screen.getByText("Collides with staff name")).toBeInTheDocument();
     expect(screen.getByText("Alert destination")).toBeInTheDocument();
     expect(screen.getByText("Admin UI only")).toBeInTheDocument();
@@ -109,6 +109,52 @@ describe("SecurityFindingDetail", () => {
     expect(primary).toHaveAttribute("data-action", "primary");
     await userEvent.click(primary);
     expect(onAction).toHaveBeenCalledWith("resolve");
+  });
+
+  it("does not call zero notifications 'Shadow only' for admin_ui findings", () => {
+    render(
+      <SecurityFindingDetail
+        finding={makeFinding({
+          alert_surface: "admin_ui",
+          notification_count: 0,
+        })}
+        isMutating={false}
+        onAction={jest.fn()}
+      />,
+    );
+    expect(screen.queryByText("Shadow only")).toBeNull();
+    expect(screen.getByText("0× notified")).toBeInTheDocument();
+  });
+
+  it("exposes the full room ID via a title attribute even when truncated", () => {
+    render(
+      <SecurityFindingDetail
+        finding={makeFinding({
+          channel_id: "matrix",
+          space_id: "!ilodKeOTMMMDTlGhkf:matrix.org",
+        })}
+        isMutating={false}
+        onAction={jest.fn()}
+      />,
+    );
+    const fullId = "!ilodKeOTMMMDTlGhkf:matrix.org";
+    const node = screen.getByTitle(fullId);
+    expect(node.textContent).toContain("…");
+    expect(node.textContent).toContain(":matrix.org");
+  });
+
+  it("renders 'Silent' for findings whose alert_surface is none", () => {
+    render(
+      <SecurityFindingDetail
+        finding={makeFinding({
+          alert_surface: "none",
+          notification_count: 0,
+        })}
+        isMutating={false}
+        onAction={jest.fn()}
+      />,
+    );
+    expect(screen.getByText("Silent")).toBeInTheDocument();
   });
 
   it("renders the risk score progress bar with a percentage value", () => {

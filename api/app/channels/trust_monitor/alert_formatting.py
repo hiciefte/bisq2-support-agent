@@ -44,6 +44,18 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
+def _sanitize_matrix_text(value: Any) -> str:
+    """Make untrusted text safe to inline into a Matrix markdown message.
+
+    Strips newlines (preserves the line-based layout) and neutralizes
+    `@room`/`@here` mentions so a malicious display name can't ping the
+    whole staff room.
+    """
+    text = _stringify(value).replace("\r", " ").replace("\n", " ")
+    text = text.replace("@room", "@\u200broom").replace("@here", "@\u200bhere")
+    return text
+
+
 def _detector_label(detector_key: str) -> str:
     return _DETECTOR_LABELS.get(detector_key, _humanize_key(detector_key))
 
@@ -75,20 +87,22 @@ def format_trust_alert_for_matrix(finding: TrustFinding) -> str:
     )
     detection_method = _detection_method_label(evidence.get("detection_method"))
 
-    display_name = finding.suspect_display_name or "(no display name)"
+    display_name = _sanitize_matrix_text(
+        finding.suspect_display_name or "(no display name)"
+    )
 
     lines: list[str] = []
     lines.append(f"**🚨 Trust monitor alert — {detector_label}**")
     lines.append("")
     lines.append(f"**Suspect:** {display_name}")
-    lines.append(f"`{finding.suspect_actor_id}`")
+    lines.append(f"`{_sanitize_matrix_text(finding.suspect_actor_id)}`")
     if matched_staff:
-        lines.append(f"**Collides with staff:** {matched_staff}")
+        lines.append(f"**Collides with staff:** {_sanitize_matrix_text(matched_staff)}")
     lines.append("")
     lines.append(f"**Risk score:** {finding.score:.2f} ({risk_label})")
     if detection_method:
         lines.append(f"**Detection method:** {detection_method}")
-    lines.append(f"**Channel:** {finding.channel_id}")
+    lines.append(f"**Channel:** {_sanitize_matrix_text(finding.channel_id)}")
 
     extra_signals = [
         (key, value)
@@ -99,7 +113,7 @@ def format_trust_alert_for_matrix(finding: TrustFinding) -> str:
         lines.append("")
         lines.append("**Other signals:**")
         for key, value in extra_signals:
-            lines.append(f"- {_humanize_key(key)}: {_stringify(value)}")
+            lines.append(f"- {_humanize_key(key)}: {_sanitize_matrix_text(value)}")
 
     lines.append("")
     lines.append("Open in Admin UI to view avatars, take action, or mark as benign.")
