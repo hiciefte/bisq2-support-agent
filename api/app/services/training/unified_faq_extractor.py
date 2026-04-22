@@ -98,6 +98,12 @@ Your task is to extract HIGH-QUALITY FAQ pairs where:
 - Messages that are only confirmations or agreements
 - Staff messages that have no preceding user question in the transcript
 - Cases where only a staff member is speaking (no user question exists)
+- Pairs where the answer is GENERIC advice that could apply to any software
+  (e.g., "try restarting", "check the documentation", "ensure your connection is stable")
+  without Bisq-specific steps, commands, or domain knowledge
+- Pairs where the question topic does NOT match the answer topic — if a user
+  asks about payment confirmation but the staff answer discusses wallet sync,
+  those are from DIFFERENT conversations and must NOT be paired
 
 ### Handling corrections:
 If a staff member corrects their own answer:
@@ -146,6 +152,13 @@ Transform conversational staff answers into concise, staff-quality support answe
 If a user sends multiple messages forming one question:
 - Combine them into a single question_text
 - Include full context needed to understand the question
+
+### Threading and reply context:
+Messages may include "← IN REPLY TO [Msg #N]" or "(replying to ...)" markers.
+These indicate which message a staff member is responding to. USE this signal
+to pair the correct question with the correct answer. If a staff reply references
+Msg #3, the question is in Msg #3 — do NOT pair it with a different user's message
+that happens to be closer in the timeline.
 
 ## EXAMPLES
 
@@ -664,6 +677,13 @@ class UnifiedFAQExtractor:
             user_mapping[author] = anon
             return anon
 
+        # Build a lookup from message ID → message number for threading
+        id_to_msg_number: dict[str, int] = {}
+        for i, msg in enumerate(messages):
+            mid = msg.get("id", "")
+            if mid:
+                id_to_msg_number[mid] = i + 1
+
         # Build anonymized transcript
         lines = []
         for i, msg in enumerate(messages):
@@ -674,17 +694,37 @@ class UnifiedFAQExtractor:
 
             line = f"[Msg #{i+1}] [{anon_author}] (ID: {msg_id}): {text}"
 
-            # Add citation/reply info if present
+            # Add citation/reply info with resolved message number
             citation = msg.get("citation")
+            reply_to = msg.get("reply_to")
+
             if citation:
                 cited_author = citation.get("author", "unknown")
                 cited_text = citation.get("text", "")[:50]
                 anon_cited = get_anon_name(cited_author)
-                line += f' (replying to {anon_cited}: "{cited_text}...")'
-
-            reply_to = msg.get("reply_to")
-            if reply_to:
-                line += f" (reply to: {reply_to})"
+                cited_msg_num = None
+                for mid, num in id_to_msg_number.items():
+                    if num < i + 1:
+                        check_msg = messages[num - 1]
+                        if check_msg.get(
+                            "author"
+                        ) == cited_author and cited_text in check_msg.get("text", ""):
+                            cited_msg_num = num
+                            break
+                if cited_msg_num:
+                    line += f" ← IN REPLY TO [Msg #{cited_msg_num}] [{anon_cited}]"
+                else:
+                    line += f' (replying to {anon_cited}: "{cited_text}...")'
+            elif reply_to:
+                replied_msg_num = id_to_msg_number.get(reply_to)
+                if replied_msg_num:
+                    replied_author = messages[replied_msg_num - 1].get(
+                        "author", "unknown"
+                    )
+                    anon_replied = get_anon_name(replied_author)
+                    line += f" ← IN REPLY TO [Msg #{replied_msg_num}] [{anon_replied}]"
+                else:
+                    line += f" (reply to: {reply_to})"
 
             lines.append(line)
 
