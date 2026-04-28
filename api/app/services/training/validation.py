@@ -56,6 +56,7 @@ _DEFAULT_DOMAIN_TERMS = frozenset(
 )
 
 _TOKEN_RE = re.compile(r"\S+")
+_WORD_RE = re.compile(r"[a-z0-9]+(?:[+][a-z0-9]+)?")
 _CODE_RE = re.compile(r"[`/\\]|\.app|\.sh|\-\-\w")
 
 
@@ -109,7 +110,10 @@ def check_answer_specificity(
     lower = text.lower()
     terms = set(domain_terms) if domain_terms else _DEFAULT_DOMAIN_TERMS
 
-    has_domain_term = any(term in lower for term in terms)
+    words = set(_WORD_RE.findall(lower))
+    has_domain_term = bool(words & terms) or any(
+        phrase in lower for phrase in terms if " " in phrase
+    )
     has_code = bool(_CODE_RE.search(text))
 
     if has_code:
@@ -119,9 +123,8 @@ def check_answer_specificity(
         return SpecificityResult(is_generic=True, reason="too_short_no_domain_terms")
 
     if not has_domain_term:
-        words = set(lower.split())
         verb_overlap = words & _GENERIC_VERBS
-        if verb_overlap and not has_code:
+        if verb_overlap:
             return SpecificityResult(is_generic=True, reason="generic_verbs_only")
 
     return SpecificityResult(is_generic=False)

@@ -41,7 +41,7 @@ class TestComparisonScoreRouting:
     def test_good_scores_allow_spot_check(self) -> None:
         svc = _make_service()
         routing, _ = svc._determine_routing(final_score=0.80, comparison_score=0.60)
-        assert routing in ("SPOT_CHECK", "AUTO_APPROVE")
+        assert routing == "SPOT_CHECK"
 
     def test_calibration_mode_always_full_review(self) -> None:
         svc = _make_service(calibration_mode=True)

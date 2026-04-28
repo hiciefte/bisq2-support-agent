@@ -31,7 +31,7 @@ class TestFilterShortMessages:
         result = filter_short_messages(messages, min_tokens=5)
         assert len(result) == 2
 
-    def test_removes_short_user_messages(self) -> None:
+    def test_removes_short_user_messages_but_keeps_staff(self) -> None:
         messages = [
             {"id": "1", "author": "user1", "text": "ok thanks"},
             {"id": "2", "author": "staff1", "text": "You're welcome!"},
@@ -41,9 +41,10 @@ class TestFilterShortMessages:
                 "text": "What is the maximum trade amount in Bisq?",
             },
         ]
-        result = filter_short_messages(messages, min_tokens=5)
+        result = filter_short_messages(messages, min_tokens=5, staff_authors={"staff1"})
         ids = [m["id"] for m in result]
         assert "1" not in ids
+        assert "2" in ids
         assert "3" in ids
 
     def test_keeps_all_staff_messages_regardless_of_length(self) -> None:

@@ -700,17 +700,20 @@ class UnifiedFAQExtractor:
 
             if citation:
                 cited_author = citation.get("author", "unknown")
-                cited_text = citation.get("text", "")[:50]
+                cited_text = (citation.get("text") or "")[:50]
                 anon_cited = get_anon_name(cited_author)
                 cited_msg_num = None
-                for mid, num in id_to_msg_number.items():
-                    if num < i + 1:
-                        check_msg = messages[num - 1]
-                        if check_msg.get(
-                            "author"
-                        ) == cited_author and cited_text in check_msg.get("text", ""):
-                            cited_msg_num = num
-                            break
+                if cited_text:
+                    for mid, num in id_to_msg_number.items():
+                        if num < i + 1:
+                            check_msg = messages[num - 1]
+                            if check_msg.get(
+                                "author"
+                            ) == cited_author and cited_text in check_msg.get(
+                                "text", ""
+                            ):
+                                cited_msg_num = num
+                                break
                 if cited_msg_num:
                     line += f" ← IN REPLY TO [Msg #{cited_msg_num}] [{anon_cited}]"
                 else:
