@@ -388,7 +388,9 @@ class UnifiedPipelineService:
         )
 
         # Determine routing
-        routing, is_calibration = self._determine_routing(comparison.final_score)
+        routing, is_calibration = self._determine_routing(
+            comparison.final_score, comparison_score=comparison.embedding_similarity
+        )
 
         # Create candidate
         candidate = self.repository.create(
@@ -551,7 +553,9 @@ class UnifiedPipelineService:
         )
 
         # Determine new routing
-        routing, _ = self._determine_routing(comparison.final_score)
+        routing, _ = self._determine_routing(
+            comparison.final_score, comparison_score=comparison.embedding_similarity
+        )
 
         # Update the candidate with corrected answer and new scores
         self.repository.update_candidate(
@@ -781,7 +785,9 @@ class UnifiedPipelineService:
         )
 
         # Determine routing
-        routing, is_calibration = self._determine_routing(comparison.final_score)
+        routing, is_calibration = self._determine_routing(
+            comparison.final_score, comparison_score=comparison.embedding_similarity
+        )
 
         # Create candidate
         candidate = self.repository.create(
@@ -908,21 +914,24 @@ class UnifiedPipelineService:
             duration = time.time() - start_time
             training_comparison_duration.observe(duration)
 
-    def _determine_routing(self, final_score: float) -> tuple[str, bool]:
+    _COMPARISON_FULL_REVIEW_THRESHOLD = 0.45
+
+    def _determine_routing(
+        self,
+        final_score: float,
+        comparison_score: float | None = None,
+    ) -> tuple[str, bool]:
         """
-        Determine routing based on score and calibration state.
+        Determine routing based on scores and calibration state.
 
-        During calibration mode, all candidates go to FULL_REVIEW
-        to establish accurate baseline thresholds.
-
-        After calibration, uses LearningEngine adaptive thresholds if available,
-        otherwise falls back to hardcoded thresholds:
-        - score >= 0.90: AUTO_APPROVE
-        - score >= 0.75: SPOT_CHECK
-        - score < 0.75: FULL_REVIEW
+        When a comparison_score is available (staff answer vs. AI answer),
+        it overrides the final_score for routing: a low comparison score
+        means the AI answer is likely wrong, so the candidate must go to
+        FULL_REVIEW regardless of how high the final_score is.
 
         Args:
-            final_score: The final comparison score
+            final_score: The weighted comparison score
+            comparison_score: Raw similarity of staff vs AI answer (optional)
 
         Returns:
             Tuple of (routing, is_calibration_sample)
@@ -930,8 +939,13 @@ class UnifiedPipelineService:
         is_calibration = self.repository.is_calibration_mode()
 
         if is_calibration:
-            # During calibration, everything goes to FULL_REVIEW
             return "FULL_REVIEW", True
+
+        if (
+            comparison_score is not None
+            and comparison_score < self._COMPARISON_FULL_REVIEW_THRESHOLD
+        ):
+            return "FULL_REVIEW", False
 
         # Post-calibration: Use LearningEngine if available for adaptive thresholds
         if self.learning_engine is not None:
@@ -1477,7 +1491,9 @@ class UnifiedPipelineService:
             )
 
             # Determine new routing based on updated score
-            routing, _ = self._determine_routing(comparison.final_score)
+            routing, _ = self._determine_routing(
+                comparison.final_score, comparison_score=comparison.embedding_similarity
+            )
 
             update_kwargs: Dict[str, Any] = {
                 "candidate_id": candidate_id,
@@ -1563,7 +1579,9 @@ class UnifiedPipelineService:
         )
 
         # Determine new routing based on updated score
-        routing, _ = self._determine_routing(comparison.final_score)
+        routing, _ = self._determine_routing(
+            comparison.final_score, comparison_score=comparison.embedding_similarity
+        )
 
         # Update the candidate with all new values
         return self.repository.update_candidate(
@@ -1782,7 +1800,9 @@ class UnifiedPipelineService:
         )
 
         # Determine routing
-        routing, is_calibration = self._determine_routing(comparison.final_score)
+        routing, is_calibration = self._determine_routing(
+            comparison.final_score, comparison_score=comparison.embedding_similarity
+        )
 
         # Create candidate with detected protocol
         source_timestamp = datetime.now(timezone.utc).isoformat()

@@ -303,7 +303,7 @@ class Settings(BaseSettings):
         description="Enable full LLM extraction (replaces pattern-based)",
     )
     LLM_EXTRACTION_MODEL: str = Field(
-        default="openai:gpt-4.1-nano",
+        default="openai:gpt-4.1-mini",
         description="Model for extraction (format: 'provider:model')",
     )
     LLM_EXTRACTION_BATCH_SIZE: int = Field(
