@@ -97,6 +97,26 @@ class TestProtocolDetection:
         assert protocol == "multisig_v1"
         assert confidence >= 0.7
 
+    def test_detect_protocol_from_text_support_ticket_alone_is_ambiguous(
+        self, detector
+    ):
+        """Support-ticket wording alone is shared enough to stay ambiguous."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "How do I open a support ticket?"
+        )
+        assert protocol is None
+        assert confidence == 0.0
+
+    def test_detect_protocol_from_text_bisq1_dispute_resolution_wiki_url(
+        self, detector
+    ):
+        """Bisq 1 dispute-resolution wiki URLs are precise multisig signals."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "See https://bisq.wiki/Dispute_resolution#Level_2:_Mediation for details."
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
     def test_detect_protocol_from_text_bisq1_account_signing_terms(self, detector):
         """Account-signing limits are Bisq 1 support signals."""
         protocol, confidence = detector.detect_protocol_from_text(
