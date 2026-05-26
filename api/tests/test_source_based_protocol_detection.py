@@ -311,6 +311,26 @@ class TestPipelineDetectProtocolWithFallback:
         )
         assert result == "multisig_v1"
 
+    def test_matrix_staff_answer_support_ticket_shortcut_is_bisq1(
+        self, pipeline_service
+    ):
+        """Staff answer fallback should catch Bisq 1 support-ticket shortcuts."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="How do I open a support ticket to report an issue with a trade?",
+            staff_answer="Select the trade and press Ctrl+O to open a support ticket.",
+            source="matrix",
+        )
+        assert result == "multisig_v1"
+
+    def test_matrix_staff_answer_account_limits_is_bisq1(self, pipeline_service):
+        """Staff answer fallback should catch account-signing limit answers."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="What is the minimum payment in sats to get the account info signed?",
+            staff_answer="The minimum payment is 0.0025 BTC. See the Account_limits wiki page.",
+            source="matrix",
+        )
+        assert result == "multisig_v1"
+
     def test_matrix_source_detects_bisq2_in_pipeline(self, pipeline_service):
         """Matrix source should detect Bisq 2 content."""
         result = pipeline_service._detect_protocol_with_fallback(

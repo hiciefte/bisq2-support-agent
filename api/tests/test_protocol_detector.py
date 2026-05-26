@@ -73,6 +73,38 @@ class TestProtocolDetection:
         assert protocol == "multisig_v1"
         assert confidence >= 0.7
 
+    def test_detect_protocol_from_text_bisq1_deposit_txid(self, detector):
+        """Deposit txid wording should map to Bisq 1/multisig flows."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "The trade failed and there is no valid deposit txid."
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_detect_protocol_from_text_bisq1_market_price_tolerance(self, detector):
+        """Market-price tolerance trade failures are Bisq 1 signals."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "The offer failed because of a market price tolerance error."
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_detect_protocol_from_text_bisq1_support_ticket_shortcut(self, detector):
+        """Bisq 1 support ticket shortcuts should route to multisig_v1."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "Select the trade and press Ctrl+O to open a support ticket."
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_detect_protocol_from_text_bisq1_account_signing_terms(self, detector):
+        """Account-signing limits are Bisq 1 support signals."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "What is the minimum payment to get the account info signed?"
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
     def test_detect_protocol_from_text_bisq2_keywords(self, detector):
         """Bisq Easy keywords should return bisq_easy protocol."""
         protocol, confidence = detector.detect_protocol_from_text(
@@ -299,6 +331,8 @@ class TestOperationalSupportQuestions:
             "Can I cancel a trade if the delivery address is invalid?",
             "What should I do if my Bisq wallet fails to restore from seed?",
             "Can I start trading after installing an update, or is there something I should be aware of?",
+            "How do I verify the Bisq installer on Linux?",
+            "If PGP says good signature, is it safe to use?",
             "I wanna talk to a manager!!",
         ],
     )
