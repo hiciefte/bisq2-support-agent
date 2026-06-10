@@ -311,6 +311,62 @@ class TestPipelineDetectProtocolWithFallback:
         )
         assert result == "multisig_v1"
 
+    def test_matrix_staff_answer_support_ticket_shortcut_is_bisq1(
+        self, pipeline_service
+    ):
+        """Staff answer fallback should catch Bisq 1 support-ticket shortcuts."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="How do I open a support ticket to report an issue with a trade?",
+            staff_answer="Select the trade and press Ctrl+O to open a support ticket.",
+            source="matrix",
+        )
+        assert result == "multisig_v1"
+
+    def test_matrix_staff_answer_dispute_resolution_wiki_url_is_bisq1(
+        self, pipeline_service
+    ):
+        """Staff answer fallback should catch Bisq 1 dispute-resolution links."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="Does opening the support ticket send it to mediation?",
+            staff_answer=(
+                "Opening a support ticket starts mediation. "
+                "See https://bisq.wiki/Dispute_resolution#Level_2:_Mediation."
+            ),
+            source="matrix",
+        )
+        assert result == "multisig_v1"
+
+    def test_matrix_support_ticket_without_specific_signal_stays_ambiguous(
+        self, pipeline_service
+    ):
+        """Do not force Bisq 1 for support-ticket wording without a precise signal."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="How do I open a support ticket?",
+            staff_answer="Use the support flow in the app to contact staff.",
+            source="matrix",
+        )
+        assert result is None
+
+    def test_matrix_mediation_chat_without_specific_signal_stays_ambiguous(
+        self, pipeline_service
+    ):
+        """Do not force Bisq 1 for shared mediation-chat wording alone."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="How do I use mediation chat?",
+            staff_answer="Use mediation chat to coordinate with support.",
+            source="matrix",
+        )
+        assert result is None
+
+    def test_matrix_staff_answer_account_limits_is_bisq1(self, pipeline_service):
+        """Staff answer fallback should catch account-signing limit answers."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="What is the minimum payment in sats to get the account info signed?",
+            staff_answer="The minimum payment is 0.0025 BTC. See the Account_limits wiki page.",
+            source="matrix",
+        )
+        assert result == "multisig_v1"
+
     def test_matrix_source_detects_bisq2_in_pipeline(self, pipeline_service):
         """Matrix source should detect Bisq 2 content."""
         result = pipeline_service._detect_protocol_with_fallback(
