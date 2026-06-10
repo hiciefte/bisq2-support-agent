@@ -347,6 +347,17 @@ class TestPipelineDetectProtocolWithFallback:
         )
         assert result is None
 
+    def test_matrix_mediation_chat_without_specific_signal_stays_ambiguous(
+        self, pipeline_service
+    ):
+        """Do not force Bisq 1 for shared mediation-chat wording alone."""
+        result = pipeline_service._detect_protocol_with_fallback(
+            question_text="How do I use mediation chat?",
+            staff_answer="Use mediation chat to coordinate with support.",
+            source="matrix",
+        )
+        assert result is None
+
     def test_matrix_staff_answer_account_limits_is_bisq1(self, pipeline_service):
         """Staff answer fallback should catch account-signing limit answers."""
         result = pipeline_service._detect_protocol_with_fallback(

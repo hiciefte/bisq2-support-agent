@@ -73,7 +73,6 @@ BISQ1_STRONG_KEYWORDS: list[str] = [
     "ctrl+o",
     "ctrl + o",
     "ctrl-o",
-    "mediation chat",
     "bisq.wiki/dispute_resolution",
     "account info signed",
     "account limits",

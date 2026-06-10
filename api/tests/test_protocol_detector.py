@@ -107,6 +107,14 @@ class TestProtocolDetection:
         assert protocol is None
         assert confidence == 0.0
 
+    def test_detect_protocol_from_text_mediation_chat_alone_is_ambiguous(
+        self, detector
+    ):
+        """Mediation-chat wording alone should not force Bisq 1 routing."""
+        protocol, confidence = detector.detect_protocol_from_text("mediation chat")
+        assert protocol is None
+        assert confidence == 0.0
+
     def test_detect_protocol_from_text_bisq1_dispute_resolution_wiki_url(
         self, detector
     ):
