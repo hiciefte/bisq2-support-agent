@@ -1366,13 +1366,14 @@ class SimplifiedRAGService:
                 elif doc.metadata.get("type") == "faq":
                     # Generate FAQ URL using slug from document ID and full question
                     faq_url = None
+                    faq_slug = None
                     faq_id = doc.metadata.get("id")
                     # Use full question from metadata if available, otherwise use title
                     faq_question = doc.metadata.get("question") or title
                     if faq_id and faq_question:
                         # Generate slug from question and ID
-                        slug = slug_manager.generate_slug(faq_question, faq_id)
-                        faq_url = f"/faq/{slug}"
+                        faq_slug = slug_manager.generate_slug(faq_question, str(faq_id))
+                        faq_url = f"/faq/{faq_slug}"
 
                     sources.append(
                         {
@@ -1380,6 +1381,10 @@ class SimplifiedRAGService:
                             "type": "faq",
                             "content": content,
                             "protocol": protocol,
+                            "id": str(faq_id) if faq_id is not None else None,
+                            "faq_id": str(faq_id) if faq_id is not None else None,
+                            "question": faq_question,
+                            "slug": faq_slug,
                             "url": faq_url,
                             "section": section,
                             "similarity_score": (

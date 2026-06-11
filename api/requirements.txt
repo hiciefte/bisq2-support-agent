@@ -79,8 +79,10 @@ click==8.4.1
     #   uvicorn
 contourpy==1.3.3
     # via matplotlib
-cryptography==48.0.1
-    # via pyjwt
+cryptography==46.0.7
+    # via
+    #   -r api/requirements.in
+    #   pyjwt
 cycler==0.12.1
     # via matplotlib
 datasets==5.0.0

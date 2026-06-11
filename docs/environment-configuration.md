@@ -74,7 +74,7 @@ These variables configure the application services running inside Docker contain
 
 ### Bisq2 API Authorization Variables
 
-When Bisq2 API is configured with `authorizationRequired=true`, the support-agent must be configured for durable client credentials plus session bootstrap.
+When Bisq2 API is configured with `authorizationRequired=true`, the support-agent must be configured for durable client credentials or a durable encrypted auth-state file plus session bootstrap. Store these values in `docker/.env`, not in `/etc/bisq-support/deploy.env`.
 
 * **`BISQ_API_URL`**
   * Description: Base URL used by support-agent to call Bisq2 API.
@@ -100,12 +100,12 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 * **`BISQ_API_AUTH_STATE_SECRET`**
   * Description: Secret used to encrypt the persisted Bisq auth-state cache at rest.
   * Default: empty
-  * Production recommendation: set this explicitly instead of relying on fallback secrets
+  * Production recommendation: set this explicitly and keep it stable across deployments; changing it makes existing encrypted auth-state files unreadable.
 * **`BISQ_API_CLIENT_ID`**
-  * Description: Recommended durable Bisq2 API client ID for production. When paired with `BISQ_API_CLIENT_SECRET`, the support agent can recreate sessions after restart without relying on QR files.
+  * Description: Optional durable Bisq2 API client ID for production. When paired with `BISQ_API_CLIENT_SECRET`, the support agent can recreate sessions after restart without relying on QR files.
   * Default: empty
 * **`BISQ_API_CLIENT_SECRET`**
-  * Description: Recommended durable Bisq2 API client secret for production. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are preferred over pairing-file bootstrap.
+  * Description: Optional durable Bisq2 API client secret for production. When both `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` are set, these credentials are preferred over auth-state and pairing-file bootstrap.
   * Default: empty
 * **`BISQ2_STAFF_NOTIFICATION_TARGET`**
   * Description: Optional Bisq2 channel ID used when the Bisq2 Internal Notice Target is set to `staff_room`.
@@ -113,9 +113,11 @@ When Bisq2 API is configured with `authorizationRequired=true`, the support-agen
 
 Notes:
 * On first startup with auth enabled, support-agent can read pairing QR/code, pair once, then persist credentials/session to `BISQ_API_AUTH_STATE_FILE`.
-* For production, treat QR/code input as bootstrap only. Persist the paired `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` in the deployment environment so sessions can be recreated after restart without depending on a stale QR payload.
+* For production, treat QR/code input as bootstrap only. After successful pairing, either persist the paired `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` in `docker/.env`, or keep `BISQ_API_CLIENT_ID` / `BISQ_API_CLIENT_SECRET` blank and use the encrypted `BISQ_API_AUTH_STATE_FILE` as the credential source.
+* `BISQ_API_SESSION_ID` should normally stay blank in production. Sessions are runtime state and can be recreated from the client secret.
 * `BISQ_API_AUTH_STATE_FILE` must contain both `client_id` and `client_secret`; incomplete state is ignored and counted as an auth failure.
-* In Dockerized production, bootstrap once if needed, then move the durable client credentials into the deploy environment and keep `BISQ_API_AUTH_STATE_FILE` as a session cache rather than the sole source of truth.
+* In Dockerized production, `/data` maps to `$BISQ_SUPPORT_INSTALL_DIR/api/data`, so `BISQ_API_AUTH_STATE_FILE=bisq_api_auth.json` survives normal container rebuilds, `docker compose up -d`, and `docker compose down` as long as operators do not remove volumes or delete the host data directory.
+* See `docs/bisq2-api-startup-and-pairing.md` for the local production-network startup flow and production re-pairing checklist.
 
 ### Matrix Variables (Sync vs Alerts)
 

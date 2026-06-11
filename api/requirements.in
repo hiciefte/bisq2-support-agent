@@ -28,6 +28,10 @@ transformers>=4.35.0
 
 # Matrix integration
 matrix-nio[e2e]>=0.21.0
+# cryptography 47+ Linux ARM64 wheels crash with SIGILL in the Rust binding
+# under local Docker Desktop aarch64. Keep local/dev ARM64 images usable while
+# production remains x86_64.
+cryptography>=46.0.3,<47.0.0
 
 # LLM providers
 # AISuite for unified LLM interface with MCP support

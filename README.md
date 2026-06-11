@@ -38,7 +38,9 @@ If you want Dockerized support-agent services to use a manually started Bisq2 he
 BISQ_API_URL=http://host.docker.internal:8090 ./run-local.sh
 ```
 
-Important: the Bisq2 API process must be reachable from Docker (bind host `0.0.0.0`, not only `127.0.0.1`).
+For the production-network single-client setup, pairing bootstrap, stale credential cleanup, and verification commands, follow `docs/bisq2-api-startup-and-pairing.md`. Do not use the local 3-node harness when the goal is to receive real production-network chat and offer-book data.
+
+Important: the Bisq2 API process must be reachable from Docker. On macOS Docker Desktop, `host.docker.internal` can reach a host service bound to `127.0.0.1`. On native Linux Docker, a host-run Bisq2 API may need to bind to `0.0.0.0`; firewall it to the host/Docker bridge if you do that.
 
 For Matrix local testing, keep public support sync and staff notifications separated:
 
@@ -53,10 +55,13 @@ If the Bisq2 API runs with `authorizationRequired=true`, enable authenticated su
 
 ```bash
 BISQ_API_AUTH_ENABLED=true
-# Prefer durable client credentials in production...
+# Either keep durable client credentials in docker/.env...
 BISQ_API_CLIENT_ID=...
 BISQ_API_CLIENT_SECRET=...
-# ...and use pairing data only for first bootstrap if needed:
+# ...or let the encrypted auth-state file be the credential source after first pairing.
+BISQ_API_AUTH_STATE_FILE=bisq_api_auth.json
+BISQ_API_AUTH_STATE_SECRET=...
+# Use pairing data only for first bootstrap or intentional re-pairing:
 # BISQ_API_PAIRING_CODE_ID=...
 # BISQ_API_PAIRING_QR_FILE=/path/to/pairing_qr_code.txt
 ```
@@ -135,6 +140,11 @@ After deployment, you must configure the following settings in `/opt/bisq-suppor
    MATRIX_CHATOPS_ENABLED=true
    MATRIX_CHATOPS_ROOM_IDS=!your-staff-room:matrix.org
    ```
+
+   Bisq2 API pairing and restart behavior:
+   - Production app config lives in `/opt/bisq-support/docker/.env`, not `/etc/bisq-support/deploy.env`.
+   - `/opt/bisq-support/api/data/bisq_api_auth.json` survives normal container rebuilds/restarts as long as `BISQ_API_AUTH_STATE_SECRET` stays unchanged.
+   - Use `docs/bisq2-api-startup-and-pairing.md` before changing Bisq2 API auth or re-pairing production.
 
 6. **Restart services** after making changes:
    ```bash

@@ -29,6 +29,7 @@ import { type Period } from "@/types/dashboard";
 import {
   AlertTriangle,
   ArrowRight,
+  BookOpenCheck,
   CheckCircle2,
   ChevronDown,
   Clock,
@@ -362,7 +363,7 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Prioritized work across Quality Signals, Escalations, FAQs, and Training.
+                Prioritized work across Quality Signals, Escalations, FAQs, and Knowledge Updates.
               </p>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -409,25 +410,25 @@ export function OverviewClient({ initialData }: OverviewClientProps) {
               />
 
               <ActionTaskCard
-                icon={<Gauge className="h-4 w-4 text-emerald-300" />}
-                label="Training"
+                icon={<BookOpenCheck className="h-4 w-4 text-emerald-300" />}
+                label="Knowledge Updates"
                 count={actionCounts.training_queue}
                 status={isActionCountsAvailable ? "known" : "unknown"}
                 description={
                   !isActionCountsAvailable
-                    ? "Training queue status is temporarily unavailable."
+                    ? "Knowledge update queue status is temporarily unavailable."
                     : actionCounts.training_queue > 0
-                    ? "Candidate answers waiting in training queues."
-                    : "Training queues are currently clear."
+                    ? "Support-chat evidence waiting for LLM Wiki review."
+                    : "Knowledge update queues are currently clear."
                 }
-                href="/admin/training"
-                cta="Open training"
+                href="/admin/knowledge-updates"
+                cta="Review updates"
                 detail={
                   !isActionCountsAvailable
-                    ? "Open Training for authoritative queue counts."
+                    ? "Open Knowledge Updates for authoritative queue counts."
                     : actionCounts.training_queue > 0
-                    ? "Unified training queue has pending items."
-                    : "No training actions waiting."
+                    ? "LLM Wiki review queue has pending items."
+                    : "No knowledge updates waiting."
                 }
               />
             </CardContent>

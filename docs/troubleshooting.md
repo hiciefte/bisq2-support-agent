@@ -214,23 +214,29 @@ If the FAQ extractor runs but doesn't generate new FAQs:
 
 5. If Bisq2 API has `authorizationRequired=true`, ensure support-agent auth is configured:
    ```bash
-   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_CLIENT_ID|BISQ_API_CLIENT_SECRET|BISQ_API_PAIRING_QR_FILE|BISQ_API_PAIRING_CODE_ID|BISQ_API_AUTH_STATE_FILE|BISQ_API_PAIRING_CLIENT_NAME)=' docker/.env
+   grep -E '^(BISQ_API_AUTH_ENABLED|BISQ_API_CLIENT_ID|BISQ_API_CLIENT_SECRET|BISQ_API_SESSION_ID|BISQ_API_PAIRING_QR_FILE|BISQ_API_PAIRING_CODE_ID|BISQ_API_AUTH_STATE_FILE|BISQ_API_AUTH_STATE_SECRET|BISQ_API_PAIRING_CLIENT_NAME)=' docker/.env
    ```
-   - Recommended production flow is durable client credentials with optional one-time pairing bootstrap:
+   - Recommended production flow is durable auth state or durable client credentials with optional one-time pairing bootstrap:
      1. Set `BISQ_API_AUTH_ENABLED=true`.
-     2. Prefer `BISQ_API_CLIENT_ID` and `BISQ_API_CLIENT_SECRET` in the deploy environment.
-     3. Use `BISQ_API_PAIRING_QR_FILE` or `BISQ_API_PAIRING_CODE_ID` only for the first bootstrap if durable credentials are not known yet.
-     4. If you must bootstrap from QR, copy the current QR payload from Bisq2 API runtime data into API data volume:
+     2. Set a stable `BISQ_API_AUTH_STATE_SECRET` in `docker/.env`.
+     3. Keep `BISQ_API_SESSION_ID` blank; the support-agent should create sessions at runtime.
+     4. Prefer one steady-state source: either `BISQ_API_CLIENT_ID` + `BISQ_API_CLIENT_SECRET` in `docker/.env`, or `/data/$BISQ_API_AUTH_STATE_FILE` with the same `BISQ_API_AUTH_STATE_SECRET`.
+     5. Use `BISQ_API_PAIRING_QR_FILE` or `BISQ_API_PAIRING_CODE_ID` only for first bootstrap or intentional re-pairing.
+     6. If you must bootstrap from QR, copy the current QR payload from Bisq2 API runtime data into API data volume:
 
         ```bash
         docker compose -f docker/docker-compose.yml exec bisq2-api cat /opt/bisq2/data/pairing_qr_code.txt > api/data/pairing_qr_code.txt
         ```
 
-     5. Restart `api` container and confirm `/data/bisq_api_auth.json` contains both `client_id` and `client_secret`.
+     7. Restart `api` container and confirm `/data/bisq_api_auth.json` exists. Do not print its contents in shared logs.
+     8. After successful production pairing, blank `BISQ_API_PAIRING_QR_FILE` unless you intentionally want pairing fallback on the next restart.
    - Pairing did not complete when logs show `Missing clientId` (missing/invalid QR file or auth disabled in support-agent).
    - `bisq_api_auth.json` containing only `client_id` is invalid and will be ignored.
+   - `Failed to decrypt Bisq API auth state` means `BISQ_API_AUTH_STATE_SECRET` changed or the auth-state file came from another environment.
+   - `authorizationRequired=false` in `/opt/bisq2/data/bisq.conf` means Bisq2 API is not enforcing auth, so pairing is not the primary reason for API failures.
    - Bisq2-side permission mapping for support endpoints is missing/incomplete for authenticated clients when logs show `Required permissions not granted` for `/api/v1/support/*`.
    - Docker liveness for `bisq2-api` should use an unauthenticated endpoint such as `/api/v1/openapi.json`; authenticated readiness is monitored separately through the support API metrics.
+   - For the full local production-network startup and production pairing checklist, see `docs/bisq2-api-startup-and-pairing.md`.
 
 ## Monitoring Issues
 

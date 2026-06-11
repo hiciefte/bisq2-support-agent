@@ -28,9 +28,9 @@ export function QueueTabs<TTabKey extends string>({
   gridClassName = "grid-cols-3",
 }: QueueTabsProps<TTabKey>) {
   return (
-    <div className={cn("rounded-lg border border-border/70 bg-card/40 p-1.5", className)}>
-      <div className="overflow-x-auto">
-        <div className={cn("flex min-w-full gap-1 sm:grid", gridClassName)}>
+    <div className={cn("w-full min-w-0 rounded-lg border border-border/70 bg-card/40 p-1.5", className)}>
+      <div className="max-w-full overflow-x-auto">
+        <div className={cn("flex w-max min-w-full gap-1 sm:grid sm:w-full", gridClassName)}>
           {tabs.map((item) => {
             const isSelected = activeTab === item.key;
             const Icon = item.icon;
