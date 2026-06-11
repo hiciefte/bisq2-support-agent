@@ -3,10 +3,10 @@ id: bisq1-dao-dpt-state-error
 title: Bisq 1 DAO state and delayed payout transaction mismatch errors
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: multisig_v1
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: medium
 source_refs:
   - wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error

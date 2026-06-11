@@ -3,10 +3,10 @@ id: bisq2-overview-trade-totals
 title: Bisq 2 overview totals and completed-trade history
 type: llm_wiki
 page_type: known_issue
-status: reviewed
+status: proposed
 protocol: bisq_easy
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-06-10"
+reviewed_by: null
+reviewed_at: null
 risk_level: low
 source_refs:
   - support:matrix_eval_029

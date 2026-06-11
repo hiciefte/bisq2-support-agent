@@ -3,10 +3,10 @@ id: bisq2-profile-data-recovery
 title: Bisq 2 profile and data recovery
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: bisq_easy
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: high
 source_refs:
   - wiki:Data directory

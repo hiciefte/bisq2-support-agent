@@ -3,10 +3,10 @@ id: bisq1-sepa-payment-name-proof
 title: Bisq 1 SEPA payment details, sender name, and proof
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: multisig_v1
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: high
 source_refs:
   - wiki:SEPA

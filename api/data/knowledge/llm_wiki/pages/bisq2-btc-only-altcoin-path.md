@@ -3,10 +3,10 @@ id: bisq2-btc-only-altcoin-path
 title: "Bisq Easy BTC scope: buying and selling Bitcoin only"
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: bisq_easy
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: low
 source_refs:
   - wiki:Bisq Easy

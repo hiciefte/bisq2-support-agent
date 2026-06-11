@@ -30,6 +30,8 @@ source_refs:
 ---
 ```
 
+Seed pages and newly synthesized pages should start as `proposed`. Use `reviewed_by` and `reviewed_at` only after a human support-admin review promotes the page.
+
 Only `reviewed` and `active` pages are indexable by the local loader. Production activation should use `active` pages once the eval gate is implemented.
 
 ## Page Structure

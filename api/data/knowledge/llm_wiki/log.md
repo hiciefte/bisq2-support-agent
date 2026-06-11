@@ -15,3 +15,11 @@
 - Separated arbitration payout/reimbursement guidance from timeout guidance to reduce unsupported answer drift.
 
 - Added Bisq 1 payout/output-error routing terms after live query testing showed the payout-output sample still asked for clarification.
+
+## 2026-06-11 - production source verification
+
+- Checked all initial page `source_refs` against the production `faqs.db` and production processed wiki snapshot.
+- Production wiki files match the local checked-in wiki snapshot byte-for-byte.
+- All referenced production FAQ IDs exist and are verified, but production `faq:1147` differs from the local FAQ with that ID.
+- Removed stale `faq:1147` as ACH evidence and tightened ACH wording to the production-supported claims.
+- Marked all initial pages `status: proposed` with empty review metadata so they cannot be indexed before a human support-admin review.

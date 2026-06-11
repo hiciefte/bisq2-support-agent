@@ -3,10 +3,10 @@ id: bisq2-easy-mediation-and-risk
 title: Bisq Easy mediation and risk boundaries
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: bisq_easy
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: high
 source_refs:
   - wiki:Bisq Easy
@@ -22,7 +22,6 @@ source_refs:
   - faq:873
   - faq:1069
   - faq:1070
-  - faq:1147
   - faq:1068
 ---
 ## Canonical Support Answer
@@ -31,7 +30,7 @@ Bisq Easy is reputation-based and does not use the Bisq 1 multisig escrow/securi
 
 Because there is no Bisq 1-style escrow in Bisq Easy, support should not promise reimbursement or DAO-backed recovery for every buyer loss. The safety model is to use small amounts, choose sellers with reputation, communicate clearly, and request mediation when payment was sent but BTC was not released.
 
-After a buyer sends fiat, BTC release depends on the payment method and the seller confirming receipt. For ACH specifically, the seller shares ACH payment details in trade chat, the buyer sends fiat directly to the seller's account, and ACH can take 1-3 days. If the seller does not release BTC within the expected trade period for that payment method, the buyer should open mediation.
+After a buyer sends fiat, BTC release depends on the payment method and the seller confirming receipt. For ACH specifically, keep support guidance conservative: ACH can take 1-3 days, is not available for every bank account, and bank micro-deposit verification flows can be unsuitable for peer-to-peer payment. If the seller does not release BTC within the expected trade period for that payment method, the buyer should open mediation.
 
 If the seller received fiat but a UI deadlock or mediation state blocks completion, support can ask the parties to coordinate in trade chat and, where appropriate, have the seller send BTC to the buyer's provided Bitcoin address.
 
@@ -60,7 +59,6 @@ If the seller received fiat but a UI deadlock or mediation state blocks completi
 - `faq:20`, `faq:88`, `faq:91`, and `faq:92` explain the non-escrow risk model.
 - `faq:47`, `faq:52`, `faq:98`, and `faq:1068` cover unresponsive peers, stuck trades, mediation, and sent-fiat situations.
 - `faq:1069` says ACH processing usually takes 1-3 days.
-- `faq:1147` says the seller shares ACH payment details and the buyer makes the ACH transfer to the seller.
 - `faq:873` warns that ACH micro-deposit verification is not intended for peer-to-peer payments and may require choosing another seller or payment method.
 
 ## Review Notes

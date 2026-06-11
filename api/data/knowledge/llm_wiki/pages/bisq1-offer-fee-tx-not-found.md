@@ -3,10 +3,10 @@ id: bisq1-offer-fee-tx-not-found
 title: Bisq 1 offer deactivated because fee transaction was not found
 type: llm_wiki
 page_type: support_playbook
-status: reviewed
+status: proposed
 protocol: multisig_v1
-reviewed_by: codex-initial-llm-wiki-review
-reviewed_at: "2026-05-13"
+reviewed_by: null
+reviewed_at: null
 risk_level: medium
 source_refs:
   - wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
