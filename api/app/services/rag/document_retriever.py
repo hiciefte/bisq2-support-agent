@@ -17,6 +17,7 @@ import logging
 import re
 from typing import Dict, List, Set, Tuple
 
+from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
 from app.services.rag.interfaces import RetrievedDocument, RetrieverProtocol
 from langchain_core.documents import Document
 
@@ -25,6 +26,60 @@ logger = logging.getLogger(__name__)
 
 # Type alias for document with similarity score
 DocumentWithScore = Tuple[Document, float]
+_BISQ1_VERSION_RE = re.compile(r"\bbisq\s*1\b|\bbisq1\b")
+_BISQ2_VERSION_RE = re.compile(r"\bbisq\s*2\b|\bbisq2\b")
+_COMPARISON_TOKEN_RE = re.compile(
+    r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
+)
+
+
+def _keyword_score(query_lower: str, keywords: List[str]) -> int:
+    return sum(1 for keyword in keywords if keyword in query_lower)
+
+
+def _classify_query_protocol(
+    query: str, detected_version: str | None = None
+) -> tuple[bool, bool, bool]:
+    """Classify retrieval protocol intent without duplicating routing heuristics.
+
+    Returns:
+        (is_multisig_query, mentions_bisq_easy, is_comparison_query)
+
+    ``detected_version`` may come from heuristic conversation state. Unknown
+    values intentionally fall through to the product default instead of raising
+    into the user-facing retrieval path.
+    """
+    query_lower = query.lower()
+    query_mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
+    query_mentions_bisq2 = bool(_BISQ2_VERSION_RE.search(query_lower))
+    is_comparison_query = (query_mentions_bisq1 and query_mentions_bisq2) or bool(
+        _COMPARISON_TOKEN_RE.search(query_lower)
+    )
+
+    if is_comparison_query:
+        return True, True, True
+
+    if query_mentions_bisq1:
+        return True, False, False
+    if query_mentions_bisq2:
+        return False, True, False
+
+    bisq1_score = _keyword_score(query_lower, BISQ1_STRONG_KEYWORDS)
+    bisq2_score = _keyword_score(query_lower, BISQ2_STRONG_KEYWORDS)
+    if bisq1_score > bisq2_score and bisq1_score > 0:
+        return True, False, False
+    if bisq2_score > bisq1_score and bisq2_score > 0:
+        return False, True, False
+
+    if detected_version:
+        normalized_version = detected_version.strip()
+        if normalized_version in ("Bisq 1", "multisig_v1"):
+            return True, False, False
+        if normalized_version in ("Bisq 2", "bisq_easy"):
+            return False, True, False
+
+    # Default product bias remains Bisq Easy for truly ambiguous questions.
+    return False, True, False
 
 
 class DocumentRetriever:
@@ -118,55 +173,12 @@ class DocumentRetriever:
         # must retrieve both protocols; otherwise we'd bias to the detected version and the
         # prompt won't have enough context to produce a comparison answer.
         if detected_version:
-            logger.info(
-                f"Using explicitly detected version: {detected_version} (ignoring query text patterns)"
-            )
-            query_lower = query.lower()
-            query_mentions_bisq1 = bool(
-                re.search(r"\bbisq\s*1\b|\bbisq1\b", query_lower)
-            )
-            query_mentions_bisq2 = bool(
-                re.search(r"\bbisq\s*2\b|\bbisq2\b", query_lower)
-            )
-            comparison_tokens = re.compile(
-                r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
-            )
-            query_is_comparison = (
-                query_mentions_bisq1 and query_mentions_bisq2
-            ) or bool(comparison_tokens.search(query_lower))
-
-            # Comparison intent in the question overrides version-based routing.
-            if query_is_comparison:
-                is_multisig_query = True
-                mentions_bisq_easy = True
-                is_comparison_query = True
-            else:
-                # Map detected version to query classification
-                # Accepts both version names (Bisq 1, Bisq 2) and protocol names (multisig_v1, bisq_easy)
-                if detected_version in ("Bisq 1", "multisig_v1"):
-                    is_multisig_query = True
-                    mentions_bisq_easy = False
-                    is_comparison_query = False
-                elif detected_version in ("Bisq 2", "bisq_easy"):
-                    is_multisig_query = False
-                    mentions_bisq_easy = True
-                    is_comparison_query = False
-                else:  # "Unknown", "all", or other - default to Bisq Easy priority
-                    is_multisig_query = False
-                    mentions_bisq_easy = True
-                    is_comparison_query = False
+            logger.info("Using explicitly detected version: %s", detected_version)
         else:
-            # Detect version from query using word boundaries to avoid false positives
             logger.info("No explicit version provided, detecting from query text...")
-            query_lower = query.lower()
-            is_multisig_query = bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", query_lower))
-            mentions_bisq_easy = bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", query_lower))
-            comparison_tokens = re.compile(
-                r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
-            )
-            is_comparison_query = (is_multisig_query and mentions_bisq_easy) or bool(
-                comparison_tokens.search(query_lower)
-            )
+        is_multisig_query, _mentions_bisq_easy, is_comparison_query = (
+            _classify_query_protocol(query, detected_version)
+        )
 
         try:
             if is_multisig_query and not is_comparison_query:
@@ -423,32 +435,9 @@ class DocumentRetriever:
         # Detect version from query and incorporate detected_version unless the query itself
         # signals a comparison. Bisq 1 is actively used and heavily represented in the wiki,
         # so we must not over-bias to Bisq Easy for comparison/ambiguous queries.
-        query_lower = query.lower()
-        is_multisig_query = bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", query_lower))
-        mentions_bisq_easy = bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", query_lower))
-        comparison_tokens = re.compile(
-            r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
+        is_multisig_query, _mentions_bisq_easy, is_comparison_query = (
+            _classify_query_protocol(query, detected_version)
         )
-        is_comparison_query = (is_multisig_query and mentions_bisq_easy) or bool(
-            comparison_tokens.search(query_lower)
-        )
-
-        if not is_comparison_query:
-            # Override with detected version if not explicit in query.
-            if (
-                not is_multisig_query
-                and not mentions_bisq_easy
-                and detected_version in ("Bisq 1", "multisig_v1")
-            ):
-                is_multisig_query = True
-                logger.info("Using detected version context: Bisq 1 (multisig_v1)")
-            elif (
-                not is_multisig_query
-                and not mentions_bisq_easy
-                and detected_version in ("Bisq 2", "bisq_easy")
-            ):
-                mentions_bisq_easy = True
-                logger.info("Using detected version context: Bisq 2 (bisq_easy)")
 
         try:
             if is_comparison_query:

@@ -41,6 +41,7 @@ class FeedbackWeightManager:
         self.source_weights = {
             "faq": 1.2,
             "wiki": 1.0,
+            "llm_wiki": 1.25,
         }
         logger.info("Feedback weight manager initialized")
 

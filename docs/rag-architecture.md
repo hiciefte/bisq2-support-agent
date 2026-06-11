@@ -41,7 +41,7 @@ User Query
 ### RAG Orchestration
 
 - `api/app/services/simplified_rag_service.py`
-- Loads wiki + FAQ documents
+- Loads wiki, FAQ, and internal LLM Wiki documents
 - Rebuilds/validates Qdrant index via index manager
 - Initializes retriever and response generation chain
 
@@ -92,6 +92,33 @@ User Query
 - Source of truth: `api/data/faqs.db`
 - Includes manually managed and pipeline-extracted FAQs
 
+### Internal LLM Wiki
+
+- Source: `api/data/knowledge/llm_wiki/pages/*.md`
+- Loader: `api/app/services/rag/llm_wiki_loader.py`
+- Purpose: compiled internal support knowledge derived from canonical docs, verified FAQs, and support evidence
+- Only markdown files with `status: reviewed` or `status: active` and non-empty `source_refs` enter the RAG index
+- Draft, proposed, and deprecated pages are ignored so AI-generated synthesis never becomes authoritative before review
+
+Example frontmatter:
+
+```yaml
+---
+id: bisq-easy-deposit-limits
+title: Bisq Easy deposit limits
+type: llm_wiki
+page_type: support_playbook
+status: reviewed
+protocol: bisq_easy
+reviewed_by: support-admin
+reviewed_at: "2026-05-12"
+risk_level: low
+source_refs:
+  - wiki:bisq-easy
+  - faq:123
+---
+```
+
 ## Configuration Reference
 
 | Setting | Value / Default | Notes |
@@ -106,6 +133,7 @@ User Query
 | `QUERY_REWRITE_MAX_HISTORY_TURNS` | `4` | Max chat history turns for context |
 | `ENABLE_COLBERT_RERANK` | app default: `false` | Compose default currently enables it (`true`) |
 | `COLBERT_TOP_N` | `5` | Final docs retained after rerank |
+| `LLM_WIKI_DIR_PATH` | `{DATA_DIR}/knowledge/llm_wiki/pages` | Internal LLM Wiki page directory |
 | `BM25_K1` | `1.5` | BM25 term frequency saturation |
 | `BM25_B` | `0.75` | BM25 document length normalization |
 

@@ -1,0 +1,1 @@
+"""Knowledge update proposal services."""

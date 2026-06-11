@@ -28,28 +28,29 @@ transformers>=4.35.0
 
 # Matrix integration
 matrix-nio[e2e]>=0.21.0
+# cryptography 47+ Linux ARM64 wheels crash with SIGILL in the Rust binding
+# under local Docker Desktop aarch64. Keep local/dev ARM64 images usable while
+# production remains x86_64.
+cryptography>=46.0.3,<47.0.0
 
 # LLM providers
 # AISuite for unified LLM interface with MCP support
 aisuite[mcp]>=0.1.14
 # LiteLLM for vendor-portable embeddings (100+ providers)
-litellm>=1.30.0,<1.83.0  # Pinned <1.83.0: requires httpx>=0.28 and openai>=2.x (breaks aisuite)
-# CVE-2026-35030/35029/GHSA-69x8-hrgq-fjj8 affect litellm proxy (not used here)
+litellm>=1.30.0,<1.83.0  # Pinned <1.83.0: fixed versions require httpx>=0.28, but aisuite requires httpx<0.28
 # MCP SDK for building Model Context Protocol servers
 # Note: Using mcp without [cli] extra due to typer version conflict between
 # instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0
 mcp>=1.23.0  # Security fix for CVE-2025-53365, CVE-2025-53366, CVE-2025-66416
-# Pin to 1.x until we can test compatibility with 2.0.0 breaking changes
-# 2.0.0 changes Response tool-call output schema (breaking change)
+# Pin to 1.x until AISuite supports httpx>=0.28 and the OpenAI 2.x API surface.
 openai<2.0.0
 # Keep langchain-openai for embeddings only (not for LLM)
 langchain-openai
-# Note: httpx is pinned to 0.27.2 in requirements.txt (aisuite requires httpx<0.28)
 
 # Web scraping and parsing
 beautifulsoup4
 requests
-urllib3>=2.6.0  # Security fix for CVE-2025-66418, CVE-2025-66471
+urllib3>=2.7.0  # Security fix for CVE-2026-44431, CVE-2026-44432
 mwclient
 
 # Async SQLite (for escalation pipeline)

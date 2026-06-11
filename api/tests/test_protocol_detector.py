@@ -89,6 +89,14 @@ class TestProtocolDetection:
         assert protocol == "multisig_v1"
         assert confidence >= 0.7
 
+    def test_detect_protocol_from_text_bisq1_price_tolerance(self, detector):
+        """Price tolerance trade failures are Bisq 1 signals."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "The offer failed because of a price tolerance error."
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
     def test_detect_protocol_from_text_bisq1_support_ticket_shortcut(self, detector):
         """Bisq 1 support ticket shortcuts should route to multisig_v1."""
         protocol, confidence = detector.detect_protocol_from_text(
@@ -129,6 +137,14 @@ class TestProtocolDetection:
         """Account-signing limits are Bisq 1 support signals."""
         protocol, confidence = detector.detect_protocol_from_text(
             "What is the minimum payment to get the account info signed?"
+        )
+        assert protocol == "multisig_v1"
+        assert confidence >= 0.7
+
+    def test_detect_protocol_from_text_bisq1_output_errors(self, detector):
+        """Payout/output error wording should map to Bisq 1."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "After confirming payment received, a trade shows cancelled/output errors"
         )
         assert protocol == "multisig_v1"
         assert confidence >= 0.7

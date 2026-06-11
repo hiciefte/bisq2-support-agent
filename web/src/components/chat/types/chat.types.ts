@@ -7,13 +7,23 @@
  */
 export interface Source {
     title: string
-    type: "wiki" | "faq"
+    type: "wiki" | "faq" | "llm_wiki"
     content: string
     protocol?: "bisq_easy" | "multisig_v1" | "all"
     /** Wiki URL (e.g., "https://bisq.wiki/Article#Section") */
     url?: string
+    /** Durable internal source identifier, used for stable FAQ references */
+    id?: string
+    /** Durable FAQ identifier when the source is a FAQ */
+    faq_id?: string
+    /** Current public FAQ slug when available */
+    slug?: string
+    /** Full FAQ question when title is shortened */
+    question?: string
     /** Section within article */
     section?: string
+    /** Internal LLM Wiki page type, e.g. support_playbook */
+    page_type?: string
     /** 0.0-1.0 relevance score from vector search */
     similarity_score?: number
 }

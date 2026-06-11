@@ -82,7 +82,7 @@ const parseSource = (value: unknown): Source | null => {
     const { title, type, content } = value;
     if (
         typeof title !== "string" ||
-        (type !== "wiki" && type !== "faq") ||
+        (type !== "wiki" && type !== "faq" && type !== "llm_wiki") ||
         typeof content !== "string"
     ) {
         return null;
@@ -100,6 +100,8 @@ const parseSource = (value: unknown): Source | null => {
                 : undefined,
         url: typeof value.url === "string" ? value.url : undefined,
         section: typeof value.section === "string" ? value.section : undefined,
+        page_type:
+            typeof value.page_type === "string" ? value.page_type : undefined,
         similarity_score: isFiniteNumber(value.similarity_score)
             ? value.similarity_score
             : undefined,

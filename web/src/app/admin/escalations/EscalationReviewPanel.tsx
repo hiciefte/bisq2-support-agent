@@ -434,9 +434,10 @@ export function EscalationReviewPanel({
     return raw
       .map((s) => {
         const category = (s.category || "").toLowerCase()
-        const inferredType: "wiki" | "faq" =
+        const inferredType: Source["type"] =
           category === "faq" ? "faq" :
           category === "wiki" ? "wiki" :
+          category === "llm_wiki" ? "llm_wiki" :
           (s.url && String(s.url).startsWith("/faq/")) ? "faq" :
           "wiki"
 
@@ -449,6 +450,7 @@ export function EscalationReviewPanel({
           protocol: (s.protocol as Source["protocol"]) || undefined,
           url: s.url || undefined,
           section: s.section || undefined,
+          page_type: typeof s.page_type === "string" ? s.page_type : undefined,
           similarity_score: typeof s.relevance_score === "number" ? s.relevance_score : undefined,
         } satisfies Source
       })
@@ -466,8 +468,11 @@ export function EscalationReviewPanel({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent showClose={false} className="max-w-4xl max-h-[85vh] p-0 overflow-hidden flex flex-col">
-          <div className="relative px-6 pt-6">
+        <DialogContent
+          showClose={false}
+          className="w-[calc(100vw-1rem)] max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[85vh] p-0 overflow-hidden flex flex-col rounded-lg"
+        >
+          <div className="relative px-4 pt-4 sm:px-6 sm:pt-6">
             <DialogHeader className="relative pb-3">
               <DialogClose asChild>
                 <Button
@@ -628,7 +633,7 @@ export function EscalationReviewPanel({
             </DialogHeader>
           </div>
 
-          <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 pb-6">
+          <div ref={scrollAreaRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6 sm:pb-6">
             <div className="space-y-5 pt-1">
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -976,14 +981,15 @@ export function EscalationReviewPanel({
             </div>
           </div>
 
-          <div className="border-t border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
+          <div className="border-t border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 py-4 sm:px-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                 {phase === 'review' && canRespond && (
                   <Button
                     onClick={handleRespond}
                     size="sm"
                     disabled={isActionInProgress || !staffAnswer.trim()}
+                    className="w-full sm:w-auto"
                   >
                     {isResponding ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -995,12 +1001,13 @@ export function EscalationReviewPanel({
                 )}
 
                 {phase === 'faq' && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <Button
                       onClick={handleComplete}
                       size="sm"
                       disabled={isActionInProgress || !faqQuestion.trim() || !faqAnswer.trim() || requiresForceOverride}
                       title={requiresForceOverride ? "Resolve duplicate risk or use Create FAQ Anyway" : undefined}
+                      className="w-full sm:w-auto"
                     >
                       {isSubmittingFaq ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1013,6 +1020,7 @@ export function EscalationReviewPanel({
                         size="sm"
                         variant="secondary"
                         disabled={isActionInProgress || !faqQuestion.trim() || !faqAnswer.trim()}
+                        className="w-full sm:w-auto"
                       >
                         Create FAQ Anyway
                       </Button>
@@ -1021,14 +1029,14 @@ export function EscalationReviewPanel({
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 {phase === 'review' && canClose && (
                   <Button
                     onClick={handleClose}
                     variant="outline"
                     size="sm"
                     disabled={isActionInProgress}
-                    className="text-muted-foreground hover:text-foreground"
+                    className="w-full text-muted-foreground hover:text-foreground sm:w-auto"
                     title="Dismiss this escalation without sending a reply to the user"
                   >
                     {isClosing ? (
@@ -1045,7 +1053,7 @@ export function EscalationReviewPanel({
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="text-muted-foreground hover:text-foreground"
+                    className="w-full text-muted-foreground hover:text-foreground sm:w-auto"
                     onClick={handleClose}
                     disabled={isActionInProgress}
                   >

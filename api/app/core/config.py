@@ -525,6 +525,11 @@ class Settings(BaseSettings):
         return os.path.join(self.DATA_DIR, "wiki")
 
     @property
+    def LLM_WIKI_DIR_PATH(self) -> str:
+        """Complete path to internal LLM Wiki knowledge pages."""
+        return os.path.join(self.DATA_DIR, "knowledge", "llm_wiki", "pages")
+
+    @property
     def FEEDBACK_DIR_PATH(self) -> str:
         """Complete path to the feedback directory"""
         return os.path.join(self.DATA_DIR, "feedback")
@@ -1256,6 +1261,7 @@ class Settings(BaseSettings):
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
         Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.LLM_WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 
 # Thread-safe lazy initialization using lru_cache

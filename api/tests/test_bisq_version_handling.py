@@ -508,6 +508,72 @@ class TestDocumentRetrieverVersionPriority:
             len(bisq_easy_calls) == 0
         ), "Bisq Easy stage should be skipped for pure Bisq 1 queries"
 
+    def test_bisq1_transaction_failure_terms_route_to_multisig(self, test_settings):
+        """Bisq 1 transaction-failure terms should not default to Bisq Easy.
+
+        Given: A query without an explicit "Bisq 1" mention but with Bisq 1-only
+        transaction language
+        When: Retrieving documents
+        Then: The retriever should search multisig_v1 first
+        """
+        # Arrange
+        mock_retriever = Mock()
+        mock_retriever.retrieve.return_value = []
+        retriever = DocumentRetriever(retriever=mock_retriever)
+
+        # Act
+        query = "What should I do when a trade fails with no valid deposit transaction?"
+        retriever.retrieve_with_version_priority(query)
+
+        # Assert
+        first_call = mock_retriever.retrieve.call_args_list[0]
+        assert (first_call.kwargs.get("filter_dict") or {}).get(
+            "protocol"
+        ) == "multisig_v1"
+
+    def test_scored_retrieval_strong_bisq1_terms_override_bisq2_default(
+        self, test_settings
+    ):
+        """Scored retrieval should not let the Bisq 2 default mask Bisq 1 errors."""
+        # Arrange
+        mock_retriever = Mock()
+        mock_retriever.retrieve_with_scores.return_value = []
+        retriever = DocumentRetriever(retriever=mock_retriever)
+
+        # Act: SimplifiedRAGService can pass a Bisq 2 default into this path, but
+        # strong Bisq 1 transaction terms in the query must still win.
+        query = (
+            "What should I do when a trade fails with a market-price tolerance "
+            "error and no valid deposit transaction?"
+        )
+        retriever.retrieve_with_scores(query, detected_version="Bisq 2")
+
+        # Assert
+        first_call = mock_retriever.retrieve_with_scores.call_args_list[0]
+        assert (first_call.kwargs.get("filter_dict") or {}).get(
+            "protocol"
+        ) == "multisig_v1"
+
+    def test_scored_retrieval_output_errors_route_to_multisig(self, test_settings):
+        """Output-error terms should route scored retrieval to Bisq 1."""
+        # Arrange
+        mock_retriever = Mock()
+        mock_retriever.retrieve_with_scores.return_value = []
+        retriever = DocumentRetriever(retriever=mock_retriever)
+
+        # Act
+        query = (
+            "After confirming payment received, a trade shows "
+            "cancelled/output errors. What should be checked?"
+        )
+        retriever.retrieve_with_scores(query, detected_version="Bisq 2")
+
+        # Assert
+        first_call = mock_retriever.retrieve_with_scores.call_args_list[0]
+        assert (first_call.kwargs.get("filter_dict") or {}).get(
+            "protocol"
+        ) == "multisig_v1"
+
 
 class TestEdgeCases:
     """Test cases for edge cases and boundary conditions."""

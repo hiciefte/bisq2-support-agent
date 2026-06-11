@@ -308,7 +308,7 @@ def _render_source_mix(entries: list[_RenderedSource]) -> Optional[str]:
         return None
 
     counts = Counter(entry.source_type for entry in entries)
-    ordered_types = ("FAQ", "Wiki", "Doc")
+    ordered_types = ("FAQ", "LLM Wiki", "Wiki", "Doc")
     parts: list[str] = []
     for source_type in ordered_types:
         count = counts.get(source_type, 0)
@@ -323,6 +323,9 @@ def _render_source_mix_part(source_type: str, count: int) -> str:
         return f"{count} {label}"
     if source_type == "Wiki":
         label = "Wiki page" if count == 1 else "Wiki pages"
+        return f"{count} {label}"
+    if source_type == "LLM Wiki":
+        label = "LLM Wiki page" if count == 1 else "LLM Wiki pages"
         return f"{count} {label}"
     label = "Doc" if count == 1 else "Docs"
     return f"{count} {label}"
@@ -346,12 +349,16 @@ def _source_icon_markdown(source_type: str) -> str:
         return "![FAQ](bisq-icon://faq)"
     if source_type == "Wiki":
         return "![Wiki](bisq-icon://wiki)"
+    if source_type == "LLM Wiki":
+        return "![LLM Wiki](bisq-icon://llm-wiki)"
     return "![Doc](bisq-icon://wiki)"
 
 
 def _resolve_source_type(source: DocumentReference) -> str:
     if _is_faq_source(source):
         return "FAQ"
+    if _is_llm_wiki_source(source):
+        return "LLM Wiki"
     if _is_wiki_source(source):
         return "Wiki"
     return "Doc"
@@ -441,6 +448,19 @@ def _is_wiki_source(source: DocumentReference) -> bool:
     host = (parsed.netloc or "").lower()
     path = (parsed.path or "").lower()
     return "wiki" in host or path.startswith("/wiki/")
+
+
+def _is_llm_wiki_source(source: DocumentReference) -> bool:
+    source_type = _normalize_text(getattr(source, "type", None))
+    if source_type:
+        normalized_type = source_type.lower().replace("-", "_").replace(" ", "_")
+        if normalized_type == "llm_wiki":
+            return True
+    category = _normalize_text(getattr(source, "category", None))
+    if not category:
+        return False
+    normalized = category.lower().replace("-", "_").replace(" ", "_")
+    return normalized == "llm_wiki"
 
 
 def _normalize_slug(value: Optional[str]) -> Optional[str]:

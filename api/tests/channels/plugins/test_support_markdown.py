@@ -150,6 +150,29 @@ def test_compose_support_answer_markdown_groups_faq_and_wiki_sources_in_mix():
     )
 
 
+def test_compose_support_answer_markdown_labels_llm_wiki_sources():
+    rendered = compose_support_answer_markdown(
+        "Use the reviewed Bisq Easy support flow.",
+        [
+            DocumentReference(
+                document_id="bisq-easy-support-flow",
+                title="Bisq Easy support flow",
+                relevance_score=0.88,
+                category="llm_wiki",
+                protocol="bisq_easy",
+                section="Internal LLM Wiki: support playbook",
+            )
+        ],
+        confidence_score=0.88,
+    )
+
+    assert "- Source mix: **1 LLM Wiki page**" in rendered
+    assert (
+        "- ![LLM Wiki](bisq-icon://llm-wiki) [LLM Wiki] Bisq Easy support flow"
+        in rendered
+    )
+
+
 def test_compose_support_answer_markdown_escapes_source_labels_and_drops_unsafe_links():
     long_title = "L" * 240
     rendered = compose_support_answer_markdown(

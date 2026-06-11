@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, GraduationCap, AlertTriangle, ShieldAlert } from "lucide-react"
+import { BarChart3, MessageSquare, HelpCircle, Menu, X, LogOut, BookOpenCheck, AlertTriangle, ShieldAlert } from "lucide-react"
 import { useAdminActionCounts } from "@/hooks/useAdminActionCounts"
 
 const navigation = [
@@ -34,10 +34,10 @@ const navigation = [
     description: "Manage FAQ content"
   },
   {
-    name: "Training",
-    href: "/admin/training",
-    icon: GraduationCap,
-    description: "Auto-training pipeline"
+    name: "Knowledge Updates",
+    href: "/admin/knowledge-updates",
+    icon: BookOpenCheck,
+    description: "LLM Wiki review queue"
   },
   {
     name: "Security Alerts",
@@ -128,6 +128,11 @@ export function AdminSidebar() {
                   {item.name === "Escalations" && counts.pending_escalations > 0 && (
                     <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-red-500 text-white">
                       {counts.pending_escalations}
+                    </span>
+                  )}
+                  {item.name === "Knowledge Updates" && counts.training_queue > 0 && (
+                    <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[10px] font-medium bg-emerald-500 text-black">
+                      {counts.training_queue}
                     </span>
                   )}
                 </div>

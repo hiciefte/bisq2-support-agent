@@ -19,6 +19,9 @@ from app.core.config import get_settings  # noqa: E402
 from app.services.faq_service import FAQService  # noqa: E402
 from app.services.rag.document_processor import DocumentProcessor  # noqa: E402
 from app.services.rag.llm_provider import LLMProvider  # noqa: E402
+from app.services.rag.llm_wiki_loader import (  # noqa: E402
+    LLMWikiLoader,
+)
 from app.services.rag.qdrant_index_manager import QdrantIndexManager  # noqa: E402
 from app.services.wiki_service import WikiService  # noqa: E402
 
@@ -42,8 +45,13 @@ def main() -> int:
 
     wiki = WikiService(settings=settings)
     faq = FAQService(settings=settings)
+    llm_wiki = LLMWikiLoader()
 
-    docs = wiki.load_wiki_data() + faq.load_faq_data()
+    docs = (
+        wiki.load_wiki_data()
+        + faq.load_faq_data()
+        + llm_wiki.load_documents(settings.LLM_WIKI_DIR_PATH)
+    )
     if not docs:
         logger.error("No documents loaded; aborting.")
         return 2
