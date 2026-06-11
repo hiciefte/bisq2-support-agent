@@ -125,6 +125,13 @@ def _safe_relpath(rel_path: str) -> Path:
     return p
 
 
+def _remove_existing_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def _sqlite_backup(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as src_conn:
@@ -181,7 +188,7 @@ def create_snapshot(args: argparse.Namespace) -> int:
             _sqlite_backup(src, dst)
         elif spec.capture_mode == "copy_tree":
             if dst.exists():
-                shutil.rmtree(dst)
+                _remove_existing_path(dst)
             shutil.copytree(src, dst)
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -303,7 +310,7 @@ def restore_snapshot(args: argparse.Namespace) -> int:
         capture_mode = str(entry.get("capture_mode", "copy"))
         if capture_mode == "copy_tree":
             if dst.exists():
-                shutil.rmtree(dst)
+                _remove_existing_path(dst)
             shutil.copytree(src, dst)
         else:
             shutil.copy2(src, dst)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -82,7 +83,11 @@ def test_kb_snapshot_captures_verifies_and_restores_llm_wiki_tree(
         == 0
     )
 
-    page.write_text("# Bisq Easy\n\nMutated content.\n", encoding="utf-8")
+    llm_wiki_dir = data_dir / "knowledge" / "llm_wiki"
+    shutil.rmtree(llm_wiki_dir)
+    llm_wiki_dir.write_text(
+        "stale file where restored tree belongs\n", encoding="utf-8"
+    )
     assert (
         verify_snapshot(
             _args(
@@ -104,6 +109,7 @@ def test_kb_snapshot_captures_verifies_and_restores_llm_wiki_tree(
         )
         == 0
     )
+    assert llm_wiki_dir.is_dir()
     assert page.read_text(encoding="utf-8") == "# Bisq Easy\n\nReviewed content.\n"
     assert (
         verify_snapshot(

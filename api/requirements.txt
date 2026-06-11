@@ -6,9 +6,9 @@
 #
 aiofiles==24.1.0
     # via matrix-nio
-aiohappyeyeballs==2.6.1
+aiohappyeyeballs==2.6.2
     # via aiohttp
-aiohttp==3.13.5
+aiohttp==3.14.1
     # via
     #   -r api/requirements.in
     #   aiohttp-socks
@@ -38,6 +38,8 @@ anyio==4.13.0
     #   starlette
 appdirs==1.4.4
     # via ragas
+ast-serialize==0.5.0
+    # via mypy
 atomicwrites==1.4.1
     # via matrix-nio
 attrs==26.1.0
@@ -45,17 +47,17 @@ attrs==26.1.0
     #   aiohttp
     #   jsonschema
     #   referencing
-beautifulsoup4==4.14.3
+beautifulsoup4==4.15.0
     # via -r api/requirements.in
-black==26.3.1
+black==26.5.1
     # via -r api/requirements.in
-build==1.4.4
+build==1.5.0
     # via pip-tools
 cachetools==5.5.2
     # via
     #   -r api/requirements.in
     #   matrix-nio
-certifi==2026.4.22
+certifi==2026.5.20
     # via
     #   httpcore
     #   httpx
@@ -68,7 +70,7 @@ cfgv==3.5.0
     # via pre-commit
 charset-normalizer==3.4.7
     # via requests
-click==8.3.3
+click==8.4.1
     # via
     #   black
     #   litellm
@@ -77,13 +79,11 @@ click==8.3.3
     #   uvicorn
 contourpy==1.3.3
     # via matplotlib
-cryptography==47.0.0
+cryptography==48.0.1
     # via pyjwt
 cycler==0.12.1
     # via matplotlib
-dataclasses-json==0.6.7
-    # via langchain-community
-datasets==4.8.5
+datasets==5.0.0
     # via
     #   -r api/requirements.in
     #   ragas
@@ -93,7 +93,7 @@ dill==0.4.1
     #   multiprocess
 diskcache==5.6.3
     # via ragas
-distlib==0.4.0
+distlib==0.4.2
     # via virtualenv
 distro==1.9.0
     # via openai
@@ -103,11 +103,11 @@ docstring-parser==0.15
     # via
     #   aisuite
     #   instructor
-fastapi==0.136.1
+fastapi==0.136.3
     # via -r api/requirements.in
 fastuuid==0.14.0
     # via litellm
-filelock==3.29.0
+filelock==3.29.2
     # via
     #   datasets
     #   huggingface-hub
@@ -115,19 +115,19 @@ filelock==3.29.0
     #   virtualenv
 flake8==7.3.0
     # via -r api/requirements.in
-fonttools==4.62.1
+fonttools==4.63.0
     # via matplotlib
 frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec[http]==2026.2.0
+fsspec[http]==2026.4.0
     # via
     #   datasets
     #   huggingface-hub
-greenlet==3.5.0
+greenlet==3.5.1
     # via sqlalchemy
-grpcio==1.80.0
+grpcio==1.81.0
     # via qdrant-client
 h11==0.16.0
     # via
@@ -138,7 +138,7 @@ h2==4.3.0
     # via
     #   httpx
     #   matrix-nio
-hf-xet==1.4.3
+hf-xet==1.5.1
     # via huggingface-hub
 hpack==4.1.0
     # via h2
@@ -160,7 +160,7 @@ httpx-sse==0.4.3
     # via
     #   langchain-community
     #   mcp
-huggingface-hub==1.12.0
+huggingface-hub==1.13.0
     # via
     #   datasets
     #   tokenizers
@@ -169,7 +169,7 @@ hyperframe==6.1.0
     # via h2
 identify==2.6.19
     # via pre-commit
-idna==3.13
+idna==3.18
     # via
     #   anyio
     #   httpx
@@ -185,7 +185,7 @@ isort==8.0.1
     # via -r api/requirements.in
 jinja2==3.1.6
     # via litellm
-jiter==0.14.0
+jiter==0.15.0
     # via openai
 joblib==1.5.3
     # via scikit-learn
@@ -205,13 +205,13 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.5.0
     # via matplotlib
-langchain==1.2.15
+langchain==1.3.6
     # via ragas
 langchain-classic==1.0.7
     # via langchain-community
-langchain-community==0.4.1
+langchain-community==0.4.2
     # via ragas
-langchain-core==1.3.3
+langchain-core==1.4.3
     # via
     #   -r api/requirements.in
     #   langchain
@@ -222,51 +222,52 @@ langchain-core==1.3.3
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
+    #   langgraph-sdk
     #   ragas
 langchain-openai==1.1.9
     # via
     #   -r api/requirements.in
     #   ragas
-langchain-protocol==0.0.12
-    # via langchain-core
+langchain-protocol==0.0.16
+    # via
+    #   langchain-core
+    #   langgraph-sdk
 langchain-text-splitters==1.1.2
     # via
     #   -r api/requirements.in
     #   langchain-classic
 langdetect==1.0.9
     # via -r api/requirements.in
-langgraph==1.1.10
+langgraph==1.2.4
     # via langchain
-langgraph-checkpoint==4.0.3
+langgraph-checkpoint==4.1.1
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.12
+langgraph-prebuilt==1.1.0
     # via langgraph
-langgraph-sdk==0.3.13
+langgraph-sdk==0.4.2
     # via langgraph
 langsmith==0.8.12
     # via
     #   langchain-classic
     #   langchain-community
     #   langchain-core
-librt==0.9.0
+librt==0.11.0
     # via mypy
 litellm==1.80.0
     # via -r api/requirements.in
-markdown-it-py==4.0.0
+markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
     # via jinja2
-marshmallow==3.26.2
-    # via dataclasses-json
 matplotlib==3.10.9
     # via -r api/requirements.in
 matrix-nio[e2e]==0.25.2
     # via -r api/requirements.in
 mccabe==0.7.0
     # via flake8
-mcp==1.27.0
+mcp==1.27.2
     # via
     #   -r api/requirements.in
     #   aisuite
@@ -290,13 +291,14 @@ mwxml==0.3.8
     # via
     #   -r api/requirements.in
     #   mwcli
-mypy==1.20.2
+mypy==2.1.0
     # via -r api/requirements.in
 mypy-extensions==1.1.0
     # via
     #   black
     #   mypy
-    #   typing-inspect
+narwhals==2.22.1
+    # via scikit-learn
 nest-asyncio==1.6.0
     # via
     #   -r api/requirements.in
@@ -306,7 +308,7 @@ networkx==3.6.1
     # via ragas
 nodeenv==1.10.0
     # via pre-commit
-numpy==2.4.4
+numpy==2.4.6
     # via
     #   contourpy
     #   datasets
@@ -328,7 +330,7 @@ openai==1.109.1
     #   langchain-openai
     #   litellm
     #   ragas
-orjson==3.11.8
+orjson==3.11.9
     # via
     #   langgraph-sdk
     #   langsmith
@@ -342,12 +344,11 @@ packaging==26.2
     #   huggingface-hub
     #   langchain-core
     #   langsmith
-    #   marshmallow
     #   matplotlib
     #   pytest
     #   transformers
     #   wheel
-pandas==3.0.2
+pandas==3.0.3
     # via
     #   -r api/requirements.in
     #   datasets
@@ -368,7 +369,7 @@ pillow==12.2.0
     #   ragas
 pip-tools==7.5.3
     # via -r api/requirements.in
-platformdirs==4.9.6
+platformdirs==4.10.0
     # via
     #   black
     #   python-discovery
@@ -385,13 +386,13 @@ prometheus-client==0.25.0
     # via
     #   -r api/requirements.in
     #   prometheus-fastapi-instrumentator
-prometheus-fastapi-instrumentator==7.1.0
+prometheus-fastapi-instrumentator==8.0.0
     # via -r api/requirements.in
-propcache==0.4.1
+propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-protobuf==7.34.1
+protobuf==7.35.0
     # via qdrant-client
 psutil==7.2.2
     # via -r api/requirements.in
@@ -405,7 +406,7 @@ pycparser==3.0
     # via cffi
 pycryptodome==3.23.0
     # via matrix-nio
-pydantic==2.13.3
+pydantic==2.13.4
     # via
     #   -r api/requirements.in
     #   fastapi
@@ -421,11 +422,11 @@ pydantic==2.13.3
     #   pydantic-settings
     #   qdrant-client
     #   ragas
-pydantic-core==2.46.3
+pydantic-core==2.46.4
     # via
     #   instructor
     #   pydantic
-pydantic-settings==2.14.0
+pydantic-settings==2.14.1
     # via
     #   -r api/requirements.in
     #   langchain-community
@@ -436,7 +437,7 @@ pygments==2.20.0
     # via
     #   pytest
     #   rich
-pyjwt[crypto]==2.12.1
+pyjwt[crypto]==2.13.0
     # via mcp
 pyparsing==3.3.2
     # via matplotlib
@@ -448,13 +449,13 @@ pytest==9.0.3
     # via
     #   -r api/requirements.in
     #   pytest-asyncio
-pytest-asyncio==1.3.0
+pytest-asyncio==1.4.0
     # via -r api/requirements.in
 python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
-python-discovery==1.2.2
+python-discovery==1.4.0
     # via virtualenv
 python-dotenv==1.2.2
     # via
@@ -462,7 +463,7 @@ python-dotenv==1.2.2
     #   pydantic-settings
 python-json-logger==4.1.0
     # via -r api/requirements.in
-python-multipart==0.0.27
+python-multipart==0.0.32
     # via mcp
 python-olm==3.2.16
     # via matrix-nio
@@ -479,7 +480,7 @@ pyyaml==6.0.3
     #   langchain-core
     #   pre-commit
     #   transformers
-qdrant-client==1.17.1
+qdrant-client==1.18.0
     # via -r api/requirements.in
 ragas==0.4.3
     # via -r api/requirements.in
@@ -487,11 +488,11 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.4.4
+regex==2026.5.9
     # via
     #   tiktoken
     #   transformers
-requests==2.33.1
+requests==2.34.2
     # via
     #   -r api/requirements.in
     #   datasets
@@ -509,13 +510,13 @@ rich==13.9.4
     # via
     #   instructor
     #   ragas
-rpds-py==0.30.0
+rpds-py==2026.5.1
     # via
     #   jsonschema
     #   referencing
-safetensors==0.7.0
+safetensors==0.8.0
     # via transformers
-scikit-learn==1.8.0
+scikit-learn==1.9.0
     # via -r api/requirements.in
 scikit-network==0.33.5
     # via ragas
@@ -531,15 +532,15 @@ sniffio==1.3.1
     # via
     #   httpx
     #   openai
-soupsieve==2.8.3
+soupsieve==2.8.4
     # via beautifulsoup4
-sqlalchemy==2.0.49
+sqlalchemy==2.0.50
     # via
     #   langchain-classic
     #   langchain-community
-sse-starlette==3.4.1
+sse-starlette==3.4.4
     # via mcp
-starlette==0.52.1
+starlette==1.2.1
     # via
     #   fastapi
     #   mcp
@@ -553,7 +554,7 @@ tenacity==8.5.0
     #   langchain-core
 threadpoolctl==3.6.0
     # via scikit-learn
-tiktoken==0.12.0
+tiktoken==0.13.0
     # via
     #   langchain-openai
     #   litellm
@@ -562,7 +563,7 @@ tokenizers==0.22.2
     # via
     #   litellm
     #   transformers
-tqdm==4.67.3
+tqdm==4.68.2
     # via
     #   -r api/requirements.in
     #   datasets
@@ -570,7 +571,7 @@ tqdm==4.67.3
     #   openai
     #   ragas
     #   transformers
-transformers==5.6.2
+transformers==5.11.0
     # via -r api/requirements.in
 typer==0.9.4
     # via
@@ -580,6 +581,7 @@ typer==0.9.4
     #   transformers
 typing-extensions==4.15.0
     # via
+    #   aiohttp
     #   aiosignal
     #   anyio
     #   beautifulsoup4
@@ -598,10 +600,7 @@ typing-extensions==4.15.0
     #   sqlalchemy
     #   starlette
     #   typer
-    #   typing-inspect
     #   typing-inspection
-typing-inspect==0.9.0
-    # via dataclasses-json
 typing-inspection==0.4.2
     # via
     #   fastapi
@@ -615,19 +614,20 @@ urllib3==2.7.0
     #   -r api/requirements.in
     #   qdrant-client
     #   requests
-uuid-utils==0.14.1
+uuid-utils==0.16.0
     # via
     #   langchain-core
     #   langsmith
-uvicorn==0.46.0
+uvicorn==0.49.0
     # via
     #   -r api/requirements.in
     #   mcp
-virtualenv==21.3.0
+virtualenv==21.4.2
     # via pre-commit
-websockets==16.0
+websockets==15.0.1
     # via
     #   -r api/requirements.in
+    #   langgraph-sdk
     #   langsmith
 wheel==0.47.0
     # via pip-tools
@@ -636,9 +636,9 @@ xxhash==3.7.0
     #   datasets
     #   langgraph
     #   langsmith
-yarl==1.23.0
+yarl==1.24.2
     # via aiohttp
-zipp==3.23.1
+zipp==4.1.0
     # via importlib-metadata
 zstandard==0.25.0
     # via langsmith

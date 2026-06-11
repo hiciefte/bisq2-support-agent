@@ -44,6 +44,10 @@ def _classify_query_protocol(
 
     Returns:
         (is_multisig_query, mentions_bisq_easy, is_comparison_query)
+
+    ``detected_version`` may come from heuristic conversation state. Unknown
+    values intentionally fall through to the product default instead of raising
+    into the user-facing retrieval path.
     """
     query_lower = query.lower()
     query_mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
@@ -68,9 +72,10 @@ def _classify_query_protocol(
         return False, True, False
 
     if detected_version:
-        if detected_version in ("Bisq 1", "multisig_v1"):
+        normalized_version = detected_version.strip()
+        if normalized_version in ("Bisq 1", "multisig_v1"):
             return True, False, False
-        if detected_version in ("Bisq 2", "bisq_easy"):
+        if normalized_version in ("Bisq 2", "bisq_easy"):
             return False, True, False
 
     # Default product bias remains Bisq Easy for truly ambiguous questions.

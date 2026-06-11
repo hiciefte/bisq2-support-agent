@@ -1261,6 +1261,7 @@ class Settings(BaseSettings):
         Path(self.DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.FEEDBACK_DIR_PATH).mkdir(parents=True, exist_ok=True)
         Path(self.WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
+        Path(self.LLM_WIKI_DIR_PATH).mkdir(parents=True, exist_ok=True)
 
 
 # Thread-safe lazy initialization using lru_cache

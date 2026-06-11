@@ -6,7 +6,7 @@ active LLM Wiki pages with explicit source references become RAG documents.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -229,6 +229,8 @@ def _string_list(value: Any) -> List[str]:
         return []
     if isinstance(value, str):
         return [value.strip()] if value.strip() else []
+    if isinstance(value, Mapping):
+        return []
     if not isinstance(value, Iterable):
         return []
     result = []

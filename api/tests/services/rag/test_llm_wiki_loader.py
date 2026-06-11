@@ -81,6 +81,18 @@ def test_loader_skips_reviewed_page_without_source_refs(tmp_path: Path) -> None:
     assert docs == []
 
 
+def test_loader_skips_reviewed_page_with_mapping_source_refs(tmp_path: Path) -> None:
+    _write_playbook(
+        tmp_path,
+        "mapping-source-refs.md",
+        source_refs="  wiki: bisq-easy\n  faq: 123",
+    )
+
+    docs = LLMWikiLoader().load_documents(tmp_path)
+
+    assert docs == []
+
+
 def test_loader_uses_configured_llm_wiki_weight(tmp_path: Path) -> None:
     _write_playbook(tmp_path, "reviewed.md")
     loader = LLMWikiLoader(source_weights={"llm_wiki": 1.1})
