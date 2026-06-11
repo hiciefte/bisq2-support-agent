@@ -450,6 +450,7 @@ export function EscalationReviewPanel({
           protocol: (s.protocol as Source["protocol"]) || undefined,
           url: s.url || undefined,
           section: s.section || undefined,
+          page_type: typeof s.page_type === "string" ? s.page_type : undefined,
           similarity_score: typeof s.relevance_score === "number" ? s.relevance_score : undefined,
         } satisfies Source
       })

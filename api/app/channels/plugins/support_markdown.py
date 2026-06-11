@@ -350,7 +350,7 @@ def _source_icon_markdown(source_type: str) -> str:
     if source_type == "Wiki":
         return "![Wiki](bisq-icon://wiki)"
     if source_type == "LLM Wiki":
-        return "![LLM Wiki](bisq-icon://wiki)"
+        return "![LLM Wiki](bisq-icon://llm-wiki)"
     return "![Doc](bisq-icon://wiki)"
 
 

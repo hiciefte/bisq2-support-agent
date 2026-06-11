@@ -168,7 +168,8 @@ def test_compose_support_answer_markdown_labels_llm_wiki_sources():
 
     assert "- Source mix: **1 LLM Wiki page**" in rendered
     assert (
-        "- ![LLM Wiki](bisq-icon://wiki) [LLM Wiki] Bisq Easy support flow" in rendered
+        "- ![LLM Wiki](bisq-icon://llm-wiki) [LLM Wiki] Bisq Easy support flow"
+        in rendered
     )
 
 
