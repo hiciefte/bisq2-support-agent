@@ -399,7 +399,7 @@ git commit --no-verify -m "Emergency fix"
 
 ### Updating Python Dependencies
 
-When you need to update Python dependencies or if GitHub Actions fails with "requirements.txt is not up to date":
+When GitHub Actions fails with "requirements.txt is not up to date":
 
 **❌ Don't do this (creates platform-specific dependencies):**
 ```bash
@@ -408,11 +408,18 @@ pip-compile api/requirements.in -o api/requirements.txt
 
 **✅ Do this instead (creates cross-platform compatible dependencies):**
 ```bash
-# Use Docker to generate requirements.txt in the same Linux environment as CI
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+# Use Docker to generate requirements.txt in the same Linux environment as CI.
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --no-strip-extras
 ```
 
 This ensures the generated `requirements.txt` is compatible with both your local development environment and the Linux-based GitHub Actions CI environment.
+
+Use `--upgrade --no-strip-extras` only when you intentionally want to refresh
+Python dependency versions:
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml run --build --rm api pip-compile api/requirements.in -o api/requirements.txt --upgrade --no-strip-extras
+```
 
 ### Adding New Dependencies
 
