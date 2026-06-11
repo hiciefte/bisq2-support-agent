@@ -30,6 +30,7 @@ from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import DocumentRetriever
 from app.services.rag.index_state_manager import IndexStateManager
 from app.services.rag.llm_provider import LLMProvider
+from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.protocol_detector import ProtocolDetector
@@ -171,6 +172,7 @@ class SimplifiedRAGService:
         self.feedback_service = feedback_service
         self.wiki_service = wiki_service
         self.faq_service = faq_service
+        self.llm_wiki_loader = LLMWikiLoader()
         self.bisq_mcp_service = bisq_mcp_service
         self.translation_service = translation_service
 
@@ -251,6 +253,7 @@ class SimplifiedRAGService:
             self.source_weights = {
                 "faq": 1.2,  # Prioritize FAQ content
                 "wiki": 1.1,  # Slightly increased weight for wiki content
+                "llm_wiki": 1.25,  # Human-reviewed compiled support knowledge
             }
 
         # Register with FAQ service for FAQ updates (manual rebuild mode)
@@ -476,10 +479,17 @@ class SimplifiedRAGService:
                 else:
                     logger.warning("FAQService not provided, skipping FAQ data loading")
 
+                llm_wiki_docs = self.llm_wiki_loader.load_documents(
+                    self.settings.LLM_WIKI_DIR_PATH
+                )
+
                 # Combine all documents
-                all_docs = wiki_docs + faq_docs
+                all_docs = wiki_docs + faq_docs + llm_wiki_docs
                 logger.info(
-                    f"Loaded {len(wiki_docs)} wiki documents and {len(faq_docs)} FAQ documents"
+                    "Loaded %d wiki documents, %d FAQ documents, and %d LLM Wiki pages",
+                    len(wiki_docs),
+                    len(faq_docs),
+                    len(llm_wiki_docs),
                 )
 
                 if not all_docs:
@@ -500,6 +510,7 @@ class SimplifiedRAGService:
                         self.wiki_service.update_source_weights(self.source_weights)
                     if self.faq_service:
                         self.faq_service.update_source_weights(self.source_weights)
+                    self.llm_wiki_loader.update_source_weights(self.source_weights)
 
                 # Split documents using document processor
                 splits = self.document_processor.split_documents(all_docs)
@@ -1371,6 +1382,25 @@ class SimplifiedRAGService:
                             "protocol": protocol,
                             "url": faq_url,
                             "section": section,
+                            "similarity_score": (
+                                round(similarity_score, 4)
+                                if similarity_score is not None
+                                else None
+                            ),
+                        }
+                    )
+                elif doc.metadata.get("type") == "llm_wiki":
+                    sources.append(
+                        {
+                            "title": title,
+                            "type": "llm_wiki",
+                            "category": "llm_wiki",
+                            "content": content,
+                            "protocol": protocol,
+                            "url": None,
+                            "section": section,
+                            "source_refs": doc.metadata.get("source_refs", []),
+                            "page_type": doc.metadata.get("page_type"),
                             "similarity_score": (
                                 round(similarity_score, 4)
                                 if similarity_score is not None

@@ -525,6 +525,11 @@ class Settings(BaseSettings):
         return os.path.join(self.DATA_DIR, "wiki")
 
     @property
+    def LLM_WIKI_DIR_PATH(self) -> str:
+        """Complete path to internal LLM Wiki knowledge pages."""
+        return os.path.join(self.DATA_DIR, "knowledge", "llm_wiki", "pages")
+
+    @property
     def FEEDBACK_DIR_PATH(self) -> str:
         """Complete path to the feedback directory"""
         return os.path.join(self.DATA_DIR, "feedback")

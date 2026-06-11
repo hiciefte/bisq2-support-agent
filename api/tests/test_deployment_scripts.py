@@ -34,6 +34,12 @@ def init_git_repo(path: Path) -> None:
         ["git", "config", "user.email", "ci@example.com"], cwd=path, check=True
     )
     subprocess.run(["git", "config", "user.name", "CI"], cwd=path, check=True)
+    # Keep synthetic test repositories independent from a developer machine's
+    # global Git signing and hooks configuration.
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "config", "core.hooksPath", "/dev/null"], cwd=path, check=True
+    )
 
 
 def test_source_env_file_exports_variables_to_child_process(tmp_path: Path) -> None:

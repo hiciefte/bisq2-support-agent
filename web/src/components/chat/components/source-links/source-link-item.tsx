@@ -5,7 +5,13 @@
 
 "use client"
 
-import { ExternalLink, BookOpen, MessageSquare, ChevronDown } from "lucide-react"
+import {
+    ExternalLink,
+    BookOpen,
+    MessageSquare,
+    ChevronDown,
+    FileText,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RelevancePill } from "./relevance-pill"
 import type { GroupedSource } from "./relevance-utils"
@@ -15,11 +21,27 @@ interface SourceLinkItemProps {
     source: GroupedSource
 }
 
+const sourceIcons = {
+    wiki: BookOpen,
+    faq: MessageSquare,
+    llm_wiki: FileText,
+} as const
+
+const formatPageType = (value?: string) =>
+    value
+        ? value
+              .split("_")
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(" ")
+        : null
+
 export function SourceLinkItem({ source }: SourceLinkItemProps) {
     const [expanded, setExpanded] = useState(false)
     const hasMultipleSections = source.sections.length > 1
 
-    const Icon = source.type === "wiki" ? BookOpen : MessageSquare
+    const Icon = sourceIcons[source.type]
+    const pageTypeLabel =
+        source.type === "llm_wiki" ? formatPageType(source.page_type) : null
 
     const handleClick = () => {
         if (source.url) {
@@ -54,6 +76,11 @@ export function SourceLinkItem({ source }: SourceLinkItemProps) {
                                 className="h-3 w-3 text-muted-foreground flex-shrink-0"
                                 aria-hidden="true"
                             />
+                        )}
+                        {pageTypeLabel && (
+                            <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                {pageTypeLabel}
+                            </span>
                         )}
                     </div>
 

@@ -30,6 +30,40 @@ def _stable_int_id(key: str) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=False) & ((1 << 63) - 1)
 
 
+def _file_source_metadata(path: Path) -> Dict[str, Any]:
+    st = path.stat()
+    return {
+        "path": str(path),
+        "mtime": st.st_mtime,
+        "size": st.st_size,
+    }
+
+
+def _directory_source_metadata(path: Path, pattern: str) -> Dict[str, Any]:
+    files = sorted(p for p in path.rglob(pattern) if p.is_file())
+    digest = hashlib.sha256()
+    total_size = 0
+    latest_mtime = 0.0
+
+    for file_path in files:
+        relative_path = file_path.relative_to(path).as_posix()
+        data = file_path.read_bytes()
+        stat = file_path.stat()
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(data).digest())
+        total_size += stat.st_size
+        latest_mtime = max(latest_mtime, stat.st_mtime)
+
+    return {
+        "path": str(path),
+        "mtime": latest_mtime,
+        "size": total_size,
+        "file_count": len(files),
+        "content_hash": digest.hexdigest(),
+    }
+
+
 class QdrantIndexManager:
     """Manage the Qdrant collection used for RAG retrieval."""
 
@@ -92,30 +126,19 @@ class QdrantIndexManager:
 
         wiki_file = self.data_dir / "wiki" / "processed_wiki.jsonl"
         if wiki_file.exists():
-            st = wiki_file.stat()
-            sources["wiki"] = {
-                "path": str(wiki_file),
-                "mtime": st.st_mtime,
-                "size": st.st_size,
-            }
+            sources["wiki"] = _file_source_metadata(wiki_file)
 
         faq_db = self.data_dir / "faqs.db"
         if faq_db.exists():
-            st = faq_db.stat()
-            sources["faq"] = {
-                "path": str(faq_db),
-                "mtime": st.st_mtime,
-                "size": st.st_size,
-            }
+            sources["faq"] = _file_source_metadata(faq_db)
+
+        llm_wiki_dir = self.data_dir / "knowledge" / "llm_wiki"
+        if llm_wiki_dir.exists():
+            sources["llm_wiki"] = _directory_source_metadata(llm_wiki_dir, "*.md")
 
         # Also track the vocabulary file so query-side sparse vectorization matches index.
         if self.vocab_path.exists():
-            st = self.vocab_path.stat()
-            sources["bm25_vocab"] = {
-                "path": str(self.vocab_path),
-                "mtime": st.st_mtime,
-                "size": st.st_size,
-            }
+            sources["bm25_vocab"] = _file_source_metadata(self.vocab_path)
 
         return meta
 
@@ -155,6 +178,10 @@ class QdrantIndexManager:
                 return True
             if current_info.get("size", 0) != old_info.get("size", 0):
                 return True
+            if current_info.get("file_count") != old_info.get("file_count"):
+                return True
+            if current_info.get("content_hash") != old_info.get("content_hash"):
+                return True
 
         old_sources = set(metadata.get("sources", {}).keys())
         current_sources = set(current.get("sources", {}).keys())
@@ -178,6 +205,10 @@ class QdrantIndexManager:
                 return f"Source modified: {source_name}"
             if current_info.get("size", 0) != old_info.get("size", 0):
                 return f"Source size changed: {source_name}"
+            if current_info.get("file_count") != old_info.get("file_count"):
+                return f"Source file count changed: {source_name}"
+            if current_info.get("content_hash") != old_info.get("content_hash"):
+                return f"Source content changed: {source_name}"
         old_sources = set(metadata.get("sources", {}).keys())
         current_sources = set(current.get("sources", {}).keys())
         removed = old_sources - current_sources
@@ -274,14 +305,10 @@ class QdrantIndexManager:
 
         texts = [d.page_content or "" for d in documents]
 
-        # Build a stable BM25 vocabulary/stats from the full corpus, and persist it.
+        # Build a stable BM25 vocabulary/stats from the full corpus. Persist it only
+        # after the dense rebuild succeeds so failed embedding calls do not leave
+        # query-side sparse state out of sync with the live Qdrant collection.
         tokenizer = BM25SparseTokenizer(corpus=texts)
-        self.vocab_path.parent.mkdir(parents=True, exist_ok=True)
-        self.vocab_path.write_text(tokenizer.export_vocabulary(), encoding="utf-8")
-        logger.info(
-            f"BM25 vocabulary saved to {self.vocab_path} "
-            f"(vocab_size={tokenizer.vocabulary_size}, num_docs={tokenizer.get_statistics().get('num_documents')})"
-        )
 
         # Determine dense vector size.
         probe = embeddings.embed_query(texts[0] if texts[0] else "probe")
@@ -335,6 +362,13 @@ class QdrantIndexManager:
 
         duration = time.time() - start
         info = self.get_collection_info()
+
+        self.vocab_path.parent.mkdir(parents=True, exist_ok=True)
+        self.vocab_path.write_text(tokenizer.export_vocabulary(), encoding="utf-8")
+        logger.info(
+            f"BM25 vocabulary saved to {self.vocab_path} "
+            f"(vocab_size={tokenizer.vocabulary_size}, num_docs={tokenizer.get_statistics().get('num_documents')})"
+        )
 
         # Persist metadata after successful build for change detection.
         meta = self.collect_source_metadata()

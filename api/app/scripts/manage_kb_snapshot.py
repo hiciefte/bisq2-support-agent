@@ -4,6 +4,7 @@
 The retrieval stack depends on a small set of authoritative inputs:
 - wiki/processed_wiki.jsonl
 - faqs.db
+- knowledge/llm_wiki
 - bm25_vocabulary.json
 - qdrant_index_metadata.json
 
@@ -38,7 +39,7 @@ MANIFEST_FILENAME = "manifest.json"
 class SnapshotFileSpec:
     relative_path: str
     required: bool
-    capture_mode: str  # "copy" | "sqlite_backup"
+    capture_mode: str  # "copy" | "copy_tree" | "sqlite_backup"
 
 
 SNAPSHOT_FILE_SPECS: tuple[SnapshotFileSpec, ...] = (
@@ -47,6 +48,7 @@ SNAPSHOT_FILE_SPECS: tuple[SnapshotFileSpec, ...] = (
         "wiki/payment_methods_reference.jsonl", required=False, capture_mode="copy"
     ),
     SnapshotFileSpec("faqs.db", required=True, capture_mode="sqlite_backup"),
+    SnapshotFileSpec("knowledge/llm_wiki", required=False, capture_mode="copy_tree"),
     SnapshotFileSpec("bm25_vocabulary.json", required=True, capture_mode="copy"),
     SnapshotFileSpec("qdrant_index_metadata.json", required=False, capture_mode="copy"),
 )
@@ -65,6 +67,22 @@ def _sha256(path: Path) -> str:
                 break
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _tree_sha256(path: Path) -> str:
+    """Hash a directory tree by relative file path and file content."""
+    hasher = hashlib.sha256()
+    for child in sorted(p for p in path.rglob("*") if p.is_file()):
+        rel = child.relative_to(path).as_posix()
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(_sha256(child).encode("ascii"))
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
+def _tree_size(path: Path) -> int:
+    return sum(child.stat().st_size for child in path.rglob("*") if child.is_file())
 
 
 def _detect_git_ref() -> dict[str, str | None]:
@@ -161,6 +179,10 @@ def create_snapshot(args: argparse.Namespace) -> int:
 
         if spec.capture_mode == "sqlite_backup":
             _sqlite_backup(src, dst)
+        elif spec.capture_mode == "copy_tree":
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -172,9 +194,11 @@ def create_snapshot(args: argparse.Namespace) -> int:
             "capture_mode": spec.capture_mode,
             "source_path": str(src),
             "snapshot_path": str(dst),
-            "size": st.st_size,
+            "size": _tree_size(dst) if spec.capture_mode == "copy_tree" else st.st_size,
             "mtime": st.st_mtime,
-            "sha256": _sha256(dst),
+            "sha256": (
+                _tree_sha256(dst) if spec.capture_mode == "copy_tree" else _sha256(dst)
+            ),
         }
         if spec.capture_mode == "sqlite_backup":
             row["source_logical_sha256"] = _sqlite_logical_sha256(src)
@@ -271,9 +295,18 @@ def restore_snapshot(args: argparse.Namespace) -> int:
         if backup_dir is not None and dst.exists():
             backup_target = backup_dir / rel
             backup_target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(dst, backup_target)
+            if dst.is_dir():
+                shutil.copytree(dst, backup_target)
+            else:
+                shutil.copy2(dst, backup_target)
 
-        shutil.copy2(src, dst)
+        capture_mode = str(entry.get("capture_mode", "copy"))
+        if capture_mode == "copy_tree":
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
         restored += 1
 
     print(f"Restored files: {restored}")
@@ -310,6 +343,16 @@ def verify_snapshot(args: argparse.Namespace) -> int:
                 mismatches.append(
                     "logical sqlite mismatch: "
                     f"{rel} expected={expected_logical[:12]} actual={actual_logical[:12]}"
+                )
+        elif capture_mode == "copy_tree":
+            if not target.is_dir():
+                mismatches.append(f"not a directory: {rel}")
+                continue
+            actual_sha = _tree_sha256(target)
+            if expected_sha and actual_sha != expected_sha:
+                mismatches.append(
+                    "tree sha mismatch: "
+                    f"{rel} expected={expected_sha[:12]} actual={actual_sha[:12]}"
                 )
         else:
             actual_sha = _sha256(target)

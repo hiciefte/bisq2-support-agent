@@ -434,9 +434,10 @@ export function EscalationReviewPanel({
     return raw
       .map((s) => {
         const category = (s.category || "").toLowerCase()
-        const inferredType: "wiki" | "faq" =
+        const inferredType: Source["type"] =
           category === "faq" ? "faq" :
           category === "wiki" ? "wiki" :
+          category === "llm_wiki" ? "llm_wiki" :
           (s.url && String(s.url).startsWith("/faq/")) ? "faq" :
           "wiki"
 

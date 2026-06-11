@@ -7,13 +7,15 @@
  */
 export interface Source {
     title: string
-    type: "wiki" | "faq"
+    type: "wiki" | "faq" | "llm_wiki"
     content: string
     protocol?: "bisq_easy" | "multisig_v1" | "all"
     /** Wiki URL (e.g., "https://bisq.wiki/Article#Section") */
     url?: string
     /** Section within article */
     section?: string
+    /** Internal LLM Wiki page type, e.g. support_playbook */
+    page_type?: string
     /** 0.0-1.0 relevance score from vector search */
     similarity_score?: number
 }

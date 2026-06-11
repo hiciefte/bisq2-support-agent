@@ -55,7 +55,8 @@ export function getRelevanceConfig(score: number | undefined): RelevanceConfig {
 export interface GroupedSource {
     title: string
     url?: string
-    type: "wiki" | "faq"
+    type: "wiki" | "faq" | "llm_wiki"
+    page_type?: string
     sections: Array<{
         section?: string
         content: string
@@ -79,7 +80,8 @@ export function groupSourcesByArticle(sources: Source[]): GroupedSource[] {
             grouped.set(key, {
                 title: source.title,
                 url: source.url,
-                type: source.type as "wiki" | "faq",
+                type: source.type as "wiki" | "faq" | "llm_wiki",
+                page_type: source.page_type,
                 sections: [],
                 maxScore: source.similarity_score || 0,
             })
