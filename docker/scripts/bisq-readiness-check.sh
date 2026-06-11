@@ -48,7 +48,10 @@ call_mcp_tool() {
         return 1
     fi
 
-    error_message=$(echo "$response" | jq -r '.error.message // empty')
+    if ! error_message=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null); then
+        log "FAIL: $tool_name returned non-JSON response"
+        return 1
+    fi
     if [ -n "$error_message" ]; then
         log "FAIL: $tool_name returned MCP error: $error_message"
         return 1
