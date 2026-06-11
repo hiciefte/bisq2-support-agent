@@ -312,7 +312,7 @@ rebuild_services() {
     log_info "Ensuring monitoring services are running..."
     # Start all monitoring services (if defined in compose file)
     # These services enhance observability; graceful degradation if unavailable
-    local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler" "matrix-alertmanager-webhook")
+    local monitoring_services=("prometheus" "grafana" "node-exporter" "alertmanager" "cadvisor" "scheduler")
     local monitoring_failed=0
     for svc in "${monitoring_services[@]}"; do
         if docker compose -f "$compose_file" up -d "$svc" 2>/dev/null; then
@@ -438,7 +438,7 @@ check_and_repair_services() {
     local failed_services=()
     # All core and monitoring services are critical for production operation
     local critical_services=("api" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
-    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor" "matrix-alertmanager-webhook")
+    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
 
     if uses_qdrant_runtime; then
         critical_services=("qdrant" "${critical_services[@]}")
