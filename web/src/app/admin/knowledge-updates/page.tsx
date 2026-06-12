@@ -20,6 +20,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  X,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -88,22 +89,60 @@ interface DiffRow {
 }
 
 const QUEUE_LABELS: Record<RoutingCategory, string> = {
-  FULL_REVIEW: "Knowledge Gap",
-  SPOT_CHECK: "Minor Gap",
-  AUTO_APPROVE: "Calibration",
+  FULL_REVIEW: "1. Full review",
+  SPOT_CHECK: "2. Spot check",
+  AUTO_APPROVE: "3. Ready queue",
 };
 
 const QUEUE_TABS = [
-  { key: "FULL_REVIEW" as const, label: QUEUE_LABELS.FULL_REVIEW, icon: BookOpenCheck },
-  { key: "SPOT_CHECK" as const, label: QUEUE_LABELS.SPOT_CHECK, icon: ShieldCheck },
-  { key: "AUTO_APPROVE" as const, label: QUEUE_LABELS.AUTO_APPROVE, icon: GraduationCap },
+  {
+    key: "FULL_REVIEW" as const,
+    label: QUEUE_LABELS.FULL_REVIEW,
+    description: "Start here: highest review risk",
+    countLabel: "pending candidates",
+    icon: BookOpenCheck,
+  },
+  {
+    key: "SPOT_CHECK" as const,
+    label: QUEUE_LABELS.SPOT_CHECK,
+    description: "Lower-risk edits to verify",
+    countLabel: "pending candidates",
+    icon: ShieldCheck,
+  },
+  {
+    key: "AUTO_APPROVE" as const,
+    label: QUEUE_LABELS.AUTO_APPROVE,
+    description: "High-confidence backlog",
+    countLabel: "pending candidates",
+    icon: GraduationCap,
+  },
 ];
+
+const QUEUE_GUIDANCE: Record<RoutingCategory, { title: string; body: string; nextAction: string }> = {
+  FULL_REVIEW: {
+    title: "Start with full review",
+    body: "These candidates need the most human judgment. Read the proposed LLM Wiki page, edit weak wording, and check sources when a claim looks risky or unsupported.",
+    nextAction: "Approve only when the final page is reusable support knowledge.",
+  },
+  SPOT_CHECK: {
+    title: "Spot-check lower-risk edits",
+    body: "These candidates look closer to existing knowledge. Read the changed page first, then open sources only for claims that feel surprising, broad, or user-facing.",
+    nextAction: "Use this lane after the full-review queue is under control.",
+  },
+  AUTO_APPROVE: {
+    title: "Use the ready queue last",
+    body: "These candidates were routed as high confidence, but during initial bootstrapping they still deserve quick sampling so the generated LLM Wiki stays clean.",
+    nextAction: "Do not treat this as the first lane for manual cleanup.",
+  },
+};
 
 const SHORTCUT_HINTS = [
   { keyCombo: "S", label: "Save document" },
   { keyCombo: "A", label: "Approve" },
   { keyCombo: "R", label: "Reject" },
 ];
+
+const REVIEW_GUIDE_STORAGE_KEY = "bisq-support:knowledge-updates:review-guide-dismissed";
 
 const DOCUMENT_REVIEW_MODES: Array<{
   key: DocumentReviewMode;
@@ -294,6 +333,140 @@ function ContextBadge({
   );
 }
 
+function formatCandidateCount(count: number): string {
+  return `${count.toLocaleString()} ${count === 1 ? "candidate" : "candidates"}`;
+}
+
+function KnowledgeUpdateReviewGuide({
+  counts,
+  activeQueue,
+  isDismissed,
+  onDismiss,
+  onShow,
+}: {
+  counts: QueueCounts;
+  activeQueue: RoutingCategory;
+  isDismissed: boolean | null;
+  onDismiss: () => void;
+  onShow: () => void;
+}) {
+  const total = counts.FULL_REVIEW + counts.SPOT_CHECK + counts.AUTO_APPROVE;
+  const guidance = QUEUE_GUIDANCE[activeQueue];
+  const activeCount = counts[activeQueue] ?? 0;
+
+  if (isDismissed === null) return null;
+
+  if (isDismissed) {
+    return (
+      <div className="flex justify-end">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onShow}
+          className="gap-2 text-muted-foreground hover:text-foreground"
+        >
+          <BookOpenCheck className="h-4 w-4" aria-hidden="true" />
+          Show review guide
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Card className="relative border-primary/20 bg-secondary/40 shadow-sm">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onDismiss}
+        className="absolute right-[13px] top-[13px] z-10 h-8 w-8 text-muted-foreground hover:bg-background/70 hover:text-foreground"
+        aria-label="Hide review guide"
+        title="Hide review guide"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </Button>
+      <CardContent className="p-4 pr-14 md:p-5 md:pr-16">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+          <div className="space-y-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 rounded-full bg-primary/10 p-2 text-primary">
+                <BookOpenCheck className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold">Your job: approve one reusable LLM Wiki page at a time</h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                  The page turns repeated support evidence into internal knowledge the bot can retrieve later.
+                  It is not asking you to create hundreds of FAQs. Read the proposed page first, edit it if
+                  needed, then spot-check sources only when a claim looks wrong, unsupported, or risky.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              {[
+                ["1", "Read the wiki page", "Check whether the reusable answer is precise and durable."],
+                ["2", "Open sources only if needed", "Use support evidence to verify suspicious or high-impact claims."],
+                ["3", "Approve, skip, or reject", "Approval updates internal LLM Wiki knowledge, not a public FAQ."],
+              ].map(([step, title, body]) => (
+                <div key={step} className="rounded-lg border border-border/70 bg-background/70 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-[11px] font-semibold text-background">
+                      {step}
+                    </span>
+                    <p className="text-sm font-medium">{title}</p>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-border/70 bg-background/80 p-4">
+            <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{guidance.title}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{guidance.body}</p>
+                  <p className="mt-1 text-xs font-medium text-foreground">{guidance.nextAction}</p>
+                </div>
+                <Badge variant="secondary" className="shrink-0 justify-center tabular-nums">
+                  {formatCandidateCount(activeCount)}
+                </Badge>
+              </div>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">About the backlog</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  The lane numbers are pending support candidates, not final pages. A large initial count is
+                  expected while bootstrapping; approving one good LLM Wiki page can absorb many similar
+                  future questions.
+                </p>
+              </div>
+              <Badge variant="outline" className="shrink-0 tabular-nums">
+                {total.toLocaleString()}
+              </Badge>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Full review</span>
+                <span className="font-medium tabular-nums">{formatCandidateCount(counts.FULL_REVIEW)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Spot check</span>
+                <span className="font-medium tabular-nums">{formatCandidateCount(counts.SPOT_CHECK)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Ready queue</span>
+                <span className="font-medium tabular-nums">{formatCandidateCount(counts.AUTO_APPROVE)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CompactKnowledgeSources({
   sources,
 }: {
@@ -333,7 +506,7 @@ function DocumentDiffViewer({
     <div className="overflow-hidden rounded-xl border border-border/70 bg-background">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-muted/20 px-3 py-2">
         <div>
-          <p className="text-sm font-medium">Full document diff</p>
+          <p className="text-sm font-medium">Full wiki file: diff & edit</p>
           <p className="text-xs text-muted-foreground">
             Click a proposed line to edit it in place while keeping the diff context visible.
           </p>
@@ -531,6 +704,7 @@ export default function KnowledgeUpdatesPage() {
   const [showSupportingEdits, setShowSupportingEdits] = useState(false);
   const [answerRating, setAnswerRating] = useState<AnswerRating | null>(null);
   const [ratingLoading, setRatingLoading] = useState<AnswerRating | null>(null);
+  const [isReviewGuideDismissed, setIsReviewGuideDismissed] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isOperationDirty = useMemo(
@@ -630,11 +804,39 @@ export default function KnowledgeUpdatesPage() {
   }, [loadData]);
 
   useEffect(() => {
+    try {
+      setIsReviewGuideDismissed(
+        window.localStorage.getItem(REVIEW_GUIDE_STORAGE_KEY) === "true",
+      );
+    } catch {
+      setIsReviewGuideDismissed(false);
+    }
+  }, []);
+
+  useEffect(() => {
     setAnswerRating(null);
     setRatingLoading(null);
     setShowSupportingEdits(false);
     setEditingDocumentLine(null);
   }, [data?.candidate.id, data?.candidate.generated_answer]);
+
+  const handleDismissReviewGuide = useCallback(() => {
+    setIsReviewGuideDismissed(true);
+    try {
+      window.localStorage.setItem(REVIEW_GUIDE_STORAGE_KEY, "true");
+    } catch {
+      // Local storage can be unavailable in hardened browser contexts.
+    }
+  }, []);
+
+  const handleShowReviewGuide = useCallback(() => {
+    setIsReviewGuideDismissed(false);
+    try {
+      window.localStorage.removeItem(REVIEW_GUIDE_STORAGE_KEY);
+    } catch {
+      // Local storage can be unavailable in hardened browser contexts.
+    }
+  }, []);
 
   const persistOperations = async (): Promise<KnowledgeProposal | null> => {
     if (!data || !isOperationDirty) return data?.proposal ?? null;
@@ -861,7 +1063,7 @@ export default function KnowledgeUpdatesPage() {
     <AdminQueueShell showVectorStoreBanner shortcutHints={SHORTCUT_HINTS}>
       <QueuePageHeader
         title="Knowledge Updates"
-        description="Verify support evidence, refine the proposed LLM Wiki change, then approve or reject what should become retrievable knowledge."
+        description="Review proposed LLM Wiki pages created from real support discussions. Start with Full review, then use Spot check and Ready queue as lower-risk follow-up lanes."
         lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatDate(lastUpdatedAt.toISOString())}` : null}
         isRefreshing={isRefreshing}
         onRefresh={() => void loadData({ silent: true })}
@@ -887,6 +1089,14 @@ export default function KnowledgeUpdatesPage() {
         tabs={tabs}
         activeTab={activeQueue}
         onTabChange={setActiveQueue}
+      />
+
+      <KnowledgeUpdateReviewGuide
+        counts={queueCounts}
+        activeQueue={activeQueue}
+        isDismissed={isReviewGuideDismissed}
+        onDismiss={handleDismissReviewGuide}
+        onShow={handleShowReviewGuide}
       />
 
       {error && (
@@ -916,135 +1126,7 @@ export default function KnowledgeUpdatesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.25fr)_minmax(280px,0.8fr)]">
-          <Card className="min-w-0 border-border/70 bg-card/80">
-            <CardHeader className="pb-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <ContextBadge
-                  label="Channel"
-                  value={data.candidate.source === "bisq2" ? "Bisq 2" : "Matrix"}
-                  icon={MessageSquare}
-                />
-                {data.candidate.category && (
-                  <ContextBadge label="Topic" value={data.candidate.category} icon={FileText} />
-                )}
-                <ContextBadge label="Protocol" value={protocolLabel(data.candidate.protocol)} icon={ShieldCheck} />
-              </div>
-              <CardTitle className="pt-2 text-base">Support evidence</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Verify what the user asked, what staff answered, and whether the AI draft could have been sent as-is.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <section className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User question</p>
-                <div className="rounded-lg border border-border/70 bg-muted/25 p-3 text-sm leading-6">
-                  {data.candidate.edited_question_text || data.candidate.question_text}
-                </div>
-              </section>
-              <section className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Staff answer</p>
-                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm leading-6 whitespace-pre-wrap">
-                  {data.candidate.edited_staff_answer || data.candidate.staff_answer}
-                </div>
-              </section>
-              {cleanedGeneratedAnswer && (
-                <section className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-                      AI draft answer
-                    </p>
-                    {generationConfidenceLabel && (
-                      <Badge variant="outline" className="h-6 text-[11px]">
-                        Confidence {generationConfidenceLabel}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm leading-6">
-                    <MarkdownContent content={cleanedGeneratedAnswer} />
-                    {data.candidate.generated_answer_sources && data.candidate.generated_answer_sources.length > 0 && (
-                      <div className="mt-3 border-t border-border/50 pt-3">
-                        <SourceBadges sources={data.candidate.generated_answer_sources} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="rounded-lg border border-dashed border-border bg-muted/15 p-3">
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-sm font-medium leading-5">Was this AI draft good enough to send?</p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          Records a training signal only. It does not approve the LLM Wiki change.
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button
-                          variant={answerRating === "needs_improvement" ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => void handleRateGeneratedAnswer("needs_improvement")}
-                          disabled={ratingLoading !== null}
-                          className={cn(
-                            "w-full justify-center gap-1.5 px-2 text-xs",
-                            answerRating === "needs_improvement"
-                              ? "bg-amber-600 text-white hover:bg-amber-700"
-                              : "text-amber-700 hover:bg-amber-50 hover:text-amber-800",
-                          )}
-                        >
-                          {ratingLoading === "needs_improvement" ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <ThumbsDown className="h-3.5 w-3.5" />
-                          )}
-                          Needs Work
-                        </Button>
-                        <Button
-                          variant={answerRating === "good" ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => void handleRateGeneratedAnswer("good")}
-                          disabled={ratingLoading !== null}
-                          className={cn(
-                            "w-full justify-center gap-1.5 px-2 text-xs",
-                            answerRating === "good"
-                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                              : "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800",
-                          )}
-                        >
-                          {ratingLoading === "good" ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <ThumbsUp className="h-3.5 w-3.5" />
-                          )}
-                          Good
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              )}
-              {conversation.length > 0 && (
-                <Collapsible open={showConversation} onOpenChange={setShowConversation}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" className="w-full justify-between px-2">
-                      Conversation context
-                      <ChevronDown className={cn("h-4 w-4 transition-transform", showConversation && "rotate-180")} />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-2">
-                    {conversation.map((message, index) => (
-                      <div key={`${message.timestamp}-${index}`} className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                          <span>{message.sender || "participant"}</span>
-                          <span>{message.timestamp ? formatDate(message.timestamp) : ""}</span>
-                        </div>
-                        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
-                      </div>
-                    ))}
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-            </CardContent>
-          </Card>
-
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_minmax(280px,0.75fr)]">
           <Card className="min-w-0 border-border/70 bg-card/90">
             <CardHeader className="pb-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1056,8 +1138,8 @@ export default function KnowledgeUpdatesPage() {
                       : "Creating a new internal LLM Wiki page"}
                   </p>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    Review the complete markdown file first. Inline edits keep changed paragraphs in context;
-                    source links stay nearby for spot checks.
+                    This is the main object you approve. Read the complete page first, then edit unclear
+                    wording directly in the diff. Open sources only when a claim needs proof.
                   </p>
                 </div>
                 {isDirty && (
@@ -1084,12 +1166,12 @@ export default function KnowledgeUpdatesPage() {
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <ArrowRight className="hidden h-4 w-4 text-muted-foreground sm:block" aria-hidden="true" />
                     <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
-                    Decide
+                    Approve or reject
                   </div>
                 </div>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  Start with the final LLM Wiki file. Open sources only when a claim looks unsupported,
-                  risky, or oddly worded, then approve only if the final text should become reusable support knowledge.
+                  Approval updates the internal LLM Wiki. It does not publish a public FAQ and it does not
+                  immediately change autoresponse confidence thresholds.
                 </p>
               </div>
 
@@ -1150,15 +1232,16 @@ export default function KnowledgeUpdatesPage() {
                   <Button variant="ghost" className="w-full justify-between px-2">
                     <span className="inline-flex items-center gap-2">
                       <PencilLine className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                      Generated structured suggestions
+                      Advanced: generated fields
                     </span>
                     <ChevronDown className={cn("h-4 w-4 transition-transform", showSupportingEdits && "rotate-180")} />
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-3 pt-2">
                   <p className="rounded-lg border border-border/70 bg-muted/15 p-3 text-xs leading-5 text-muted-foreground">
-                    These fields are the generator output behind the document diff. Edit them for normal
-                    section-level fixes; most reviews should happen directly in Diff & edit.
+                    These fields are the generator output behind the document. Most reviews should happen
+                    directly in Diff & edit. Open this section only when you need to understand or repair
+                    a specific generated field.
                   </p>
                   <section className="space-y-3">
                     <div>
@@ -1185,12 +1268,142 @@ export default function KnowledgeUpdatesPage() {
             </CardContent>
           </Card>
 
-          <aside className="min-w-0 space-y-4 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto xl:pr-1">
+          <Card className="min-w-0 border-border/70 bg-card/80">
+            <CardHeader className="pb-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <ContextBadge
+                  label="Channel"
+                  value={data.candidate.source === "bisq2" ? "Bisq 2" : "Matrix"}
+                  icon={MessageSquare}
+                />
+                {data.candidate.category && (
+                  <ContextBadge label="Topic" value={data.candidate.category} icon={FileText} />
+                )}
+                <ContextBadge label="Protocol" value={protocolLabel(data.candidate.protocol)} icon={ShieldCheck} />
+              </div>
+              <CardTitle className="pt-2 text-base">Evidence from support chat</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Use this after reading the wiki page. Verify the original question, the human staff answer,
+                and whether the bot draft would have been good enough.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <section className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User question</p>
+                <div className="rounded-lg border border-border/70 bg-muted/25 p-3 text-sm leading-6">
+                  {data.candidate.edited_question_text || data.candidate.question_text}
+                </div>
+              </section>
+              <section className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Human staff answer</p>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm leading-6 whitespace-pre-wrap">
+                  {data.candidate.edited_staff_answer || data.candidate.staff_answer}
+                </div>
+              </section>
+              {cleanedGeneratedAnswer && (
+                <section className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+                      Bot draft at ingest
+                    </p>
+                    {generationConfidenceLabel && (
+                      <Badge variant="outline" className="h-6 text-[11px]">
+                        Confidence {generationConfidenceLabel}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm leading-6">
+                    <MarkdownContent content={cleanedGeneratedAnswer} />
+                    {data.candidate.generated_answer_sources && data.candidate.generated_answer_sources.length > 0 && (
+                      <div className="mt-3 border-t border-border/50 pt-3">
+                        <SourceBadges sources={data.candidate.generated_answer_sources} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-dashed border-border bg-muted/15 p-3">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-sm font-medium leading-5">Could the bot have sent this answer?</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          Records an answer-quality signal only. It does not approve the LLM Wiki change or change channel thresholds.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant={answerRating === "needs_improvement" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => void handleRateGeneratedAnswer("needs_improvement")}
+                          disabled={ratingLoading !== null}
+                          className={cn(
+                            "w-full justify-center gap-1.5 px-2 text-xs",
+                            answerRating === "needs_improvement"
+                              ? "bg-amber-600 text-white hover:bg-amber-700"
+                              : "text-amber-700 hover:bg-amber-50 hover:text-amber-800",
+                          )}
+                        >
+                          {ratingLoading === "needs_improvement" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          )}
+                          Needs work
+                        </Button>
+                        <Button
+                          variant={answerRating === "good" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => void handleRateGeneratedAnswer("good")}
+                          disabled={ratingLoading !== null}
+                          className={cn(
+                            "w-full justify-center gap-1.5 px-2 text-xs",
+                            answerRating === "good"
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                              : "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800",
+                          )}
+                        >
+                          {ratingLoading === "good" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          )}
+                          Good enough
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
+              {conversation.length > 0 && (
+                <Collapsible open={showConversation} onOpenChange={setShowConversation}>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="w-full justify-between px-2">
+                      Full support thread
+                      <ChevronDown className={cn("h-4 w-4 transition-transform", showConversation && "rotate-180")} />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-2">
+                    {conversation.map((message, index) => (
+                      <div key={`${message.timestamp}-${index}`} className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <span>{message.sender || "participant"}</span>
+                          <span>{message.timestamp ? formatDate(message.timestamp) : ""}</span>
+                        </div>
+                        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                      </div>
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </CardContent>
+          </Card>
+
+          <aside className="order-3 min-w-0 space-y-4 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto xl:pr-1">
             <Card className="border-border/70 bg-card/80">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Decision</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  Apply the reviewed change, defer it, or route it to a public FAQ.
+                  Approve only when the final wiki page should become retrievable support knowledge.
+                  Use FAQ only for a durable public one-question answer.
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 p-4">
@@ -1219,7 +1432,7 @@ export default function KnowledgeUpdatesPage() {
                     <Button variant="ghost" className="w-full justify-between text-muted-foreground">
                       <span className="inline-flex items-center gap-2">
                         <HelpCircle className="h-4 w-4" />
-                        FAQ escape hatch
+                        Optional public FAQ
                       </span>
                       <ChevronDown className={cn("h-4 w-4 transition-transform", showFaqFallback && "rotate-180")} />
                     </Button>
