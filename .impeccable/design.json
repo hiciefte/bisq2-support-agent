@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-11T00:00:00.000Z",
+  "title": "Design System: Bisq 2 Support Agent",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "Paper Background",
+        "canonical": "hsl(0 0% 100%)",
+        "tonalRamp": ["#262626", "#3f3f3f", "#737373", "#a3a3a3", "#d4d4d4", "#e5e5e5", "#f5f5f5", "#ffffff"]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Ink Foreground",
+        "canonical": "hsl(0 0% 3.9%)",
+        "tonalRamp": ["#0a0a0a", "#171717", "#262626", "#404040", "#525252", "#737373", "#a3a3a3", "#d4d4d4"]
+      },
+      "primary-green": {
+        "role": "primary",
+        "displayName": "Bisq Support Green",
+        "canonical": "hsl(127 65% 42%)",
+        "tonalRamp": ["#052e0b", "#0b4d14", "#126b1f", "#18892a", "#25b13c", "#51c364", "#90dc9d", "#d8f3dc"]
+      },
+      "secondary-green-surface": {
+        "role": "secondary",
+        "displayName": "Quiet Green Surface",
+        "canonical": "hsl(127 25% 96%)",
+        "tonalRamp": ["#142318", "#233b29", "#3d6144", "#64846b", "#9db7a3", "#c9d8cc", "#e6efe8", "#f2f7f3"]
+      },
+      "accent-green-surface": {
+        "role": "secondary",
+        "displayName": "Accent Green Surface",
+        "canonical": "hsl(127 35% 90%)",
+        "tonalRamp": ["#102917", "#1d4326", "#356b40", "#5b9365", "#91bd99", "#c1ddc6", "#dceddf", "#f2f8f3"]
+      },
+      "border-green-gray": {
+        "role": "neutral",
+        "displayName": "Green-Gray Border",
+        "canonical": "hsl(127 15% 89%)",
+        "tonalRamp": ["#1b211c", "#303a32", "#526056", "#7c8b80", "#a8b5ab", "#c8d0ca", "#dee5df", "#f1f5f2"]
+      },
+      "destructive-red": {
+        "role": "semantic",
+        "displayName": "Destructive Red",
+        "canonical": "hsl(0 84.2% 60.2%)",
+        "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#dc2626", "#ef4444", "#f87171", "#fecaca", "#fef2f2"]
+      },
+      "bisq-orange": {
+        "role": "brand-accent",
+        "displayName": "Bisq Orange Progress",
+        "canonical": "#f7931a",
+        "tonalRamp": ["#431407", "#7c2d12", "#9a3412", "#c2410c", "#f7931a", "#fb923c", "#fed7aa", "#fff7ed"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Admin Page Title",
+        "purpose": "Major route headings and high-level page titles."
+      },
+      "headline": {
+        "displayName": "Section Headline",
+        "purpose": "Dashboard and page section headings."
+      },
+      "title": {
+        "displayName": "Panel Title",
+        "purpose": "Cards, queue items, decision panels, and review regions."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Default text for admin work, chat markdown, explanations, and form copy."
+      },
+      "label": {
+        "displayName": "Compact Label",
+        "purpose": "Badges, metadata, counts, status chips, and keyboard hints."
+      }
+    },
+    "shadows": [
+      {
+        "name": "card-resting",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Default shadcn card separation for primary panels."
+      },
+      {
+        "name": "control-subtle",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Small button and input separation when borders are not enough."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-fast",
+        "value": "150ms ease-out",
+        "purpose": "Button, badge, hover, and focus feedback."
+      },
+      {
+        "name": "collapse-standard",
+        "value": "250ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Radix collapsible and accordion content."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "2xl-container",
+        "value": "1400px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action for save, approve, and selected task controls.",
+      "html": "<button class=\"ds-btn-primary\">Approve change</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 8px 16px; border: 0; border-radius: 6px; background: hsl(127 65% 42%); color: #fafafa; font: 500 14px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); transition: background 150ms ease-out, transform 150ms ease-out, box-shadow 150ms ease-out; } .ds-btn-primary:hover { background: color-mix(in srgb, hsl(127 65% 42%) 90%, black); } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: 2px solid hsl(127 65% 42%); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Low-emphasis action for refresh, reveal, secondary navigation, and compact tool controls.",
+      "html": "<button class=\"ds-btn-ghost\">Refresh queue</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: #737373; font: 500 14px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; transition: background 150ms ease-out, color 150ms ease-out, transform 150ms ease-out; } .ds-btn-ghost:hover { background: #dceddf; color: #12541c; } .ds-btn-ghost:active { transform: scale(0.98); } .ds-btn-ghost:focus-visible { outline: 2px solid hsl(127 65% 42%); outline-offset: 2px; }"
+    },
+    {
+      "name": "Admin Card",
+      "kind": "card",
+      "refersTo": "card-default",
+      "description": "Primary admin panel for review, monitoring, queue content, and settings.",
+      "html": "<section class=\"ds-admin-card\"><div class=\"ds-admin-card-header\"><h3>Queue health</h3><p>Review items that need human attention.</p></div><div class=\"ds-admin-card-body\">24 pending reviews</div></section>",
+      "css": ".ds-admin-card { max-width: 420px; border: 1px solid #dee5df; border-radius: 12px; background: #ffffff; color: #0a0a0a; box-shadow: 0 1px 3px rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); overflow: hidden; } .ds-admin-card-header { padding: 24px 24px 12px; } .ds-admin-card-header h3 { margin: 0; font: 600 16px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.01em; } .ds-admin-card-header p { margin: 8px 0 0; color: #737373; font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; } .ds-admin-card-body { padding: 0 24px 24px; font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Default text input for filters, settings, and editable review fields.",
+      "html": "<label class=\"ds-field\"><span>Search knowledge</span><input class=\"ds-input\" placeholder=\"Payment method, trade wizard, dispute\" /></label>",
+      "css": ".ds-field { display: grid; gap: 6px; color: #0a0a0a; font: 600 12px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; } .ds-input { height: 40px; width: 100%; border: 1px solid #dee5df; border-radius: 8px; background: rgb(255 255 255 / 0.5); color: #0a0a0a; padding: 8px 12px; font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; transition: background 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out; } .ds-input::placeholder { color: rgb(115 115 115 / 0.8); } .ds-input:hover { background: rgb(243 246 243 / 0.3); } .ds-input:focus-visible { outline: none; border-color: hsl(127 65% 42%); box-shadow: 0 0 0 2px hsl(127 65% 42% / 0.35); }"
+    },
+    {
+      "name": "Source Badge",
+      "kind": "chip",
+      "refersTo": "badge-default",
+      "description": "Compact evidence trigger that opens source details only when verification is needed.",
+      "html": "<button class=\"ds-source-badge\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 6.5A2.5 2.5 0 0 1 6.5 4H20v14H6.5A2.5 2.5 0 0 0 4 20.5z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M8 8h8M8 12h6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg><span>6 sources</span></button>",
+      "css": ".ds-source-badge { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 10px; border: 1px solid #dee5df; border-radius: 6px; background: #f2f7f3; color: #12541c; font: 600 12px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; transition: background 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out; } .ds-source-badge svg { width: 14px; height: 14px; } .ds-source-badge:hover { background: #dceddf; border-color: color-mix(in srgb, #25b13c 35%, #dee5df); } .ds-source-badge:active { transform: scale(0.98); } .ds-source-badge:focus-visible { outline: 2px solid hsl(127 65% 42%); outline-offset: 2px; }"
+    },
+    {
+      "name": "Queue Tab",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "Task filter for admin review queues. The selected tab is a filled product control, not a decorative card.",
+      "html": "<button class=\"ds-queue-tab\" aria-pressed=\"true\"><span class=\"ds-queue-tab-icon\">1</span><span class=\"ds-queue-tab-copy\"><strong>Full review</strong><small>Read the page before approving.</small></span><span class=\"ds-queue-count\">24</span></button>",
+      "css": ".ds-queue-tab { display: flex; align-items: center; gap: 10px; min-height: 48px; min-width: 220px; padding: 8px 12px; border: 0; border-radius: 6px; background: #25b13c; color: #fafafa; text-align: left; font: 500 14px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; transition: background 150ms ease-out, transform 150ms ease-out; } .ds-queue-tab:hover { background: color-mix(in srgb, #25b13c 90%, black); } .ds-queue-tab:active { transform: scale(0.98); } .ds-queue-tab:focus-visible { outline: 2px solid #25b13c; outline-offset: 2px; } .ds-queue-tab-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: rgb(250 250 250 / 0.18); font-size: 12px; font-weight: 700; } .ds-queue-tab-copy { display: grid; gap: 2px; min-width: 0; } .ds-queue-tab-copy strong { font-size: 14px; } .ds-queue-tab-copy small { font-size: 12px; opacity: 0.82; } .ds-queue-count { margin-left: auto; border-radius: 6px; background: #f2f7f3; color: #12541c; padding: 2px 8px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "Admin navigation item with active green state and quiet inactive state.",
+      "html": "<a class=\"ds-sidebar-item ds-sidebar-item-active\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 5h16v14H4z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M8 9h8M8 13h5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg><span>Knowledge Updates</span></a>",
+      "css": ".ds-sidebar-item { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 8px 12px; border-radius: 6px; color: #737373; text-decoration: none; font: 500 14px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; transition: background 150ms ease-out, color 150ms ease-out; } .ds-sidebar-item svg { width: 16px; height: 16px; } .ds-sidebar-item:hover { background: #dceddf; color: #12541c; } .ds-sidebar-item-active { background: #25b13c; color: #fafafa; } .ds-sidebar-item-active:hover { background: #25b13c; color: #fafafa; } .ds-sidebar-item:focus-visible { outline: 2px solid #25b13c; outline-offset: 2px; }"
+    },
+    {
+      "name": "Diff Review Row",
+      "kind": "custom",
+      "refersTo": "card-default",
+      "description": "Inline LLM Wiki document review row that keeps change context and edit affordance in the same place.",
+      "html": "<div class=\"ds-diff-row ds-diff-row-add\"><span class=\"ds-diff-line\">42</span><p>Users can retry the trade wizard after refreshing offers and checking the selected payment method.</p></div>",
+      "css": ".ds-diff-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 8px 12px; border-bottom: 1px solid #dee5df; background: #ffffff; color: #0a0a0a; font: 400 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; } .ds-diff-row p { margin: 0; overflow-wrap: anywhere; } .ds-diff-line { color: #737373; text-align: right; font-variant-numeric: tabular-nums; } .ds-diff-row-add { background: #f2f7f3; } .ds-diff-row-add .ds-diff-line { color: #12541c; } .ds-diff-row:hover { background: #dceddf; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operator's Desk",
+    "overview": "The interface should feel like a quiet, well-labeled operations desk for a privacy-sensitive support system. It is not a marketing surface and it is not a playful chatbot shell. It should help a support admin understand what happened, what needs review, what source proves it, and what action is safe.",
+    "keyCharacteristics": [
+      "Review-first: generated answers, sources, diffs, and decisions stay visible in one workflow.",
+      "Calm density: compact enough for support operations, never crowded without hierarchy.",
+      "Source-backed: links, badges, and evidence states are first-class UI elements.",
+      "Familiar product UI: shadcn new-york, Radix primitives, Lucide icons, and predictable navigation.",
+      "Privacy-aware: avoid making private support evidence look permanent or public."
+    ],
+    "rules": [
+      {
+        "name": "The Green Earns Its Place Rule",
+        "body": "Green means primary action, selected state, or verified positive state. If everything is green, nothing is important.",
+        "section": "colors"
+      },
+      {
+        "name": "The Evidence Is Not Decoration Rule",
+        "body": "Source badges and evidence states use color only to clarify trust and review state, never to create ornamental variety.",
+        "section": "colors"
+      },
+      {
+        "name": "The Labels Must Explain the Job Rule",
+        "body": "Do not expose pipeline categories such as calibration or knowledge gap without explaining what the support admin should do next.",
+        "section": "typography"
+      },
+      {
+        "name": "The Native Tool Rule",
+        "body": "Product screens use the system sans stack. Do not introduce display fonts into buttons, labels, data, or admin navigation.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Until It Acts Rule",
+        "body": "Resting admin UI is quiet. Hover, focus, active, and selected states may gain emphasis because the user is interacting with them.",
+        "section": "elevation"
+      },
+      {
+        "name": "The No Glass Rule",
+        "body": "Do not use decorative blur, translucent panels, or glassmorphism in operator surfaces.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do make the support admin's next action explicit on every queue screen.",
+      "Do put source-backed evidence near the claim it verifies, with clickable links when a durable public link exists.",
+      "Do preserve the shadcn new-york component vocabulary unless there is a concrete usability reason to diverge.",
+      "Do use Bisq Support Green for active navigation, selected tabs, primary actions, and verified positive state.",
+      "Do keep operator copy concise, factual, and specific about impact.",
+      "Do explain initial bootstrap states, high raw candidate counts, and deduplication so admins do not interpret normal backlog as data corruption.",
+      "Do keep destructive actions visibly distinct, reversible when possible, and explicit about what data changes."
+    ],
+    "donts": [
+      "Don't build generic AI SaaS dashboards with decorative gradients, vague confidence badges, and unclear automation.",
+      "Don't use dark neon crypto dashboards, purple default palettes, or glassmorphism used for decoration.",
+      "Don't create FAQ sprawl where every support discussion becomes a separate public answer.",
+      "Don't hide automation decisions behind labels like Calibration or Knowledge Gap without explaining the human task.",
+      "Don't use dense admin screens that expose internal pipeline terms before explaining the operator's job.",
+      "Don't use playful copy in operator surfaces when the task involves security, trust monitoring, support escalation, or production health.",
+      "Don't duplicate evidence lists, badges, or source blocks across columns.",
+      "Don't use colored side-stripe borders, gradient text, or modal-first workflows."
+    ]
+  }
+}
