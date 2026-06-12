@@ -379,7 +379,7 @@ function KnowledgeUpdateReviewGuide({
         variant="ghost"
         size="icon"
         onClick={onDismiss}
-        className="absolute right-3 top-3 z-10 h-8 w-8 text-muted-foreground hover:bg-background/70 hover:text-foreground"
+        className="absolute right-[13px] top-[13px] z-10 h-8 w-8 text-muted-foreground hover:bg-background/70 hover:text-foreground"
         aria-label="Hide review guide"
         title="Hide review guide"
       >
