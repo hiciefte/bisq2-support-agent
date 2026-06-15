@@ -51,15 +51,17 @@ export function useEscalationPolling(
   const [rateToken, setRateToken] = useState<string | null>(null);
   const [userLanguage, setUserLanguage] = useState<string | null>(null);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingActiveRef = useRef<boolean>(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const startTimeRef = useRef<number>(0);
   const pollCountRef = useRef<number>(0);
 
   const cleanupPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    pollingActiveRef.current = false;
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
     }
   }, []);
 
@@ -143,10 +145,18 @@ export function useEscalationPolling(
 
     const startPolling = () => {
       cleanupPolling();
-      void poll();
-      intervalRef.current = setInterval(() => {
-        void poll();
-      }, getInterval());
+      pollingActiveRef.current = true;
+
+      const runAndSchedule = async () => {
+        await poll();
+        if (!active || !pollingActiveRef.current) return;
+
+        pollingTimeoutRef.current = setTimeout(() => {
+          void runAndSchedule();
+        }, getInterval());
+      };
+
+      void runAndSchedule();
     };
 
     const startEventStream = () => {
@@ -192,7 +202,7 @@ export function useEscalationPolling(
     startEventStream();
 
     const handleVisibilityChange = () => {
-      if (intervalRef.current) {
+      if (pollingActiveRef.current) {
         startPolling();
       }
     };

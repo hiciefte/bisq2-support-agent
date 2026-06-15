@@ -55,3 +55,20 @@ async def test_publish_keeps_latest_event_when_subscriber_is_slow():
 
         received = await asyncio.wait_for(queue.get(), timeout=0.1)
         assert received.staff_answer == "Latest answer"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_publish_keeps_latest_event_for_same_message():
+    broker = EscalationEventBroker()
+    escalations = [
+        _make_escalation(staff_answer=f"Concurrent answer {index}")
+        for index in range(10)
+    ]
+
+    async with broker.subscribe(escalations[0].message_id) as queue:
+        await asyncio.gather(
+            *(broker.publish(escalation) for escalation in escalations)
+        )
+
+        received = await asyncio.wait_for(queue.get(), timeout=0.1)
+        assert received.staff_answer == "Concurrent answer 9"

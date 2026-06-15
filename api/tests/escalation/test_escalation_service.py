@@ -674,6 +674,45 @@ class TestEscalationServiceCloseEvents:
 
         broker.publish.assert_awaited_once_with(closed)
 
+    @pytest.mark.asyncio
+    async def test_auto_close_reaction_publishes_web_event(
+        self,
+        mock_repository,
+        mock_faq_service,
+        mock_learning_engine,
+        mock_settings,
+        mock_rag_service,
+    ):
+        broker = MagicMock()
+        broker.publish = AsyncMock()
+        svc = EscalationService(
+            repository=mock_repository,
+            response_delivery=None,
+            faq_service=mock_faq_service,
+            learning_engine=mock_learning_engine,
+            settings=mock_settings,
+            rag_service=mock_rag_service,
+            event_broker=broker,
+        )
+        pending = _make_escalation(
+            status=EscalationStatus.PENDING,
+            routing_reason="auto_reaction_negative:user_reported_incorrect(confidence=95%)",
+        )
+        closed = _make_escalation(
+            status=EscalationStatus.CLOSED,
+            closed_at=datetime.now(timezone.utc),
+        )
+        mock_repository.get_by_message_id.return_value = pending
+        mock_repository.update.return_value = closed
+
+        result = await svc.auto_close_reaction_escalation(
+            message_id=pending.message_id,
+            reason="reaction_removed",
+        )
+
+        assert result is True
+        broker.publish.assert_awaited_once_with(closed)
+
 
 # ---------------------------------------------------------------------------
 # Generate FAQ

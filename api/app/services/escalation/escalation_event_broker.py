@@ -30,11 +30,10 @@ class EscalationEventBroker:
         finally:
             async with self._lock:
                 queues = self._subscribers.get(message_id)
-                if not queues:
-                    return
-                queues.discard(queue)
-                if not queues:
-                    self._subscribers.pop(message_id, None)
+                if queues:
+                    queues.discard(queue)
+                    if not queues:
+                        self._subscribers.pop(message_id, None)
 
     async def publish(self, escalation: Escalation) -> None:
         async with self._lock:
@@ -46,4 +45,14 @@ class EscalationEventBroker:
                     queue.get_nowait()
                 except asyncio.QueueEmpty:
                     pass
-            queue.put_nowait(escalation)
+            try:
+                queue.put_nowait(escalation)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(escalation)
+                except asyncio.QueueFull:
+                    pass
