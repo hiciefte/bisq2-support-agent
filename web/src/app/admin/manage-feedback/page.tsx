@@ -294,7 +294,7 @@ export default function ManageFeedbackPage() {
     const params = new URLSearchParams();
     Object.entries(adjustedFilters).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '' && value !== 'all' &&
-          !(Array.isArray(value) && value.length === 0) && value !== false) {
+          !(Array.isArray(value) && value.length === 0)) {
         if (Array.isArray(value)) {
           params.append(key, value.join(','));
         } else if (value instanceof Date) {

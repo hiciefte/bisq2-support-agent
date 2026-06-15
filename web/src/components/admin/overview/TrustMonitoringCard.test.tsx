@@ -1,4 +1,5 @@
 import { cloneElement, createContext, isValidElement, useContext, useState } from "react";
+import type { ReactElement } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TrustMonitoringCard } from "./TrustMonitoringCard";
@@ -122,7 +123,7 @@ jest.mock("@/components/ui/collapsible", () => ({
   CollapsibleTrigger: ({ children }: { children: React.ReactNode }) => {
     const context = useContext(CollapsibleContext);
     if (isValidElement(children)) {
-      return cloneElement(children, {
+      return cloneElement(children as ReactElement<{ onClick?: () => void }>, {
         onClick: () => context?.setOpen(!context.open),
       });
     }

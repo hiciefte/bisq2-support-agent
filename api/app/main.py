@@ -289,8 +289,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
     app.state.escalation_service = None
+    app.state.escalation_event_broker = None
     app.state.escalation_init_failed = False
     try:
+        from app.services.escalation.escalation_event_broker import (
+            EscalationEventBroker,
+        )
         from app.services.escalation.escalation_repository import EscalationRepository
         from app.services.escalation.escalation_service import EscalationService
         from app.services.escalation.feedback_orchestrator import FeedbackOrchestrator
@@ -304,6 +308,8 @@ async def lifespan(app: FastAPI):
             settings=settings,
         )
         app.state.feedback_orchestrator = feedback_orchestrator
+        event_broker = EscalationEventBroker()
+        app.state.escalation_event_broker = event_broker
 
         escalation_service = EscalationService(
             repository=esc_repo,
@@ -314,11 +320,13 @@ async def lifespan(app: FastAPI):
             feedback_orchestrator=feedback_orchestrator,
             embeddings=embeddings_model,
             rag_service=rag_service,
+            event_broker=event_broker,
         )
         app.state.escalation_service = escalation_service
         logger.info("EscalationService initialized (singleton)")
     except Exception:
         app.state.escalation_service = None
+        app.state.escalation_event_broker = None
         app.state.feedback_orchestrator = None
         app.state.escalation_init_failed = True
         logger.critical("EscalationService init failed", exc_info=True)

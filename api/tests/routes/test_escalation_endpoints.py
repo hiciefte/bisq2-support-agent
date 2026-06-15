@@ -79,6 +79,7 @@ def temp_db_path():
 def mock_escalation_service():
     """Create a mock escalation service."""
     service = MagicMock()
+    service.event_broker = None
 
     # Mock sample escalation data
     sample_escalation = Escalation(
@@ -836,6 +837,53 @@ class TestPollingEndpoint:
         assert data["resolution"] == "responded"
         assert data["responded_at"] is not None
         assert data["closed_at"] is not None
+
+    def test_events_stream_returns_current_resolved_answer(
+        self, polling_client, mock_escalation_service
+    ):
+        """SSE sends the current resolved state immediately on connect."""
+        responded_escalation = Escalation(
+            id=1,
+            message_id="12345678-1234-1234-1234-123456789abc",
+            channel="web",
+            user_id="@user:matrix.org",
+            username="testuser",
+            channel_metadata={},
+            question="Test question",
+            ai_draft_answer="Draft answer",
+            confidence_score=0.65,
+            routing_action="needs_human",
+            routing_reason=None,
+            sources=[],
+            staff_answer="Final staff answer",
+            staff_id="admin1",
+            delivery_status=EscalationDeliveryStatus.DELIVERED,
+            delivery_error=None,
+            delivery_attempts=1,
+            last_delivery_at=datetime(2025, 1, 15, 12, 30, 0),
+            generated_faq_id=None,
+            status=EscalationStatus.RESPONDED,
+            priority=EscalationPriority.NORMAL,
+            created_at=datetime(2025, 1, 15, 10, 0, 0),
+            claimed_at=datetime(2025, 1, 15, 11, 0, 0),
+            responded_at=datetime(2025, 1, 15, 12, 0, 0),
+            closed_at=None,
+        )
+        mock_escalation_service.repository.get_by_message_id.return_value = (
+            responded_escalation
+        )
+
+        with polling_client.stream(
+            "GET",
+            "/escalations/12345678-1234-1234-1234-123456789abc/events",
+        ) as response:
+            body = "".join(response.iter_text())
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "event: escalation" in body
+        assert '"status":"resolved"' in body
+        assert '"staff_answer":"Final staff answer"' in body
 
     def test_poll_invalid_uuid_returns_422(self, polling_client):
         """Test polling with invalid UUID format returns 422."""

@@ -669,7 +669,7 @@ export function TrainingReviewItem({
                 <>
                   <MarkdownContent content={cleanedGeneratedAnswer} className="text-sm" />
                   {/* Sources and Confidence */}
-                  {(pair.generated_answer_sources?.length > 0 || pair.generation_confidence !== null) && (
+                  {((pair.generated_answer_sources?.length ?? 0) > 0 || pair.generation_confidence !== null) && (
                     <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-center gap-3">
                       {pair.generated_answer_sources && pair.generated_answer_sources.length > 0 && (
                         <SourceBadges sources={pair.generated_answer_sources} />

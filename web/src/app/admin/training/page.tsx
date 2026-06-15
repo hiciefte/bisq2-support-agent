@@ -20,6 +20,7 @@ import type {
   QueueCounts,
   RoutingCategory,
   SimilarFAQ,
+  BatchCandidate,
   UnifiedCandidate,
 } from '@/components/admin/training/types';
 
@@ -286,9 +287,13 @@ export default function TrainingPage() {
   };
 
   // Handle expand item from batch view
-  const handleExpandBatchItem = (candidate: UnifiedCandidate) => {
+  const handleExpandBatchItem = (candidate: BatchCandidate) => {
+    const fullCandidate = batchItems.find((item) => item.id === candidate.id);
+    if (!fullCandidate) {
+      return;
+    }
     setIsBatchMode(false);
-    setCurrentItem(candidate);
+    setCurrentItem(fullCandidate);
   };
 
   // Handle approve action - unified endpoint
