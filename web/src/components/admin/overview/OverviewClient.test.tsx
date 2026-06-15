@@ -12,7 +12,10 @@ jest.mock("lucide-react", () => {
   return new Proxy({}, { get: () => MockIcon });
 });
 
-const mockTrustMonitoringCardSpy = jest.fn(() => <div>trust-monitor-card</div>);
+const mockTrustMonitoringCardSpy = jest.fn((props: unknown) => {
+  void props;
+  return <div>trust-monitor-card</div>;
+});
 
 jest.mock("@/components/admin/overview/TrustMonitoringCard", () => ({
   TrustMonitoringCard: (props: unknown) => mockTrustMonitoringCardSpy(props),

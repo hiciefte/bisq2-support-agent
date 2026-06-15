@@ -68,6 +68,7 @@ export interface EscalationItem {
     content?: string | null
     protocol?: string | null
     section?: string | null
+    page_type?: string | null
   }>
   created_at: string
   claimed_at?: string | null

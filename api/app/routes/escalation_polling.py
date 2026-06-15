@@ -2,8 +2,10 @@
 User-facing polling endpoint for escalation responses.
 """
 
+import asyncio
+import json
 import logging
-import re
+from typing import AsyncIterator
 
 from app.channels.escalation_localization import normalize_language_code
 from app.channels.plugins.web.identity import derive_web_user_context
@@ -19,6 +21,7 @@ from app.services.escalation.rating_token import (
     verify_rating_token,
 )
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi.responses import StreamingResponse
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -28,7 +31,7 @@ router = APIRouter()
 
 # Message ID pattern: optional channel prefix + UUID v4
 # Examples: "160541ae-..." (plain UUID) or "web_160541ae-..." (channel-prefixed)
-MESSAGE_ID_PATTERN = re.compile(
+MESSAGE_ID_PATH_PATTERN = (
     r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 
@@ -121,13 +124,119 @@ async def _localize_staff_answer(
     return answer
 
 
+async def _get_escalation_or_404(service, message_id: str):
+    escalation = await service.repository.get_by_message_id(message_id)
+
+    if not escalation:
+        logger.debug(f"Message ID not found: {message_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "not_found"},
+        )
+    return escalation
+
+
+async def _build_user_poll_response(
+    *,
+    request: Request,
+    escalation,
+    message_id: str,
+    settings,
+) -> UserPollResponse:
+    signing_key = _get_rating_signing_key(settings)
+    rater_id = _derive_rater_id(request)
+    localized_staff_answer = await _localize_staff_answer(
+        request=request,
+        escalation=escalation,
+    )
+
+    if escalation.status in (
+        EscalationStatus.PENDING,
+        EscalationStatus.IN_REVIEW,
+    ):
+        return UserPollResponse(
+            status="pending",
+            staff_answer=None,
+            responded_at=None,
+            resolution=None,
+            closed_at=None,
+            user_language=escalation.user_language,
+        )
+
+    if escalation.status == EscalationStatus.RESPONDED:
+        rate_token = _build_rate_token_for_escalation(
+            escalation=escalation,
+            message_id=message_id,
+            rater_id=rater_id,
+            signing_key=signing_key,
+            settings=settings,
+        )
+        return UserPollResponse(
+            status="resolved",
+            staff_answer=localized_staff_answer,
+            responded_at=escalation.responded_at,
+            resolution="responded",
+            closed_at=None,
+            staff_answer_rating=escalation.staff_answer_rating,
+            rate_token=rate_token,
+            user_language=escalation.user_language,
+        )
+
+    if escalation.status == EscalationStatus.CLOSED:
+        rate_token = _build_rate_token_for_escalation(
+            escalation=escalation,
+            message_id=message_id,
+            rater_id=rater_id,
+            signing_key=signing_key,
+            settings=settings,
+        )
+        return UserPollResponse(
+            status="resolved",
+            staff_answer=localized_staff_answer,
+            responded_at=escalation.responded_at,
+            resolution=_derive_user_resolution(escalation),
+            closed_at=escalation.closed_at,
+            staff_answer_rating=escalation.staff_answer_rating,
+            rate_token=rate_token,
+            user_language=escalation.user_language,
+        )
+
+    return UserPollResponse(
+        status="pending",
+        staff_answer=None,
+        responded_at=None,
+        resolution=None,
+        closed_at=None,
+        user_language=escalation.user_language,
+    )
+
+
+def _is_terminal_user_response(response: UserPollResponse) -> bool:
+    return response.status == "resolved" and (
+        bool(response.staff_answer) or response.resolution == "closed"
+    )
+
+
+def _format_sse_event(event: str, payload: UserPollResponse) -> str:
+    data = payload.model_dump(mode="json")
+    encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {encoded}\n\n"
+
+
+def _get_event_broker(request: Request, service):
+    broker = getattr(service, "event_broker", None)
+    if broker is not None:
+        return broker
+    return getattr(request.app.state, "escalation_event_broker", None)
+
+
 @router.get("/escalations/{message_id}/response", response_model=UserPollResponse)
 async def poll_escalation_response(
     request: Request,
     message_id: str = Path(
         ...,
         description="Message ID from the original question (UUID with optional channel prefix)",
-        pattern=r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        pattern=MESSAGE_ID_PATH_PATTERN,
     ),
     service=Depends(get_escalation_service),
     settings=Depends(get_settings),
@@ -149,88 +258,13 @@ async def poll_escalation_response(
     logger.debug(f"User polling for escalation response: {message_id}")
 
     try:
-        signing_key = _get_rating_signing_key(settings)
-        rater_id = _derive_rater_id(request)
-
-        # Get escalation by message_id
-        escalation = await service.repository.get_by_message_id(message_id)
-
-        if not escalation:
-            logger.debug(f"Message ID not found: {message_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"status": "not_found"},
-            )
-        localized_staff_answer = await _localize_staff_answer(
+        escalation = await _get_escalation_or_404(service, message_id)
+        return await _build_user_poll_response(
             request=request,
             escalation=escalation,
+            message_id=message_id,
+            settings=settings,
         )
-
-        # Check status and return appropriate response
-        if escalation.status == EscalationStatus.PENDING:
-            return UserPollResponse(
-                status="pending",
-                staff_answer=None,
-                responded_at=None,
-                resolution=None,
-                closed_at=None,
-                user_language=escalation.user_language,
-            )
-        elif escalation.status == EscalationStatus.IN_REVIEW:
-            return UserPollResponse(
-                status="pending",
-                staff_answer=None,
-                responded_at=None,
-                resolution=None,
-                closed_at=None,
-                user_language=escalation.user_language,
-            )
-        elif escalation.status == EscalationStatus.RESPONDED:
-            rate_token = _build_rate_token_for_escalation(
-                escalation=escalation,
-                message_id=message_id,
-                rater_id=rater_id,
-                signing_key=signing_key,
-                settings=settings,
-            )
-            return UserPollResponse(
-                status="resolved",
-                staff_answer=localized_staff_answer,
-                responded_at=escalation.responded_at,
-                resolution="responded",
-                closed_at=None,
-                staff_answer_rating=escalation.staff_answer_rating,
-                rate_token=rate_token,
-                user_language=escalation.user_language,
-            )
-        elif escalation.status == EscalationStatus.CLOSED:
-            rate_token = _build_rate_token_for_escalation(
-                escalation=escalation,
-                message_id=message_id,
-                rater_id=rater_id,
-                signing_key=signing_key,
-                settings=settings,
-            )
-            return UserPollResponse(
-                status="resolved",
-                staff_answer=localized_staff_answer,
-                responded_at=escalation.responded_at,
-                resolution=_derive_user_resolution(escalation),
-                closed_at=escalation.closed_at,
-                staff_answer_rating=escalation.staff_answer_rating,
-                rate_token=rate_token,
-                user_language=escalation.user_language,
-            )
-        else:
-            # Unknown status, return pending to be safe
-            return UserPollResponse(
-                status="pending",
-                staff_answer=None,
-                responded_at=None,
-                resolution=None,
-                closed_at=None,
-                user_language=escalation.user_language,
-            )
 
     except HTTPException:
         # Re-raise HTTP exceptions without wrapping
@@ -246,6 +280,94 @@ async def poll_escalation_response(
         ) from e
 
 
+@router.get("/escalations/{message_id}/events")
+async def stream_escalation_events(
+    request: Request,
+    message_id: str = Path(
+        ...,
+        description="Message ID from the original question (UUID with optional channel prefix)",
+        pattern=MESSAGE_ID_PATH_PATTERN,
+    ),
+    service=Depends(get_escalation_service),
+    settings=Depends(get_settings),
+) -> StreamingResponse:
+    """Stream escalation response updates via Server-Sent Events."""
+    logger.debug(f"User streaming escalation response: {message_id}")
+
+    try:
+        await _get_escalation_or_404(service, message_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to open escalation event stream for {message_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to open escalation event stream",
+        ) from e
+
+    async def event_stream() -> AsyncIterator[str]:
+        broker = _get_event_broker(request, service)
+        if broker is None:
+            escalation = await service.repository.get_by_message_id(message_id)
+            if escalation is None:
+                return
+            response = await _build_user_poll_response(
+                request=request,
+                escalation=escalation,
+                message_id=message_id,
+                settings=settings,
+            )
+            yield _format_sse_event("escalation", response)
+            return
+
+        async with broker.subscribe(message_id) as queue:
+            escalation = await service.repository.get_by_message_id(message_id)
+            if escalation is None:
+                return
+
+            response = await _build_user_poll_response(
+                request=request,
+                escalation=escalation,
+                message_id=message_id,
+                settings=settings,
+            )
+            yield _format_sse_event("escalation", response)
+            if _is_terminal_user_response(response):
+                return
+
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    escalation = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+
+                response = await _build_user_poll_response(
+                    request=request,
+                    escalation=escalation,
+                    message_id=message_id,
+                    settings=settings,
+                )
+                yield _format_sse_event("escalation", response)
+                if _is_terminal_user_response(response):
+                    return
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post(
     "/escalations/{message_id}/rate",
     response_model=UserPollResponse,
@@ -256,7 +378,7 @@ async def rate_staff_answer(
     message_id: str = Path(
         ...,
         description="Message ID from the original question",
-        pattern=r"^(?:[a-z]+_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        pattern=MESSAGE_ID_PATH_PATTERN,
     ),
     service=Depends(get_escalation_service),
     settings=Depends(get_settings),

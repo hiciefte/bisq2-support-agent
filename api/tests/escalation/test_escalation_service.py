@@ -537,6 +537,45 @@ class TestEscalationServiceRespond:
         mock_learning_engine.record_review.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_respond_publishes_web_event_immediately(
+        self,
+        mock_repository,
+        mock_faq_service,
+        mock_learning_engine,
+        mock_settings,
+        mock_rag_service,
+    ):
+        """Staff responses are pushed to web clients as soon as they are stored."""
+        broker = MagicMock()
+        broker.publish = AsyncMock()
+        svc = EscalationService(
+            repository=mock_repository,
+            response_delivery=None,
+            faq_service=mock_faq_service,
+            learning_engine=mock_learning_engine,
+            settings=mock_settings,
+            rag_service=mock_rag_service,
+            event_broker=broker,
+        )
+        claimed = _make_escalation(
+            status=EscalationStatus.IN_REVIEW,
+            staff_id="staff_1",
+            channel="web",
+        )
+        responded = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_answer="Answer",
+            staff_id="staff_1",
+            channel="web",
+        )
+        mock_repository.get_by_id.return_value = claimed
+        mock_repository.update.return_value = responded
+
+        await svc.respond_to_escalation(1, "Answer", "staff_1")
+
+        broker.publish.assert_awaited_once_with(responded)
+
+    @pytest.mark.asyncio
     async def test_respond_delivery_failure_still_saves(
         self, service, mock_repository, mock_response_delivery
     ):
@@ -593,6 +632,86 @@ class TestEscalationServicePrioritize:
 
         with pytest.raises(EscalationClosedError):
             await service.prioritize_escalation(1, EscalationPriority.HIGH)
+
+
+# ---------------------------------------------------------------------------
+# Close
+# ---------------------------------------------------------------------------
+
+
+class TestEscalationServiceCloseEvents:
+    """Test close event publishing."""
+
+    @pytest.mark.asyncio
+    async def test_close_publishes_web_event(
+        self,
+        mock_repository,
+        mock_faq_service,
+        mock_learning_engine,
+        mock_settings,
+        mock_rag_service,
+    ):
+        broker = MagicMock()
+        broker.publish = AsyncMock()
+        svc = EscalationService(
+            repository=mock_repository,
+            response_delivery=None,
+            faq_service=mock_faq_service,
+            learning_engine=mock_learning_engine,
+            settings=mock_settings,
+            rag_service=mock_rag_service,
+            event_broker=broker,
+        )
+        escalation = _make_escalation(status=EscalationStatus.IN_REVIEW)
+        closed = _make_escalation(
+            status=EscalationStatus.CLOSED,
+            closed_at=datetime.now(timezone.utc),
+        )
+        mock_repository.get_by_id.return_value = escalation
+        mock_repository.update.return_value = closed
+
+        await svc.close_escalation(1)
+
+        broker.publish.assert_awaited_once_with(closed)
+
+    @pytest.mark.asyncio
+    async def test_auto_close_reaction_publishes_web_event(
+        self,
+        mock_repository,
+        mock_faq_service,
+        mock_learning_engine,
+        mock_settings,
+        mock_rag_service,
+    ):
+        broker = MagicMock()
+        broker.publish = AsyncMock()
+        svc = EscalationService(
+            repository=mock_repository,
+            response_delivery=None,
+            faq_service=mock_faq_service,
+            learning_engine=mock_learning_engine,
+            settings=mock_settings,
+            rag_service=mock_rag_service,
+            event_broker=broker,
+        )
+        pending = _make_escalation(
+            status=EscalationStatus.PENDING,
+            routing_reason="auto_reaction_negative:user_reported_incorrect(confidence=95%)",
+        )
+        closed = _make_escalation(
+            status=EscalationStatus.CLOSED,
+            closed_at=datetime.now(timezone.utc),
+        )
+        mock_repository.get_by_message_id.return_value = pending
+        mock_repository.update.return_value = closed
+
+        result = await svc.auto_close_reaction_escalation(
+            message_id=pending.message_id,
+            reason="reaction_removed",
+        )
+
+        assert result is True
+        broker.publish.assert_awaited_once_with(closed)
 
 
 # ---------------------------------------------------------------------------

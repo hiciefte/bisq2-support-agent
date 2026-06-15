@@ -8,6 +8,7 @@ import {
 } from "@/components/admin/overview/types";
 import { makeAuthenticatedRequest } from "@/lib/auth";
 
+export type { ChannelAutoresponsePolicy };
 export type ChannelResponseMode = "off" | "review" | "auto";
 export type ChannelAcknowledgmentMode = ChannelAutoresponsePolicy["acknowledgment_mode"];
 export type ChannelEscalationUserNoticeMode = ChannelAutoresponsePolicy["escalation_user_notice_mode"];

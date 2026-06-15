@@ -67,6 +67,7 @@ class EscalationService:
         feedback_orchestrator=None,
         embeddings=None,
         rag_service=None,
+        event_broker=None,
     ):
         self.repository = repository
         self.response_delivery = response_delivery
@@ -76,6 +77,18 @@ class EscalationService:
         self.feedback_orchestrator = feedback_orchestrator
         self.embeddings = embeddings
         self.rag_service = rag_service
+        self.event_broker = event_broker
+
+    async def _publish_update(self, escalation: Escalation) -> None:
+        if self.event_broker is None:
+            return
+        try:
+            await self.event_broker.publish(escalation)
+        except Exception:
+            logger.exception(
+                "Failed to publish escalation event for message_id=%s",
+                escalation.message_id,
+            )
 
     # ------------------------------------------------------------------
     # Create
@@ -232,6 +245,7 @@ class EscalationService:
             ),
         )
         ESCALATION_LIFECYCLE.labels(action="responded").inc()
+        await self._publish_update(updated)
 
         # Track response time
         if escalation.created_at:
@@ -399,13 +413,14 @@ class EscalationService:
             return False
 
         now = datetime.now(timezone.utc)
-        await self.repository.update(
+        updated = await self.repository.update(
             escalation.id,
             EscalationUpdate(
                 status=EscalationStatus.CLOSED,
                 closed_at=now,
             ),
         )
+        await self._publish_update(updated)
         ESCALATION_LIFECYCLE.labels(action="auto_closed").inc()
         logger.info(
             "Auto-closed reaction escalation",
@@ -497,13 +512,15 @@ class EscalationService:
 
         now = datetime.now(timezone.utc)
         ESCALATION_LIFECYCLE.labels(action="closed").inc()
-        return await self.repository.update(
+        updated = await self.repository.update(
             escalation_id,
             EscalationUpdate(
                 status=EscalationStatus.CLOSED,
                 closed_at=now,
             ),
         )
+        await self._publish_update(updated)
+        return updated
 
     async def prioritize_escalation(
         self,

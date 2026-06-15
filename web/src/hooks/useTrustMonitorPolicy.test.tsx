@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { makeAuthenticatedRequest } from "@/lib/auth";
+import type { TrustMonitorPolicy } from "@/components/admin/security/types";
 import { useTrustMonitorPolicy } from "./useTrustMonitorPolicy";
 
 jest.mock("@/lib/auth", () => ({
@@ -16,7 +17,7 @@ function mockJsonResponse(payload: unknown, status = 200): Response {
   } as Response;
 }
 
-const POLICY = {
+const POLICY: TrustMonitorPolicy = {
   enabled: true,
   name_collision_enabled: true,
   silent_observer_enabled: true,
@@ -32,7 +33,7 @@ const POLICY = {
   aggregate_ttl_days: 30,
   finding_ttl_days: 30,
   updated_at: "2026-03-20T10:00:00Z",
-} as const;
+};
 
 describe("useTrustMonitorPolicy", () => {
   beforeEach(() => {

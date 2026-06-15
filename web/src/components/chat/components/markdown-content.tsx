@@ -19,6 +19,7 @@ import { memo, useMemo, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { Components } from 'react-markdown';
 
 // Dynamic import with SSR disabled - react-markdown only needed client-side
 const ReactMarkdown = dynamic(() => import('react-markdown'), {
@@ -115,18 +116,12 @@ function CustomLink({
   );
 }
 
-function CustomImage({
-  src,
-  alt,
-}: {
-  src?: string;
-  alt?: string;
-}) {
-  const safeSrc = getSafeImageSrc(src);
+function CustomImage({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const safeSrc = getSafeImageSrc(typeof src === 'string' ? src : undefined);
   if (!safeSrc) return null;
 
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={safeSrc} alt={alt ?? ''} loading="lazy" />;
+  return <img src={safeSrc} alt={typeof alt === 'string' ? alt : ''} loading="lazy" />;
 }
 
 /**
@@ -145,16 +140,14 @@ export const MarkdownContent = memo(function MarkdownContent({
   className,
 }: MarkdownContentProps) {
   // Stable reference for custom components - prevents ReactMarkdown re-initialization
-  const components = useMemo(
+  const components = useMemo<Components>(
     () => ({
       // Custom link with external indicator and security
       a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
         <CustomLink href={href}>{children}</CustomLink>
       ),
       // Custom image guard to avoid `src=""` warnings and block unsafe schemes
-      img: ({ src, alt }: { src?: string; alt?: string }) => (
-        <CustomImage src={src} alt={alt} />
-      ),
+      img: CustomImage,
     }),
     []
   );
