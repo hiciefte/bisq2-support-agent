@@ -177,6 +177,63 @@ def test_approve_writes_full_document_override(tmp_path: Path) -> None:
     assert "support:matrix:$event" not in written
 
 
+def test_document_override_source_refs_drive_approval_checks(tmp_path: Path) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=17,
+        protocol="multisig_v1",
+        category="fiat stablecoin routing",
+        question_text="Can I send fiat to Bisq to buy stablecoins?",
+        staff_answer="Users do not send fiat to Bisq itself.",
+        generated_answer_sources="[]",
+    )
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    assert any(
+        check["code"] == "source_refs" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+    assert "source_refs: []" in proposal.preview_markdown
+
+    edited_markdown = proposal.preview_markdown.replace(
+        "source_refs: []",
+        "\n".join(
+            [
+                "source_refs:",
+                "  - wiki:Payment methods",
+                "  - wiki:Trading Monero",
+                "  - wiki:Trade Protocols",
+                "  - faq:1041",
+            ]
+        ),
+    )
+    updated = service.update_document_markdown(
+        candidate=candidate,
+        markdown=edited_markdown,
+    )
+    approved = service.approve(candidate=candidate, reviewer="admin")
+
+    assert updated.source_refs == [
+        "wiki:Payment methods",
+        "wiki:Trading Monero",
+        "wiki:Trade Protocols",
+        "faq:1041",
+    ]
+    assert all(
+        check["status"] != "fail" for check in updated.checks if check["blocking"]
+    )
+    written = (
+        Path(settings.LLM_WIKI_DIR_PATH) / f"{proposal.target_page_id}.md"
+    ).read_text(encoding="utf-8")
+    assert approved.status == "approved"
+    assert "source_refs:" in written
+    assert "wiki:Payment methods" in written
+    assert "status: reviewed" in written
+
+
 def test_operation_update_clears_full_document_override(tmp_path: Path) -> None:
     _write_page(tmp_path)
     settings = Settings(DATA_DIR=str(tmp_path))

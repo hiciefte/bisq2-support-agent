@@ -9,6 +9,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
+  Copy,
   FileText,
   GraduationCap,
   HelpCircle,
@@ -287,6 +288,28 @@ function replaceMarkdownLine(markdown: string, lineNumber: number, value: string
   const lines = splitMarkdownLines(markdown);
   lines[lineNumber - 1] = value;
   return lines.join("\n");
+}
+
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.left = "-1000px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed");
+  }
 }
 
 function actionLabel(action: string): string {
@@ -897,6 +920,15 @@ export default function KnowledgeUpdatesPage() {
     }
   };
 
+  const handleCopyRawDocument = async () => {
+    try {
+      await copyTextToClipboard(documentMarkdown);
+      toast.success("Raw LLM Wiki file copied");
+    } catch {
+      toast.error("Could not copy raw file");
+    }
+  };
+
   const handleApprove = async () => {
     if (!data) return;
     const saved = isDocumentDirty
@@ -1185,22 +1217,34 @@ export default function KnowledgeUpdatesPage() {
                         the surrounding document context.
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (isDocumentDirty) {
-                          void persistDocumentMarkdown();
-                        } else {
-                          void persistOperations();
-                        }
-                      }}
-                      disabled={!isDirty || isSaving}
-                      className="gap-2 lg:shrink-0"
-                    >
-                      {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Save document
-                    </Button>
+                    <div className="flex flex-wrap gap-2 lg:shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleCopyRawDocument()}
+                        disabled={!documentMarkdown}
+                        className="gap-2"
+                      >
+                        <Copy className="h-4 w-4" aria-hidden="true" />
+                        Copy raw file
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (isDocumentDirty) {
+                            void persistDocumentMarkdown();
+                          } else {
+                            void persistOperations();
+                          }
+                        }}
+                        disabled={!isDirty || isSaving}
+                        className="gap-2"
+                      >
+                        {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Save document
+                      </Button>
+                    </div>
                   </div>
                   <DocumentReviewModeSelector
                     value={documentMode}
