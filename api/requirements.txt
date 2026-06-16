@@ -79,7 +79,7 @@ click==8.4.1
     #   uvicorn
 contourpy==1.3.3
     # via matplotlib
-cryptography==46.0.7
+cryptography==48.0.1
     # via
     #   -r api/requirements.in
     #   pyjwt
@@ -542,8 +542,9 @@ sqlalchemy==2.0.50
     #   langchain-community
 sse-starlette==3.4.4
     # via mcp
-starlette==1.2.1
+starlette==1.3.1
     # via
+    #   -r api/requirements.in
     #   fastapi
     #   mcp
     #   prometheus-fastapi-instrumentator
