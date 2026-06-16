@@ -292,8 +292,12 @@ function replaceMarkdownLine(markdown: string, lineNumber: number, value: string
 
 async function copyTextToClipboard(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Permission or insecure-context failures can still use the textarea fallback.
+    }
   }
 
   const textarea = document.createElement("textarea");
