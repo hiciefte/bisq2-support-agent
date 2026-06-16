@@ -245,11 +245,12 @@ class KnowledgeUpdateService:
             source_refs=proposal.source_refs,
             page_id=page_id,
         )
+        source_refs = _effective_source_refs(proposal.source_refs, preview)
         checks = self._build_checks(
             candidate=candidate,
             target=target,
             operations=proposal.operations,
-            source_refs=proposal.source_refs,
+            source_refs=source_refs,
             proposal_kind=proposal.proposal_kind,
             preview_markdown=preview,
             pages=self._load_pages(),
@@ -263,6 +264,7 @@ class KnowledgeUpdateService:
             UPDATE knowledge_update_proposals
             SET preview_markdown = ?,
                 document_markdown_override = ?,
+                source_refs_json = ?,
                 checks_json = ?,
                 updated_at = ?
             WHERE candidate_id = ?
@@ -270,6 +272,7 @@ class KnowledgeUpdateService:
             (
                 preview,
                 preview,
+                json.dumps(source_refs),
                 json.dumps(checks),
                 now,
                 candidate.id,
@@ -747,7 +750,7 @@ class KnowledgeUpdateService:
         preview_markdown: str,
         pages: List[LLMWikiPageRecord],
     ) -> List[Dict[str, Any]]:
-        source_refs = _durable_source_refs(source_refs)
+        source_refs = _effective_source_refs(source_refs, preview_markdown)
         checks: List[Dict[str, Any]] = []
         invalid_ops = [
             op
@@ -1073,6 +1076,19 @@ def _durable_source_refs(refs: Iterable[str]) -> List[str]:
     """Keep only source refs that can be re-opened without stored chat logs."""
     return _dedupe(
         ref for ref in refs if not str(ref).strip().lower().startswith("support:")
+    )
+
+
+def _source_refs_from_markdown(markdown: str) -> List[str]:
+    parsed = _read_markdown_text(markdown)
+    if parsed is None:
+        return []
+    return _durable_source_refs(_string_list(parsed.frontmatter.get("source_refs")))
+
+
+def _effective_source_refs(refs: Iterable[str], markdown: str) -> List[str]:
+    return _durable_source_refs(
+        [*_durable_source_refs(refs), *_source_refs_from_markdown(markdown)]
     )
 
 
