@@ -268,7 +268,7 @@ export default function AdminReportsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1.4fr_auto]">
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="report-start">Start date</Label>
                 <Input
@@ -296,8 +296,10 @@ export default function AdminReportsPage() {
                   onChange={(event) => setReviewer(event.target.value)}
                 />
               </div>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_160px] md:items-end">
               <div className="space-y-2">
-                <Label htmlFor="report-label">Period label or block range</Label>
+                <Label htmlFor="report-label">Block range / period label</Label>
                 <Input
                   id="report-label"
                   value={periodLabel}
@@ -312,7 +314,7 @@ export default function AdminReportsPage() {
                   onClick={() => void loadReport()}
                   disabled={isLoading}
                 >
-                  Generate
+                  {isLoading ? "Generating" : "Generate"}
                 </Button>
               </div>
             </div>
@@ -541,8 +543,8 @@ export default function AdminReportsPage() {
             <aside className="space-y-6">
               <Card className="sticky top-6 shadow-sm">
                 <CardHeader>
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
+                  <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                    <div className="min-w-0">
                       <CardTitle>Shareable Markdown</CardTitle>
                       <CardDescription>
                         Copy this into the compensation request and add any
@@ -553,7 +555,7 @@ export default function AdminReportsPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="gap-2"
+                      className="w-full gap-2 2xl:w-auto"
                       onClick={() => void handleCopy()}
                       disabled={!report.report_markdown}
                     >
