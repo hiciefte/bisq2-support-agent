@@ -505,6 +505,9 @@ services:
       - HEALTHCHECK_URL=${HEALTHCHECK_URL:-https://hc-ping.com/27867359-f4f3-4e22-8f46-8d18a73cf219}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - API_HOST=api
+      - API_PORT=8000
+      - BISQ_READINESS_CURRENCY=${BISQ_READINESS_CURRENCY:-EUR}
+      - BISQ_READINESS_DIRECTION=${BISQ_READINESS_DIRECTION:-SELL}
     volumes:
       - ./scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -515,11 +518,13 @@ services:
         mkdir -p /var/log/cron &&
         # Add @reboot entries to run scripts once when crond starts
         echo '@reboot /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' > /etc/crontabs/root &&
+        echo '@reboot /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
         # Add regular cron entries
         # NOTE: update-faqs.sh removed - replaced by unified training pipeline (poll-matrix.sh)
         echo '0 1 * * 0 /scripts/update-wiki.sh >> /var/log/cron/wiki.log 2>&1' >> /etc/crontabs/root &&
         echo '0 0 * * 1 /scripts/process-feedback.sh >> /var/log/cron/feedback.log 2>&1' >> /etc/crontabs/root &&
         echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
+        echo '*/10 * * * * /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
         echo '0 */12 * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
         crond -f -l 8 -d 8
