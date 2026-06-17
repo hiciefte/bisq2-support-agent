@@ -1,9 +1,9 @@
 ---
 id: bisq1-altcoin-instant-stuck
-title: Bisq 1 Altcoin Instant trade protocol not progressing
+title: "Deprecated: Bisq 1 Altcoin Instant trade protocol not progressing"
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: deprecated
 protocol: multisig_v1
 reviewed_by: null
 reviewed_at: null
@@ -16,21 +16,20 @@ source_refs:
 ---
 ## Canonical Support Answer
 
-If an Altcoin Instant or Bisq 1 trade starts but protocol state stops progressing, avoid guessing from the state label alone. First determine whether the deposit transaction exists and whether the maker/taker fee transactions are valid. If funds may be locked or payment has already been sent, keep the trade open and use trader chat or mediation.
+This page is deprecated before activation. Do not promote it as a standalone LLM Wiki page.
 
-For protocol failures, the mediator can request transaction IDs, logs, and payment proof. If the issue is caused by invalid or missing transactions, handle it as a failed-trade case; if the deposit is valid and the peer/payment side is disputed, handle it through dispute resolution.
+Altcoin Instant is not a separate support flow for stuck Bisq 1 trades. Use `bisq1-deposit-confirmed-stuck` when the deposit transaction exists but the app or protocol state is not progressing. Use `bisq1-failed-trade-fees` when the maker/taker/deposit transaction is missing or invalid. Use `bisq1-dispute-mediation-arbitration` when fiat/altcoin payment, locked funds, or peer cooperation requires mediation or arbitration.
 
 ## Applies When
 
-- The user says Altcoin Instant or Bisq 1 protocol state is stuck.
-- The user asks whether to cancel, delete, or retry a stuck trade.
-- The user reports output/cancelled state after payment or confirmation.
+- A generated candidate incorrectly targets this page.
+- A reviewer sees an Altcoin Instant stuck-trade proposal and needs the canonical target page.
 
 ## Do Not Say
 
-- Do not tell users to delete the trade before checking transaction state.
-- Do not conflate failed transaction creation with a live dispute over locked funds.
-- Do not provide payout conclusions before mediator review.
+- Do not add new support guidance to this page.
+- Do not treat Altcoin Instant as a special stuck-trade mechanism beyond its shorter trade period.
+- Do not preserve duplicate guidance here when a broader Bisq 1 stuck-trade page already covers the case.
 
 ## Evidence / Sources
 
@@ -41,8 +40,9 @@ For protocol failures, the mediator can request transaction IDs, logs, and payme
 
 ## Review Notes
 
-- Specific Altcoin Instant state names should be mapped against current Bisq 1 logs/UI when available.
+- Deprecated after production candidate review showed this page attracted unrelated stuck-trade, deposit, and mediation proposals.
+- Keep the replacement guidance in `bisq1-deposit-confirmed-stuck`, `bisq1-failed-trade-fees`, and `bisq1-dispute-mediation-arbitration`.
 
 ## Last Change Summary
 
-Converted from generated support playbook into internal LLM Wiki page; ready for local support-admin review.
+Deprecated before activation to prevent duplicate and misleading LLM Wiki review work.

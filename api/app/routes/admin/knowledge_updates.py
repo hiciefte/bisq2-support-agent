@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
+KNOWLEDGE_UPDATE_PAGE_SIZE = 500
 
 router = APIRouter(
     prefix="/admin/knowledge-updates",
@@ -92,13 +93,43 @@ def get_knowledge_update_service(request: Request) -> KnowledgeUpdateService:
     )
 
 
+async def _iter_pending_candidates(
+    pipeline_service,
+    *,
+    routing: Optional[str] = None,
+):
+    offset = 0
+    while True:
+        candidates = await run_in_threadpool(
+            lambda: pipeline_service.repository.get_pending(
+                routing=routing,
+                limit=KNOWLEDGE_UPDATE_PAGE_SIZE,
+                offset=offset,
+            )
+        )
+        if not candidates:
+            return
+
+        for candidate in candidates:
+            yield candidate
+
+        if len(candidates) < KNOWLEDGE_UPDATE_PAGE_SIZE:
+            return
+        offset += len(candidates)
+
+
 @router.get("/counts")
 async def get_knowledge_update_counts(
     pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
 ) -> Dict[str, int]:
-    """Return pending knowledge update counts using the unified queue routing."""
+    """Return counts for candidates suitable for LLM Wiki review."""
     try:
-        return pipeline_service.get_queue_counts()
+        counts = {"AUTO_APPROVE": 0, "SPOT_CHECK": 0, "FULL_REVIEW": 0}
+        async for candidate in _iter_pending_candidates(pipeline_service):
+            if service.is_candidate_reviewable(candidate):
+                counts[candidate.routing] = counts.get(candidate.routing, 0) + 1
+        return counts
     except Exception as exc:
         logger.exception("Failed to get knowledge update counts")
         raise BaseAppException(
@@ -116,10 +147,19 @@ async def get_current_knowledge_update(
 ) -> Optional[Dict[str, Any]]:
     """Return the next candidate with a lazily generated LLM Wiki proposal."""
     try:
-        candidate = pipeline_service.get_current_item(routing=queue)
+        candidate = None
+        async for pending in _iter_pending_candidates(
+            pipeline_service,
+            routing=queue,
+        ):
+            if service.is_candidate_reviewable(pending):
+                candidate = pending
+                break
         if candidate is None:
             return None
-        proposal = service.get_or_create_proposal(candidate=candidate)
+        proposal = await run_in_threadpool(
+            lambda: service.get_or_create_proposal(candidate=candidate)
+        )
         return {
             "candidate": _candidate_to_dict(candidate),
             "proposal": service.to_response(proposal, candidate),

@@ -322,3 +322,180 @@ def test_service_initializes_proposal_table(tmp_path: Path) -> None:
     )
     assert cursor.fetchone() is not None
     conn.close()
+
+
+def test_missing_protocol_does_not_match_protocol_specific_page(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=31,
+        protocol=None,
+        category="Trading",
+        question_text=(
+            "I am temporarily locked out of my account but had an open trade. "
+            "How can I notify my counterparty?"
+        ),
+        staff_answer="Notify the counterparty in the trade chat.",
+        generated_answer_sources='[{"type":"wiki","title":"Bisq Easy"}]',
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert proposal.proposal_kind == "create_new"
+    assert proposal.target_page_id != "bisq2-reputation-basics"
+    assert any(
+        check["code"] == "candidate_protocol" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+    assert any(
+        check["code"] == "candidate_reusability" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+
+
+def test_thin_situational_answer_blocks_approval(tmp_path: Path) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=32,
+        protocol="multisig_v1",
+        category="Trading",
+        question_text=(
+            "I am temporarily locked out of my account but had an open trade. "
+            "How can I notify my counterparty?"
+        ),
+        staff_answer="Notify the counterparty in the trade chat.",
+        generated_answer_sources='[{"type":"wiki","title":"Mediation"}]',
+    )
+    service.get_or_create_proposal(candidate=candidate)
+
+    try:
+        service.approve(candidate=candidate, reviewer="admin")
+    except ValueError as exc:
+        assert "Candidate reusability" in str(exc)
+    else:
+        raise AssertionError("thin situational candidate should block approval")
+
+
+def test_exact_llm_wiki_source_can_match_reviewed_page(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        generated_answer_sources=(
+            '[{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+        ),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert proposal.proposal_kind == "update_existing"
+    assert proposal.target_page_id == "bisq2-reputation-basics"
+
+
+def test_deprecated_llm_wiki_source_does_not_match_target(tmp_path: Path) -> None:
+    page = _write_page(tmp_path)
+    page.write_text(
+        page.read_text(encoding="utf-8").replace(
+            "status: reviewed", "status: deprecated"
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        generated_answer_sources=(
+            '[{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+        ),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert proposal.proposal_kind == "create_new"
+    assert proposal.target_page_id != "bisq2-reputation-basics"
+
+
+def test_candidate_reviewability_requires_protocol_sources_and_reusability(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        protocol=None,
+        staff_answer="Notify the counterparty in the trade chat.",
+        generated_answer_sources=None,
+    )
+
+    assert service.candidate_reviewability_issues(candidate) == [
+        "missing_protocol",
+        "missing_source_refs",
+        "low_reusability",
+    ]
+    assert not service.is_candidate_reviewable(candidate)
+
+
+def test_candidate_reviewability_rejects_protocols_not_supported_by_loader(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(protocol="musig")
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert service.candidate_reviewability_issues(candidate) == ["unsupported_protocol"]
+    assert not service.is_candidate_reviewable(candidate)
+    assert any(
+        check["code"] == "candidate_protocol" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+
+
+def test_unsupported_protocol_does_not_use_exact_llm_wiki_source_match(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        protocol="musig",
+        generated_answer_sources='[{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]',
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert proposal.proposal_kind == "create_new"
+    assert proposal.target_page_id != "bisq2-reputation-basics"
+
+
+def test_candidate_reviewability_accepts_durable_candidate(tmp_path: Path) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+
+    assert service.candidate_reviewability_issues(_candidate()) == []
+    assert service.is_candidate_reviewable(_candidate())
