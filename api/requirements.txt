@@ -15,7 +15,6 @@ aiohttp==3.14.1
     #   fsspec
     #   instructor
     #   langchain-community
-    #   litellm
     #   matrix-nio
 aiohttp-socks==0.11.0
     # via matrix-nio
@@ -73,7 +72,6 @@ charset-normalizer==3.4.7
 click==8.4.1
     # via
     #   black
-    #   litellm
     #   pip-tools
     #   typer
     #   uvicorn
@@ -107,8 +105,6 @@ docstring-parser==0.15
     #   instructor
 fastapi==0.136.3
     # via -r api/requirements.in
-fastuuid==0.14.0
-    # via litellm
 filelock==3.29.2
     # via
     #   datasets
@@ -154,7 +150,6 @@ httpx[http2]==0.27.2
     #   huggingface-hub
     #   langgraph-sdk
     #   langsmith
-    #   litellm
     #   mcp
     #   openai
     #   qdrant-client
@@ -177,16 +172,12 @@ idna==3.18
     #   httpx
     #   requests
     #   yarl
-importlib-metadata==9.0.0
-    # via litellm
 iniconfig==2.3.0
     # via pytest
 instructor==1.0.3
     # via ragas
 isort==8.0.1
     # via -r api/requirements.in
-jinja2==3.1.6
-    # via litellm
 jiter==0.15.0
     # via openai
 joblib==1.5.3
@@ -199,7 +190,6 @@ jsonpointer==3.1.1
     # via jsonpatch
 jsonschema==4.26.0
     # via
-    #   litellm
     #   matrix-nio
     #   mcp
     #   mwxml
@@ -257,12 +247,8 @@ langsmith==0.8.12
     #   langchain-core
 librt==0.11.0
     # via mypy
-litellm==1.80.0
-    # via -r api/requirements.in
 markdown-it-py==4.2.0
     # via rich
-markupsafe==3.0.3
-    # via jinja2
 matplotlib==3.10.9
     # via -r api/requirements.in
 matrix-nio[e2e]==0.25.2
@@ -330,7 +316,6 @@ openai==1.109.1
     #   -r api/requirements.in
     #   instructor
     #   langchain-openai
-    #   litellm
     #   ragas
 orjson==3.11.9
     # via
@@ -418,7 +403,6 @@ pydantic==2.13.4
     #   langchain-core
     #   langgraph
     #   langsmith
-    #   litellm
     #   mcp
     #   openai
     #   pydantic-settings
@@ -460,9 +444,7 @@ python-dateutil==2.9.0.post0
 python-discovery==1.4.0
     # via virtualenv
 python-dotenv==1.2.2
-    # via
-    #   litellm
-    #   pydantic-settings
+    # via pydantic-settings
 python-json-logger==4.1.0
     # via -r api/requirements.in
 python-multipart==0.0.32
@@ -560,12 +542,9 @@ threadpoolctl==3.6.0
 tiktoken==0.13.0
     # via
     #   langchain-openai
-    #   litellm
     #   ragas
 tokenizers==0.22.2
-    # via
-    #   litellm
-    #   transformers
+    # via transformers
 tqdm==4.68.2
     # via
     #   -r api/requirements.in
@@ -641,8 +620,6 @@ xxhash==3.7.0
     #   langsmith
 yarl==1.24.2
     # via aiohttp
-zipp==4.1.0
-    # via importlib-metadata
 zstandard==0.25.0
     # via langsmith
 

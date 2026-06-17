@@ -46,7 +46,7 @@ from app.services.feedback_service import FeedbackService
 from app.services.mcp.mcp_http_server import router as mcp_router
 from app.services.mcp.mcp_http_server import set_bisq_service
 from app.services.public_faq_service import PublicFAQService
-from app.services.rag.embeddings_provider import LiteLLMEmbeddings
+from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 from app.services.rag.learning_engine import LearningEngine
 from app.services.simplified_rag_service import SimplifiedRAGService
 from app.services.tor_monitoring_service import TorMonitoringService
@@ -285,7 +285,7 @@ async def lifespan(app: FastAPI):
     app.state.learning_engine = learning_engine
 
     # Embeddings are a startup requirement because AnswerComparisonEngine depends on them.
-    embeddings_model = LiteLLMEmbeddings.from_settings(settings)
+    embeddings_model = OpenAIEmbeddingsProvider.from_settings(settings)
 
     # Initialize EscalationService singleton for admin routes, polling, and hooks.
     app.state.escalation_service = None

@@ -9,6 +9,40 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
 
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="time"],
+  input[type="week"] {
+    color-scheme: light;
+  }
+
+  .dark input[type="date"],
+  .dark input[type="datetime-local"],
+  .dark input[type="month"],
+  .dark input[type="time"],
+  .dark input[type="week"] {
+    color-scheme: dark;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator,
+  input[type="week"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.76;
+    transition: opacity 150ms ease-out;
+  }
+
+  input[type="date"]:hover::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator,
+  input[type="month"]:hover::-webkit-calendar-picker-indicator,
+  input[type="time"]:hover::-webkit-calendar-picker-indicator,
+  input[type="week"]:hover::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+
   :root {
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
