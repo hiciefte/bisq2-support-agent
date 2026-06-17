@@ -24,7 +24,7 @@ def test_initial_llm_wiki_seed_pages_require_human_review() -> None:
 
     for page in pages:
         frontmatter = _frontmatter(page)
-        assert frontmatter["status"] == "proposed", page.name
+        assert frontmatter["status"] in {"proposed", "deprecated"}, page.name
         assert frontmatter.get("reviewed_by") is None, page.name
         assert frontmatter.get("reviewed_at") is None, page.name
 

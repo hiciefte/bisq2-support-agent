@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import yaml  # type: ignore[import-untyped]
 from app.core.config import Settings
 from app.services.rag.llm_wiki_loader import (
+    ALLOWED_PROTOCOLS,
     INDEXABLE_STATUSES,
     LLM_WIKI_TYPE,
     REVIEWED_STATUS,
@@ -37,6 +38,29 @@ SECTION_ORDER = [
 
 SUPPORTED_ACTIONS = {"append_paragraph", "append_bullet", "replace_section"}
 SUPPORTED_SECTIONS = set(SECTION_ORDER)
+VALID_PROTOCOLS = set(ALLOWED_PROTOCOLS)
+MIN_TARGET_PAGE_TOKEN_COVERAGE = 0.22
+MIN_TARGET_TITLE_TOKEN_OVERLAP = 0.15
+THIN_ANSWER_MIN_CHARS = 80
+THIN_ANSWER_PATTERNS = (
+    "notify the counterparty",
+    "contact support",
+    "team member",
+    "someone will follow up",
+    "try again",
+    "restart the app",
+)
+SITUATIONAL_QUESTION_TERMS = (
+    "my account",
+    "my trade",
+    "my open trade",
+    "temporarily locked",
+    "locked out",
+    "notify my counterparty",
+    "support ticket",
+    "error message",
+    "screenshot",
+)
 
 
 @dataclass(frozen=True)
@@ -179,6 +203,24 @@ class KnowledgeUpdateService:
         row = cursor.fetchone()
         conn.close()
         return self._row_to_proposal(row) if row else None
+
+    def candidate_reviewability_issues(
+        self, candidate: UnifiedFAQCandidate
+    ) -> List[str]:
+        """Return fundamental reasons a candidate should not enter LLM Wiki review."""
+        issues: List[str] = []
+        if not candidate.protocol:
+            issues.append("missing_protocol")
+        elif candidate.protocol not in VALID_PROTOCOLS:
+            issues.append("unsupported_protocol")
+        if not self._build_source_refs(candidate):
+            issues.append("missing_source_refs")
+        if _candidate_reusability_issues(candidate):
+            issues.append("low_reusability")
+        return issues
+
+    def is_candidate_reviewable(self, candidate: UnifiedFAQCandidate) -> bool:
+        return not self.candidate_reviewability_issues(candidate)
 
     def update_operations(
         self,
@@ -520,9 +562,13 @@ class KnowledgeUpdateService:
     ) -> Optional[LLMWikiPageRecord]:
         if not pages:
             return None
+        if candidate.protocol not in VALID_PROTOCOLS:
+            return None
 
         source_titles = self._generated_source_titles(candidate, source_type="llm_wiki")
         for page in pages:
+            if page.status == "deprecated":
+                continue
             if page.title in source_titles or page.page_id in source_titles:
                 return page
 
@@ -544,17 +590,25 @@ class KnowledgeUpdateService:
         best_page: Optional[LLMWikiPageRecord] = None
         best_score = 0.0
         for page in pages:
-            if candidate.protocol and page.protocol not in {candidate.protocol, "all"}:
+            if page.status == "deprecated":
+                continue
+            if page.protocol not in {candidate.protocol, "all"}:
                 continue
             page_tokens = _tokenize(f"{page.page_id} {page.title} {page.body[:1200]}")
+            title_tokens = _tokenize(f"{page.page_id} {page.title}")
             if not page_tokens:
                 continue
             score = len(query_tokens & page_tokens) / max(len(query_tokens), 1)
-            if score > best_score:
+            title_overlap = len(query_tokens & title_tokens) / max(len(title_tokens), 1)
+            if (
+                score >= MIN_TARGET_PAGE_TOKEN_COVERAGE
+                and title_overlap >= MIN_TARGET_TITLE_TOKEN_OVERLAP
+                and score > best_score
+            ):
                 best_score = score
                 best_page = page
 
-        return best_page if best_score >= 0.08 else None
+        return best_page
 
     def _build_source_refs(self, candidate: UnifiedFAQCandidate) -> List[str]:
         refs: List[str] = []
@@ -781,6 +835,39 @@ class KnowledgeUpdateService:
                     f"{len(source_refs)} source reference(s) attached."
                     if source_refs
                     else "Reviewed LLM Wiki pages require source references."
+                ),
+                blocking=True,
+            )
+        )
+        protocol = candidate.protocol
+        checks.append(
+            _check(
+                code="candidate_protocol",
+                label="Candidate protocol",
+                status="pass" if protocol in VALID_PROTOCOLS else "fail",
+                detail=(
+                    f"Candidate is tagged `{protocol}`."
+                    if protocol in VALID_PROTOCOLS
+                    else (
+                        f"Candidate protocol `{protocol}` is not indexable by the LLM Wiki loader."
+                        if protocol
+                        else "Candidate must have an explicit Bisq protocol before promotion."
+                    )
+                ),
+                blocking=True,
+            )
+        )
+
+        reusability_issues = _candidate_reusability_issues(candidate)
+        checks.append(
+            _check(
+                code="candidate_reusability",
+                label="Candidate reusability",
+                status="fail" if reusability_issues else "pass",
+                detail=(
+                    "; ".join(reusability_issues)
+                    if reusability_issues
+                    else "Candidate contains reusable support guidance."
                 ),
                 blocking=True,
             )
@@ -1170,6 +1257,33 @@ def _risk_level(candidate: UnifiedFAQCandidate) -> str:
     if candidate.protocol == "multisig_v1":
         return "medium"
     return "low"
+
+
+def _candidate_reusability_issues(candidate: UnifiedFAQCandidate) -> List[str]:
+    question = _clean_inline(candidate.edited_question_text or candidate.question_text)
+    answer = _clean_block(candidate.edited_staff_answer or candidate.staff_answer)
+    question_lower = question.lower()
+    answer_lower = answer.lower()
+    combined_lower = f"{question_lower} {answer_lower}"
+
+    if not answer.strip():
+        return ["Candidate has no reviewed staff answer."]
+
+    issues: List[str] = []
+    has_thin_answer = len(answer.strip()) < THIN_ANSWER_MIN_CHARS
+    has_handoff_answer = any(
+        pattern in answer_lower for pattern in THIN_ANSWER_PATTERNS
+    )
+    has_situational_question = any(
+        term in combined_lower for term in SITUATIONAL_QUESTION_TERMS
+    )
+
+    if has_handoff_answer:
+        issues.append("Answer is operational handoff guidance, not reusable knowledge.")
+    if has_thin_answer and has_situational_question:
+        issues.append("Answer is too thin for a situation-specific support case.")
+
+    return issues
 
 
 def _check(
