@@ -1,7 +1,7 @@
 """Tests for LLM Provider with AISuite MCP - Written FIRST (TDD Red Phase).
 
 These tests define the expected behavior of the new LLM provider
-that uses AISuite native MCP support and LiteLLM embeddings.
+that uses AISuite native MCP support and OpenAI embeddings.
 """
 
 from unittest.mock import MagicMock, patch
@@ -217,18 +217,18 @@ class TestLLMProviderContract:
         settings.EMBEDDING_DIMENSIONS = None
         return settings
 
-    def test_initialize_embeddings_uses_litellm(self, mock_settings):
-        """initialize_embeddings must use LiteLLM provider."""
+    def test_initialize_embeddings_uses_openai_provider(self, mock_settings):
+        """initialize_embeddings must use the OpenAI provider."""
         with patch("aisuite.Client"):
             with patch(
-                "app.services.rag.llm_provider.LiteLLMEmbeddings"
-            ) as MockLiteLLM:
+                "app.services.rag.llm_provider.OpenAIEmbeddingsProvider"
+            ) as MockEmbeddings:
                 from app.services.rag.llm_provider import LLMProvider
 
                 provider = LLMProvider(mock_settings)
                 provider.initialize_embeddings()
 
-                MockLiteLLM.from_settings.assert_called_once_with(mock_settings)
+                MockEmbeddings.from_settings.assert_called_once_with(mock_settings)
 
     def test_initialize_llm_returns_wrapper(self, mock_settings):
         """initialize_llm must return AISuiteLLMWrapper."""
@@ -263,14 +263,16 @@ class TestLLMProviderContract:
             with pytest.raises(ValueError):
                 provider.initialize_llm()
 
-    def test_initialize_embeddings_returns_litellm_instance(self, mock_settings):
-        """initialize_embeddings must return LiteLLMEmbeddings instance."""
+    def test_initialize_embeddings_returns_openai_embeddings_instance(
+        self, mock_settings
+    ):
+        """initialize_embeddings must return OpenAIEmbeddingsProvider instance."""
         with patch("aisuite.Client"):
             with patch(
-                "app.services.rag.llm_provider.LiteLLMEmbeddings"
-            ) as MockLiteLLM:
+                "app.services.rag.llm_provider.OpenAIEmbeddingsProvider"
+            ) as MockEmbeddings:
                 mock_embeddings = MagicMock()
-                MockLiteLLM.from_settings.return_value = mock_embeddings
+                MockEmbeddings.from_settings.return_value = mock_embeddings
 
                 from app.services.rag.llm_provider import LLMProvider
 

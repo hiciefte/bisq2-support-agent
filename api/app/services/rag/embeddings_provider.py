@@ -1,16 +1,18 @@
-"""LiteLLM-based embeddings provider with multi-provider support.
+"""OpenAI embeddings provider.
 
-This module provides a LangChain-compatible embeddings implementation
-using LiteLLM for vendor-portable embedding support (100+ providers).
+This module provides a LangChain-compatible embeddings implementation using
+the already-installed ``langchain-openai`` package. LiteLLM is intentionally not
+used here because secure LiteLLM releases require ``httpx>=0.28`` while the
+current AISuite release still pins ``httpx<0.28``.
 
 For multilingual support, BGE-M3 embeddings can be used instead.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-import litellm
 from langchain_core.embeddings import Embeddings
+from langchain_openai import OpenAIEmbeddings as LangChainOpenAIEmbeddings
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -54,49 +56,51 @@ def get_multilingual_embeddings(model_name: str = "BAAI/bge-m3") -> Embeddings:
         raise
 
 
-class LiteLLMEmbeddings(Embeddings):
-    """LangChain-compatible embeddings using LiteLLM for provider abstraction.
+def _normalize_openai_embedding_model(model: str) -> str:
+    """Return a LangChain/OpenAI model id from legacy provider-prefixed values."""
+    if model.startswith("openai/"):
+        return model.split("/", 1)[1]
+    if model.startswith("openai:"):
+        return model.split(":", 1)[1]
+    return model
 
-    Supports 100+ embedding providers: OpenAI, Cohere, Voyage, Azure, Ollama, etc.
-    """
+
+class OpenAIEmbeddingsProvider(Embeddings):
+    """LangChain-compatible OpenAI embeddings provider."""
 
     def __init__(
         self,
-        model: str = "openai/text-embedding-3-small",
+        model: str = "text-embedding-3-small",
         dimensions: int | None = None,
         api_key: str | None = None,
         api_base: str | None = None,
         timeout: float = 60.0,
     ):
-        """Initialize the LiteLLM embeddings provider.
+        """Initialize the OpenAI embeddings provider.
 
         Args:
-            model: Model identifier in format "provider/model" (e.g., "openai/text-embedding-3-small")
+            model: OpenAI embedding model. Legacy "openai/..." and "openai:..."
+                prefixes are accepted for backward compatibility.
             dimensions: Optional embedding dimensions (supported by some models)
             api_key: Optional API key (uses environment variable if not provided)
             api_base: Optional API base URL for custom endpoints
             timeout: Request timeout in seconds (default: 60.0)
         """
-        self.model = model
+        self.model = _normalize_openai_embedding_model(model)
         self.dimensions = dimensions
         self.api_key = api_key
         self.api_base = api_base
         self.timeout = timeout
 
-        # Configure LiteLLM
-        litellm.set_verbose = False
+        self._embeddings = LangChainOpenAIEmbeddings(
+            model=self.model,
+            dimensions=self.dimensions,
+            api_key=cast(Any, self.api_key or None),
+            base_url=self.api_base or None,
+            timeout=self.timeout,
+        )
 
-        # Set API keys based on provider
-        if api_key:
-            provider = model.split("/")[0] if "/" in model else "openai"
-            if provider == "openai":
-                litellm.api_key = api_key
-            elif provider == "cohere":
-                litellm.cohere_key = api_key
-            elif provider == "voyage":
-                litellm.voyage_key = api_key
-
-        logger.info(f"LiteLLM embeddings initialized: {model}")
+        logger.info(f"OpenAI embeddings initialized: {self.model}")
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of documents.
@@ -114,27 +118,9 @@ class LiteLLMEmbeddings(Embeddings):
             return []
 
         try:
-            kwargs: dict[str, Any] = {
-                "model": self.model,
-                "input": texts,
-                "timeout": self.timeout,
-            }
-            if self.dimensions is not None:
-                kwargs["dimensions"] = self.dimensions
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
-
-            response = litellm.embedding(**kwargs)
-            # Handle both dict and object response formats from LiteLLM
-            data = response["data"] if isinstance(response, dict) else response.data
-            embeddings = []
-            for item in data:
-                if isinstance(item, dict):
-                    embeddings.append(item["embedding"])
-                else:
-                    embeddings.append(item.embedding)
+            result = self._embeddings.embed_documents(texts)
             logger.debug(f"Embedded {len(texts)} documents")
-            return embeddings
+            return result
         except Exception as e:
             logger.error(f"Embedding failed: {e}")
             raise
@@ -152,39 +138,36 @@ class LiteLLMEmbeddings(Embeddings):
         return embeddings[0] if embeddings else []
 
     @classmethod
-    def from_settings(cls, settings: "Settings") -> "LiteLLMEmbeddings":
+    def from_settings(cls, settings: "Settings") -> "OpenAIEmbeddingsProvider":
         """Create embeddings provider from application settings.
 
         Args:
             settings: Application settings object
 
         Returns:
-            Configured LiteLLMEmbeddings instance
+            Configured OpenAIEmbeddingsProvider instance
         """
         provider = getattr(settings, "EMBEDDING_PROVIDER", None) or "openai"
+        if provider != "openai":
+            raise ValueError(
+                "Only OpenAI embeddings are currently supported. "
+                "LiteLLM was removed from the runtime dependency set because "
+                "secure LiteLLM releases conflict with AISuite's httpx pin."
+            )
+
         model = getattr(settings, "EMBEDDING_MODEL", "text-embedding-3-small")
 
         # Construct full model ID if not already prefixed
         if "/" not in model:
-            model = f"{provider}/{model}"
-
-        # Get API key and base URL based on provider
-        api_key = None
-        api_base = None
-        if provider == "openai":
-            api_key = getattr(settings, "OPENAI_API_KEY", None)
-        elif provider == "cohere":
-            api_key = getattr(settings, "COHERE_API_KEY", None)
-        elif provider == "voyage":
-            api_key = getattr(settings, "VOYAGE_API_KEY", None)
-        elif provider == "ollama":
-            # Ollama requires api_base URL, API key is optional
-            api_base = getattr(settings, "OLLAMA_API_URL", None)
-            api_key = getattr(settings, "OLLAMA_API_KEY", None)
+            model = f"openai/{model}"
 
         return cls(
             model=model,
-            api_key=api_key,
-            api_base=api_base,
+            api_key=getattr(settings, "OPENAI_API_KEY", None),
             dimensions=getattr(settings, "EMBEDDING_DIMENSIONS", None),
         )
+
+
+# Backward-compatible export for older imports and tests. New code should import
+# OpenAIEmbeddingsProvider directly.
+LiteLLMEmbeddings = OpenAIEmbeddingsProvider

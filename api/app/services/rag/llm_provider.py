@@ -3,7 +3,7 @@
 This module provides:
 - LLM client using AISuite for unified interface
 - Direct HTTP MCP tool calling (bypasses uvloop/nest_asyncio incompatibility)
-- Embeddings via LiteLLM abstraction
+- Embeddings via OpenAI provider
 """
 
 import json
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import aisuite as ai  # type: ignore[import-untyped]
 import httpx
-from app.services.rag.embeddings_provider import LiteLLMEmbeddings
+from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -399,7 +399,7 @@ class LLMProvider:
             settings: Application settings with API keys and model configuration
         """
         self.settings = settings
-        self.embeddings: LiteLLMEmbeddings | None = None
+        self.embeddings: OpenAIEmbeddingsProvider | None = None
         self.llm: AISuiteLLMWrapper | None = None
 
         try:
@@ -418,20 +418,20 @@ class LLMProvider:
         if not self.settings.OPENAI_API_KEY:
             raise ValueError("OpenAI API key is required but not configured.")
 
-    def initialize_embeddings(self) -> LiteLLMEmbeddings:
-        """Initialize embeddings using LiteLLM abstraction.
+    def initialize_embeddings(self) -> OpenAIEmbeddingsProvider:
+        """Initialize embeddings using the OpenAI provider.
 
         Returns:
-            LiteLLMEmbeddings instance configured from settings
+            OpenAIEmbeddingsProvider instance configured from settings
 
         Raises:
             ValueError: If API key is not configured
         """
-        logger.info("Initializing embeddings via LiteLLM...")
+        logger.info("Initializing OpenAI embeddings...")
         self._validate_openai_api_key()
 
-        self.embeddings = LiteLLMEmbeddings.from_settings(self.settings)
-        logger.info("Embeddings initialized via LiteLLM")
+        self.embeddings = OpenAIEmbeddingsProvider.from_settings(self.settings)
+        logger.info("OpenAI embeddings initialized")
         return self.embeddings
 
     def initialize_llm(
@@ -458,11 +458,11 @@ class LLMProvider:
         logger.info(f"LLM initialized: {self.settings.OPENAI_MODEL}")
         return self.llm
 
-    def get_embeddings(self) -> LiteLLMEmbeddings | None:
+    def get_embeddings(self) -> OpenAIEmbeddingsProvider | None:
         """Get the initialized embeddings model.
 
         Returns:
-            LiteLLMEmbeddings instance or None if not initialized
+            OpenAIEmbeddingsProvider instance or None if not initialized
         """
         return self.embeddings
 

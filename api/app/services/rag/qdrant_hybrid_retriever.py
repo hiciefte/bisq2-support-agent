@@ -33,7 +33,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     - Configurable semantic/keyword weight balance
     - Protocol-aware filtering (bisq_easy, multisig_v1, all)
     - Automatic connection management and health checks
-    - Multi-provider embeddings via LiteLLM for dense vectors
+    - OpenAI embeddings for dense vectors
 
     Attributes:
         settings: Application settings with Qdrant configuration
@@ -54,7 +54,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         Args:
             settings: Application settings with Qdrant configuration
             client: Optional pre-configured QdrantClient (for testing)
-            embeddings: Optional embedding model (defaults to LiteLLM multi-provider)
+            embeddings: Optional embedding model (defaults to OpenAI provider)
             bm25_tokenizer: Optional BM25 tokenizer (defaults to loading from file)
         """
         self.settings = settings
@@ -97,14 +97,14 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         )
 
     def _create_embeddings(self):
-        """Create embedding model for dense vectors using multi-provider abstraction.
+        """Create embedding model for dense vectors using the OpenAI provider.
 
         Returns:
-            LiteLLM embeddings model with configurable provider
+            OpenAI embeddings model
         """
-        from app.services.rag.embeddings_provider import LiteLLMEmbeddings
+        from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
 
-        return LiteLLMEmbeddings.from_settings(self.settings)
+        return OpenAIEmbeddingsProvider.from_settings(self.settings)
 
     def _load_bm25_tokenizer(self) -> BM25SparseTokenizer:
         """Load BM25 tokenizer from vocabulary file.

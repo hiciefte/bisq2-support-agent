@@ -26,6 +26,10 @@ _EXPORT_MAP = {
         "app.services.rag.embeddings_provider",
         "LiteLLMEmbeddings",
     ),
+    "OpenAIEmbeddingsProvider": (
+        "app.services.rag.embeddings_provider",
+        "OpenAIEmbeddingsProvider",
+    ),
     "LLMProvider": ("app.services.rag.llm_provider", "LLMProvider"),
     "NLIValidator": ("app.services.rag.nli_validator", "NLIValidator"),
     "PromptManager": ("app.services.rag.prompt_manager", "PromptManager"),

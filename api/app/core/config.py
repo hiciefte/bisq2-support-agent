@@ -174,14 +174,14 @@ class Settings(BaseSettings):
     MAX_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
 
-    # Embedding Provider Configuration (LiteLLM multi-provider support)
-    EMBEDDING_PROVIDER: str = "openai"  # Provider: openai, cohere, voyage, ollama
+    # Embedding Provider Configuration
+    EMBEDDING_PROVIDER: str = "openai"  # Only openai is currently supported.
     EMBEDDING_MODEL: str = (
         "text-embedding-3-small"  # Model name (without provider prefix)
     )
     EMBEDDING_DIMENSIONS: int | None = None  # Optional dimensions (model-dependent)
-    COHERE_API_KEY: str = ""  # API key for Cohere embeddings
-    VOYAGE_API_KEY: str = ""  # API key for Voyage embeddings
+    COHERE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
+    VOYAGE_API_KEY: str = ""  # Reserved for future non-OpenAI embedding support.
 
     # Token pricing (for cost tracking in metrics)
     # Default values are for GPT-4.1-nano

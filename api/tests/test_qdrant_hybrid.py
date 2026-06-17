@@ -44,7 +44,9 @@ class TestQdrantHybridRetriever:
     @pytest.fixture
     def mock_embeddings(self):
         """Create mock embeddings."""
-        with patch("app.services.rag.embeddings_provider.LiteLLMEmbeddings") as mock:
+        with patch(
+            "app.services.rag.embeddings_provider.OpenAIEmbeddingsProvider"
+        ) as mock:
             embeddings = MagicMock()
             embeddings.embed_query.return_value = [0.1] * 1536
             mock.from_settings.return_value = embeddings
@@ -231,7 +233,9 @@ class TestBM25TokenizerIntegration:
     @pytest.fixture
     def mock_embeddings(self):
         """Create mock embeddings."""
-        with patch("app.services.rag.embeddings_provider.LiteLLMEmbeddings") as mock:
+        with patch(
+            "app.services.rag.embeddings_provider.OpenAIEmbeddingsProvider"
+        ) as mock:
             embeddings = MagicMock()
             embeddings.embed_query.return_value = [0.1] * 1536
             mock.from_settings.return_value = embeddings

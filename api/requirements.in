@@ -37,8 +37,6 @@ starlette>=1.3.1,<1.4.0
 # LLM providers
 # AISuite for unified LLM interface with MCP support
 aisuite[mcp]>=0.1.14
-# LiteLLM for vendor-portable embeddings (100+ providers)
-litellm>=1.30.0,<1.83.0  # Pinned <1.83.0: fixed versions require httpx>=0.28, but aisuite requires httpx<0.28
 # MCP SDK for building Model Context Protocol servers
 # Note: Using mcp without [cli] extra due to typer version conflict between
 # instructor (ragas dependency) requiring typer<0.10.0 and mcp[cli] requiring typer>=0.16.0
