@@ -77,24 +77,27 @@ class SupportReportingService:
         reviewer: Optional[str],
     ) -> list[sqlite3.Row]:
         if not Path(self.db_path).exists():
-            return []
+            raise RuntimeError(f"Reporting database does not exist: {self.db_path}")
 
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
             if not _table_exists(conn, "knowledge_update_proposals"):
-                return []
+                raise RuntimeError(
+                    "Reporting database is missing knowledge_update_proposals"
+                )
 
             has_candidates = _table_exists(conn, "unified_faq_candidates")
             reviewer_filter = _clean_optional(reviewer)
-            params: list[Any] = [start_date.isoformat(), end_date.isoformat()]
-            reviewer_clause = ""
-            if reviewer_filter:
-                reviewer_clause = "AND lower(coalesce(p.reviewed_by, '')) = lower(?)"
-                params.append(reviewer_filter)
+            params: list[Any] = [
+                start_date.isoformat(),
+                end_date.isoformat(),
+                reviewer_filter,
+                reviewer_filter,
+            ]
 
             if has_candidates:
-                query = f"""
+                query = """
                     SELECT
                         p.id,
                         p.candidate_id,
@@ -117,11 +120,11 @@ class SupportReportingService:
                       AND p.reviewed_at IS NOT NULL
                       AND date(p.reviewed_at) >= date(?)
                       AND date(p.reviewed_at) <= date(?)
-                      {reviewer_clause}
+                      AND (? IS NULL OR lower(coalesce(p.reviewed_by, '')) = lower(?))
                     ORDER BY p.reviewed_at DESC, p.id DESC
                 """
             else:
-                query = f"""
+                query = """
                     SELECT
                         p.id,
                         p.candidate_id,
@@ -143,7 +146,7 @@ class SupportReportingService:
                       AND p.reviewed_at IS NOT NULL
                       AND date(p.reviewed_at) >= date(?)
                       AND date(p.reviewed_at) <= date(?)
-                      {reviewer_clause}
+                      AND (? IS NULL OR lower(coalesce(p.reviewed_by, '')) = lower(?))
                     ORDER BY p.reviewed_at DESC, p.id DESC
                 """
             return list(conn.execute(query, params).fetchall())

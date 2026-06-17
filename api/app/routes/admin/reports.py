@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional
 
 from app.core.config import get_settings
 from app.core.security import verify_admin_access
@@ -38,11 +38,11 @@ def get_support_reporting_service(request: Request) -> SupportReportingService:
 
 @router.get("/support-work")
 async def get_support_work_report(
-    start_date: date = Query(...),
-    end_date: date = Query(...),
-    reviewer: Optional[str] = Query(default=None),
-    period_label: Optional[str] = Query(default=None),
-    service: SupportReportingService = Depends(get_support_reporting_service),
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    service: Annotated[SupportReportingService, Depends(get_support_reporting_service)],
+    reviewer: Annotated[Optional[str], Query()] = None,
+    period_label: Annotated[Optional[str], Query()] = None,
 ) -> Dict[str, Any]:
     """Return support-admin work totals for an inclusive date range."""
     try:

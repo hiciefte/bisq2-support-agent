@@ -7,6 +7,7 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
+import pytest
 from app.core.config import Settings
 from app.services.admin_reporting_service import SupportReportingService
 from app.services.knowledge_updates.llm_wiki_update_service import (
@@ -258,3 +259,32 @@ def test_support_work_report_rejects_inverted_period(tmp_path: Path) -> None:
         assert str(exc) == "start_date must be on or before end_date"
     else:
         raise AssertionError("Expected inverted reporting period to fail")
+
+
+def test_support_work_report_fails_when_reporting_database_is_missing(
+    tmp_path: Path,
+) -> None:
+    service = SupportReportingService(db_path=str(tmp_path / "missing.db"))
+
+    with pytest.raises(RuntimeError, match="Reporting database does not exist"):
+        service.build_support_work_report(
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 15),
+        )
+
+
+def test_support_work_report_fails_when_reporting_table_is_missing(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "empty.db"
+    sqlite3.connect(str(db_path)).close()
+    service = SupportReportingService(db_path=str(db_path))
+
+    with pytest.raises(
+        RuntimeError,
+        match="Reporting database is missing knowledge_update_proposals",
+    ):
+        service.build_support_work_report(
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 15),
+        )

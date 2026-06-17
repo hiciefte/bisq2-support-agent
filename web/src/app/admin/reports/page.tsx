@@ -155,6 +155,7 @@ export default function AdminReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const didAutoLoadRef = useRef(false);
+  const copyResetTimeoutRef = useRef<number | null>(null);
 
   const loadReport = useCallback(async () => {
     if (!startDate || !endDate) {
@@ -197,14 +198,29 @@ export default function AdminReportsPage() {
     if (!report?.report_markdown) {
       return;
     }
+    if (copyResetTimeoutRef.current !== null) {
+      window.clearTimeout(copyResetTimeoutRef.current);
+      copyResetTimeoutRef.current = null;
+    }
     try {
       await copyTextToClipboard(report.report_markdown);
       setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 2500);
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCopyState("idle");
+        copyResetTimeoutRef.current = null;
+      }, 2500);
     } catch {
       setCopyState("failed");
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
