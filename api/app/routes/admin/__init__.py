@@ -19,6 +19,7 @@ from app.routes.admin import (
     faqs,
     feedback,
     knowledge_updates,
+    reports,
     signals,
     training,
     trust_monitor,
@@ -44,6 +45,7 @@ def include_admin_routers(app: FastAPI) -> None:
     app.include_router(training.router)
     app.include_router(knowledge_updates.router)
     app.include_router(escalations.router)
+    app.include_router(reports.router)
     app.include_router(signals.router)
     app.include_router(channel_autoresponse.router)
     app.include_router(trust_monitor.router)
@@ -56,6 +58,7 @@ __all__ = [
     "escalations",
     "faqs",
     "feedback",
+    "reports",
     "signals",
     "include_admin_routers",
     "knowledge_updates",
