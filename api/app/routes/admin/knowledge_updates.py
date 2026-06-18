@@ -156,6 +156,33 @@ def _cluster_member_ids(
     return cluster.candidate_ids
 
 
+def _approve_cluster_members(
+    repository,
+    *,
+    member_ids: List[int],
+    reviewer: str,
+    page_ref: str,
+) -> None:
+    for member_id in member_ids:
+        repository.approve(member_id, reviewer, page_ref)
+
+
+def _reject_cluster_members(
+    repository,
+    *,
+    member_ids: List[int],
+    reviewer: str,
+    reason: str,
+) -> None:
+    for member_id in member_ids:
+        repository.reject(member_id, reviewer, reason)
+
+
+def _skip_cluster_members(repository, *, member_ids: List[int]) -> None:
+    for member_id in member_ids:
+        repository.skip(member_id)
+
+
 @router.get("/counts")
 async def get_knowledge_update_counts(
     pipeline_service=Depends(get_pipeline_service()),
@@ -331,12 +358,14 @@ async def approve_knowledge_update(
             )
         )
         page_id = proposal.target_page_id or f"candidate-{candidate_id}"
-        for member_id in _cluster_member_ids(candidate_id, cluster):
-            pipeline_service.repository.approve(
-                member_id,
-                request_body.reviewer,
-                f"llm_wiki:{page_id}",
+        await run_in_threadpool(
+            lambda: _approve_cluster_members(
+                pipeline_service.repository,
+                member_ids=_cluster_member_ids(candidate_id, cluster),
+                reviewer=request_body.reviewer,
+                page_ref=f"llm_wiki:{page_id}",
             )
+        )
         _record_learning_review(
             request=request,
             candidate=candidate,
@@ -402,14 +431,18 @@ async def reject_knowledge_update(
         reviewer=request_body.reviewer,
         reason=reason,
     )
-    for member_id in _cluster_member_ids(candidate_id, cluster):
-        if member_id == candidate_id:
-            continue
-        pipeline_service.repository.reject(
-            member_id,
-            request_body.reviewer,
-            reason,
+    await run_in_threadpool(
+        lambda: _reject_cluster_members(
+            pipeline_service.repository,
+            member_ids=[
+                member_id
+                for member_id in _cluster_member_ids(candidate_id, cluster)
+                if member_id != candidate_id
+            ],
+            reviewer=request_body.reviewer,
+            reason=reason,
         )
+    )
     _record_learning_review(
         request=request,
         candidate=candidate,
@@ -433,10 +466,16 @@ async def skip_knowledge_update(
         service=service,
     )
     await pipeline_service.skip_candidate(candidate_id=candidate_id)
-    for member_id in _cluster_member_ids(candidate_id, cluster):
-        if member_id == candidate_id:
-            continue
-        pipeline_service.repository.skip(member_id)
+    await run_in_threadpool(
+        lambda: _skip_cluster_members(
+            pipeline_service.repository,
+            member_ids=[
+                member_id
+                for member_id in _cluster_member_ids(candidate_id, cluster)
+                if member_id != candidate_id
+            ],
+        )
+    )
     return ActionResponse(success=True)
 
 
