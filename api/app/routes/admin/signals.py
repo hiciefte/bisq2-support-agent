@@ -10,12 +10,17 @@ from typing import Any, Dict, List, Literal, Optional
 
 from app.core.security import verify_admin_access
 from app.models.escalation import EscalationCreate, EscalationPriority, EscalationStatus
+from app.services.knowledge_updates.llm_wiki_update_service import (
+    KnowledgeUpdateService,
+)
+from app.services.knowledge_updates.topic_clusters import build_knowledge_review_items
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
 LINKED_ESCALATION_METADATA_KEY = "linked_escalation_id"
+KNOWLEDGE_UPDATE_PAGE_SIZE = 500
 
 SignalFilter = Literal["all", "needs_action", "covered"]
 
@@ -92,6 +97,39 @@ class ConversationOutcomeResponse(BaseModel):
         "promote_case",
         "await_feedback",
     ] = "none"
+
+
+def _get_knowledge_update_review_item_count(
+    *,
+    request: Request,
+    training_service,
+) -> int:
+    settings = getattr(request.app.state, "settings", None)
+    repository = getattr(training_service, "repository", None)
+    db_path = getattr(repository, "db_path", None)
+    if settings is None or repository is None or db_path is None:
+        return 0
+
+    service = KnowledgeUpdateService(settings=settings, db_path=db_path)
+    candidates = []
+    offset = 0
+    while True:
+        page = repository.get_pending(
+            limit=KNOWLEDGE_UPDATE_PAGE_SIZE,
+            offset=offset,
+        )
+        if not page:
+            break
+
+        candidates.extend(page)
+
+        if len(page) < KNOWLEDGE_UPDATE_PAGE_SIZE:
+            break
+        offset += len(page)
+
+    return len(
+        build_knowledge_review_items(candidates, service.is_candidate_reviewable)
+    )
 
 
 def _parse_bool(value: Any) -> Optional[bool]:
@@ -431,8 +469,10 @@ async def get_overview_action_counts(
     training_service = getattr(request.app.state, "unified_pipeline_service", None)
     if training_service is not None:
         try:
-            queue_counts = training_service.get_queue_counts()
-            training_queue = int(sum(int(v) for v in queue_counts.values()))
+            training_queue = _get_knowledge_update_review_item_count(
+                request=request,
+                training_service=training_service,
+            )
         except Exception:
             logger.exception("Failed to fetch training queue counts")
 
