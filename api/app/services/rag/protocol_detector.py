@@ -47,6 +47,38 @@ class ProtocolDetector:
     BISQ1_KEYWORDS = BISQ1_STRONG_KEYWORDS
 
     BISQ2_KEYWORDS = BISQ2_STRONG_KEYWORDS
+    BISQ1_DOMAIN_CONTEXT_KEYWORDS = (
+        "dao",
+        "bsq",
+        "arbitration",
+        "arbitrator",
+        "multisig",
+        "2-of-2",
+        "delayed payout",
+        "spv",
+        "signed account",
+        "account signing",
+        "account age witness",
+        "account info signed",
+        "account limits",
+        "deposit transaction",
+        "deposit txid",
+        "ctrl+o",
+        "ctrl + o",
+        "ctrl-o",
+    )
+    BISQ2_DOMAIN_CONTEXT_KEYWORDS = (
+        "bisq easy",
+        "reputation score",
+        "reputation system",
+        "bonded roles",
+        "multiple identities",
+        "600 usd",
+        "$600",
+        "offerbook",
+        "current offers",
+        "available offers",
+    )
     OPERATIONAL_SUPPORT_PATTERNS = (
         r"\bopen(?:\s+(?:a|the))?\s+mediation\b",
         r"\b(open|start|begin)\s+(?:a\s+)?dispute\b",
@@ -282,7 +314,14 @@ class ProtocolDetector:
         # 1. Check for explicit version mentions (highest confidence)
         explicit_version = self._check_explicit_mentions(question_lower)
         if explicit_version:
-            return (*explicit_version, None)  # No clarification needed
+            clarifying = (
+                self._generate_clarifying_question(question)
+                if explicit_version[0] == "Unknown"
+                else None
+            )
+            return (*explicit_version, clarifying)
+        if self._has_mixed_explicit_mentions(question_lower):
+            return ("Unknown", 0.30, self._generate_clarifying_question(question))
 
         # 2. Check for version-specific keywords
         keyword_version = self._check_keywords(question_lower)
@@ -329,6 +368,8 @@ class ProtocolDetector:
         explicit = self._check_explicit_mentions(text_lower)
         if explicit:
             return explicit
+        if self._has_mixed_explicit_mentions(text_lower):
+            return ("Unknown", 0.0)
 
         # Check for version-specific keywords
         return self._check_keywords(text_lower)
@@ -339,10 +380,54 @@ class ProtocolDetector:
 
     def _check_explicit_mentions(self, text: str) -> Optional[Tuple[str, float]]:
         """Check for explicit version mentions."""
-        if "bisq 1" in text or "bisq1" in text:
+        has_bisq1 = self._has_bisq1_mention(text)
+        has_bisq2 = self._has_bisq2_mention(text)
+        if has_bisq1 and has_bisq2:
+            comparator_target = self._target_from_comparator_phrase(text)
+            if comparator_target is not None:
+                return comparator_target
+            return None
+        if has_bisq1:
+            if self._has_domain_context(text, self.BISQ2_DOMAIN_CONTEXT_KEYWORDS):
+                return ("Unknown", 0.0)
             return ("Bisq 1", 0.95)
-        if "bisq 2" in text or "bisq2" in text:
+        if has_bisq2:
+            if self._has_domain_context(text, self.BISQ1_DOMAIN_CONTEXT_KEYWORDS):
+                return ("Unknown", 0.0)
             return ("Bisq 2", 0.95)
+        return None
+
+    def _has_mixed_explicit_mentions(self, text: str) -> bool:
+        return self._has_bisq1_mention(text) and self._has_bisq2_mention(text)
+
+    @staticmethod
+    def _has_bisq1_mention(text: str) -> bool:
+        return bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", text))
+
+    @staticmethod
+    def _has_bisq2_mention(text: str) -> bool:
+        return bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", text))
+
+    @staticmethod
+    def _has_domain_context(text: str, keywords: Tuple[str, ...]) -> bool:
+        return any(keyword in text for keyword in keywords)
+
+    def _target_from_comparator_phrase(self, text: str) -> Optional[Tuple[str, float]]:
+        """Infer the target version when the other version is only a comparator."""
+        comparator = r"(?:connects?|works?|runs?|opens?)"
+        ok_state = r"(?:just\s+)?fine|ok|okay|normally"
+        bisq1_ok = re.search(
+            rf"(?:\bbisq\s*1\b|\bbisq1\b).{{0,80}}\b{comparator}\b.{{0,40}}\b(?:{ok_state})\b",
+            text,
+        )
+        bisq2_ok = re.search(
+            rf"(?:\bbisq\s*2\b|\bbisq2\b).{{0,80}}\b{comparator}\b.{{0,40}}\b(?:{ok_state})\b",
+            text,
+        )
+        if bisq1_ok and self._has_bisq2_mention(text):
+            return ("Bisq 2", 0.90)
+        if bisq2_ok and self._has_bisq1_mention(text):
+            return ("Bisq 1", 0.90)
         return None
 
     def _check_keywords(self, text: str) -> Tuple[str, float]:

@@ -586,6 +586,73 @@ def test_candidate_reviewability_rejects_protocols_not_supported_by_loader(
     )
 
 
+def test_candidate_reviewability_rejects_conflicting_protocol_signal(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        protocol="multisig_v1",
+        category="Troubleshooting",
+        question_text=(
+            "My Bisq2 says 0 connections to Tor and does not list any offers. "
+            "Bisq1 connects just fine. Using MacOS version. Any ideas?"
+        ),
+        staff_answer=(
+            "Ensure your system clock is synchronized with the internet clock. "
+            "Also verify that you have downloaded the latest version of Bisq."
+        ),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert service.candidate_reviewability_issues(candidate) == ["protocol_conflict"]
+    assert not service.is_candidate_reviewable(candidate)
+    assert any(
+        check["code"] == "candidate_protocol_consistency"
+        and check["status"] == "fail"
+        and check["blocking"] is True
+        for check in proposal.checks
+    )
+
+
+def test_candidate_reviewability_allows_secondary_cross_version_reference(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        protocol="multisig_v1",
+        category="Payment Methods",
+        question_text=(
+            "Do accounts for buying using Cash by Mail (CBM) and US Postal Money "
+            "Order (USPMO) need to include the name/address combination used on "
+            "the mailed package? What about changing this information later? "
+            "Are accounts signed after valid buys?"
+        ),
+        original_user_question=(
+            "Trying to understand creating accounts for/using cash by mail and "
+            "USPMO. Are the accounts signed after making a valid buy from a "
+            "signed account, despite not being limited by signing, for use in "
+            "Bisq2 signed age?"
+        ),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    assert "protocol_conflict" not in service.candidate_reviewability_issues(candidate)
+    assert any(
+        check["code"] == "candidate_protocol_consistency" and check["status"] == "pass"
+        for check in proposal.checks
+    )
+
+
 def test_unsupported_protocol_does_not_use_exact_llm_wiki_source_match(
     tmp_path: Path,
 ) -> None:

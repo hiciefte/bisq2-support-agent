@@ -418,6 +418,47 @@ class TestExplicitVersionProtocol:
         assert protocol == "bisq_easy"
         assert confidence >= 0.95
 
+    def test_bisq2_problem_with_bisq1_comparator_returns_bisq_easy(self, detector):
+        """A Bisq 1 comparison must not retag a Bisq 2 problem as Bisq 1."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "My Bisq2 says 0 connections to Tor and does not list any offers. "
+            "Bisq1 connects just fine. Using MacOS version. Any ideas?"
+        )
+        assert protocol == "bisq_easy"
+        assert confidence >= 0.85
+
+    def test_mixed_explicit_versions_without_clear_target_stays_ambiguous(
+        self, detector
+    ):
+        """Mixed explicit version text should not default to Bisq 1 by order."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "Can I import my Bisq2 account to Bisq1?"
+        )
+        assert protocol is None
+        assert confidence == 0.0
+
+    def test_single_explicit_version_with_opposite_domain_signal_stays_ambiguous(
+        self, detector
+    ):
+        """A secondary cross-version reference must not override the main topic."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "Are Cash by Mail accounts signed after making a valid buy from a "
+            "signed account, despite not being limited by signing, for use in "
+            "Bisq2 signed age?"
+        )
+        assert protocol is None
+        assert confidence == 0.0
+
+    def test_single_explicit_with_opposite_domain_keywords_stays_ambiguous(
+        self, detector
+    ):
+        """Ambiguity must not fall through into keyword scoring."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "In Bisq2, do account limits and deposit txid rules still apply?"
+        )
+        assert protocol is None
+        assert confidence == 0.0
+
 
 class TestSourceAwareDefaults:
     """Test source-aware default protocol detection for ambiguous questions."""
