@@ -724,8 +724,11 @@ class KnowledgeUpdateService:
         )
         answer = _clean_block(candidate.edited_staff_answer or candidate.staff_answer)
         applies_when = question
+        last_change_summary = "Updated through the Knowledge Updates admin workflow."
         if cluster is not None:
+            answer = _cluster_canonical_answer(cluster)
             applies_when = _cluster_applies_when(cluster)
+            last_change_summary = _cluster_last_change_summary(cluster)
         operations: List[Dict[str, Any]] = [
             {
                 "id": "canonical-answer",
@@ -743,7 +746,7 @@ class KnowledgeUpdateService:
                 "id": "last-change",
                 "section": "Last Change Summary",
                 "action": "replace_section",
-                "content": "Updated through the Knowledge Updates admin workflow.",
+                "content": last_change_summary,
             },
         ]
 
@@ -1014,8 +1017,8 @@ class KnowledgeUpdateService:
                         "An edited full document has been saved for this topic cluster."
                         if document_override_present
                         else (
-                            "This item represents multiple related support discussions. "
-                            "Edit and save the full document before approval."
+                            "A generated synthesis draft is ready. Save the full "
+                            "document to confirm human review before approval."
                         )
                     ),
                     blocking=True,
@@ -1366,7 +1369,11 @@ def _proposal_has_cluster_context(
 ) -> bool:
     if cluster is None:
         return True
-    return _operations_require_cluster_synthesis(proposal.operations)
+    if proposal.document_markdown_override:
+        return True
+    return _operations_require_cluster_synthesis(
+        proposal.operations
+    ) and _operations_include_cluster_answer_units(proposal.operations, cluster)
 
 
 def _operations_require_cluster_synthesis(operations: List[Dict[str, Any]]) -> bool:
@@ -1374,25 +1381,109 @@ def _operations_require_cluster_synthesis(operations: List[Dict[str, Any]]) -> b
 
 
 def _cluster_applies_when(cluster: KnowledgeTopicCluster) -> str:
-    label = cluster.topic.replace("_", " ")
+    questions = _cluster_question_units(cluster)
+    if not questions:
+        label = cluster.topic.replace("_", " ")
+        return f"The user asks about {label}."
+    return "\n".join(questions)
+
+
+def _cluster_canonical_answer(cluster: KnowledgeTopicCluster) -> str:
+    units = _cluster_answer_units(cluster)
+    if not units:
+        return ""
+    if len(units) == 1:
+        return units[0]
+    return "\n".join(f"- {unit}" for unit in units)
+
+
+def _cluster_last_change_summary(cluster: KnowledgeTopicCluster) -> str:
     return (
-        f"The user asks about {label}; synthesize the durable pattern from "
-        f"{cluster.size} related support discussions."
+        f"Synthesized {cluster.size} related support discussions into one "
+        "reviewable LLM Wiki page update through the Knowledge Updates admin workflow."
     )
 
 
 def _cluster_synthesis_note(cluster: KnowledgeTopicCluster) -> str:
-    examples = []
-    for example in cluster.examples(limit=3):
-        examples.append(
-            f"#{example['candidate_id']}: {example['question']} -> {example['answer']}"
-        )
-    joined_examples = " | ".join(examples)
     return (
-        f"Cluster synthesis required for {cluster.size} related support discussions "
-        f"(`{cluster.key}`). Edit the full document into one reusable page-level update "
-        f"before approval. Examples: {joined_examples}"
+        f"Generated from {cluster.size} related support discussions (`{cluster.key}`). "
+        "Save the full document to confirm that the synthesized page-level update is "
+        "accurate, non-duplicative, and reusable before approval."
     )
+
+
+def _operations_include_cluster_answer_units(
+    operations: List[Dict[str, Any]],
+    cluster: KnowledgeTopicCluster,
+) -> bool:
+    canonical = next(
+        (
+            str(operation.get("content") or "")
+            for operation in operations
+            if operation.get("id") == "canonical-answer"
+        ),
+        "",
+    )
+    if not canonical:
+        return False
+    canonical_fingerprint = _cluster_unit_fingerprint(canonical)
+    return all(
+        _cluster_unit_fingerprint(unit) in canonical_fingerprint
+        for unit in _cluster_answer_units(cluster)
+    )
+
+
+def _cluster_question_units(cluster: KnowledgeTopicCluster) -> List[str]:
+    return _dedupe_cluster_units(
+        _clean_inline(candidate.edited_question_text or candidate.question_text)
+        for candidate in cluster.candidates
+    )
+
+
+def _cluster_answer_units(cluster: KnowledgeTopicCluster) -> List[str]:
+    units: List[str] = []
+    for candidate in cluster.candidates:
+        units.extend(
+            _split_support_answer_units(
+                candidate.edited_staff_answer or candidate.staff_answer
+            )
+        )
+    return _dedupe_cluster_units(units)
+
+
+def _split_support_answer_units(answer: str) -> List[str]:
+    cleaned = _clean_block(answer)
+    if not cleaned:
+        return []
+    lines = [
+        line.strip().removeprefix("-").strip()
+        for line in cleaned.splitlines()
+        if line.strip()
+    ]
+    if len(lines) > 1:
+        return [line for line in lines if line]
+    return [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", cleaned)
+        if part.strip()
+    ]
+
+
+def _cluster_unit_fingerprint(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(value).lower()))
+
+
+def _dedupe_cluster_units(values: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        fingerprint = _cluster_unit_fingerprint(normalized)
+        if not normalized or not fingerprint or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        result.append(normalized)
+    return result
 
 
 def _string_list(value: Any) -> List[str]:
