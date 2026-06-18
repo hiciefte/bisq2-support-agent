@@ -147,6 +147,9 @@ def test_approve_writes_reviewed_llm_wiki_markdown(tmp_path: Path) -> None:
     assert "reviewed_by: admin" in written
     assert "Buyers can start in Bisq Easy without reputation." in written
     assert "support:matrix:$event" not in written
+    reloaded = service._load_page_by_id("bisq2-reputation-basics")
+    assert reloaded is not None
+    assert "Buyers can start in Bisq Easy without reputation." in reloaded.body
 
 
 def test_topic_cluster_proposal_requires_document_synthesis(

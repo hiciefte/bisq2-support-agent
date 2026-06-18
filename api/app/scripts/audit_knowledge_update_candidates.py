@@ -29,6 +29,8 @@ from app.services.knowledge_updates.llm_wiki_update_service import (  # noqa: E4
 )
 from app.services.knowledge_updates.topic_clusters import (  # noqa: E402
     TOKEN_STOPWORDS,
+    TOPIC_CLUSTER_MAX_SIZE,
+    TOPIC_CLUSTER_MIN_SIZE,
     build_exact_clusters,
     build_knowledge_review_items,
     exact_cluster_key,
@@ -356,7 +358,7 @@ def _recommendation(
         return "reject_or_rework"
     if cluster_size > 1:
         return "merge_duplicate_cluster"
-    if admin_cluster_size >= 3:
+    if admin_cluster_size >= TOPIC_CLUSTER_MIN_SIZE:
         return "merge_topic_cluster"
     if (candidate.contradiction_score or 0.0) >= 0.35:
         return "manual_full_review"
@@ -483,13 +485,13 @@ def _summary(
     broad_topic_clusters = sum(
         1
         for row in candidate_rows
-        if row["topic_cluster_size"] >= 3
+        if row["topic_cluster_size"] >= TOPIC_CLUSTER_MIN_SIZE
         and row["topic_cluster_candidate_ids"][0] == row["candidate_id"]
     )
     admin_clusters = sum(
         1
         for row in candidate_rows
-        if row["admin_cluster_size"] >= 3
+        if row["admin_cluster_size"] >= TOPIC_CLUSTER_MIN_SIZE
         and row["admin_cluster_candidate_ids"][0] == row["candidate_id"]
     )
     top_topic_clusters = Counter(
@@ -498,7 +500,7 @@ def _summary(
     admin_cluster_sizes = {
         str(row["admin_cluster_key"]): row["admin_cluster_size"]
         for row in candidate_rows
-        if row["admin_cluster_size"] >= 3
+        if row["admin_cluster_size"] >= TOPIC_CLUSTER_MIN_SIZE
         and row["admin_cluster_candidate_ids"][0] == row["candidate_id"]
     }
     top_admin_clusters = sorted(
@@ -537,8 +539,8 @@ def _render_markdown(
         "",
         f"- Pending candidates: {summary['candidate_count']}",
         f"- Duplicate exact clusters: {summary['duplicate_clusters']}",
-        f"- Broad diagnostic topic clusters with 3+ candidates: {summary['topic_clusters']}",
-        f"- Admin clusters with 3-5 candidates: {summary['admin_clusters']}",
+        f"- Broad diagnostic topic clusters with {TOPIC_CLUSTER_MIN_SIZE}+ candidates: {summary['topic_clusters']}",
+        f"- Admin clusters with {TOPIC_CLUSTER_MIN_SIZE}-{TOPIC_CLUSTER_MAX_SIZE} candidates: {summary['admin_clusters']}",
         f"- LLM Wiki pages in export: {summary['page_count']}",
         f"- Existing proposals in export: {summary['proposal_count']}",
         "",
@@ -590,7 +592,7 @@ def _render_markdown(
     topic_rows = [
         row
         for row in candidate_rows
-        if row["topic_cluster_size"] >= 3
+        if row["topic_cluster_size"] >= TOPIC_CLUSTER_MIN_SIZE
         and row["topic_cluster_key"] not in seen_topics
         and not seen_topics.add(row["topic_cluster_key"])
     ]
@@ -610,7 +612,7 @@ def _render_markdown(
     admin_rows = [
         row
         for row in candidate_rows
-        if row["admin_cluster_size"] >= 3
+        if row["admin_cluster_size"] >= TOPIC_CLUSTER_MIN_SIZE
         and row["admin_cluster_key"] not in seen_admin_clusters
         and not seen_admin_clusters.add(row["admin_cluster_key"])
     ]

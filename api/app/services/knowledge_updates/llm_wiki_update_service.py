@@ -421,6 +421,7 @@ class KnowledgeUpdateService:
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(final_markdown, encoding="utf-8")
+        self._pages_cache = None
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
