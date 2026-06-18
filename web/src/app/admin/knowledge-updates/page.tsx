@@ -78,9 +78,24 @@ interface KnowledgeProposal {
   current_page_markdown: string | null;
 }
 
+interface KnowledgeClusterExample {
+  candidate_id: number;
+  question: string;
+  answer: string;
+}
+
+interface KnowledgeCluster {
+  key: string;
+  topic: string;
+  size: number;
+  candidate_ids: number[];
+  examples: KnowledgeClusterExample[];
+}
+
 interface KnowledgeUpdateResponse {
   candidate: UnifiedCandidate;
   proposal: KnowledgeProposal;
+  cluster: KnowledgeCluster | null;
 }
 
 const QUEUE_LABELS: Record<RoutingCategory, string> = {
@@ -94,21 +109,21 @@ const QUEUE_TABS = [
     key: "FULL_REVIEW" as const,
     label: QUEUE_LABELS.FULL_REVIEW,
     description: "Start here: highest review risk",
-    countLabel: "pending candidates",
+    countLabel: "review items",
     icon: BookOpenCheck,
   },
   {
     key: "SPOT_CHECK" as const,
     label: QUEUE_LABELS.SPOT_CHECK,
     description: "Lower-risk edits to verify",
-    countLabel: "pending candidates",
+    countLabel: "review items",
     icon: ShieldCheck,
   },
   {
     key: "AUTO_APPROVE" as const,
     label: QUEUE_LABELS.AUTO_APPROVE,
     description: "High-confidence backlog",
-    countLabel: "pending candidates",
+    countLabel: "review items",
     icon: GraduationCap,
   },
 ];
@@ -336,6 +351,12 @@ function protocolLabel(protocol: UnifiedCandidate["protocol"]): string {
   return "Protocol unknown";
 }
 
+function topicLabel(topic: string): string {
+  return topic
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function ContextBadge({
   label,
   value,
@@ -354,8 +375,8 @@ function ContextBadge({
   );
 }
 
-function formatCandidateCount(count: number): string {
-  return `${count.toLocaleString()} ${count === 1 ? "candidate" : "candidates"}`;
+function formatReviewItemCount(count: number): string {
+  return `${count.toLocaleString()} ${count === 1 ? "review item" : "review items"}`;
 }
 
 function KnowledgeUpdateReviewGuide({
@@ -450,7 +471,7 @@ function KnowledgeUpdateReviewGuide({
                   <p className="mt-1 text-xs font-medium text-foreground">{guidance.nextAction}</p>
                 </div>
                 <Badge variant="secondary" className="shrink-0 justify-center tabular-nums">
-                  {formatCandidateCount(activeCount)}
+                  {formatReviewItemCount(activeCount)}
                 </Badge>
               </div>
             </div>
@@ -458,9 +479,8 @@ function KnowledgeUpdateReviewGuide({
               <div>
                 <p className="text-sm font-medium">About the backlog</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  The lane numbers are pending support candidates, not final pages. A large initial count is
-                  expected while bootstrapping; approving one good LLM Wiki page can absorb many similar
-                  future questions.
+                  The lane numbers are review items, not raw support messages. Clustered topics are collapsed
+                  into one synthesis task so one good LLM Wiki page can absorb many similar future questions.
                 </p>
               </div>
               <Badge variant="outline" className="shrink-0 tabular-nums">
@@ -470,15 +490,15 @@ function KnowledgeUpdateReviewGuide({
             <div className="mt-3 grid gap-2 text-xs">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Full review</span>
-                <span className="font-medium tabular-nums">{formatCandidateCount(counts.FULL_REVIEW)}</span>
+                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.FULL_REVIEW)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Spot check</span>
-                <span className="font-medium tabular-nums">{formatCandidateCount(counts.SPOT_CHECK)}</span>
+                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.SPOT_CHECK)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Ready queue</span>
-                <span className="font-medium tabular-nums">{formatCandidateCount(counts.AUTO_APPROVE)}</span>
+                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.AUTO_APPROVE)}</span>
               </div>
             </div>
           </div>
@@ -504,6 +524,42 @@ function CompactKnowledgeSources({
       </p>
       <SourceBadges sources={generatedSources} />
     </div>
+  );
+}
+
+function ClusterContextCard({ cluster }: { cluster: KnowledgeCluster }) {
+  return (
+    <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="inline-flex items-center gap-2 text-sm font-semibold">
+            <Sparkles className="h-4 w-4 text-amber-600" aria-hidden="true" />
+            Topic synthesis required
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            This is one review item for {cluster.size.toLocaleString()} related support discussions.
+            Edit the LLM Wiki file into one reusable page update before approval.
+          </p>
+        </div>
+        <Badge variant="outline" className="border-amber-500/30 bg-background/70 text-amber-700">
+          {topicLabel(cluster.topic)}
+        </Badge>
+      </div>
+      <div className="mt-3 space-y-2">
+        {cluster.examples.map((example) => (
+          <div
+            key={example.candidate_id}
+            className="rounded-lg border border-border/70 bg-background/70 p-2"
+          >
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Candidate {example.candidate_id}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-foreground">{example.question}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{example.answer}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1000,7 +1056,7 @@ export default function KnowledgeUpdatesPage() {
     <AdminQueueShell showVectorStoreBanner shortcutHints={SHORTCUT_HINTS}>
       <QueuePageHeader
         title="Knowledge Updates"
-        description="Review proposed LLM Wiki pages created from real support discussions. Start with Full review, then use Spot check and Ready queue as lower-risk follow-up lanes."
+        description="Review proposed LLM Wiki page updates created from real support discussions. Similar discussions are collapsed into one synthesis task so admins improve the knowledgebase instead of approving FAQ-like duplicates."
         lastUpdatedLabel={lastUpdatedAt ? `Updated ${formatDate(lastUpdatedAt.toISOString())}` : null}
         isRefreshing={isRefreshing}
         onRefresh={() => void loadData({ silent: true })}
@@ -1070,9 +1126,11 @@ export default function KnowledgeUpdatesPage() {
                 <div>
                   <CardTitle className="text-base">LLM Wiki file review</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {data.proposal.proposal_kind === "update_existing"
-                      ? `Updating ${data.proposal.target_page_title || data.proposal.target_page_id}`
-                      : "Creating a new internal LLM Wiki page"}
+                    {data.cluster
+                      ? `Synthesizing ${data.cluster.size.toLocaleString()} related discussions into ${data.proposal.target_page_title || data.proposal.target_page_id}`
+                      : data.proposal.proposal_kind === "update_existing"
+                        ? `Updating ${data.proposal.target_page_title || data.proposal.target_page_id}`
+                        : "Creating a new internal LLM Wiki page"}
                   </p>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                     This is the main object you approve. Read the complete page first, then edit unclear
@@ -1237,6 +1295,7 @@ export default function KnowledgeUpdatesPage() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
+              {data.cluster && <ClusterContextCard cluster={data.cluster} />}
               <section className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User question</p>
                 <div className="rounded-lg border border-border/70 bg-muted/25 p-3 text-sm leading-6">

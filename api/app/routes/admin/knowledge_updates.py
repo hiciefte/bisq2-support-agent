@@ -17,6 +17,11 @@ from app.services.faq.duplicate_guard import build_duplicate_faq_detail
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
+from app.services.knowledge_updates.topic_clusters import (
+    KnowledgeReviewItem,
+    KnowledgeTopicCluster,
+    build_knowledge_review_items,
+)
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -118,6 +123,66 @@ async def _iter_pending_candidates(
         offset += len(candidates)
 
 
+async def _get_knowledge_review_items(
+    pipeline_service,
+    service: KnowledgeUpdateService,
+) -> List[KnowledgeReviewItem]:
+    candidates = []
+    async for candidate in _iter_pending_candidates(pipeline_service):
+        candidates.append(candidate)
+    return build_knowledge_review_items(candidates, service.is_candidate_reviewable)
+
+
+async def _get_candidate_cluster(
+    *,
+    candidate_id: int,
+    pipeline_service,
+    service: KnowledgeUpdateService,
+) -> Optional[KnowledgeTopicCluster]:
+    for item in await _get_knowledge_review_items(pipeline_service, service):
+        if item.cluster is None:
+            continue
+        if candidate_id in item.cluster.candidate_ids:
+            return item.cluster
+    return None
+
+
+def _cluster_member_ids(
+    candidate_id: int,
+    cluster: Optional[KnowledgeTopicCluster],
+) -> List[int]:
+    if cluster is None:
+        return [candidate_id]
+    return cluster.candidate_ids
+
+
+def _approve_cluster_members(
+    repository,
+    *,
+    member_ids: List[int],
+    reviewer: str,
+    page_ref: str,
+) -> None:
+    for member_id in member_ids:
+        repository.approve(member_id, reviewer, page_ref)
+
+
+def _reject_cluster_members(
+    repository,
+    *,
+    member_ids: List[int],
+    reviewer: str,
+    reason: str,
+) -> None:
+    for member_id in member_ids:
+        repository.reject(member_id, reviewer, reason)
+
+
+def _skip_cluster_members(repository, *, member_ids: List[int]) -> None:
+    for member_id in member_ids:
+        repository.skip(member_id)
+
+
 @router.get("/counts")
 async def get_knowledge_update_counts(
     pipeline_service=Depends(get_pipeline_service()),
@@ -126,9 +191,8 @@ async def get_knowledge_update_counts(
     """Return counts for candidates suitable for LLM Wiki review."""
     try:
         counts = {"AUTO_APPROVE": 0, "SPOT_CHECK": 0, "FULL_REVIEW": 0}
-        async for candidate in _iter_pending_candidates(pipeline_service):
-            if service.is_candidate_reviewable(candidate):
-                counts[candidate.routing] = counts.get(candidate.routing, 0) + 1
+        for item in await _get_knowledge_review_items(pipeline_service, service):
+            counts[item.routing] = counts.get(item.routing, 0) + 1
         return counts
     except Exception as exc:
         logger.exception("Failed to get knowledge update counts")
@@ -147,22 +211,27 @@ async def get_current_knowledge_update(
 ) -> Optional[Dict[str, Any]]:
     """Return the next candidate with a lazily generated LLM Wiki proposal."""
     try:
-        candidate = None
-        async for pending in _iter_pending_candidates(
+        item = None
+        for review_item in await _get_knowledge_review_items(
             pipeline_service,
-            routing=queue,
+            service,
         ):
-            if service.is_candidate_reviewable(pending):
-                candidate = pending
+            if review_item.routing == queue:
+                item = review_item
                 break
-        if candidate is None:
+        if item is None:
             return None
+        candidate = item.candidate
         proposal = await run_in_threadpool(
-            lambda: service.get_or_create_proposal(candidate=candidate)
+            lambda: service.get_or_create_proposal(
+                candidate=candidate,
+                cluster=item.cluster,
+            )
         )
         return {
             "candidate": _candidate_to_dict(candidate),
             "proposal": service.to_response(proposal, candidate),
+            "cluster": item.cluster.to_response() if item.cluster else None,
         }
     except Exception as exc:
         logger.exception("Failed to get current knowledge update")
@@ -188,8 +257,17 @@ async def regenerate_knowledge_update_proposal(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Candidate {candidate_id} not found",
         )
+    cluster = await _get_candidate_cluster(
+        candidate_id=candidate_id,
+        pipeline_service=pipeline_service,
+        service=service,
+    )
     proposal = await run_in_threadpool(
-        lambda: service.get_or_create_proposal(candidate=candidate, force=True)
+        lambda: service.get_or_create_proposal(
+            candidate=candidate,
+            cluster=cluster,
+            force=True,
+        )
     )
     return service.to_response(proposal, candidate)
 
@@ -267,14 +345,26 @@ async def approve_knowledge_update(
         )
 
     try:
+        cluster = await _get_candidate_cluster(
+            candidate_id=candidate_id,
+            pipeline_service=pipeline_service,
+            service=service,
+        )
         proposal = await run_in_threadpool(
-            lambda: service.approve(candidate=candidate, reviewer=request_body.reviewer)
+            lambda: service.approve(
+                candidate=candidate,
+                reviewer=request_body.reviewer,
+                cluster=cluster,
+            )
         )
         page_id = proposal.target_page_id or f"candidate-{candidate_id}"
-        pipeline_service.repository.approve(
-            candidate_id,
-            request_body.reviewer,
-            f"llm_wiki:{page_id}",
+        await run_in_threadpool(
+            lambda: _approve_cluster_members(
+                pipeline_service.repository,
+                member_ids=_cluster_member_ids(candidate_id, cluster),
+                reviewer=request_body.reviewer,
+                page_ref=f"llm_wiki:{page_id}",
+            )
         )
         _record_learning_review(
             request=request,
@@ -324,6 +414,11 @@ async def reject_knowledge_update(
             detail=f"Candidate {candidate_id} not found",
         )
     reason = request_body.reason.strip() or "not_durable"
+    cluster = await _get_candidate_cluster(
+        candidate_id=candidate_id,
+        pipeline_service=pipeline_service,
+        service=service,
+    )
     await run_in_threadpool(
         lambda: service.mark_rejected(
             candidate_id=candidate_id,
@@ -335,6 +430,18 @@ async def reject_knowledge_update(
         candidate_id=candidate_id,
         reviewer=request_body.reviewer,
         reason=reason,
+    )
+    await run_in_threadpool(
+        lambda: _reject_cluster_members(
+            pipeline_service.repository,
+            member_ids=[
+                member_id
+                for member_id in _cluster_member_ids(candidate_id, cluster)
+                if member_id != candidate_id
+            ],
+            reviewer=request_body.reviewer,
+            reason=reason,
+        )
     )
     _record_learning_review(
         request=request,
@@ -350,9 +457,25 @@ async def reject_knowledge_update(
 async def skip_knowledge_update(
     candidate_id: int,
     pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
 ):
     """Move a knowledge update candidate to the end of its queue."""
+    cluster = await _get_candidate_cluster(
+        candidate_id=candidate_id,
+        pipeline_service=pipeline_service,
+        service=service,
+    )
     await pipeline_service.skip_candidate(candidate_id=candidate_id)
+    await run_in_threadpool(
+        lambda: _skip_cluster_members(
+            pipeline_service.repository,
+            member_ids=[
+                member_id
+                for member_id in _cluster_member_ids(candidate_id, cluster)
+                if member_id != candidate_id
+            ],
+        )
+    )
     return ActionResponse(success=True)
 
 

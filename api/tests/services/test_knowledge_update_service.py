@@ -5,6 +5,7 @@ from app.core.config import Settings
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
+from app.services.knowledge_updates.topic_clusters import KnowledgeTopicCluster
 from app.services.training.unified_repository import UnifiedFAQCandidate
 
 
@@ -146,6 +147,72 @@ def test_approve_writes_reviewed_llm_wiki_markdown(tmp_path: Path) -> None:
     assert "reviewed_by: admin" in written
     assert "Buyers can start in Bisq Easy without reputation." in written
     assert "support:matrix:$event" not in written
+
+
+def test_topic_cluster_proposal_requires_document_synthesis(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidates = [
+        _candidate(
+            id=1,
+            question_text="Do buyers need reputation in Bisq Easy?",
+            staff_answer="Buyers do not need reputation to buy BTC in Bisq Easy.",
+        ),
+        _candidate(
+            id=2,
+            question_text="Why does seller reputation matter in Bisq Easy?",
+            staff_answer="Seller reputation is the main safety signal in Bisq Easy.",
+        ),
+        _candidate(
+            id=3,
+            question_text="Can a buyer start without their own reputation?",
+            staff_answer="Buyers can start without reputation, but should prefer reputable sellers.",
+        ),
+    ]
+    cluster = KnowledgeTopicCluster(
+        key="bisq_easy|bisq_easy_reputation_or_risk",
+        topic="bisq_easy_reputation_or_risk",
+        candidates=candidates,
+    )
+
+    proposal = service.get_or_create_proposal(
+        candidate=candidates[0],
+        cluster=cluster,
+    )
+
+    assert any(
+        operation["id"] == "cluster-synthesis" for operation in proposal.operations
+    )
+    assert "3 related support discussions" in proposal.preview_markdown
+    assert any(
+        check["code"] == "cluster_synthesis_review" and check["status"] == "fail"
+        for check in proposal.checks
+    )
+    try:
+        service.approve(candidate=candidates[0], reviewer="admin")
+    except ValueError as exc:
+        assert "Cluster synthesis review" in str(exc)
+    else:
+        raise AssertionError("cluster proposal should require an edited document")
+
+    updated = service.update_document_markdown(
+        candidate=candidates[0],
+        markdown=proposal.preview_markdown.replace(
+            "Buyers do not need reputation to buy BTC in Bisq Easy.",
+            "Buyers do not need their own reputation to buy BTC in Bisq Easy, but should prefer sellers with strong reputation.",
+        ),
+    )
+
+    assert any(
+        check["code"] == "cluster_synthesis_review" and check["status"] == "pass"
+        for check in updated.checks
+    )
 
 
 def test_approve_writes_full_document_override(tmp_path: Path) -> None:

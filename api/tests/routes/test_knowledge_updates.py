@@ -118,8 +118,24 @@ async def test_knowledge_update_counts_page_through_all_pending_candidates(
         [
             _candidate(id=1, routing="FULL_REVIEW"),
             _candidate(id=2, routing="FULL_REVIEW", protocol=None),
-            _candidate(id=3, routing="SPOT_CHECK"),
-            _candidate(id=4, routing="AUTO_APPROVE"),
+            _candidate(
+                id=3,
+                routing="SPOT_CHECK",
+                question_text="How do I verify the Bisq 1 deposit transaction?",
+                staff_answer="Check the deposit transaction ID in the trade details and verify it with a Bitcoin block explorer before deciding whether the trade is funded.",
+                protocol="multisig_v1",
+                category="Wallet",
+                generated_answer_sources='[{"type":"wiki","title":"Deposit transaction"}]',
+            ),
+            _candidate(
+                id=4,
+                routing="AUTO_APPROVE",
+                question_text="How do I check payment method limits?",
+                staff_answer="Use the payment method details and the trade period shown in Bisq before deciding whether a fiat transfer is late or still within the expected window.",
+                protocol="multisig_v1",
+                category="Payment Methods",
+                generated_answer_sources='[{"type":"wiki","title":"Payment methods"}]',
+            ),
         ]
     )
 
@@ -129,6 +145,51 @@ async def test_knowledge_update_counts_page_through_all_pending_candidates(
     )
 
     assert counts == {"AUTO_APPROVE": 1, "SPOT_CHECK": 1, "FULL_REVIEW": 1}
+
+
+@pytest.mark.asyncio
+async def test_knowledge_update_counts_collapse_topic_cluster(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(
+                id=1,
+                question_text="How do I open mediation when the trade timer expired?",
+                staff_answer="Open mediation from the trade once the trade period has ended.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Mediation"}]',
+            ),
+            _candidate(
+                id=2,
+                question_text="How can I request a support ticket for a stuck trade?",
+                staff_answer="Use the support ticket flow in the Bisq app for the affected trade and keep the trade context there before escalating to external support channels.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Dispute Resolution in Bisq 1"}]',
+            ),
+            _candidate(
+                id=3,
+                question_text="Can I start mediation with Ctrl+O?",
+                staff_answer="Ctrl+O can open the mediation flow for a Bisq 1 trade, but the support answer should still explain when mediation is appropriate.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Dispute Resolution in Bisq 1"}]',
+            ),
+        ]
+    )
+
+    counts = await get_knowledge_update_counts(
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert counts == {"AUTO_APPROVE": 0, "SPOT_CHECK": 0, "FULL_REVIEW": 1}
 
 
 @pytest.mark.asyncio
@@ -186,3 +247,57 @@ async def test_current_knowledge_update_pages_until_reviewable_candidate(
 
     assert response is not None
     assert response["candidate"]["id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_current_knowledge_update_returns_topic_cluster_context(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(
+                id=10,
+                question_text="How do I open mediation when the seller is not responding?",
+                staff_answer="Use the mediation flow after the trade period when the peer does not respond.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Mediation"}]',
+            ),
+            _candidate(
+                id=11,
+                question_text="How do I request a support ticket for a trade dispute?",
+                staff_answer="Open a support ticket from the Bisq trade before using external channels, so the mediator has the trade context and messages in the app.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Dispute Resolution in Bisq 1"}]',
+            ),
+            _candidate(
+                id=12,
+                question_text="Can I start mediation manually with Ctrl+O?",
+                staff_answer="Ctrl+O can open mediation for a Bisq 1 trade, but the guidance should explain the trade-period and dispute context before telling users to escalate.",
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Dispute Resolution in Bisq 1"}]',
+            ),
+        ]
+    )
+
+    response = await get_current_knowledge_update(
+        queue="FULL_REVIEW",
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response is not None
+    assert response["candidate"]["id"] == 10
+    assert response["cluster"]["size"] == 3
+    assert response["cluster"]["candidate_ids"] == [10, 11, 12]
+    assert response["cluster"]["topic"] == "open_mediation_or_support_ticket"
+    assert any(
+        check["code"] == "cluster_synthesis_review"
+        for check in response["proposal"]["checks"]
+    )
