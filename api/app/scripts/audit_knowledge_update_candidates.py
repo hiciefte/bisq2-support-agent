@@ -16,7 +16,7 @@ import re
 import sqlite3
 import sys
 import tempfile
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any
@@ -27,88 +27,16 @@ from app.core.config import Settings  # noqa: E402
 from app.services.knowledge_updates.llm_wiki_update_service import (  # noqa: E402
     KnowledgeUpdateService,
 )
+from app.services.knowledge_updates.topic_clusters import (  # noqa: E402
+    TOKEN_STOPWORDS,
+    build_exact_clusters,
+    exact_cluster_key,
+    topic_cluster_ids,
+    topic_cluster_key,
+)
 from app.services.training.unified_repository import UnifiedFAQCandidate  # noqa: E402
 
-TOKEN_STOPWORDS = {
-    "about",
-    "after",
-    "answer",
-    "bisq",
-    "from",
-    "have",
-    "that",
-    "this",
-    "user",
-    "with",
-    "what",
-    "when",
-    "where",
-    "will",
-    "your",
-}
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-TOPIC_PATTERNS = (
-    (
-        "open_mediation_or_support_ticket",
-        (
-            r"\bopen (a )?(mediation|support ticket|dispute)\b",
-            r"\b(start|request|initiate) (mediation|a support ticket)\b",
-            r"\bctrl\s*\+?\s*o\b",
-            r"\bcmd\s*\+?\s*o\b",
-            r"\bmediator\b",
-        ),
-    ),
-    (
-        "unresponsive_peer_or_release",
-        (
-            r"\b(seller|buyer|peer|counterparty).*(not respond|unresponsive|offline|does not answer)\b",
-            r"\b(payment received|confirm receipt|release btc|release bitcoin)\b",
-            r"\btrade (deadline|timer|period|window).*(expired|exceeded|approaching)\b",
-        ),
-    ),
-    (
-        "payment_account_or_name_mismatch",
-        (
-            r"\b(account|bank|iban|zelle|sepa|wise|revolut).*(name|owner|mismatch|different|wrong)\b",
-            r"\bpayment account\b",
-            r"\baccount owner\b",
-        ),
-    ),
-    (
-        "wallet_restore_or_data_directory",
-        (
-            r"\b(seed words|wallet seed|backup|restore|data directory|new instance|old wallet)\b",
-            r"\bcopy.*bisq (folder|directory)\b",
-            r"\bimport.*wallet\b",
-        ),
-    ),
-    (
-        "wallet_sync_or_spv",
-        (
-            r"\b(spv|resync|confirmations|mempool|wallet balance|missing transaction)\b",
-            r"\bdeposit.*(confirmed|missing|null)\b",
-            r"\b0 confirmations\b",
-        ),
-    ),
-    (
-        "tor_network_or_price_feed",
-        (r"\b(tor|peer|peers|bitcoin network|price feed|price node|connection)\b",),
-    ),
-    (
-        "account_signing_or_limits",
-        (r"\b(signed|signing|account limits|trade limits|new account)\b",),
-    ),
-    (
-        "payment_method_reversibility_or_chargeback",
-        (
-            r"\b(chargeback|recall|reversible|payment method|zelle|sepa|ach|wise|strike)\b",
-        ),
-    ),
-    (
-        "bisq_easy_reputation_or_risk",
-        (r"\b(bisq easy|reputation|seller reputation|mediation in bisq 2)\b",),
-    ),
-)
 
 
 def main() -> None:
@@ -122,8 +50,8 @@ def main() -> None:
         for raw in export.get("pending_candidates", [])
         if isinstance(raw, dict)
     ]
-    exact_clusters = _exact_clusters(candidates)
-    topic_clusters = _topic_clusters(candidates)
+    exact_clusters = build_exact_clusters(candidates)
+    topic_clusters = topic_cluster_ids(candidates)
 
     with tempfile.TemporaryDirectory(prefix="bisq-knowledge-audit-") as tmp:
         data_dir = Path(tmp)
@@ -325,9 +253,9 @@ def _audit_candidate(
     warnings = [
         str(check.get("label")) for check in checks if check.get("status") == "warn"
     ]
-    cluster_key = _exact_cluster_key(candidate)
+    cluster_key = exact_cluster_key(candidate)
     cluster_ids = exact_clusters.get(cluster_key, [])
-    topic_key = _topic_cluster_key(candidate)
+    topic_key = topic_cluster_key(candidate)
     topic_ids = topic_clusters.get(topic_key, [])
     recommendation = _recommendation(
         candidate=candidate,
@@ -619,56 +547,6 @@ def _render_markdown(
 
     lines.append("")
     return "\n".join(lines)
-
-
-def _exact_clusters(candidates: list[UnifiedFAQCandidate]) -> dict[str, list[int]]:
-    clusters: dict[str, list[int]] = defaultdict(list)
-    for candidate in candidates:
-        clusters[_exact_cluster_key(candidate)].append(candidate.id)
-    return dict(clusters)
-
-
-def _topic_clusters(candidates: list[UnifiedFAQCandidate]) -> dict[str, list[int]]:
-    clusters: dict[str, list[int]] = defaultdict(list)
-    for candidate in candidates:
-        clusters[_topic_cluster_key(candidate)].append(candidate.id)
-    return dict(clusters)
-
-
-def _exact_cluster_key(candidate: UnifiedFAQCandidate) -> str:
-    question = _fingerprint(candidate.edited_question_text or candidate.question_text)
-    answer = _fingerprint(candidate.edited_staff_answer or candidate.staff_answer)
-    return f"{candidate.protocol or 'none'}|{candidate.category or 'none'}|{question}|{answer}"
-
-
-def _topic_cluster_key(candidate: UnifiedFAQCandidate) -> str:
-    text = _clean(
-        " ".join(
-            [
-                candidate.edited_question_text or candidate.question_text,
-                candidate.edited_staff_answer or candidate.staff_answer,
-                candidate.category or "",
-            ]
-        )
-    )
-    lowered = text.lower()
-    for label, patterns in TOPIC_PATTERNS:
-        if any(re.search(pattern, lowered) for pattern in patterns):
-            return f"{candidate.protocol or 'none'}|{label}"
-
-    tokens = [
-        token
-        for token in re.findall(r"[a-z0-9]{4,}", lowered)
-        if token not in TOKEN_STOPWORDS
-    ]
-    counts = Counter(tokens)
-    keywords = "-".join(token for token, _ in counts.most_common(4))
-    return f"{candidate.protocol or 'none'}|{candidate.category or 'none'}|{keywords}"
-
-
-def _fingerprint(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower())
-    return " ".join(normalized.split())
 
 
 def _source_titles(raw_sources: str | None) -> list[str]:

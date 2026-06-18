@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import yaml  # type: ignore[import-untyped]
 from app.core.config import Settings
+from app.services.knowledge_updates.topic_clusters import KnowledgeTopicCluster
 from app.services.rag.llm_wiki_loader import (
     ALLOWED_PROTOCOLS,
     INDEXABLE_STATUSES,
@@ -150,17 +151,27 @@ class KnowledgeUpdateService:
         self,
         *,
         candidate: UnifiedFAQCandidate,
+        cluster: Optional[KnowledgeTopicCluster] = None,
         force: bool = False,
     ) -> KnowledgeUpdateProposal:
         existing = self.get_by_candidate_id(candidate.id)
-        if existing is not None and not force:
+        if (
+            existing is not None
+            and not force
+            and _proposal_has_cluster_context(existing, cluster)
+        ):
             return existing
 
         pages = self._load_pages()
         target = self._match_target_page(candidate, pages)
         proposal_kind = "update_existing" if target else "create_new"
-        source_refs = self._build_source_refs(candidate)
-        operations = self._build_operations(candidate, target, source_refs)
+        source_refs = self._build_source_refs(candidate, cluster=cluster)
+        operations = self._build_operations(
+            candidate,
+            target,
+            source_refs,
+            cluster=cluster,
+        )
         preview = self._render_preview(
             candidate=candidate,
             target=target,
@@ -175,6 +186,8 @@ class KnowledgeUpdateService:
             proposal_kind=proposal_kind,
             preview_markdown=preview,
             pages=pages,
+            requires_cluster_synthesis=cluster is not None,
+            document_override_present=False,
         )
         return self._upsert_proposal(
             candidate_id=candidate.id,
@@ -245,6 +258,10 @@ class KnowledgeUpdateService:
             proposal_kind=proposal.proposal_kind,
             preview_markdown=preview,
             pages=self._load_pages(),
+            requires_cluster_synthesis=_operations_require_cluster_synthesis(
+                operations
+            ),
+            document_override_present=False,
         )
 
         conn = sqlite3.connect(self.db_path)
@@ -296,6 +313,10 @@ class KnowledgeUpdateService:
             proposal_kind=proposal.proposal_kind,
             preview_markdown=preview,
             pages=self._load_pages(),
+            requires_cluster_synthesis=_operations_require_cluster_synthesis(
+                proposal.operations
+            ),
+            document_override_present=True,
         )
 
         conn = sqlite3.connect(self.db_path)
@@ -329,8 +350,9 @@ class KnowledgeUpdateService:
         *,
         candidate: UnifiedFAQCandidate,
         reviewer: str,
+        cluster: Optional[KnowledgeTopicCluster] = None,
     ) -> KnowledgeUpdateProposal:
-        proposal = self.get_or_create_proposal(candidate=candidate)
+        proposal = self.get_or_create_proposal(candidate=candidate, cluster=cluster)
         blocking_failures = [
             check
             for check in proposal.checks
@@ -610,21 +632,28 @@ class KnowledgeUpdateService:
 
         return best_page
 
-    def _build_source_refs(self, candidate: UnifiedFAQCandidate) -> List[str]:
+    def _build_source_refs(
+        self,
+        candidate: UnifiedFAQCandidate,
+        *,
+        cluster: Optional[KnowledgeTopicCluster] = None,
+    ) -> List[str]:
         refs: List[str] = []
-        for source in _parse_sources(candidate.generated_answer_sources):
-            source_type = str(
-                source.get("type") or source.get("category") or ""
-            ).lower()
-            title = str(source.get("title") or "").strip()
-            if not title:
-                continue
-            if source_type == "wiki":
-                refs.append(f"wiki:{title}")
-            elif source_type == "faq":
-                refs.append(f"faq:{_faq_ref_value(source, title)}")
-            elif source_type == "llm_wiki":
-                refs.append(f"llm_wiki:{title}")
+        candidates = cluster.candidates if cluster else [candidate]
+        for source_candidate in candidates:
+            for source in _parse_sources(source_candidate.generated_answer_sources):
+                source_type = str(
+                    source.get("type") or source.get("category") or ""
+                ).lower()
+                title = str(source.get("title") or "").strip()
+                if not title:
+                    continue
+                if source_type == "wiki":
+                    refs.append(f"wiki:{title}")
+                elif source_type == "faq":
+                    refs.append(f"faq:{_faq_ref_value(source, title)}")
+                elif source_type == "llm_wiki":
+                    refs.append(f"llm_wiki:{title}")
 
         return _dedupe(refs)
 
@@ -633,12 +662,17 @@ class KnowledgeUpdateService:
         candidate: UnifiedFAQCandidate,
         target: Optional[LLMWikiPageRecord],
         source_refs: List[str],
+        *,
+        cluster: Optional[KnowledgeTopicCluster] = None,
     ) -> List[Dict[str, Any]]:
         question = _clean_inline(
             candidate.edited_question_text or candidate.question_text
         )
         answer = _clean_block(candidate.edited_staff_answer or candidate.staff_answer)
         source_name = "Matrix" if candidate.source == "matrix" else "Bisq 2"
+        applies_when = question
+        if cluster is not None:
+            applies_when = _cluster_applies_when(cluster)
         operations: List[Dict[str, Any]] = [
             {
                 "id": "canonical-answer",
@@ -650,7 +684,7 @@ class KnowledgeUpdateService:
                 "id": "applies-when",
                 "section": "Applies When",
                 "action": "append_bullet",
-                "content": question,
+                "content": applies_when,
             },
             {
                 "id": "review-note",
@@ -671,6 +705,16 @@ class KnowledgeUpdateService:
                 ),
             },
         ]
+
+        if cluster is not None:
+            operations.append(
+                {
+                    "id": "cluster-synthesis",
+                    "section": "Review Notes",
+                    "action": "append_bullet",
+                    "content": _cluster_synthesis_note(cluster),
+                }
+            )
 
         if target is None:
             operations.insert(
@@ -803,6 +847,8 @@ class KnowledgeUpdateService:
         proposal_kind: str,
         preview_markdown: str,
         pages: List[LLMWikiPageRecord],
+        requires_cluster_synthesis: bool = False,
+        document_override_present: bool = False,
     ) -> List[Dict[str, Any]]:
         source_refs = _effective_source_refs(source_refs, preview_markdown)
         checks: List[Dict[str, Any]] = []
@@ -872,6 +918,24 @@ class KnowledgeUpdateService:
                 blocking=True,
             )
         )
+
+        if requires_cluster_synthesis:
+            checks.append(
+                _check(
+                    code="cluster_synthesis_review",
+                    label="Cluster synthesis review",
+                    status="pass" if document_override_present else "fail",
+                    detail=(
+                        "An edited full document has been saved for this topic cluster."
+                        if document_override_present
+                        else (
+                            "This item represents multiple related support discussions. "
+                            "Edit and save the full document before approval."
+                        )
+                    ),
+                    blocking=True,
+                )
+            )
 
         if proposal_kind == "update_existing":
             checks.append(
@@ -1191,6 +1255,41 @@ def _sanitize_operations(operations: List[Dict[str, Any]]) -> List[Dict[str, Any
         if durable_refs:
             sanitized.append({**operation, "content": ", ".join(durable_refs)})
     return sanitized
+
+
+def _proposal_has_cluster_context(
+    proposal: KnowledgeUpdateProposal,
+    cluster: Optional[KnowledgeTopicCluster],
+) -> bool:
+    if cluster is None:
+        return True
+    return _operations_require_cluster_synthesis(proposal.operations)
+
+
+def _operations_require_cluster_synthesis(operations: List[Dict[str, Any]]) -> bool:
+    return any(operation.get("id") == "cluster-synthesis" for operation in operations)
+
+
+def _cluster_applies_when(cluster: KnowledgeTopicCluster) -> str:
+    label = cluster.topic.replace("_", " ")
+    return (
+        f"The user asks about {label}; synthesize the durable pattern from "
+        f"{cluster.size} related support discussions."
+    )
+
+
+def _cluster_synthesis_note(cluster: KnowledgeTopicCluster) -> str:
+    examples = []
+    for example in cluster.examples(limit=3):
+        examples.append(
+            f"#{example['candidate_id']}: {example['question']} -> {example['answer']}"
+        )
+    joined_examples = " | ".join(examples)
+    return (
+        f"Cluster synthesis required for {cluster.size} related support discussions "
+        f"(`{cluster.key}`). Edit the full document into one reusable page-level update "
+        f"before approval. Examples: {joined_examples}"
+    )
 
 
 def _string_list(value: Any) -> List[str]:
