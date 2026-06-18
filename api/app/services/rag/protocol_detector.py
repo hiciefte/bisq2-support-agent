@@ -314,7 +314,12 @@ class ProtocolDetector:
         # 1. Check for explicit version mentions (highest confidence)
         explicit_version = self._check_explicit_mentions(question_lower)
         if explicit_version:
-            return (*explicit_version, None)  # No clarification needed
+            clarifying = (
+                self._generate_clarifying_question(question)
+                if explicit_version[0] == "Unknown"
+                else None
+            )
+            return (*explicit_version, clarifying)
         if self._has_mixed_explicit_mentions(question_lower):
             return ("Unknown", 0.30, self._generate_clarifying_question(question))
 
@@ -384,11 +389,11 @@ class ProtocolDetector:
             return None
         if has_bisq1:
             if self._has_domain_context(text, self.BISQ2_DOMAIN_CONTEXT_KEYWORDS):
-                return None
+                return ("Unknown", 0.0)
             return ("Bisq 1", 0.95)
         if has_bisq2:
             if self._has_domain_context(text, self.BISQ1_DOMAIN_CONTEXT_KEYWORDS):
-                return None
+                return ("Unknown", 0.0)
             return ("Bisq 2", 0.95)
         return None
 

@@ -449,6 +449,16 @@ class TestExplicitVersionProtocol:
         assert protocol is None
         assert confidence == 0.0
 
+    def test_single_explicit_with_opposite_domain_keywords_stays_ambiguous(
+        self, detector
+    ):
+        """Ambiguity must not fall through into keyword scoring."""
+        protocol, confidence = detector.detect_protocol_from_text(
+            "In Bisq2, do account limits and deposit txid rules still apply?"
+        )
+        assert protocol is None
+        assert confidence == 0.0
+
 
 class TestSourceAwareDefaults:
     """Test source-aware default protocol detection for ambiguous questions."""
