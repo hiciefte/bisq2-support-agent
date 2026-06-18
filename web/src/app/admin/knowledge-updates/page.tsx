@@ -162,7 +162,7 @@ const DOCUMENT_REVIEW_MODES: Array<{
   {
     key: "diff",
     label: "Diff & edit",
-    description: "Read the full file and edit proposed lines in context.",
+    description: "Review the generated file draft and edit lines in context.",
   },
   {
     key: "preview",
@@ -173,6 +173,7 @@ const DOCUMENT_REVIEW_MODES: Array<{
 
 const SUPPORTING_OPERATION_IDS = new Set([
   "do-not-say",
+  "cluster-synthesis",
   "review-note",
   "last-change",
   "evidence-sources",
@@ -182,6 +183,7 @@ const OPERATION_HINTS: Record<string, string> = {
   "canonical-answer": "Primary content. Check that this is durable, precise support guidance before approving.",
   "applies-when": "Retrieval cue. This teaches when the LLM Wiki page should be used.",
   "do-not-say": "Safety guardrail. Edit only if the generated limit is too broad or too narrow.",
+  "cluster-synthesis": "Cluster audit note. It explains why this item represents several related discussions.",
   "review-note": "Reviewer audit trail. Usually no manual edit needed.",
   "last-change": "Maintenance summary for future reviewers. Usually no manual edit needed.",
   "evidence-sources": "Stored source references. Use the compact source badge before these fields when verification is needed.",
@@ -528,37 +530,53 @@ function CompactKnowledgeSources({
 }
 
 function ClusterContextCard({ cluster }: { cluster: KnowledgeCluster }) {
+  const [showExamples, setShowExamples] = useState(false);
+
   return (
     <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="inline-flex items-center gap-2 text-sm font-semibold">
             <Sparkles className="h-4 w-4 text-amber-600" aria-hidden="true" />
-            Topic synthesis required
+            Generated synthesis draft
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            This is one review item for {cluster.size.toLocaleString()} related support discussions.
-            Edit the LLM Wiki file into one reusable page update before approval.
+            The file on the left already combines {cluster.size.toLocaleString()} related support discussions
+            into one page-level draft. Read that draft first, remove weak or duplicated wording,
+            then save the document to confirm human review.
           </p>
         </div>
-        <Badge variant="outline" className="border-amber-500/30 bg-background/70 text-amber-700">
-          {topicLabel(cluster.topic)}
-        </Badge>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="border-amber-500/30 bg-background/70 text-amber-700">
+            {topicLabel(cluster.topic)}
+          </Badge>
+          <Badge variant="outline" className="border-amber-500/30 bg-background/70 text-amber-700">
+            {cluster.size.toLocaleString()} discussions
+          </Badge>
+        </div>
       </div>
-      <div className="mt-3 space-y-2">
-        {cluster.examples.map((example) => (
-          <div
-            key={example.candidate_id}
-            className="rounded-lg border border-border/70 bg-background/70 p-2"
-          >
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Candidate {example.candidate_id}
-            </p>
-            <p className="mt-1 text-xs leading-5 text-foreground">{example.question}</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{example.answer}</p>
-          </div>
-        ))}
-      </div>
+      <Collapsible open={showExamples} onOpenChange={setShowExamples} className="mt-3">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-8 w-full justify-between px-2 text-xs">
+            Spot-check original examples
+            <ChevronDown className={cn("h-4 w-4 transition-transform", showExamples && "rotate-180")} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2 space-y-2">
+          {cluster.examples.map((example) => (
+            <div
+              key={example.candidate_id}
+              className="rounded-lg border border-border/70 bg-background/70 p-2"
+            >
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Candidate {example.candidate_id}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-foreground">{example.question}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{example.answer}</p>
+            </div>
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   );
 }
@@ -1119,8 +1137,8 @@ export default function KnowledgeUpdatesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_minmax(280px,0.75fr)]">
-          <Card className="min-w-0 border-border/70 bg-card/90">
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.42fr)] 2xl:grid-cols-[minmax(560px,1.35fr)_minmax(340px,0.95fr)_minmax(280px,0.75fr)]">
+          <Card className="min-w-0 border-border/70 bg-card/90 xl:row-span-2 2xl:row-span-1">
             <CardHeader className="pb-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -1133,8 +1151,8 @@ export default function KnowledgeUpdatesPage() {
                         : "Creating a new internal LLM Wiki page"}
                   </p>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    This is the main object you approve. Read the complete page first, then edit unclear
-                    wording directly in the diff. Open sources only when a claim needs proof.
+                    This is the main object you approve. Read the complete page draft first, then edit
+                    unclear wording directly in the diff. Open sources only when a claim needs proof.
                   </p>
                 </div>
                 {isDirty && (
@@ -1176,8 +1194,8 @@ export default function KnowledgeUpdatesPage() {
                     <div>
                       <p className="text-sm font-medium">Review final LLM Wiki file</p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Diff & edit is the normal workflow. Click a proposed line to edit it without losing
-                        the surrounding document context.
+                        Diff & edit is the normal workflow. For clustered topics, the draft already folds
+                        related staff answers into the page; save it after you have reviewed the final wording.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 lg:shrink-0">
@@ -1205,7 +1223,7 @@ export default function KnowledgeUpdatesPage() {
                         className="gap-2"
                       >
                         {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                        Save document
+                        {data.cluster ? "Save reviewed draft" : "Save document"}
                       </Button>
                     </div>
                   </div>
@@ -1405,7 +1423,7 @@ export default function KnowledgeUpdatesPage() {
             </CardContent>
           </Card>
 
-          <aside className="order-3 min-w-0 space-y-4 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto xl:pr-1">
+          <aside className="order-3 min-w-0 space-y-4 xl:col-start-2 xl:row-start-2 xl:pr-1 2xl:sticky 2xl:top-6 2xl:col-start-auto 2xl:row-start-auto 2xl:max-h-[calc(100vh-3rem)] 2xl:overflow-y-auto">
             <Card className="border-border/70 bg-card/80">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Decision</CardTitle>

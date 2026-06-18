@@ -177,6 +177,11 @@ def test_topic_cluster_proposal_requires_document_synthesis(
             question_text="Can a buyer start without their own reputation?",
             staff_answer="Buyers can start without reputation, but should prefer reputable sellers.",
         ),
+        _candidate(
+            id=4,
+            question_text="Does seller reputation matter?",
+            staff_answer="Seller reputation is the main safety signal in Bisq Easy!",
+        ),
     ]
     cluster = KnowledgeTopicCluster(
         key="bisq_easy|bisq_easy_reputation_or_risk",
@@ -192,7 +197,25 @@ def test_topic_cluster_proposal_requires_document_synthesis(
     assert any(
         operation["id"] == "cluster-synthesis" for operation in proposal.operations
     )
-    assert "3 related support discussions" in proposal.preview_markdown
+    canonical = next(
+        operation
+        for operation in proposal.operations
+        if operation["id"] == "canonical-answer"
+    )
+    assert (
+        "Buyers do not need reputation to buy BTC in Bisq Easy." in canonical["content"]
+    )
+    assert (
+        "Seller reputation is the main safety signal in Bisq Easy."
+        in canonical["content"]
+    )
+    assert (
+        "Buyers can start without reputation, but should prefer reputable sellers."
+        in canonical["content"]
+    )
+    assert canonical["content"].count("- ") == 3
+    assert "4 related support discussions" in proposal.preview_markdown
+    assert proposal.document_markdown_override is None
     assert any(
         check["code"] == "cluster_synthesis_review" and check["status"] == "fail"
         for check in proposal.checks
