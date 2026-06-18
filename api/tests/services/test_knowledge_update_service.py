@@ -347,6 +347,52 @@ def test_faq_source_refs_prefer_durable_faq_id(tmp_path: Path) -> None:
     assert "support:matrix:$event" not in proposal.source_refs
 
 
+def test_low_source_support_adds_non_blocking_warning(tmp_path: Path) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        staff_answer=(
+            "Use the BSQ wallet receive tab in the DAO section when you need "
+            "to receive BSQ from another Bisq user."
+        ),
+        generated_answer_sources=(
+            '[{"type":"wiki","title":"System time",'
+            '"content":"Users should synchronize their operating system clock with internet time."}]'
+        ),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=candidate)
+
+    support_check = next(
+        check for check in proposal.checks if check["code"] == "source_support"
+    )
+    assert support_check["status"] == "warn"
+    assert support_check["blocking"] is False
+
+
+def test_generated_markdown_uses_readable_durable_review_artifacts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+
+    proposal = service.get_or_create_proposal(candidate=_candidate())
+
+    assert "Derived from reviewed" not in proposal.preview_markdown
+    assert "$event" not in proposal.preview_markdown
+    assert "Updated through the Knowledge Updates admin workflow." in (
+        proposal.preview_markdown
+    )
+    assert "- `wiki:Reputation`" in proposal.preview_markdown
+    assert "- `llm_wiki:Bisq Easy reputation basics`" in proposal.preview_markdown
+
+
 def test_approval_blocks_invalid_operation(tmp_path: Path) -> None:
     _write_page(tmp_path)
     settings = Settings(DATA_DIR=str(tmp_path))

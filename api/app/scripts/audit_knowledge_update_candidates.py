@@ -30,6 +30,7 @@ from app.services.knowledge_updates.llm_wiki_update_service import (  # noqa: E4
 from app.services.knowledge_updates.topic_clusters import (  # noqa: E402
     TOKEN_STOPWORDS,
     build_exact_clusters,
+    build_knowledge_review_items,
     exact_cluster_key,
     topic_cluster_ids,
     topic_cluster_key,
@@ -60,9 +61,16 @@ def main() -> None:
             settings=Settings(DATA_DIR=str(data_dir)),
             db_path=str(data_dir / "unified_training.db"),
         )
+        admin_cluster_index = _admin_cluster_index(service, candidates)
 
         candidate_rows = [
-            _audit_candidate(service, candidate, exact_clusters, topic_clusters)
+            _audit_candidate(
+                service,
+                candidate,
+                exact_clusters,
+                topic_clusters,
+                admin_cluster_index,
+            )
             for candidate in candidates
         ]
 
@@ -131,6 +139,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "exact_cluster_size",
         "topic_cluster_key",
         "topic_cluster_size",
+        "admin_cluster_key",
+        "admin_cluster_size",
         "blocking_failures",
         "warnings",
         "question",
@@ -153,6 +163,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
                     "exact_cluster_size": row["exact_cluster_size"],
                     "topic_cluster_key": _csv_safe(row["topic_cluster_key"]),
                     "topic_cluster_size": row["topic_cluster_size"],
+                    "admin_cluster_key": _csv_safe(row.get("admin_cluster_key")),
+                    "admin_cluster_size": row.get("admin_cluster_size", 0),
                     "blocking_failures": _csv_safe("; ".join(row["blocking_failures"])),
                     "warnings": _csv_safe("; ".join(row["warnings"])),
                     "question": _csv_safe(row["question"]),
@@ -219,11 +231,38 @@ def _write_exported_pages(export: dict[str, Any], data_dir: Path) -> None:
         raise ValueError("No LLM Wiki pages were materialized from the export")
 
 
+def _admin_cluster_index(
+    service: KnowledgeUpdateService,
+    candidates: list[UnifiedFAQCandidate],
+) -> dict[int, dict[str, Any]]:
+    index: dict[int, dict[str, Any]] = {}
+    items = build_knowledge_review_items(
+        candidates,
+        service.is_candidate_reviewable,
+        cluster_key=service.review_cluster_key,
+    )
+    for item in items:
+        if item.cluster is None:
+            candidate_ids = [item.candidate.id]
+            key = service.review_cluster_key(item.candidate)
+        else:
+            candidate_ids = item.cluster.candidate_ids
+            key = item.cluster.key
+        for candidate_id in candidate_ids:
+            index[candidate_id] = {
+                "admin_cluster_key": key,
+                "admin_cluster_size": len(candidate_ids),
+                "admin_cluster_candidate_ids": candidate_ids[:25],
+            }
+    return index
+
+
 def _audit_candidate(
     service: KnowledgeUpdateService,
     candidate: UnifiedFAQCandidate,
     exact_clusters: dict[str, list[int]],
     topic_clusters: dict[str, list[int]],
+    admin_cluster_index: dict[int, dict[str, Any]],
 ) -> dict[str, Any]:
     try:
         proposal = service.get_or_create_proposal(candidate=candidate)
@@ -257,12 +296,20 @@ def _audit_candidate(
     cluster_ids = exact_clusters.get(cluster_key, [])
     topic_key = topic_cluster_key(candidate)
     topic_ids = topic_clusters.get(topic_key, [])
+    admin_cluster = admin_cluster_index.get(
+        candidate.id,
+        {
+            "admin_cluster_key": None,
+            "admin_cluster_size": 0,
+            "admin_cluster_candidate_ids": [],
+        },
+    )
     recommendation = _recommendation(
         candidate=candidate,
         blocking_failures=blocking_failures,
         warnings=warnings,
         cluster_size=len(cluster_ids),
-        topic_cluster_size=len(topic_ids),
+        admin_cluster_size=int(admin_cluster["admin_cluster_size"]),
         proposal_kind=proposal_kind,
     )
     return {
@@ -281,6 +328,9 @@ def _audit_candidate(
         "topic_cluster_key": topic_key,
         "topic_cluster_size": len(topic_ids),
         "topic_cluster_candidate_ids": topic_ids[:25],
+        "admin_cluster_key": admin_cluster["admin_cluster_key"],
+        "admin_cluster_size": admin_cluster["admin_cluster_size"],
+        "admin_cluster_candidate_ids": admin_cluster["admin_cluster_candidate_ids"],
         "blocking_failures": blocking_failures,
         "warnings": warnings,
         "check_details": checks,
@@ -299,14 +349,14 @@ def _recommendation(
     blocking_failures: list[str],
     warnings: list[str],
     cluster_size: int,
-    topic_cluster_size: int,
+    admin_cluster_size: int,
     proposal_kind: str | None,
 ) -> str:
     if blocking_failures:
         return "reject_or_rework"
     if cluster_size > 1:
         return "merge_duplicate_cluster"
-    if topic_cluster_size >= 3:
+    if admin_cluster_size >= 3:
         return "merge_topic_cluster"
     if (candidate.contradiction_score or 0.0) >= 0.35:
         return "manual_full_review"
@@ -430,15 +480,32 @@ def _summary(
         if row["exact_cluster_size"] > 1
         and row["exact_cluster_candidate_ids"][0] == row["candidate_id"]
     )
-    topic_clusters = sum(
+    broad_topic_clusters = sum(
         1
         for row in candidate_rows
         if row["topic_cluster_size"] >= 3
         and row["topic_cluster_candidate_ids"][0] == row["candidate_id"]
     )
+    admin_clusters = sum(
+        1
+        for row in candidate_rows
+        if row["admin_cluster_size"] >= 3
+        and row["admin_cluster_candidate_ids"][0] == row["candidate_id"]
+    )
     top_topic_clusters = Counter(
         row["topic_cluster_key"] for row in candidate_rows
     ).most_common(20)
+    admin_cluster_sizes = {
+        str(row["admin_cluster_key"]): row["admin_cluster_size"]
+        for row in candidate_rows
+        if row["admin_cluster_size"] >= 3
+        and row["admin_cluster_candidate_ids"][0] == row["candidate_id"]
+    }
+    top_admin_clusters = sorted(
+        admin_cluster_sizes.items(),
+        key=lambda entry: entry[1],
+        reverse=True,
+    )[:20]
     return {
         "candidate_count": len(candidate_rows),
         "recommendations": dict(recommendations),
@@ -446,8 +513,10 @@ def _summary(
         "top_target_pages": dict(target_pages.most_common(10)),
         "blocking_failures": dict(blocking_failures),
         "duplicate_clusters": duplicate_clusters,
-        "topic_clusters": topic_clusters,
+        "topic_clusters": broad_topic_clusters,
+        "admin_clusters": admin_clusters,
         "top_topic_clusters": dict(top_topic_clusters),
+        "top_admin_clusters": dict(top_admin_clusters),
         "page_count": len(page_rows),
         "page_flags": dict(page_flags),
         "proposal_count": len(proposal_rows),
@@ -468,7 +537,8 @@ def _render_markdown(
         "",
         f"- Pending candidates: {summary['candidate_count']}",
         f"- Duplicate exact clusters: {summary['duplicate_clusters']}",
-        f"- Topic clusters with 3+ candidates: {summary['topic_clusters']}",
+        f"- Broad diagnostic topic clusters with 3+ candidates: {summary['topic_clusters']}",
+        f"- Admin clusters with 3-5 candidates: {summary['admin_clusters']}",
         f"- LLM Wiki pages in export: {summary['page_count']}",
         f"- Existing proposals in export: {summary['proposal_count']}",
         "",
@@ -532,6 +602,26 @@ def _render_markdown(
         ids = ", ".join(str(cid) for cid in row["topic_cluster_candidate_ids"][:12])
         lines.append(
             f"- {row['topic_cluster_size']} candidates `{row['topic_cluster_key']}` "
+            f"[{ids}] example: {row['question'][:140]}"
+        )
+
+    lines.extend(["", "## Top Admin Clusters", ""])
+    seen_admin_clusters: set[str] = set()
+    admin_rows = [
+        row
+        for row in candidate_rows
+        if row["admin_cluster_size"] >= 3
+        and row["admin_cluster_key"] not in seen_admin_clusters
+        and not seen_admin_clusters.add(row["admin_cluster_key"])
+    ]
+    for row in sorted(
+        admin_rows,
+        key=lambda item: item["admin_cluster_size"],
+        reverse=True,
+    )[:20]:
+        ids = ", ".join(str(cid) for cid in row["admin_cluster_candidate_ids"][:12])
+        lines.append(
+            f"- {row['admin_cluster_size']} candidates `{row['admin_cluster_key']}` "
             f"[{ids}] example: {row['question'][:140]}"
         )
 

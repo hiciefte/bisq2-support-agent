@@ -130,7 +130,11 @@ async def _get_knowledge_review_items(
     candidates = []
     async for candidate in _iter_pending_candidates(pipeline_service):
         candidates.append(candidate)
-    return build_knowledge_review_items(candidates, service.is_candidate_reviewable)
+    return build_knowledge_review_items(
+        candidates,
+        service.is_candidate_reviewable,
+        cluster_key=service.review_cluster_key,
+    )
 
 
 async def _get_candidate_cluster(
