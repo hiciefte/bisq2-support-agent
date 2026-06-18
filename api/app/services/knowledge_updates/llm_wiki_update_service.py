@@ -29,6 +29,7 @@ from app.services.rag.llm_wiki_loader import (
     LLM_WIKI_TYPE,
     REVIEWED_STATUS,
 )
+from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.training.unified_repository import UnifiedFAQCandidate
 
 SECTION_ORDER = [
@@ -43,6 +44,7 @@ SECTION_ORDER = [
 SUPPORTED_ACTIONS = {"append_paragraph", "append_bullet", "replace_section"}
 SUPPORTED_SECTIONS = set(SECTION_ORDER)
 VALID_PROTOCOLS = set(ALLOWED_PROTOCOLS)
+PROTOCOL_CONFLICT_CONFIDENCE = 0.85
 MIN_TARGET_PAGE_TOKEN_COVERAGE = 0.22
 MIN_TARGET_TITLE_TOKEN_OVERLAP = 0.15
 THIN_ANSWER_MIN_CHARS = 80
@@ -92,6 +94,7 @@ SOURCE_SUPPORT_STOPWORDS = {
     "would",
     "your",
 }
+_PROTOCOL_DETECTOR = ProtocolDetector()
 
 
 @dataclass(frozen=True)
@@ -257,6 +260,8 @@ class KnowledgeUpdateService:
             issues.append("missing_protocol")
         elif candidate.protocol not in VALID_PROTOCOLS:
             issues.append("unsupported_protocol")
+        elif _candidate_protocol_conflict(candidate):
+            issues.append("protocol_conflict")
         if not self._build_source_refs(candidate):
             issues.append("missing_source_refs")
         if _candidate_reusability_issues(candidate):
@@ -939,6 +944,24 @@ class KnowledgeUpdateService:
                 blocking=True,
             )
         )
+        protocol_conflict = _candidate_protocol_conflict(candidate)
+        checks.append(
+            _check(
+                code="candidate_protocol_consistency",
+                label="Protocol consistency",
+                status="fail" if protocol_conflict else "pass",
+                detail=(
+                    "Question text strongly indicates "
+                    f"`{protocol_conflict[0]}` "
+                    f"(confidence {protocol_conflict[1]:.2f}) but the candidate "
+                    f"is tagged `{protocol}`. Regenerate or reclassify before "
+                    "promotion."
+                    if protocol_conflict
+                    else "No strong conflicting protocol signal found in the user question."
+                ),
+                blocking=True,
+            )
+        )
 
         reusability_issues = _candidate_reusability_issues(candidate)
         checks.append(
@@ -1463,6 +1486,35 @@ def _candidate_reusability_issues(candidate: UnifiedFAQCandidate) -> List[str]:
         issues.append("Answer is too thin for a situation-specific support case.")
 
     return issues
+
+
+def _candidate_protocol_conflict(
+    candidate: UnifiedFAQCandidate,
+) -> Optional[tuple[str, float]]:
+    protocol = candidate.protocol
+    if not protocol or protocol == "all" or protocol not in VALID_PROTOCOLS:
+        return None
+
+    question_texts = _dedupe(
+        _clean_inline(text)
+        for text in (
+            candidate.edited_question_text,
+            candidate.original_user_question,
+            candidate.question_text,
+        )
+        if text
+    )
+    for question_text in question_texts:
+        detected_protocol, confidence = _PROTOCOL_DETECTOR.detect_protocol_from_text(
+            question_text
+        )
+        if (
+            detected_protocol
+            and detected_protocol != protocol
+            and confidence >= PROTOCOL_CONFLICT_CONFIDENCE
+        ):
+            return detected_protocol, confidence
+    return None
 
 
 def _candidate_source_support_score(
