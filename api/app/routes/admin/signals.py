@@ -16,6 +16,7 @@ from app.services.knowledge_updates.llm_wiki_update_service import (
 from app.services.knowledge_updates.topic_clusters import build_knowledge_review_items
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -469,9 +470,11 @@ async def get_overview_action_counts(
     training_service = getattr(request.app.state, "unified_pipeline_service", None)
     if training_service is not None:
         try:
-            training_queue = _get_knowledge_update_review_item_count(
-                request=request,
-                training_service=training_service,
+            training_queue = await run_in_threadpool(
+                lambda: _get_knowledge_update_review_item_count(
+                    request=request,
+                    training_service=training_service,
+                )
             )
         except Exception:
             logger.exception("Failed to fetch training queue counts")
