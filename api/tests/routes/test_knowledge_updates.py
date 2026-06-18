@@ -193,6 +193,93 @@ async def test_knowledge_update_counts_collapse_topic_cluster(
 
 
 @pytest.mark.asyncio
+async def test_knowledge_update_counts_do_not_collapse_oversized_topic_cluster(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(
+                id=index,
+                question_text=f"How do I open mediation for stuck trade {index}?",
+                staff_answer=(
+                    "Open mediation from the Bisq trade and keep the trade context "
+                    "inside the app before escalating to external support."
+                ),
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Mediation"}]',
+            )
+            for index in range(1, 7)
+        ]
+    )
+
+    counts = await get_knowledge_update_counts(
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert counts == {"AUTO_APPROVE": 0, "SPOT_CHECK": 0, "FULL_REVIEW": 6}
+
+
+@pytest.mark.asyncio
+async def test_knowledge_update_counts_do_not_collapse_mixed_target_topics(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(
+                id=1,
+                question_text="How do I open mediation for a stuck trade?",
+                staff_answer=(
+                    "Open mediation from the affected trade so the mediator has "
+                    "the trade context and messages."
+                ),
+                protocol="multisig_v1",
+                category="Trading",
+                generated_answer_sources='[{"type":"wiki","title":"Mediation"}]',
+            ),
+            _candidate(
+                id=2,
+                question_text="How do I open mediation after a failed bank transfer?",
+                staff_answer=(
+                    "Open mediation and explain the payment-method issue before "
+                    "trying to use a different account."
+                ),
+                protocol="multisig_v1",
+                category="Payment Methods",
+                generated_answer_sources='[{"type":"wiki","title":"Payment methods"}]',
+            ),
+            _candidate(
+                id=3,
+                question_text="How do I open support if my wallet state is wrong?",
+                staff_answer=(
+                    "Check the wallet state and use the in-app support flow when "
+                    "the trade cannot be resolved safely."
+                ),
+                protocol="multisig_v1",
+                category="Wallet",
+                generated_answer_sources='[{"type":"wiki","title":"Wallet"}]',
+            ),
+        ]
+    )
+
+    counts = await get_knowledge_update_counts(
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert counts == {"AUTO_APPROVE": 0, "SPOT_CHECK": 0, "FULL_REVIEW": 3}
+
+
+@pytest.mark.asyncio
 async def test_current_knowledge_update_skips_unreviewable_candidate(
     tmp_path: Path,
 ) -> None:

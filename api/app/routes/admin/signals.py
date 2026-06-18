@@ -129,7 +129,11 @@ def _get_knowledge_update_review_item_count(
         offset += len(page)
 
     return len(
-        build_knowledge_review_items(candidates, service.is_candidate_reviewable)
+        build_knowledge_review_items(
+            candidates,
+            service.is_candidate_reviewable,
+            cluster_key=service.review_cluster_key,
+        )
     )
 
 

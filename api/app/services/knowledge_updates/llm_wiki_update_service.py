@@ -19,7 +19,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import yaml  # type: ignore[import-untyped]
 from app.core.config import Settings
-from app.services.knowledge_updates.topic_clusters import KnowledgeTopicCluster
+from app.services.knowledge_updates.topic_clusters import (
+    KnowledgeTopicCluster,
+    topic_cluster_key,
+)
 from app.services.rag.llm_wiki_loader import (
     ALLOWED_PROTOCOLS,
     INDEXABLE_STATUSES,
@@ -62,6 +65,33 @@ SITUATIONAL_QUESTION_TERMS = (
     "error message",
     "screenshot",
 )
+SOURCE_SUPPORT_WARN_THRESHOLD = 0.20
+SOURCE_SUPPORT_STOPWORDS = {
+    "about",
+    "after",
+    "answer",
+    "bisq",
+    "bitcoin",
+    "btc",
+    "could",
+    "does",
+    "from",
+    "have",
+    "should",
+    "that",
+    "this",
+    "trade",
+    "trades",
+    "user",
+    "users",
+    "what",
+    "when",
+    "where",
+    "will",
+    "with",
+    "would",
+    "your",
+}
 
 
 @dataclass(frozen=True)
@@ -103,6 +133,7 @@ class KnowledgeUpdateService:
     def __init__(self, *, settings: Settings, db_path: str):
         self.settings = settings
         self.db_path = db_path
+        self._pages_cache: Optional[List[LLMWikiPageRecord]] = None
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_database()
 
@@ -234,6 +265,19 @@ class KnowledgeUpdateService:
 
     def is_candidate_reviewable(self, candidate: UnifiedFAQCandidate) -> bool:
         return not self.candidate_reviewability_issues(candidate)
+
+    def review_cluster_key(self, candidate: UnifiedFAQCandidate) -> str:
+        """Return the conservative key used to collapse admin review items.
+
+        Broad support topics are not enough: one approval marks every cluster
+        member reviewed. The key therefore includes the inferred target page and
+        category so only small, same-page edits collapse into one synthesis item.
+        """
+        target = self._match_target_page(candidate, self._load_pages())
+        target_id = target.page_id if target else self._new_page_id(candidate)
+        topic = topic_cluster_key(candidate).split("|", 1)[-1]
+        category = _slugify(candidate.category or "uncategorized")
+        return f"{candidate.protocol or 'none'}|{target_id}|{category}|{topic}"
 
     def update_operations(
         self,
@@ -377,6 +421,7 @@ class KnowledgeUpdateService:
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(final_markdown, encoding="utf-8")
+        self._pages_cache = None
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -559,8 +604,11 @@ class KnowledgeUpdateService:
         )
 
     def _load_pages(self) -> List[LLMWikiPageRecord]:
+        if self._pages_cache is not None:
+            return self._pages_cache
         root = Path(self.settings.LLM_WIKI_DIR_PATH)
         if not root.exists():
+            self._pages_cache = []
             return []
         pages = []
         for path in sorted(root.rglob("*.md")):
@@ -568,6 +616,7 @@ class KnowledgeUpdateService:
             if page is None:
                 continue
             pages.append(page)
+        self._pages_cache = pages
         return pages
 
     def _load_page_by_id(self, page_id: Optional[str]) -> Optional[LLMWikiPageRecord]:
@@ -669,7 +718,6 @@ class KnowledgeUpdateService:
             candidate.edited_question_text or candidate.question_text
         )
         answer = _clean_block(candidate.edited_staff_answer or candidate.staff_answer)
-        source_name = "Matrix" if candidate.source == "matrix" else "Bisq 2"
         applies_when = question
         if cluster is not None:
             applies_when = _cluster_applies_when(cluster)
@@ -687,22 +735,10 @@ class KnowledgeUpdateService:
                 "content": applies_when,
             },
             {
-                "id": "review-note",
-                "section": "Review Notes",
-                "action": "append_bullet",
-                "content": (
-                    f"Derived from reviewed {source_name} support discussion "
-                    f"`{candidate.source_event_id}`; verify wording before promotion to active."
-                ),
-            },
-            {
                 "id": "last-change",
                 "section": "Last Change Summary",
                 "action": "replace_section",
-                "content": (
-                    "Reviewed support discussion proposed this update through the "
-                    "Knowledge Updates admin workflow."
-                ),
+                "content": "Updated through the Knowledge Updates admin workflow.",
             },
         ]
 
@@ -733,7 +769,7 @@ class KnowledgeUpdateService:
                     "id": "evidence-sources",
                     "section": "Evidence / Sources",
                     "action": "append_bullet",
-                    "content": ", ".join(source_refs),
+                    "content": "\n".join(f"`{ref}`" for ref in source_refs),
                 }
             )
         return operations
@@ -916,6 +952,32 @@ class KnowledgeUpdateService:
                     else "Candidate contains reusable support guidance."
                 ),
                 blocking=True,
+            )
+        )
+
+        source_support = _candidate_source_support_score(candidate)
+        checks.append(
+            _check(
+                code="source_support",
+                label="Source support",
+                status=(
+                    "warn"
+                    if source_support is not None
+                    and source_support < SOURCE_SUPPORT_WARN_THRESHOLD
+                    else "pass"
+                ),
+                detail=(
+                    "Retrieved source snippets have low lexical overlap with the candidate answer "
+                    f"({source_support:.2f}); verify the claim before promotion."
+                    if source_support is not None
+                    and source_support < SOURCE_SUPPORT_WARN_THRESHOLD
+                    else (
+                        f"Candidate answer is supported by retrieved source snippets ({source_support:.2f})."
+                        if source_support is not None
+                        else "No source-snippet content was available for lexical support scoring."
+                    )
+                ),
+                blocking=False,
             )
         )
 
@@ -1140,8 +1202,12 @@ def _apply_operations(body: str, operations: List[Dict[str, Any]]) -> str:
         if action == "replace_section":
             sections[section] = _lines(content)
         elif action == "append_bullet":
-            bullet = content if content.startswith("- ") else f"- {content}"
-            _append_with_gap(sections[section], [bullet])
+            bullets = [
+                line if line.startswith("- ") else f"- {line}"
+                for line in _lines(content)
+                if line.strip()
+            ]
+            _append_with_gap(sections[section], bullets)
         elif action == "append_paragraph":
             _append_with_gap(sections[section], _lines(content))
 
@@ -1250,11 +1316,25 @@ def _sanitize_operations(operations: List[Dict[str, Any]]) -> List[Dict[str, Any
             sanitized.append(operation)
             continue
 
-        refs = [ref.strip() for ref in str(operation.get("content") or "").split(",")]
+        refs = _source_refs_from_operation_content(str(operation.get("content") or ""))
         durable_refs = _durable_source_refs(refs)
         if durable_refs:
-            sanitized.append({**operation, "content": ", ".join(durable_refs)})
+            sanitized.append(
+                {
+                    **operation,
+                    "content": "\n".join(f"`{ref}`" for ref in durable_refs),
+                }
+            )
     return sanitized
+
+
+def _source_refs_from_operation_content(content: str) -> List[str]:
+    refs: List[str] = []
+    for raw_part in re.split(r"[,\n]", content):
+        ref = raw_part.strip().removeprefix("-").strip().strip("`").strip()
+        if ref:
+            refs.append(ref)
+    return refs
 
 
 def _proposal_has_cluster_context(
@@ -1383,6 +1463,35 @@ def _candidate_reusability_issues(candidate: UnifiedFAQCandidate) -> List[str]:
         issues.append("Answer is too thin for a situation-specific support case.")
 
     return issues
+
+
+def _candidate_source_support_score(
+    candidate: UnifiedFAQCandidate,
+) -> Optional[float]:
+    sources = _parse_sources(candidate.generated_answer_sources)
+    source_text = " ".join(
+        str(source.get("content") or "")
+        for source in sources
+        if isinstance(source, dict)
+    )
+    if not source_text.strip():
+        return None
+
+    answer_tokens = _source_support_tokens(
+        candidate.edited_staff_answer or candidate.staff_answer
+    )
+    source_tokens = _source_support_tokens(source_text)
+    if not answer_tokens or not source_tokens:
+        return None
+    return len(answer_tokens & source_tokens) / len(answer_tokens)
+
+
+def _source_support_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{3,}", str(value or "").lower())
+        if token not in SOURCE_SUPPORT_STOPWORDS
+    }
 
 
 def _check(

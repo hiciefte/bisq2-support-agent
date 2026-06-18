@@ -28,6 +28,7 @@ TOKEN_STOPWORDS = {
 }
 
 TOPIC_CLUSTER_MIN_SIZE = 3
+TOPIC_CLUSTER_MAX_SIZE = 5
 
 TOPIC_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -147,16 +148,18 @@ class KnowledgeReviewItem:
 def build_knowledge_review_items(
     candidates: Sequence[UnifiedFAQCandidate],
     is_reviewable: Callable[[UnifiedFAQCandidate], bool],
+    *,
+    cluster_key: Callable[[UnifiedFAQCandidate], str] | None = None,
 ) -> list[KnowledgeReviewItem]:
     """Collapse reviewable topic clusters into one admin queue item."""
     ordered = [candidate for candidate in candidates if is_reviewable(candidate)]
     indexed = {candidate.id: index for index, candidate in enumerate(ordered)}
-    clusters = build_topic_clusters(ordered)
+    clusters = build_topic_clusters(ordered, key_func=cluster_key)
     clustered_ids: set[int] = set()
     items: list[tuple[int, KnowledgeReviewItem]] = []
 
     for key, group in clusters.items():
-        if len(group) < TOPIC_CLUSTER_MIN_SIZE:
+        if len(group) < TOPIC_CLUSTER_MIN_SIZE or len(group) > TOPIC_CLUSTER_MAX_SIZE:
             continue
         clustered_ids.update(candidate.id for candidate in group)
         routing = min(
@@ -206,10 +209,13 @@ def build_exact_clusters(
 
 def build_topic_clusters(
     candidates: Iterable[UnifiedFAQCandidate],
+    *,
+    key_func: Callable[[UnifiedFAQCandidate], str] | None = None,
 ) -> dict[str, list[UnifiedFAQCandidate]]:
     clusters: dict[str, list[UnifiedFAQCandidate]] = defaultdict(list)
+    build_key = key_func or topic_cluster_key
     for candidate in candidates:
-        clusters[topic_cluster_key(candidate)].append(candidate)
+        clusters[build_key(candidate)].append(candidate)
     return dict(clusters)
 
 
@@ -257,8 +263,7 @@ def topic_cluster_key(candidate: UnifiedFAQCandidate) -> str:
 
 
 def _topic_from_key(key: str) -> str:
-    parts = key.split("|", 1)
-    return parts[1] if len(parts) == 2 else key
+    return key.rsplit("|", 1)[-1]
 
 
 def _fingerprint(value: str) -> str:
