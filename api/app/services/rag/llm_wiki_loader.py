@@ -6,6 +6,7 @@ active LLM Wiki pages with explicit source references become RAG documents.
 """
 
 import logging
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,6 +34,8 @@ ALLOWED_PAGE_TYPES = {
     "eval_note",
 }
 DEFAULT_LLM_WIKI_WEIGHT = 1.25
+RAG_EXCLUDED_SECTION_TITLES = {"Review Notes", "Last Change Summary"}
+_LEVEL_2_HEADING_RE = re.compile(r"^##\s+(.+?)(?:\s+#+)?\s*$")
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,7 @@ class LLMWikiPage:
 
     def to_document(self, source_weight: float) -> Document:
         source_refs = "\n".join(f"- {ref}" for ref in self.source_refs)
+        body = _body_for_rag(self.body)
         title_prefix = (
             "Support Playbook"
             if self.page_type == DEFAULT_PAGE_TYPE
@@ -60,7 +64,7 @@ class LLMWikiPage:
         )
         page_content = (
             f"{title_prefix}: {self.title}\n\n"
-            f"{self.body.strip()}\n\n"
+            f"{body}\n\n"
             f"Source refs:\n{source_refs}"
         )
         metadata: Dict[str, Any] = {
@@ -188,6 +192,10 @@ def _validate_page(
         raise ValueError("reviewed/active LLM Wiki pages require source_refs")
     if status in INDEXABLE_STATUSES and not body.strip():
         raise ValueError("reviewed/active LLM Wiki pages require body content")
+    if status in INDEXABLE_STATUSES and not _body_for_rag(body):
+        raise ValueError(
+            "reviewed/active LLM Wiki pages require answer-facing body content"
+        )
     reviewed_at = _optional_string(frontmatter.get("reviewed_at"))
     if reviewed_at:
         try:
@@ -208,6 +216,22 @@ def _validate_page(
         reviewed_at=reviewed_at,
         risk_level=_optional_string(frontmatter.get("risk_level")),
     )
+
+
+def _body_for_rag(body: str) -> str:
+    """Remove admin-only level-2 sections before RAG indexing."""
+    kept_lines: List[str] = []
+    skip_section = False
+    for line in body.splitlines():
+        match = _LEVEL_2_HEADING_RE.match(line)
+        if match:
+            section_title = match.group(1).strip()
+            skip_section = section_title in RAG_EXCLUDED_SECTION_TITLES
+            if skip_section:
+                continue
+        if not skip_section:
+            kept_lines.append(line)
+    return "\n".join(kept_lines).strip()
 
 
 def _required_string(frontmatter: Dict[str, Any], key: str) -> str:
