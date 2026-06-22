@@ -515,12 +515,13 @@ update_repository() {
     return 0
 }
 
-# Function to check if rebuild is needed based on file changes
-# NOTE: This function checks for dependency/Dockerfile changes only.
+# Function to check if a full rebuild is needed based on file changes
+# NOTE: This function checks only changes that require rebuilding every image.
 # For code changes requiring rebuild, use needs_api_rebuild() or needs_web_rebuild()
 needs_rebuild() {
     local repo_dir="${1:-.}"
     local prev_head="${2:-$PREV_HEAD}"
+    local full_rebuild_pattern='^(Dockerfile$|docker/docker-compose[^/]*\.ya?ml$|docker/bisq2-api/)'
 
     cd "$repo_dir" || return 2
 
@@ -530,7 +531,7 @@ needs_rebuild() {
         local base
         base=$(git merge-base HEAD "${GIT_REMOTE:-origin}/${GIT_BRANCH:-main}" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
         if [ -n "$base" ]; then
-            if git diff --name-only "$base" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+            if git diff --name-only "$base" HEAD | grep -qE "$full_rebuild_pattern"; then
                 return 0  # True, needs rebuild
             fi
         else
@@ -540,12 +541,12 @@ needs_rebuild() {
     else
         # Standard approach using previous head
         if [ -n "$prev_head" ]; then
-            if git diff --name-only "$prev_head" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+            if git diff --name-only "$prev_head" HEAD | grep -qE "$full_rebuild_pattern"; then
                 return 0  # True, needs rebuild
             fi
         else
             # Use HEAD@{1} as fallback
-            if git diff --name-only "HEAD@{1}" HEAD | grep -qE 'Dockerfile|requirements.txt|package.json|package-lock.json|yarn.lock'; then
+            if git diff --name-only "HEAD@{1}" HEAD | grep -qE "$full_rebuild_pattern"; then
                 return 0  # True, needs rebuild
             fi
         fi
