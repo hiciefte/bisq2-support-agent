@@ -10,36 +10,69 @@ DOCKER_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "docker-utils.sh"
 GIT_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "git-utils.sh"
 
 
+def clean_git_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    if overrides:
+        env.update(overrides)
+    return env
+
+
 def run_bash(
     script: str, *, cwd: Path, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
     return subprocess.run(
         ["bash", "-lc", script],
         cwd=cwd,
-        env=merged_env,
+        env=clean_git_env(env),
         capture_output=True,
         text=True,
         check=False,
     )
 
 
+def run_git(
+    repo: Path, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=clean_git_env(),
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
 def init_git_repo(path: Path) -> None:
-    subprocess.run(
-        ["git", "init"], cwd=path, check=True, capture_output=True, text=True
-    )
-    subprocess.run(
-        ["git", "config", "user.email", "ci@example.com"], cwd=path, check=True
-    )
-    subprocess.run(["git", "config", "user.name", "CI"], cwd=path, check=True)
+    run_git(path, "init")
+    run_git(path, "config", "user.email", "ci@example.com")
+    run_git(path, "config", "user.name", "CI")
     # Keep synthetic test repositories independent from a developer machine's
     # global Git signing and hooks configuration.
-    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=path, check=True)
-    subprocess.run(
-        ["git", "config", "core.hooksPath", "/dev/null"], cwd=path, check=True
+    run_git(path, "config", "commit.gpgsign", "false")
+    run_git(path, "config", "core.hooksPath", "/dev/null")
+
+
+def commit_file(repo: Path, relative_path: str, content: str, message: str) -> str:
+    target = repo / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    run_git(repo, "add", relative_path)
+    run_git(repo, "commit", "-m", message)
+    return run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def run_git_update_detector(function_name: str, repo: Path, prev_head: str) -> int:
+    result = run_bash(
+        f"""
+        source "{GIT_UTILS_SH}"
+        {function_name} "{repo}" "{prev_head}"
+        """,
+        cwd=REPO_ROOT,
     )
+    return result.returncode
 
 
 def test_source_env_file_exports_variables_to_child_process(tmp_path: Path) -> None:
@@ -90,46 +123,21 @@ def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
 
 def test_ensure_repository_update_safe_rejects_unmerged_paths(tmp_path: Path) -> None:
     init_git_repo(tmp_path)
-    default_branch = subprocess.run(
-        ["git", "branch", "--show-current"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    default_branch = run_git(tmp_path, "branch", "--show-current").stdout.strip()
     conflicted = tmp_path / "conflicted.txt"
     conflicted.write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "conflicted.txt"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True
-    )
+    run_git(tmp_path, "add", "conflicted.txt")
+    run_git(tmp_path, "commit", "-m", "base")
 
-    subprocess.run(
-        ["git", "checkout", "-b", "side"], cwd=tmp_path, check=True, capture_output=True
-    )
+    run_git(tmp_path, "checkout", "-b", "side")
     conflicted.write_text("side\n", encoding="utf-8")
-    subprocess.run(
-        ["git", "commit", "-am", "side"], cwd=tmp_path, check=True, capture_output=True
-    )
+    run_git(tmp_path, "commit", "-am", "side")
 
-    subprocess.run(
-        ["git", "checkout", default_branch],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
+    run_git(tmp_path, "checkout", default_branch)
     conflicted.write_text("main\n", encoding="utf-8")
-    subprocess.run(
-        ["git", "commit", "-am", "main"], cwd=tmp_path, check=True, capture_output=True
-    )
+    run_git(tmp_path, "commit", "-am", "main")
 
-    merge = subprocess.run(
-        ["git", "merge", "side"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    merge = run_git(tmp_path, "merge", "side", check=False)
     assert merge.returncode != 0
 
     result = run_bash(
@@ -150,10 +158,8 @@ def test_stash_changes_returns_noop_when_no_new_stash_is_created(
     init_git_repo(tmp_path)
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("clean\n", encoding="utf-8")
-    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True
-    )
+    run_git(tmp_path, "add", "tracked.txt")
+    run_git(tmp_path, "commit", "-m", "base")
 
     result = run_bash(
         f"""
@@ -165,6 +171,64 @@ def test_stash_changes_returns_noop_when_no_new_stash_is_created(
 
     assert result.returncode == 2
     assert "did not create a new stash entry" in result.stdout
+
+
+def test_api_requirements_change_uses_api_rebuild_not_full_rebuild(
+    tmp_path: Path,
+) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "api/requirements.txt",
+        "langsmith==0.4.8\n",
+        "change api requirements",
+    )
+
+    assert run_git_update_detector("needs_rebuild", tmp_path, prev_head) == 1
+    assert run_git_update_detector("needs_api_rebuild", tmp_path, prev_head) == 0
+
+
+def test_web_package_change_uses_web_rebuild_not_full_rebuild(
+    tmp_path: Path,
+) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "web/package.json",
+        '{"scripts":{"test":"jest"}}\n',
+        "change web package",
+    )
+
+    assert run_git_update_detector("needs_rebuild", tmp_path, prev_head) == 1
+    assert run_git_update_detector("needs_web_rebuild", tmp_path, prev_head) == 0
+
+
+def test_compose_change_requires_full_rebuild(tmp_path: Path) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "docker/docker-compose.yml",
+        "services: {}\n",
+        "change compose",
+    )
+
+    assert run_git_update_detector("needs_rebuild", tmp_path, prev_head) == 0
+
+
+def test_bisq2_api_image_change_requires_full_rebuild(tmp_path: Path) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "docker/bisq2-api/Dockerfile",
+        "FROM eclipse-temurin:21\n",
+        "change bisq2 image",
+    )
+
+    assert run_git_update_detector("needs_rebuild", tmp_path, prev_head) == 0
 
 
 def test_restart_service_with_deps_starts_qdrant_for_api(tmp_path: Path) -> None:
