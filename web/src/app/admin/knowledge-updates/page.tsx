@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -46,6 +46,33 @@ import type { QueueCounts, RoutingCategory, UnifiedCandidate } from "@/component
 type CheckStatus = "pass" | "warn" | "fail";
 type AnswerRating = "good" | "needs_improvement";
 type DocumentReviewMode = "diff" | "preview";
+type ReviewFeedbackTag = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+interface GeneratorFeedbackExample {
+  proposal_id: number;
+  candidate_id: number;
+  target_page_id: string | null;
+  feedback_tags: string[];
+  future_generator_note: string | null;
+  last_change_summary: string | null;
+  section_diff_summary: Array<{
+    section: string;
+    before_chars: number;
+    after_chars: number;
+  }>;
+}
+
+interface GeneratorFeedbackContext {
+  example_count: number;
+  feedback_tags: string[];
+  guidance: string[];
+  notes: string[];
+  examples: GeneratorFeedbackExample[];
+}
 
 interface KnowledgeCheck {
   code: string;
@@ -72,6 +99,16 @@ interface KnowledgeProposal {
   operations: KnowledgeOperation[];
   preview_markdown: string;
   document_markdown_override: string | null;
+  generated_markdown: string | null;
+  approved_markdown: string | null;
+  review_notes: string | null;
+  last_change_summary: string | null;
+  feedback_tags: string[];
+  future_generator_note: string | null;
+  section_diff_summary: GeneratorFeedbackExample["section_diff_summary"];
+  generator_version: string;
+  prompt_version: string | null;
+  generator_feedback: GeneratorFeedbackContext;
   source_refs: string[];
   checks: KnowledgeCheck[];
   status: string;
@@ -174,6 +211,7 @@ const DOCUMENT_REVIEW_MODES: Array<{
 const SUPPORTING_OPERATION_IDS = new Set([
   "do-not-say",
   "cluster-synthesis",
+  "generator-feedback",
   "review-note",
   "last-change",
   "evidence-sources",
@@ -184,9 +222,65 @@ const OPERATION_HINTS: Record<string, string> = {
   "applies-when": "Retrieval cue. This teaches when the LLM Wiki page should be used.",
   "do-not-say": "Safety guardrail. Edit only if the generated limit is too broad or too narrow.",
   "cluster-synthesis": "Cluster audit note. It explains why this item represents several related discussions.",
+  "generator-feedback": "Prior review feedback. It helps this review and is excluded from customer-facing RAG.",
   "review-note": "Reviewer audit trail. Usually no manual edit needed.",
   "last-change": "Maintenance summary for future reviewers. Usually no manual edit needed.",
   "evidence-sources": "Stored source references. Use the compact source badge before these fields when verification is needed.",
+};
+
+const REVIEW_FEEDBACK_TAGS: ReviewFeedbackTag[] = [
+  {
+    id: "good_generation",
+    label: "Good generation",
+    description: "Draft was suitable without material correction.",
+  },
+  {
+    id: "factual_correction",
+    label: "Factual correction",
+    description: "Admin changed a generated claim.",
+  },
+  {
+    id: "scope_narrowing",
+    label: "Scope narrowed",
+    description: "Admin made the guidance less broad.",
+  },
+  {
+    id: "source_support",
+    label: "Source support",
+    description: "Admin changed source-backed evidence or source scope.",
+  },
+  {
+    id: "protocol_version",
+    label: "Protocol/version",
+    description: "Admin changed protocol or version scope.",
+  },
+  {
+    id: "tone_wording",
+    label: "Tone/wording",
+    description: "Admin changed wording without a factual correction.",
+  },
+  {
+    id: "wrong_section",
+    label: "Wrong section",
+    description: "Admin moved content to a better section.",
+  },
+  {
+    id: "missing_caveat",
+    label: "Missing caveat",
+    description: "Admin added a guardrail or caveat.",
+  },
+];
+
+const REVIEW_FEEDBACK_TAG_LABELS = Object.fromEntries(
+  REVIEW_FEEDBACK_TAGS.map((tag) => [tag.id, tag.label]),
+) as Record<string, string>;
+
+const EMPTY_GENERATOR_FEEDBACK: GeneratorFeedbackContext = {
+  example_count: 0,
+  feedback_tags: [],
+  guidance: [],
+  notes: [],
+  examples: [],
 };
 
 function formatDate(value: string | null | undefined): string {
@@ -215,6 +309,63 @@ function stripFrontmatter(markdown: string): string {
 function splitMarkdownLines(markdown: string): string[] {
   if (!markdown) return [];
   return markdown.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
+function splitMarkdownSections(markdown: string): Record<string, string> {
+  const sections: Record<string, string[]> = {};
+  let currentSection: string | null = null;
+  for (const line of splitMarkdownLines(stripFrontmatter(markdown))) {
+    if (line.startsWith("## ")) {
+      currentSection = line.slice(3).trim();
+      sections[currentSection] = sections[currentSection] ?? [];
+      continue;
+    }
+    if (currentSection) {
+      sections[currentSection].push(line);
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(sections).map(([section, lines]) => [
+      section,
+      lines.join("\n").trim(),
+    ]),
+  );
+}
+
+function changedMarkdownSections(
+  beforeMarkdown: string | null | undefined,
+  afterMarkdown: string,
+): string[] {
+  const before = splitMarkdownSections(beforeMarkdown ?? "");
+  const after = splitMarkdownSections(afterMarkdown);
+  const names = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return Array.from(names).filter((name) => (before[name] ?? "") !== (after[name] ?? ""));
+}
+
+function inferFeedbackTags(
+  changedSections: string[],
+  answerRating: AnswerRating | null,
+): string[] {
+  const tags = new Set<string>();
+  if (changedSections.length === 0 && answerRating !== "needs_improvement") {
+    tags.add("good_generation");
+  }
+  if (answerRating === "needs_improvement") {
+    tags.add("factual_correction");
+  }
+  if (changedSections.includes("Canonical Support Answer")) {
+    tags.add("factual_correction");
+  }
+  if (changedSections.includes("Applies When")) {
+    tags.add("scope_narrowing");
+  }
+  if (changedSections.includes("Do Not Say")) {
+    tags.add("missing_caveat");
+  }
+  if (changedSections.includes("Evidence / Sources")) {
+    tags.add("source_support");
+  }
+  return Array.from(tags);
 }
 
 function buildLineDiff(beforeMarkdown: string | null, afterMarkdown: string): DiffRow[] {
@@ -357,6 +508,10 @@ function topicLabel(topic: string): string {
   return topic
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function feedbackTagLabel(tag: string): string {
+  return REVIEW_FEEDBACK_TAG_LABELS[tag] ?? tag.replace(/_/g, " ");
 }
 
 function ContextBadge({
@@ -581,6 +736,50 @@ function ClusterContextCard({ cluster }: { cluster: KnowledgeCluster }) {
   );
 }
 
+function GeneratorFeedbackCard({ feedback }: { feedback: GeneratorFeedbackContext }) {
+  if (!feedback.example_count) return null;
+
+  return (
+    <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold">
+            <Sparkles className="h-4 w-4 text-sky-600" aria-hidden="true" />
+            Learned from prior reviews
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {feedback.example_count.toLocaleString()} approved review example{feedback.example_count === 1 ? "" : "s"} matched this page or topic.
+            This guidance is saved for generator improvement and is excluded from customer-facing RAG.
+          </p>
+        </div>
+        {feedback.feedback_tags.length > 0 && (
+          <div className="flex max-w-full flex-wrap gap-1.5">
+            {feedback.feedback_tags.slice(0, 3).map((tag) => (
+              <Badge key={tag} variant="outline" className="border-sky-500/30 bg-background/70 text-sky-700">
+                {feedbackTagLabel(tag)}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+      {feedback.guidance.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {feedback.guidance.slice(0, 3).map((guidance) => (
+            <p key={guidance} className="text-xs leading-5 text-foreground">
+              {guidance}
+            </p>
+          ))}
+        </div>
+      )}
+      {feedback.notes.length > 0 && (
+        <div className="mt-3 rounded-lg border border-sky-500/20 bg-background/70 p-2 text-xs leading-5 text-muted-foreground">
+          {feedback.notes[0]}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DocumentReviewModeSelector({
   value,
   onChange,
@@ -706,8 +905,30 @@ export default function KnowledgeUpdatesPage() {
   const [showSupportingEdits, setShowSupportingEdits] = useState(false);
   const [answerRating, setAnswerRating] = useState<AnswerRating | null>(null);
   const [ratingLoading, setRatingLoading] = useState<AnswerRating | null>(null);
+  const [feedbackTags, setFeedbackTags] = useState<string[]>([]);
+  const [futureGeneratorNote, setFutureGeneratorNote] = useState("");
   const [isReviewGuideDismissed, setIsReviewGuideDismissed] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reviewStateKeyRef = useRef<string | null>(null);
+  const reviewStateCandidateId = data?.candidate.id ?? null;
+  const reviewStateGeneratedAnswer = data?.candidate.generated_answer ?? "";
+  const reviewStateGeneratedMarkdown = data?.proposal.generated_markdown ?? "";
+
+  const reviewStateKey = useMemo(
+    () =>
+      reviewStateCandidateId === null
+        ? null
+        : [
+            reviewStateCandidateId,
+            reviewStateGeneratedAnswer,
+            reviewStateGeneratedMarkdown,
+          ].join("|"),
+    [
+      reviewStateCandidateId,
+      reviewStateGeneratedAnswer,
+      reviewStateGeneratedMarkdown,
+    ],
+  );
 
   const isOperationDirty = useMemo(
     () => JSON.stringify(operations) !== JSON.stringify(data?.proposal.operations ?? []),
@@ -740,6 +961,27 @@ export default function KnowledgeUpdatesPage() {
     () => buildLineDiff(data?.proposal.current_page_markdown ?? null, documentMarkdown),
     [data?.proposal.current_page_markdown, documentMarkdown],
   );
+
+  const changedSections = useMemo(
+    () =>
+      changedMarkdownSections(
+        data?.proposal.generated_markdown ?? data?.proposal.preview_markdown,
+        documentMarkdown,
+      ),
+    [data?.proposal.generated_markdown, data?.proposal.preview_markdown, documentMarkdown],
+  );
+
+  const inferredFeedbackTags = useMemo(
+    () => inferFeedbackTags(changedSections, answerRating),
+    [changedSections, answerRating],
+  );
+
+  const effectiveFeedbackTags = feedbackTags.length > 0 ? feedbackTags : inferredFeedbackTags;
+
+  const feedbackSummary =
+    changedSections.length > 0
+      ? `Changed ${changedSections.length} section${changedSections.length === 1 ? "" : "s"}`
+      : "No material document edits detected";
 
   const cleanedGeneratedAnswer = useMemo(
     () => stripGeneratedAnswerFooter(data?.candidate.generated_answer ?? ""),
@@ -786,6 +1028,8 @@ export default function KnowledgeUpdatesPage() {
       setData(current);
       setOperations(current?.proposal.operations ?? []);
       setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
+      setFeedbackTags(current?.proposal.feedback_tags ?? []);
+      setFutureGeneratorNote(current?.proposal.future_generator_note ?? "");
       setDocumentMode("diff");
       setEditingDocumentLine(null);
       setShowConversation(Boolean(current?.candidate.has_correction || current?.candidate.routing === "FULL_REVIEW"));
@@ -816,11 +1060,15 @@ export default function KnowledgeUpdatesPage() {
   }, []);
 
   useEffect(() => {
+    if (!data || reviewStateKey === reviewStateKeyRef.current) return;
+    reviewStateKeyRef.current = reviewStateKey;
     setAnswerRating(null);
     setRatingLoading(null);
     setShowSupportingEdits(false);
     setEditingDocumentLine(null);
-  }, [data?.candidate.id, data?.candidate.generated_answer]);
+    setFeedbackTags(data?.proposal.feedback_tags ?? []);
+    setFutureGeneratorNote(data?.proposal.future_generator_note ?? "");
+  }, [data, reviewStateKey]);
 
   const handleDismissReviewGuide = useCallback(() => {
     setIsReviewGuideDismissed(true);
@@ -914,13 +1162,23 @@ export default function KnowledgeUpdatesPage() {
       ? await persistDocumentMarkdown()
       : await persistOperations();
     if (!saved) return;
+    const savedChangedSections = changedMarkdownSections(
+      saved.generated_markdown ?? saved.preview_markdown,
+      saved.preview_markdown,
+    );
+    const savedInferredFeedbackTags = inferFeedbackTags(savedChangedSections, answerRating);
+    const approvalFeedbackTags = feedbackTags.length > 0 ? feedbackTags : savedInferredFeedbackTags;
     setActionLoading("approve");
     try {
       const response = await makeAuthenticatedRequest(
         `/admin/knowledge-updates/${data.candidate.id}/approve`,
         {
           method: "POST",
-          body: JSON.stringify({ reviewer: "admin" }),
+          body: JSON.stringify({
+            reviewer: "admin",
+            feedback_tags: approvalFeedbackTags,
+            future_generator_note: futureGeneratorNote.trim() || null,
+          }),
         },
       );
       if (!response.ok) {
@@ -1037,6 +1295,19 @@ export default function KnowledgeUpdatesPage() {
 
   const updateDocumentLine = (lineNumber: number, content: string) => {
     setDocumentMarkdown((current) => replaceMarkdownLine(current, lineNumber, content));
+  };
+
+  const toggleFeedbackTag = (tag: string) => {
+    setFeedbackTags((current) => {
+      const base = current.length > 0 ? current : inferredFeedbackTags;
+      if (base.includes(tag)) {
+        return base.filter((item) => item !== tag);
+      }
+      if (tag === "good_generation") {
+        return ["good_generation"];
+      }
+      return [...base.filter((item) => item !== "good_generation"), tag];
+    });
   };
 
   const handleRateGeneratedAnswer = async (rating: AnswerRating) => {
@@ -1187,6 +1458,8 @@ export default function KnowledgeUpdatesPage() {
                   immediately change autoresponse confidence thresholds.
                 </p>
               </div>
+
+              <GeneratorFeedbackCard feedback={data.proposal.generator_feedback ?? EMPTY_GENERATOR_FEEDBACK} />
 
               <section className="space-y-3">
                 <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-muted/10 p-3">
@@ -1433,6 +1706,63 @@ export default function KnowledgeUpdatesPage() {
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 p-4">
+                <div className="rounded-lg border border-border/70 bg-muted/15 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">Review outcome</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {feedbackSummary}. Saved as generator feedback, not RAG content.
+                      </p>
+                    </div>
+                    {effectiveFeedbackTags.length === 1 && effectiveFeedbackTags[0] === "good_generation" && (
+                      <Badge variant="outline" className="border-emerald-500/30 text-emerald-700">
+                        Auto
+                      </Badge>
+                    )}
+                  </div>
+                  {changedSections.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {changedSections.slice(0, 4).map((section) => (
+                        <Badge key={section} variant="secondary" className="text-[11px]">
+                          {section}
+                        </Badge>
+                      ))}
+                      {changedSections.length > 4 && (
+                        <Badge variant="outline" className="text-[11px]">
+                          +{changedSections.length - 4}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {REVIEW_FEEDBACK_TAGS.map((tag) => {
+                      const isSelected = effectiveFeedbackTags.includes(tag.id);
+                      return (
+                        <Button
+                          key={tag.id}
+                          type="button"
+                          variant={isSelected ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => toggleFeedbackTag(tag.id)}
+                          title={tag.description}
+                          className={cn(
+                            "h-7 rounded-md px-2 text-[11px]",
+                            isSelected && "bg-primary text-primary-foreground",
+                          )}
+                        >
+                          {tag.label}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <Textarea
+                    value={futureGeneratorNote}
+                    onChange={(event) => setFutureGeneratorNote(event.target.value)}
+                    placeholder="Optional future generator note"
+                    className="mt-3 min-h-16 resize-y bg-background/80 text-xs"
+                    aria-label="Future generator note"
+                  />
+                </div>
                 <Button
                   onClick={handleApprove}
                   disabled={hasBlockingFailure || actionLoading === "approve"}

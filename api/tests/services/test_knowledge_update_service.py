@@ -270,6 +270,308 @@ def test_approve_writes_full_document_override(tmp_path: Path) -> None:
     assert "support:matrix:$event" not in written
 
 
+def test_full_document_override_preserves_generated_markdown(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate()
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    generated_markdown = proposal.preview_markdown
+
+    edited_markdown = generated_markdown.replace(
+        "Seller reputation is the main safety signal.",
+        (
+            "Seller reputation is the main safety signal, but buyers do not "
+            "need their own reputation to start."
+        ),
+    )
+    updated = service.update_document_markdown(
+        candidate=candidate,
+        markdown=edited_markdown,
+    )
+
+    assert updated.generated_markdown == generated_markdown
+    assert updated.preview_markdown != generated_markdown
+    assert updated.document_markdown_override == updated.preview_markdown
+
+
+def test_approve_stores_review_feedback_sections(tmp_path: Path) -> None:
+    page = _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate()
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    edited_markdown = (
+        proposal.preview_markdown.replace(
+            "Seller reputation is the main safety signal.",
+            (
+                "Seller reputation is the main safety signal, but buyers do not "
+                "need their own reputation to start."
+            ),
+        )
+        .replace(
+            "## Review Notes\n\n## Last Change Summary",
+            "## Review Notes\n\n"
+            "- Reviewer correction: Narrowed the generated reputation guidance.\n"
+            "- Future generator guidance: Do not imply buyers need reputation.\n\n"
+            "## Last Change Summary",
+        )
+        .replace(
+            "Updated through the Knowledge Updates admin workflow.",
+            "Narrowed the canonical answer and added reviewer feedback.",
+        )
+    )
+
+    service.update_document_markdown(candidate=candidate, markdown=edited_markdown)
+    approved = service.approve(candidate=candidate, reviewer="admin")
+
+    written = page.read_text(encoding="utf-8")
+    assert approved.generated_markdown == proposal.preview_markdown
+    assert approved.approved_markdown == written
+    assert "reviewed_by: admin" in approved.approved_markdown
+    assert approved.review_notes == "\n".join(
+        [
+            "- Reviewer correction: Narrowed the generated reputation guidance.",
+            "- Future generator guidance: Do not imply buyers need reputation.",
+        ]
+    )
+    assert (
+        approved.last_change_summary
+        == "Narrowed the canonical answer and added reviewer feedback."
+    )
+
+
+def test_approve_stores_review_outcome_feedback(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate()
+    service.get_or_create_proposal(candidate=candidate)
+
+    approved = service.approve(
+        candidate=candidate,
+        reviewer="admin",
+        feedback_tags=[
+            "scope_narrowing",
+            "source_support",
+            "",
+            "scope_narrowing",
+            "unknown_tag",
+        ],
+        future_generator_note="Future drafts should keep buyer guidance narrow.",
+    )
+
+    assert approved.feedback_tags == ["scope_narrowing", "source_support"]
+    assert (
+        approved.future_generator_note
+        == "Future drafts should keep buyer guidance narrow."
+    )
+    assert approved.generator_version
+    assert approved.prompt_version is None
+
+
+def test_approval_stores_section_diff_summary(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate()
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    edited_markdown = proposal.preview_markdown.replace(
+        "Seller reputation is the main safety signal.",
+        (
+            "Seller reputation is the main safety signal, but buyers do not "
+            "need their own reputation to start."
+        ),
+    )
+    service.update_document_markdown(candidate=candidate, markdown=edited_markdown)
+
+    approved = service.approve(
+        candidate=candidate,
+        reviewer="admin",
+        feedback_tags=["factual_correction"],
+    )
+
+    assert len(approved.section_diff_summary) == 1
+    diff = approved.section_diff_summary[0]
+    assert diff["section"] == "Canonical Support Answer"
+    assert diff["after_chars"] > diff["before_chars"]
+
+
+def test_future_proposal_includes_prior_generator_feedback_guidance(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    first_candidate = _candidate(id=7)
+    service.get_or_create_proposal(candidate=first_candidate)
+    service.approve(
+        candidate=first_candidate,
+        reviewer="admin",
+        feedback_tags=["scope_narrowing", "source_support"],
+        future_generator_note=(
+            "Future drafts should avoid implying buyers need reputation."
+        ),
+    )
+
+    next_candidate = _candidate(
+        id=8,
+        question_text="Can I buy without reputation in Bisq Easy?",
+        staff_answer="Buyers can buy without their own reputation.",
+    )
+    proposal = service.get_or_create_proposal(candidate=next_candidate)
+
+    assert proposal.generator_feedback["feedback_tags"] == [
+        "scope_narrowing",
+        "source_support",
+    ]
+    assert proposal.generator_feedback["example_count"] == 1
+    assert (
+        "Future drafts should avoid implying buyers need reputation."
+        in proposal.generator_feedback["notes"]
+    )
+    assert any(
+        operation["id"] == "generator-feedback"
+        and "Prior review feedback for this topic" in operation["content"]
+        for operation in proposal.operations
+    )
+    assert "Prior review feedback for this topic" in proposal.preview_markdown
+
+
+def test_future_proposal_finds_matching_feedback_before_limit(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    db_path = tmp_path / "unified_training.db"
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(db_path),
+    )
+    first_candidate = _candidate(id=7)
+    service.get_or_create_proposal(candidate=first_candidate)
+    service.approve(
+        candidate=first_candidate,
+        reviewer="admin",
+        feedback_tags=["scope_narrowing"],
+        future_generator_note="Future drafts should keep reputation scope narrow.",
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        for index in range(55):
+            conn.execute(
+                """
+                INSERT INTO knowledge_update_proposals (
+                    candidate_id,
+                    target_page_id,
+                    target_page_title,
+                    target_page_path,
+                    proposal_kind,
+                    operations_json,
+                    preview_markdown,
+                    generated_markdown,
+                    feedback_tags_json,
+                    section_diff_summary_json,
+                    generator_version,
+                    applied_feedback_json,
+                    source_refs_json,
+                    checks_json,
+                    status,
+                    reviewed_by,
+                    reviewed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1000 + index,
+                    f"unrelated-{index}",
+                    "Unrelated",
+                    f"unrelated-{index}.md",
+                    "create_new",
+                    "[]",
+                    "## Canonical Support Answer\n\nUnrelated.",
+                    "## Canonical Support Answer\n\nUnrelated.",
+                    '["tone_wording"]',
+                    "[]",
+                    "test-generator",
+                    "{}",
+                    "[]",
+                    "[]",
+                    "approved",
+                    "admin",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    next_candidate = _candidate(
+        id=8,
+        question_text="Can buyers start without reputation?",
+        staff_answer="Buyers can start without reputation.",
+    )
+    proposal = service.get_or_create_proposal(candidate=next_candidate)
+
+    assert proposal.generator_feedback["example_count"] == 1
+    assert proposal.generator_feedback["feedback_tags"] == ["scope_narrowing"]
+    assert (
+        "Future drafts should keep reputation scope narrow."
+        in proposal.generator_feedback["notes"]
+    )
+
+
+def test_generator_feedback_export_returns_structured_records(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate()
+    service.get_or_create_proposal(candidate=candidate)
+    service.approve(
+        candidate=candidate,
+        reviewer="admin",
+        feedback_tags=["missing_caveat"],
+        future_generator_note="Future drafts should include the caveat earlier.",
+    )
+
+    records = service.list_generator_feedback_records(limit=5)
+
+    assert len(records) == 1
+    assert records[0]["candidate_id"] == candidate.id
+    assert records[0]["feedback_tags"] == ["missing_caveat"]
+    assert (
+        records[0]["future_generator_note"]
+        == "Future drafts should include the caveat earlier."
+    )
+    assert records[0]["generator_version"]
+
+
 def test_document_override_source_refs_drive_approval_checks(tmp_path: Path) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
     service = KnowledgeUpdateService(

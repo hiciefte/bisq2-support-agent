@@ -9,6 +9,8 @@ pydantic-settings
 # LLM and RAG
 langchain-core
 langchain-text-splitters
+# Security floor for GHSA-f4xh-w4cj-qxq8 in LangSmith tracing middleware.
+langsmith>=0.8.18
 
 # Qdrant for hybrid search (uses LangChain embeddings)
 qdrant-client>=1.12.0

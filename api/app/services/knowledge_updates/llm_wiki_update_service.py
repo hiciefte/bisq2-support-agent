@@ -68,6 +68,22 @@ SITUATIONAL_QUESTION_TERMS = (
     "screenshot",
 )
 SOURCE_SUPPORT_WARN_THRESHOLD = 0.20
+GENERATOR_VERSION = "knowledge-update-heuristic-v2"
+PROMPT_VERSION: Optional[str] = None
+MAX_GENERATOR_FEEDBACK_EXAMPLES = 5
+GENERATOR_FEEDBACK_EXPORT_LIMIT = 100
+PROPOSAL_FEEDBACK_COLUMNS = {
+    "generated_markdown": "TEXT",
+    "approved_markdown": "TEXT",
+    "review_notes": "TEXT",
+    "last_change_summary": "TEXT",
+    "feedback_tags_json": "TEXT",
+    "future_generator_note": "TEXT",
+    "section_diff_summary_json": "TEXT",
+    "generator_version": "TEXT",
+    "prompt_version": "TEXT",
+    "applied_feedback_json": "TEXT",
+}
 SOURCE_SUPPORT_STOPWORDS = {
     "about",
     "after",
@@ -93,6 +109,25 @@ SOURCE_SUPPORT_STOPWORDS = {
     "with",
     "would",
     "your",
+}
+FEEDBACK_TAG_GUIDANCE = {
+    "factual_correction": "Verify generated claims against durable sources before approval.",
+    "scope_narrowing": "Keep guidance narrowly tied to the reviewed support evidence.",
+    "source_support": "Prefer durable wiki, FAQ, or LLM Wiki refs before keeping a claim.",
+    "protocol_version": "Keep protocol and version scope explicit when evidence is version-sensitive.",
+    "tone_wording": "Use concise support wording without changing product meaning.",
+    "wrong_section": "Place answer rules in answer-facing sections and audit notes in Review Notes.",
+    "missing_caveat": "Add caveats as guardrails instead of broad canonical claims.",
+}
+FEEDBACK_TAG_LABELS = {
+    "good_generation": "Good generation",
+    "factual_correction": "Factual correction",
+    "scope_narrowing": "Scope narrowed",
+    "source_support": "Source support",
+    "protocol_version": "Protocol/version",
+    "tone_wording": "Tone/wording",
+    "wrong_section": "Wrong section",
+    "missing_caveat": "Missing caveat",
 }
 _PROTOCOL_DETECTOR = ProtocolDetector()
 
@@ -120,6 +155,16 @@ class KnowledgeUpdateProposal:
     operations: List[Dict[str, Any]]
     preview_markdown: str
     document_markdown_override: Optional[str]
+    generated_markdown: Optional[str]
+    approved_markdown: Optional[str]
+    review_notes: Optional[str]
+    last_change_summary: Optional[str]
+    feedback_tags: List[str]
+    future_generator_note: Optional[str]
+    section_diff_summary: List[Dict[str, Any]]
+    generator_version: str
+    prompt_version: Optional[str]
+    generator_feedback: Dict[str, Any]
     source_refs: List[str]
     checks: List[Dict[str, Any]]
     status: str
@@ -154,6 +199,16 @@ class KnowledgeUpdateService:
                 operations_json TEXT NOT NULL,
                 preview_markdown TEXT NOT NULL,
                 document_markdown_override TEXT,
+                generated_markdown TEXT,
+                approved_markdown TEXT,
+                review_notes TEXT,
+                last_change_summary TEXT,
+                feedback_tags_json TEXT,
+                future_generator_note TEXT,
+                section_diff_summary_json TEXT,
+                generator_version TEXT,
+                prompt_version TEXT,
+                applied_feedback_json TEXT,
                 source_refs_json TEXT NOT NULL,
                 checks_json TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending'
@@ -178,6 +233,39 @@ class KnowledgeUpdateService:
             cursor.execute(
                 "ALTER TABLE knowledge_update_proposals ADD COLUMN document_markdown_override TEXT"
             )
+        for column, column_type in PROPOSAL_FEEDBACK_COLUMNS.items():
+            if column not in columns:
+                cursor.execute(
+                    f"ALTER TABLE knowledge_update_proposals ADD COLUMN {column} {column_type}"
+                )
+        cursor.execute("""
+            UPDATE knowledge_update_proposals
+            SET generated_markdown = preview_markdown
+            WHERE generated_markdown IS NULL
+            """)
+        cursor.execute("""
+            UPDATE knowledge_update_proposals
+            SET feedback_tags_json = '[]'
+            WHERE feedback_tags_json IS NULL
+            """)
+        cursor.execute("""
+            UPDATE knowledge_update_proposals
+            SET section_diff_summary_json = '[]'
+            WHERE section_diff_summary_json IS NULL
+            """)
+        cursor.execute(
+            """
+            UPDATE knowledge_update_proposals
+            SET generator_version = ?
+            WHERE generator_version IS NULL
+            """,
+            (GENERATOR_VERSION,),
+        )
+        cursor.execute("""
+            UPDATE knowledge_update_proposals
+            SET applied_feedback_json = '{}'
+            WHERE applied_feedback_json IS NULL
+            """)
         conn.commit()
         conn.close()
 
@@ -200,11 +288,16 @@ class KnowledgeUpdateService:
         target = self._match_target_page(candidate, pages)
         proposal_kind = "update_existing" if target else "create_new"
         source_refs = self._build_source_refs(candidate, cluster=cluster)
+        generator_feedback = self._build_generator_feedback_context(
+            candidate=candidate,
+            target=target,
+        )
         operations = self._build_operations(
             candidate,
             target,
             source_refs,
             cluster=cluster,
+            generator_feedback=generator_feedback,
         )
         preview = self._render_preview(
             candidate=candidate,
@@ -222,6 +315,7 @@ class KnowledgeUpdateService:
             pages=pages,
             requires_cluster_synthesis=cluster is not None,
             document_override_present=False,
+            generator_feedback=generator_feedback,
         )
         return self._upsert_proposal(
             candidate_id=candidate.id,
@@ -235,6 +329,7 @@ class KnowledgeUpdateService:
             preview_markdown=preview,
             source_refs=source_refs,
             checks=checks,
+            generator_feedback=generator_feedback,
         )
 
     def get_by_candidate_id(
@@ -311,6 +406,7 @@ class KnowledgeUpdateService:
                 operations
             ),
             document_override_present=False,
+            generator_feedback=proposal.generator_feedback,
         )
 
         conn = sqlite3.connect(self.db_path)
@@ -366,6 +462,7 @@ class KnowledgeUpdateService:
                 proposal.operations
             ),
             document_override_present=True,
+            generator_feedback=proposal.generator_feedback,
         )
 
         conn = sqlite3.connect(self.db_path)
@@ -400,6 +497,8 @@ class KnowledgeUpdateService:
         candidate: UnifiedFAQCandidate,
         reviewer: str,
         cluster: Optional[KnowledgeTopicCluster] = None,
+        feedback_tags: Optional[Iterable[str]] = None,
+        future_generator_note: Optional[str] = None,
     ) -> KnowledgeUpdateProposal:
         proposal = self.get_or_create_proposal(candidate=candidate, cluster=cluster)
         blocking_failures = [
@@ -419,6 +518,18 @@ class KnowledgeUpdateService:
             target=target,
             reviewer=reviewer,
         )
+        review_notes = _section_text_from_markdown(final_markdown, "Review Notes")
+        last_change_summary = _section_text_from_markdown(
+            final_markdown,
+            "Last Change Summary",
+        )
+        generated_markdown = proposal.generated_markdown or proposal.preview_markdown
+        section_diff_summary = _section_diff_summary(
+            generated_markdown,
+            final_markdown,
+        )
+        normalized_feedback_tags = _feedback_tags(feedback_tags or [])
+        normalized_generator_note = _optional_text(future_generator_note)
         output_path = (
             target.path
             if target
@@ -437,10 +548,31 @@ class KnowledgeUpdateService:
             SET status = 'approved',
                 reviewed_by = ?,
                 reviewed_at = ?,
+                approved_markdown = ?,
+                review_notes = ?,
+                last_change_summary = ?,
+                feedback_tags_json = ?,
+                future_generator_note = ?,
+                section_diff_summary_json = ?,
+                generator_version = ?,
+                prompt_version = ?,
                 updated_at = ?
             WHERE candidate_id = ?
             """,
-            (reviewer, now, now, candidate.id),
+            (
+                reviewer,
+                now,
+                final_markdown,
+                review_notes,
+                last_change_summary,
+                json.dumps(normalized_feedback_tags),
+                normalized_generator_note,
+                json.dumps(section_diff_summary),
+                proposal.generator_version or GENERATOR_VERSION,
+                proposal.prompt_version,
+                now,
+                candidate.id,
+            ),
         )
         conn.commit()
         conn.close()
@@ -497,6 +629,16 @@ class KnowledgeUpdateService:
             "operations": proposal.operations,
             "preview_markdown": preview_markdown,
             "document_markdown_override": proposal.document_markdown_override,
+            "generated_markdown": proposal.generated_markdown,
+            "approved_markdown": proposal.approved_markdown,
+            "review_notes": proposal.review_notes,
+            "last_change_summary": proposal.last_change_summary,
+            "feedback_tags": proposal.feedback_tags,
+            "future_generator_note": proposal.future_generator_note,
+            "section_diff_summary": proposal.section_diff_summary,
+            "generator_version": proposal.generator_version,
+            "prompt_version": proposal.prompt_version,
+            "generator_feedback": proposal.generator_feedback,
             "source_refs": proposal.source_refs,
             "checks": proposal.checks,
             "status": proposal.status,
@@ -525,9 +667,11 @@ class KnowledgeUpdateService:
         preview_markdown: str,
         source_refs: List[str],
         checks: List[Dict[str, Any]],
+        generator_feedback: Dict[str, Any],
     ) -> KnowledgeUpdateProposal:
         source_refs = _durable_source_refs(source_refs)
         operations = _sanitize_operations(operations)
+        generator_feedback = _generator_feedback_context(generator_feedback)
         now = _now_iso()
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -542,13 +686,26 @@ class KnowledgeUpdateService:
                 operations_json,
                 preview_markdown,
                 document_markdown_override,
+                generated_markdown,
+                approved_markdown,
+                review_notes,
+                last_change_summary,
+                feedback_tags_json,
+                future_generator_note,
+                section_diff_summary_json,
+                generator_version,
+                prompt_version,
+                applied_feedback_json,
                 source_refs_json,
                 checks_json,
                 status,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'pending', ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?, ?,
+                ?, ?, ?, ?, 'pending', ?, ?
+            )
             ON CONFLICT(candidate_id) DO UPDATE SET
                 target_page_id = excluded.target_page_id,
                 target_page_path = excluded.target_page_path,
@@ -557,6 +714,16 @@ class KnowledgeUpdateService:
                 operations_json = excluded.operations_json,
                 preview_markdown = excluded.preview_markdown,
                 document_markdown_override = NULL,
+                generated_markdown = excluded.generated_markdown,
+                approved_markdown = NULL,
+                review_notes = NULL,
+                last_change_summary = NULL,
+                feedback_tags_json = excluded.feedback_tags_json,
+                future_generator_note = NULL,
+                section_diff_summary_json = excluded.section_diff_summary_json,
+                generator_version = excluded.generator_version,
+                prompt_version = excluded.prompt_version,
+                applied_feedback_json = excluded.applied_feedback_json,
                 source_refs_json = excluded.source_refs_json,
                 checks_json = excluded.checks_json,
                 status = 'pending',
@@ -573,6 +740,12 @@ class KnowledgeUpdateService:
                 proposal_kind,
                 json.dumps(operations),
                 preview_markdown,
+                preview_markdown,
+                json.dumps([]),
+                json.dumps([]),
+                GENERATOR_VERSION,
+                PROMPT_VERSION,
+                json.dumps(generator_feedback),
                 json.dumps(source_refs),
                 json.dumps(checks),
                 now,
@@ -598,6 +771,20 @@ class KnowledgeUpdateService:
             operations=_sanitize_operations(json.loads(row["operations_json"])),
             preview_markdown=row["preview_markdown"],
             document_markdown_override=row["document_markdown_override"],
+            generated_markdown=row["generated_markdown"],
+            approved_markdown=row["approved_markdown"],
+            review_notes=row["review_notes"],
+            last_change_summary=row["last_change_summary"],
+            feedback_tags=_feedback_tags_from_json(row["feedback_tags_json"]),
+            future_generator_note=row["future_generator_note"],
+            section_diff_summary=_section_diff_summary_from_json(
+                row["section_diff_summary_json"]
+            ),
+            generator_version=row["generator_version"] or GENERATOR_VERSION,
+            prompt_version=row["prompt_version"],
+            generator_feedback=_generator_feedback_from_json(
+                row["applied_feedback_json"]
+            ),
             source_refs=source_refs,
             checks=json.loads(row["checks_json"]),
             status=row["status"],
@@ -606,6 +793,133 @@ class KnowledgeUpdateService:
             rejection_reason=row["rejection_reason"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    def list_generator_feedback_records(
+        self,
+        *,
+        limit: int = GENERATOR_FEEDBACK_EXPORT_LIMIT,
+        target_page_id: Optional[str] = None,
+        reviewer: Optional[str] = None,
+        protocol: Optional[str] = None,
+        category: Optional[str] = None,
+        exclude_candidate_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.create_function("slugify", 1, lambda value: _slugify(str(value or "")))
+        try:
+            has_candidates = _sqlite_table_exists(conn, "unified_faq_candidates")
+            filters = ["p.status = 'approved'"]
+            params: List[Any] = []
+            if exclude_candidate_id is not None:
+                filters.append("p.candidate_id != ?")
+                params.append(exclude_candidate_id)
+            cleaned_reviewer = _optional_text(reviewer)
+            if cleaned_reviewer:
+                filters.append("lower(coalesce(p.reviewed_by, '')) = lower(?)")
+                params.append(cleaned_reviewer)
+            match_filters: List[str] = []
+            if target_page_id:
+                match_filters.append("p.target_page_id = ?")
+                params.append(target_page_id)
+            cleaned_protocol = _optional_text(protocol)
+            cleaned_category = _optional_text(category)
+            if has_candidates and cleaned_protocol and cleaned_category:
+                match_filters.append(
+                    "(c.protocol = ? AND slugify(coalesce(c.category, '')) = ?)"
+                )
+                params.extend([cleaned_protocol, _slugify(cleaned_category)])
+            if match_filters:
+                filters.append(f"({' OR '.join(match_filters)})")
+            where_clause = " AND ".join(filters)
+            if has_candidates:
+                query = f"""
+                    SELECT
+                        p.*,
+                        c.protocol AS candidate_protocol,
+                        c.category AS candidate_category,
+                        c.question_text AS candidate_question
+                    FROM knowledge_update_proposals p
+                    LEFT JOIN unified_faq_candidates c ON c.id = p.candidate_id
+                    WHERE {where_clause}
+                    ORDER BY p.reviewed_at DESC, p.id DESC
+                    LIMIT ?
+                """
+            else:
+                query = f"""
+                    SELECT
+                        p.*,
+                        NULL AS candidate_protocol,
+                        NULL AS candidate_category,
+                        NULL AS candidate_question
+                    FROM knowledge_update_proposals p
+                    WHERE {where_clause}
+                    ORDER BY p.reviewed_at DESC, p.id DESC
+                    LIMIT ?
+                """
+            rows = conn.execute(query, [*params, limit]).fetchall()
+            return [_feedback_record_from_row(row) for row in rows]
+        finally:
+            conn.close()
+
+    def _build_generator_feedback_context(
+        self,
+        *,
+        candidate: UnifiedFAQCandidate,
+        target: Optional[LLMWikiPageRecord],
+    ) -> Dict[str, Any]:
+        target_page_id = target.page_id if target else self._new_page_id(candidate)
+        records = self.list_generator_feedback_records(
+            limit=MAX_GENERATOR_FEEDBACK_EXAMPLES,
+            target_page_id=target_page_id,
+            protocol=candidate.protocol,
+            category=candidate.category,
+            exclude_candidate_id=candidate.id,
+        )
+        matching_records = [
+            record
+            for record in records
+            if _feedback_record_matches_candidate(
+                record,
+                candidate=candidate,
+                target_page_id=target_page_id,
+            )
+        ]
+
+        if not matching_records:
+            return _empty_generator_feedback_context()
+
+        feedback_tags = _dedupe(
+            tag
+            for record in matching_records
+            for tag in record.get("feedback_tags", [])
+        )
+        notes = _dedupe(
+            note
+            for record in matching_records
+            for note in _feedback_record_notes(record)
+        )[:MAX_GENERATOR_FEEDBACK_EXAMPLES]
+        return _generator_feedback_context(
+            {
+                "example_count": len(matching_records),
+                "feedback_tags": feedback_tags,
+                "guidance": _guidance_for_feedback_tags(feedback_tags),
+                "notes": notes,
+                "examples": [
+                    {
+                        "proposal_id": record["proposal_id"],
+                        "candidate_id": record["candidate_id"],
+                        "target_page_id": record["target_page_id"],
+                        "feedback_tags": record["feedback_tags"],
+                        "future_generator_note": record["future_generator_note"],
+                        "last_change_summary": record["last_change_summary"],
+                        "section_diff_summary": record["section_diff_summary"],
+                    }
+                    for record in matching_records
+                ],
+            }
         )
 
     def _load_pages(self) -> List[LLMWikiPageRecord]:
@@ -718,6 +1032,7 @@ class KnowledgeUpdateService:
         source_refs: List[str],
         *,
         cluster: Optional[KnowledgeTopicCluster] = None,
+        generator_feedback: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         question = _clean_inline(
             candidate.edited_question_text or candidate.question_text
@@ -757,6 +1072,17 @@ class KnowledgeUpdateService:
                     "section": "Review Notes",
                     "action": "append_bullet",
                     "content": _cluster_synthesis_note(cluster),
+                }
+            )
+
+        feedback_note = _generator_feedback_note(generator_feedback)
+        if feedback_note:
+            operations.append(
+                {
+                    "id": "generator-feedback",
+                    "section": "Review Notes",
+                    "action": "append_bullet",
+                    "content": feedback_note,
                 }
             )
 
@@ -893,6 +1219,7 @@ class KnowledgeUpdateService:
         pages: List[LLMWikiPageRecord],
         requires_cluster_synthesis: bool = False,
         document_override_present: bool = False,
+        generator_feedback: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         source_refs = _effective_source_refs(source_refs, preview_markdown)
         checks: List[Dict[str, Any]] = []
@@ -1006,6 +1333,25 @@ class KnowledgeUpdateService:
                 blocking=False,
             )
         )
+
+        feedback_example_count = _generator_feedback_example_count(generator_feedback)
+        if feedback_example_count:
+            feedback_tags = _feedback_tags(
+                str(tag) for tag in (generator_feedback or {}).get("feedback_tags", [])
+            )
+            labels = ", ".join(_feedback_tag_label(tag) for tag in feedback_tags)
+            checks.append(
+                _check(
+                    code="generator_feedback",
+                    label="Prior review feedback",
+                    status=("pass" if feedback_tags == ["good_generation"] else "warn"),
+                    detail=(
+                        f"{feedback_example_count} prior approved review(s) for this page/topic"
+                        + (f" flagged {labels}." if labels else ".")
+                    ),
+                    blocking=False,
+                )
+            )
 
         if requires_cluster_synthesis:
             checks.append(
@@ -1329,6 +1675,15 @@ def _source_refs_from_markdown(markdown: str) -> List[str]:
     return _durable_source_refs(_string_list(parsed.frontmatter.get("source_refs")))
 
 
+def _section_text_from_markdown(markdown: str, section_name: str) -> Optional[str]:
+    parsed = _read_markdown_text(markdown)
+    if parsed is None:
+        return None
+    _, sections = _split_sections(parsed.body)
+    content = "\n".join(sections.get(section_name, [])).strip()
+    return content or None
+
+
 def _effective_source_refs(refs: Iterable[str], markdown: str) -> List[str]:
     return _durable_source_refs(
         [*_durable_source_refs(refs), *_source_refs_from_markdown(markdown)]
@@ -1492,6 +1847,13 @@ def _string_list(value: Any) -> List[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _optional_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
 def _dedupe(values: Iterable[str]) -> List[str]:
     seen: set[str] = set()
     result: List[str] = []
@@ -1502,6 +1864,239 @@ def _dedupe(values: Iterable[str]) -> List[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _feedback_tags(values: Iterable[str]) -> List[str]:
+    return _dedupe(
+        tag
+        for value in values
+        for tag in [str(value).strip()]
+        if tag in FEEDBACK_TAG_LABELS
+    )
+
+
+def _feedback_tags_from_json(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return _feedback_tags(str(item) for item in parsed)
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _section_diff_summary(
+    before_markdown: str, after_markdown: str
+) -> List[Dict[str, Any]]:
+    before_sections = _sections_from_markdown(before_markdown)
+    after_sections = _sections_from_markdown(after_markdown)
+    section_names = _dedupe(
+        [
+            *[
+                name
+                for name in SECTION_ORDER
+                if name in before_sections or name in after_sections
+            ],
+            *before_sections.keys(),
+            *after_sections.keys(),
+        ]
+    )
+    summary: List[Dict[str, Any]] = []
+    for section_name in section_names:
+        before = before_sections.get(section_name, "")
+        after = after_sections.get(section_name, "")
+        if before == after:
+            continue
+        summary.append(
+            {
+                "section": section_name,
+                "before_chars": len(before),
+                "after_chars": len(after),
+            }
+        )
+    return summary
+
+
+def _sections_from_markdown(markdown: str) -> Dict[str, str]:
+    parsed = _read_markdown_text(markdown)
+    body = parsed.body if parsed is not None else markdown
+    _, sections = _split_sections(body)
+    return {
+        section_name: "\n".join(lines).strip()
+        for section_name, lines in sections.items()
+    }
+
+
+def _section_diff_summary_from_json(raw: Optional[str]) -> List[Dict[str, Any]]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    result: List[Dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        section = _optional_text(item.get("section"))
+        if not section:
+            continue
+        result.append(
+            {
+                "section": section,
+                "before_chars": _int_or_zero(item.get("before_chars")),
+                "after_chars": _int_or_zero(item.get("after_chars")),
+            }
+        )
+    return result
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _empty_generator_feedback_context() -> Dict[str, Any]:
+    return {
+        "example_count": 0,
+        "feedback_tags": [],
+        "guidance": [],
+        "notes": [],
+        "examples": [],
+    }
+
+
+def _generator_feedback_context(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return _empty_generator_feedback_context()
+    examples = raw.get("examples") if isinstance(raw.get("examples"), list) else []
+    feedback_tags = (
+        raw.get("feedback_tags") if isinstance(raw.get("feedback_tags"), list) else []
+    )
+    guidance = raw.get("guidance") if isinstance(raw.get("guidance"), list) else []
+    notes = raw.get("notes") if isinstance(raw.get("notes"), list) else []
+    return {
+        "example_count": _int_or_zero(raw.get("example_count") or len(examples)),
+        "feedback_tags": _feedback_tags(str(tag) for tag in feedback_tags),
+        "guidance": _dedupe(str(item) for item in guidance),
+        "notes": _dedupe(str(item) for item in notes),
+        "examples": [item for item in examples if isinstance(item, dict)],
+    }
+
+
+def _generator_feedback_from_json(raw: Optional[str]) -> Dict[str, Any]:
+    if not raw:
+        return _empty_generator_feedback_context()
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return _empty_generator_feedback_context()
+    return _generator_feedback_context(parsed)
+
+
+def _generator_feedback_example_count(raw: Optional[Dict[str, Any]]) -> int:
+    return _int_or_zero((raw or {}).get("example_count"))
+
+
+def _guidance_for_feedback_tags(feedback_tags: Iterable[str]) -> List[str]:
+    return _dedupe(
+        FEEDBACK_TAG_GUIDANCE[tag]
+        for tag in feedback_tags
+        if tag in FEEDBACK_TAG_GUIDANCE
+    )
+
+
+def _feedback_tag_label(tag: str) -> str:
+    return FEEDBACK_TAG_LABELS.get(tag, tag.replace("_", " "))
+
+
+def _generator_feedback_note(raw: Optional[Dict[str, Any]]) -> str:
+    context = _generator_feedback_context(raw)
+    if not context["example_count"]:
+        return ""
+    lines = [
+        (
+            "Prior review feedback for this topic: "
+            f"{context['example_count']} approved review example(s) are available."
+        )
+    ]
+    for guidance in context["guidance"][:3]:
+        lines.append(f"Generator guidance: {guidance}")
+    for note in context["notes"][:2]:
+        lines.append(f"Future generator note: {note}")
+    return "\n".join(lines)
+
+
+def _feedback_record_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "proposal_id": row["id"],
+        "candidate_id": row["candidate_id"],
+        "target_page_id": row["target_page_id"],
+        "target_page_title": row["target_page_title"],
+        "proposal_kind": row["proposal_kind"],
+        "reviewed_by": row["reviewed_by"],
+        "reviewed_at": row["reviewed_at"],
+        "review_notes": row["review_notes"],
+        "last_change_summary": row["last_change_summary"],
+        "feedback_tags": _feedback_tags_from_json(row["feedback_tags_json"]),
+        "future_generator_note": row["future_generator_note"],
+        "section_diff_summary": _section_diff_summary_from_json(
+            row["section_diff_summary_json"]
+        ),
+        "generator_version": row["generator_version"] or GENERATOR_VERSION,
+        "prompt_version": row["prompt_version"],
+        "protocol": row["candidate_protocol"],
+        "category": row["candidate_category"],
+        "question_text": row["candidate_question"],
+    }
+
+
+def _feedback_record_notes(record: Dict[str, Any]) -> List[str]:
+    notes: List[str] = []
+    future_note = _optional_text(record.get("future_generator_note"))
+    if future_note:
+        notes.append(future_note)
+    review_notes = _optional_text(record.get("review_notes"))
+    if review_notes:
+        for line in review_notes.splitlines():
+            cleaned = line.strip().removeprefix("-").strip()
+            lower_cleaned = cleaned.lower()
+            if lower_cleaned.startswith(
+                "future generator guidance:"
+            ) or lower_cleaned.startswith("future prompt guidance:"):
+                notes.append(cleaned.split(":", 1)[1].strip())
+    return notes
+
+
+def _feedback_record_matches_candidate(
+    record: Dict[str, Any],
+    *,
+    candidate: UnifiedFAQCandidate,
+    target_page_id: str,
+) -> bool:
+    if record.get("target_page_id") == target_page_id:
+        return True
+    protocol = _optional_text(record.get("protocol"))
+    category = _optional_text(record.get("category"))
+    if not protocol or not category:
+        return False
+    return protocol == candidate.protocol and _slugify(category) == _slugify(
+        candidate.category or ""
+    )
 
 
 def _tokenize(value: str) -> set[str]:

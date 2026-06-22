@@ -4,7 +4,10 @@ import app.routes.admin.knowledge_updates as knowledge_updates
 import pytest
 from app.core.config import Settings
 from app.routes.admin.knowledge_updates import (
+    KnowledgeReviewRequest,
+    approve_knowledge_update,
     get_current_knowledge_update,
+    get_generator_feedback_records,
     get_knowledge_update_counts,
 )
 from app.services.knowledge_updates.llm_wiki_update_service import (
@@ -68,6 +71,23 @@ class _Repository:
             and (source is None or candidate.source == source)
         ]
         return rows[offset : offset + limit]
+
+    def get_by_id(self, candidate_id):
+        return next(
+            (
+                candidate
+                for candidate in self.candidates
+                if candidate.id == candidate_id
+            ),
+            None,
+        )
+
+    def approve(self, candidate_id, reviewer, faq_id):
+        candidate = self.get_by_id(candidate_id)
+        if candidate is not None:
+            candidate.review_status = "approved"
+            candidate.reviewed_by = reviewer
+            candidate.faq_id = faq_id
 
 
 class _PipelineService:
@@ -388,3 +408,100 @@ async def test_current_knowledge_update_returns_topic_cluster_context(
         check["code"] == "cluster_synthesis_review"
         for check in response["proposal"]["checks"]
     )
+
+
+class _State:
+    pass
+
+
+class _Request:
+    def __init__(self):
+        self.app = _State()
+        self.app.state = _State()
+
+
+@pytest.mark.asyncio
+async def test_approve_knowledge_update_passes_review_outcome_feedback(
+    tmp_path: Path,
+) -> None:
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+    request.app.state.learning_engine = None
+    request.app.state.rag_service = None
+    service.get_or_create_proposal(candidate=candidate)
+
+    response = await approve_knowledge_update(
+        candidate_id=candidate.id,
+        request_body=KnowledgeReviewRequest(
+            reviewer="admin",
+            feedback_tags=["source_support", "scope_narrowing"],
+            future_generator_note="Future drafts should avoid unsupported UI labels.",
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    approved = service.get_by_candidate_id(candidate.id)
+    assert response.success is True
+    assert approved is not None
+    assert approved.feedback_tags == ["source_support", "scope_narrowing"]
+    assert (
+        approved.future_generator_note
+        == "Future drafts should avoid unsupported UI labels."
+    )
+
+
+@pytest.mark.asyncio
+async def test_generator_feedback_records_endpoint_returns_export(
+    tmp_path: Path,
+) -> None:
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    service.get_or_create_proposal(candidate=candidate)
+    service.approve(
+        candidate=candidate,
+        reviewer="admin",
+        feedback_tags=["missing_caveat"],
+        future_generator_note="Future drafts should include caveats earlier.",
+    )
+
+    response = await get_generator_feedback_records(
+        limit=10,
+        service=service,
+    )
+
+    assert response["count"] == 1
+    assert response["items"][0]["candidate_id"] == candidate.id
+    assert response["items"][0]["feedback_tags"] == ["missing_caveat"]
+
+    reviewer_filtered = await get_generator_feedback_records(
+        limit=10,
+        reviewer="admin",
+        service=service,
+    )
+    assert reviewer_filtered["count"] == 1
+    assert reviewer_filtered["items"][0]["candidate_id"] == candidate.id
+
+    target_filtered = await get_generator_feedback_records(
+        limit=10,
+        target_page_id=response["items"][0]["target_page_id"],
+        service=service,
+    )
+    assert target_filtered["count"] == 1
+    assert target_filtered["items"][0]["candidate_id"] == candidate.id
+
+    missing_target = await get_generator_feedback_records(
+        limit=10,
+        target_page_id="missing-page",
+        service=service,
+    )
+    assert missing_target["count"] == 0

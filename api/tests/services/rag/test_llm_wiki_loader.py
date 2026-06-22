@@ -56,6 +56,69 @@ def test_loader_indexes_only_reviewed_playbooks(tmp_path: Path) -> None:
     assert doc.metadata["source_weight"] == 1.25
 
 
+def test_loader_excludes_admin_only_sections_from_page_content(
+    tmp_path: Path,
+) -> None:
+    _write_playbook(
+        tmp_path,
+        "reviewed.md",
+        body="""## Canonical Support Answer
+Use Bisq Easy reputation carefully.
+
+## Applies When
+- User asks about reputation in Bisq Easy.
+
+## Do Not Say
+- Do not claim buyers need reputation.
+
+## Evidence / Sources
+- `wiki:bisq-easy`
+
+   ## review notes
+- Reviewer correction: Removed unsupported advice.
+- Future generator guidance: Do not overstate reputation requirements.
+
+## LAST CHANGE SUMMARY ###
+Narrowed the canonical answer and added a guardrail.
+""",
+    )
+
+    docs = LLMWikiLoader().load_documents(tmp_path)
+
+    assert len(docs) == 1
+    page_content = docs[0].page_content
+    assert "Canonical Support Answer" in page_content
+    assert "Use Bisq Easy reputation carefully." in page_content
+    assert "Applies When" in page_content
+    assert "Do Not Say" in page_content
+    assert "Evidence / Sources" in page_content
+    assert "Source refs:" in page_content
+    assert "Review Notes" not in page_content
+    assert "Reviewer correction" not in page_content
+    assert "Future generator guidance" not in page_content
+    assert "Last Change Summary" not in page_content
+    assert "Narrowed the canonical answer" not in page_content
+
+
+def test_loader_skips_reviewed_page_with_only_admin_only_body(
+    tmp_path: Path,
+) -> None:
+    _write_playbook(
+        tmp_path,
+        "admin-only.md",
+        body="""   ## review notes
+- Reviewer correction: This page needs canonical content.
+
+## LAST CHANGE SUMMARY ###
+Created by mistake without answer-facing content.
+""",
+    )
+
+    docs = LLMWikiLoader().load_documents(tmp_path)
+
+    assert docs == []
+
+
 def test_loader_indexes_active_pages(tmp_path: Path) -> None:
     _write_playbook(tmp_path, "active.md", status="active")
 

@@ -23,7 +23,7 @@ from app.services.knowledge_updates.topic_clusters import (
     build_knowledge_review_items,
 )
 from app.services.training.unified_pipeline_service import DuplicateFAQError
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -58,6 +58,8 @@ class UpdateKnowledgeDocumentRequest(BaseModel):
 
 class KnowledgeReviewRequest(BaseModel):
     reviewer: str = Field(default="admin")
+    feedback_tags: List[str] = Field(default_factory=list)
+    future_generator_note: Optional[str] = None
 
 
 class RejectKnowledgeUpdateRequest(BaseModel):
@@ -246,6 +248,32 @@ async def get_current_knowledge_update(
         ) from exc
 
 
+@router.get("/generator-feedback")
+async def get_generator_feedback_records(
+    limit: int = Query(default=100, ge=1, le=500),
+    target_page_id: Optional[str] = None,
+    reviewer: Optional[str] = None,
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
+) -> Dict[str, Any]:
+    """Return approved LLM Wiki review examples for generator improvement."""
+    try:
+        items = await run_in_threadpool(
+            lambda: service.list_generator_feedback_records(
+                limit=limit,
+                target_page_id=target_page_id,
+                reviewer=reviewer,
+            )
+        )
+        return {"count": len(items), "items": items}
+    except Exception as exc:
+        logger.exception("Failed to get generator feedback records")
+        raise BaseAppException(
+            detail="Failed to get generator feedback records",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="KNOWLEDGE_UPDATE_GENERATOR_FEEDBACK_FAILED",
+        ) from exc
+
+
 @router.post("/{candidate_id}/generate")
 async def regenerate_knowledge_update_proposal(
     candidate_id: int,
@@ -359,6 +387,8 @@ async def approve_knowledge_update(
                 candidate=candidate,
                 reviewer=request_body.reviewer,
                 cluster=cluster,
+                feedback_tags=request_body.feedback_tags,
+                future_generator_note=request_body.future_generator_note,
             )
         )
         page_id = proposal.target_page_id or f"candidate-{candidate_id}"
