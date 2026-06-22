@@ -482,3 +482,26 @@ async def test_generator_feedback_records_endpoint_returns_export(
     assert response["count"] == 1
     assert response["items"][0]["candidate_id"] == candidate.id
     assert response["items"][0]["feedback_tags"] == ["missing_caveat"]
+
+    reviewer_filtered = await get_generator_feedback_records(
+        limit=10,
+        reviewer="admin",
+        service=service,
+    )
+    assert reviewer_filtered["count"] == 1
+    assert reviewer_filtered["items"][0]["candidate_id"] == candidate.id
+
+    target_filtered = await get_generator_feedback_records(
+        limit=10,
+        target_page_id=response["items"][0]["target_page_id"],
+        service=service,
+    )
+    assert target_filtered["count"] == 1
+    assert target_filtered["items"][0]["candidate_id"] == candidate.id
+
+    missing_target = await get_generator_feedback_records(
+        limit=10,
+        target_page_id="missing-page",
+        service=service,
+    )
+    assert missing_target["count"] == 0

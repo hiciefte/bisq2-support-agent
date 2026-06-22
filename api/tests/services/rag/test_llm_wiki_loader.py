@@ -74,11 +74,11 @@ Use Bisq Easy reputation carefully.
 ## Evidence / Sources
 - `wiki:bisq-easy`
 
-## Review Notes
+   ## review notes
 - Reviewer correction: Removed unsupported advice.
 - Future generator guidance: Do not overstate reputation requirements.
 
-## Last Change Summary
+## LAST CHANGE SUMMARY ###
 Narrowed the canonical answer and added a guardrail.
 """,
     )
@@ -106,10 +106,10 @@ def test_loader_skips_reviewed_page_with_only_admin_only_body(
     _write_playbook(
         tmp_path,
         "admin-only.md",
-        body="""## Review Notes
+        body="""   ## review notes
 - Reviewer correction: This page needs canonical content.
 
-## Last Change Summary
+## LAST CHANGE SUMMARY ###
 Created by mistake without answer-facing content.
 """,
     )

@@ -34,8 +34,8 @@ ALLOWED_PAGE_TYPES = {
     "eval_note",
 }
 DEFAULT_LLM_WIKI_WEIGHT = 1.25
-RAG_EXCLUDED_SECTION_TITLES = {"Review Notes", "Last Change Summary"}
-_LEVEL_2_HEADING_RE = re.compile(r"^##\s+(.+?)(?:\s+#+)?\s*$")
+RAG_EXCLUDED_SECTION_TITLES = {"review notes", "last change summary"}
+_LEVEL_2_HEADING_RE = re.compile(r"^\s{0,3}##\s+(.+?)(?:\s+#+)?\s*$")
 
 
 @dataclass(frozen=True)
@@ -225,7 +225,7 @@ def _body_for_rag(body: str) -> str:
     for line in body.splitlines():
         match = _LEVEL_2_HEADING_RE.match(line)
         if match:
-            section_title = match.group(1).strip()
+            section_title = match.group(1).strip().casefold()
             skip_section = section_title in RAG_EXCLUDED_SECTION_TITLES
             if skip_section:
                 continue

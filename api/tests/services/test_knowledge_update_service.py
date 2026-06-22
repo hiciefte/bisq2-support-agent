@@ -367,6 +367,7 @@ def test_approve_stores_review_outcome_feedback(tmp_path: Path) -> None:
             "source_support",
             "",
             "scope_narrowing",
+            "unknown_tag",
         ],
         future_generator_note="Future drafts should keep buyer guidance narrow.",
     )
@@ -452,6 +453,93 @@ def test_future_proposal_includes_prior_generator_feedback_guidance(
         for operation in proposal.operations
     )
     assert "Prior review feedback for this topic" in proposal.preview_markdown
+
+
+def test_future_proposal_finds_matching_feedback_before_limit(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    db_path = tmp_path / "unified_training.db"
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(db_path),
+    )
+    first_candidate = _candidate(id=7)
+    service.get_or_create_proposal(candidate=first_candidate)
+    service.approve(
+        candidate=first_candidate,
+        reviewer="admin",
+        feedback_tags=["scope_narrowing"],
+        future_generator_note="Future drafts should keep reputation scope narrow.",
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        for index in range(55):
+            conn.execute(
+                """
+                INSERT INTO knowledge_update_proposals (
+                    candidate_id,
+                    target_page_id,
+                    target_page_title,
+                    target_page_path,
+                    proposal_kind,
+                    operations_json,
+                    preview_markdown,
+                    generated_markdown,
+                    feedback_tags_json,
+                    section_diff_summary_json,
+                    generator_version,
+                    applied_feedback_json,
+                    source_refs_json,
+                    checks_json,
+                    status,
+                    reviewed_by,
+                    reviewed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1000 + index,
+                    f"unrelated-{index}",
+                    "Unrelated",
+                    f"unrelated-{index}.md",
+                    "create_new",
+                    "[]",
+                    "## Canonical Support Answer\n\nUnrelated.",
+                    "## Canonical Support Answer\n\nUnrelated.",
+                    '["tone_wording"]',
+                    "[]",
+                    "test-generator",
+                    "{}",
+                    "[]",
+                    "[]",
+                    "approved",
+                    "admin",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                    f"9999-01-01T00:{index:02d}:00+00:00",
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    next_candidate = _candidate(
+        id=8,
+        question_text="Can buyers start without reputation?",
+        staff_answer="Buyers can start without reputation.",
+    )
+    proposal = service.get_or_create_proposal(candidate=next_candidate)
+
+    assert proposal.generator_feedback["example_count"] == 1
+    assert proposal.generator_feedback["feedback_tags"] == ["scope_narrowing"]
+    assert (
+        "Future drafts should keep reputation scope narrow."
+        in proposal.generator_feedback["notes"]
+    )
 
 
 def test_generator_feedback_export_returns_structured_records(

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -909,6 +909,26 @@ export default function KnowledgeUpdatesPage() {
   const [futureGeneratorNote, setFutureGeneratorNote] = useState("");
   const [isReviewGuideDismissed, setIsReviewGuideDismissed] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reviewStateKeyRef = useRef<string | null>(null);
+  const reviewStateCandidateId = data?.candidate.id ?? null;
+  const reviewStateGeneratedAnswer = data?.candidate.generated_answer ?? "";
+  const reviewStateGeneratedMarkdown = data?.proposal.generated_markdown ?? "";
+
+  const reviewStateKey = useMemo(
+    () =>
+      reviewStateCandidateId === null
+        ? null
+        : [
+            reviewStateCandidateId,
+            reviewStateGeneratedAnswer,
+            reviewStateGeneratedMarkdown,
+          ].join("|"),
+    [
+      reviewStateCandidateId,
+      reviewStateGeneratedAnswer,
+      reviewStateGeneratedMarkdown,
+    ],
+  );
 
   const isOperationDirty = useMemo(
     () => JSON.stringify(operations) !== JSON.stringify(data?.proposal.operations ?? []),
@@ -1040,18 +1060,15 @@ export default function KnowledgeUpdatesPage() {
   }, []);
 
   useEffect(() => {
+    if (!data || reviewStateKey === reviewStateKeyRef.current) return;
+    reviewStateKeyRef.current = reviewStateKey;
     setAnswerRating(null);
     setRatingLoading(null);
     setShowSupportingEdits(false);
     setEditingDocumentLine(null);
     setFeedbackTags(data?.proposal.feedback_tags ?? []);
     setFutureGeneratorNote(data?.proposal.future_generator_note ?? "");
-  }, [
-    data?.candidate.id,
-    data?.candidate.generated_answer,
-    data?.proposal.feedback_tags,
-    data?.proposal.future_generator_note,
-  ]);
+  }, [data, reviewStateKey]);
 
   const handleDismissReviewGuide = useCallback(() => {
     setIsReviewGuideDismissed(true);
@@ -1145,6 +1162,12 @@ export default function KnowledgeUpdatesPage() {
       ? await persistDocumentMarkdown()
       : await persistOperations();
     if (!saved) return;
+    const savedChangedSections = changedMarkdownSections(
+      saved.generated_markdown ?? saved.preview_markdown,
+      saved.preview_markdown,
+    );
+    const savedInferredFeedbackTags = inferFeedbackTags(savedChangedSections, answerRating);
+    const approvalFeedbackTags = feedbackTags.length > 0 ? feedbackTags : savedInferredFeedbackTags;
     setActionLoading("approve");
     try {
       const response = await makeAuthenticatedRequest(
@@ -1153,7 +1176,7 @@ export default function KnowledgeUpdatesPage() {
           method: "POST",
           body: JSON.stringify({
             reviewer: "admin",
-            feedback_tags: effectiveFeedbackTags,
+            feedback_tags: approvalFeedbackTags,
             future_generator_note: futureGeneratorNote.trim() || null,
           }),
         },
@@ -1277,9 +1300,13 @@ export default function KnowledgeUpdatesPage() {
   const toggleFeedbackTag = (tag: string) => {
     setFeedbackTags((current) => {
       const base = current.length > 0 ? current : inferredFeedbackTags;
-      return base.includes(tag)
-        ? base.filter((item) => item !== tag)
-        : [...base, tag];
+      if (base.includes(tag)) {
+        return base.filter((item) => item !== tag);
+      }
+      if (tag === "good_generation") {
+        return ["good_generation"];
+      }
+      return [...base.filter((item) => item !== "good_generation"), tag];
     });
   };
 

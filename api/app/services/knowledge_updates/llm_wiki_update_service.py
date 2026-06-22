@@ -801,21 +801,38 @@ class KnowledgeUpdateService:
         limit: int = GENERATOR_FEEDBACK_EXPORT_LIMIT,
         target_page_id: Optional[str] = None,
         reviewer: Optional[str] = None,
+        protocol: Optional[str] = None,
+        category: Optional[str] = None,
+        exclude_candidate_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.create_function("slugify", 1, lambda value: _slugify(str(value or "")))
         try:
             has_candidates = _sqlite_table_exists(conn, "unified_faq_candidates")
             filters = ["p.status = 'approved'"]
             params: List[Any] = []
-            if target_page_id:
-                filters.append("p.target_page_id = ?")
-                params.append(target_page_id)
+            if exclude_candidate_id is not None:
+                filters.append("p.candidate_id != ?")
+                params.append(exclude_candidate_id)
             cleaned_reviewer = _optional_text(reviewer)
             if cleaned_reviewer:
                 filters.append("lower(coalesce(p.reviewed_by, '')) = lower(?)")
                 params.append(cleaned_reviewer)
+            match_filters: List[str] = []
+            if target_page_id:
+                match_filters.append("p.target_page_id = ?")
+                params.append(target_page_id)
+            cleaned_protocol = _optional_text(protocol)
+            cleaned_category = _optional_text(category)
+            if has_candidates and cleaned_protocol and cleaned_category:
+                match_filters.append(
+                    "(c.protocol = ? AND slugify(coalesce(c.category, '')) = ?)"
+                )
+                params.extend([cleaned_protocol, _slugify(cleaned_category)])
+            if match_filters:
+                filters.append(f"({' OR '.join(match_filters)})")
             where_clause = " AND ".join(filters)
             if has_candidates:
                 query = f"""
@@ -854,17 +871,22 @@ class KnowledgeUpdateService:
         target: Optional[LLMWikiPageRecord],
     ) -> Dict[str, Any]:
         target_page_id = target.page_id if target else self._new_page_id(candidate)
-        records = self.list_generator_feedback_records(limit=50)
+        records = self.list_generator_feedback_records(
+            limit=MAX_GENERATOR_FEEDBACK_EXAMPLES,
+            target_page_id=target_page_id,
+            protocol=candidate.protocol,
+            category=candidate.category,
+            exclude_candidate_id=candidate.id,
+        )
         matching_records = [
             record
             for record in records
-            if record["candidate_id"] != candidate.id
-            and _feedback_record_matches_candidate(
+            if _feedback_record_matches_candidate(
                 record,
                 candidate=candidate,
                 target_page_id=target_page_id,
             )
-        ][:MAX_GENERATOR_FEEDBACK_EXAMPLES]
+        ]
 
         if not matching_records:
             return _empty_generator_feedback_context()
@@ -1845,7 +1867,12 @@ def _dedupe(values: Iterable[str]) -> List[str]:
 
 
 def _feedback_tags(values: Iterable[str]) -> List[str]:
-    return _dedupe(str(value).strip() for value in values)
+    return _dedupe(
+        tag
+        for value in values
+        for tag in [str(value).strip()]
+        if tag in FEEDBACK_TAG_LABELS
+    )
 
 
 def _feedback_tags_from_json(raw: Optional[str]) -> List[str]:
