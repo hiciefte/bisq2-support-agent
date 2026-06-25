@@ -728,3 +728,28 @@ class TestLifecycle:
         assert "cache_stats" in result
         assert "readiness" in result
         assert result["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_health_check_uses_openapi_endpoint(self, service):
+        """Health check should probe an endpoint exposed by Bisq2."""
+        requested_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Record the probed Bisq2 endpoint and return an OpenAPI response."""
+            requested_paths.append(request.url.path)
+            return httpx.Response(200, json={"openapi": "3.0.1"})
+
+        client = httpx.AsyncClient(
+            base_url=service.active_base_url,
+            transport=httpx.MockTransport(handler),
+        )
+
+        service._client = client
+        try:
+            result = await service.health_check()
+        finally:
+            await client.aclose()
+            service._client = None
+
+        assert result["api_available"] is True
+        assert requested_paths == ["/api/v1/openapi.json"]

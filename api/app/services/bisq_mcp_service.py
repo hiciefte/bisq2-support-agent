@@ -1502,9 +1502,10 @@ class Bisq2MCPService:
 
         if self.enabled:
             try:
-                # Try a simple request
+                # Probe the same unauthenticated endpoint used by the Docker
+                # healthcheck. Bisq2 does not expose /api/v1/health.
                 client = await self._get_client()
-                response = await client.get("/api/v1/health", timeout=2.0)
+                response = await client.get("/api/v1/openapi.json", timeout=2.0)
                 result["api_available"] = response.status_code == 200
             except Exception:
                 result["api_available"] = False
