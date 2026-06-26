@@ -32,14 +32,25 @@ def nginx_conf(request):
 class TestNginxHealthRoutes:
     """Ensure health routing matches frontend and operational expectations."""
 
-    def test_api_health_proxy_is_publicly_routed(self, nginx_conf):
-        """The web proxy health path must reach FastAPI, not nginx 403."""
-        block = _location_block(nginx_conf, "location ~ ^/api/health(/ready|/live)?$ {")
+    def test_api_health_proxy_routes_to_minimal_public_endpoint(self, nginx_conf):
+        """The public web proxy health path should not expose detailed health."""
+        block = _location_block(nginx_conf, "location = /api/health {")
 
         assert "deny all;" not in block
         assert "allow 127.0.0.1;" not in block
         assert "allow 172.16.0.0/12;" not in block
-        assert "rewrite ^/api/health(/ready|/live)?$ /health$1 break;" in block
+        assert "rewrite ^ /health/public break;" in block
+        assert "proxy_pass http://api:8000;" in block
+        assert "proxy_pass http://api:8000/health" not in block
+
+    def test_api_health_probes_proxy_to_ready_and_live(self, nginx_conf):
+        """Readiness and liveness probes should remain publicly reachable."""
+        block = _location_block(nginx_conf, "location ~ ^/api/health/(ready|live)$ {")
+
+        assert "deny all;" not in block
+        assert "allow 127.0.0.1;" not in block
+        assert "allow 172.16.0.0/12;" not in block
+        assert "rewrite ^/api/health/(ready|live)$ /health/$1 break;" in block
         assert "proxy_pass http://api:8000;" in block
         assert "proxy_pass http://api:8000/health$1;" not in block
 

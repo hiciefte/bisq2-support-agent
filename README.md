@@ -328,7 +328,15 @@ For detailed architecture, see [RAG Architecture](docs/rag-architecture.md).
 }
 ```
 
-### 2. FAQ Data
+### 2. Internal LLM Wiki
+
+-   **Location**: `api/data/knowledge/llm_wiki/pages/`
+-   **Purpose**: Reviewed support playbooks synthesized from source-backed wiki, FAQ, and support evidence.
+-   **Indexing Rule**: Only `reviewed` or `active` pages with `source_refs` enter RAG.
+-   **Admin Feedback Boundary**: `Review Notes` and `Last Change Summary` stay in markdown/admin history but are stripped from RAG-indexed content.
+-   **Generator Feedback**: Approved review feedback is stored separately and can guide future LLM Wiki proposals without being retrieved as customer-facing knowledge.
+
+### 3. FAQ Data
 -   **Storage**: SQLite database (`api/data/faqs.db`) - authoritative source
 -   **Extraction**: Automatic from support chat via Training Pipeline
 -   **Manual Addition**: Admin interface at `/admin/manage-faqs`

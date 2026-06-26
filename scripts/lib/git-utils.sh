@@ -635,6 +635,7 @@ needs_web_rebuild() {
 needs_api_restart() {
     local repo_dir="${1:-.}"
     local prev_head="${2:-$PREV_HEAD}"
+    local api_restart_pattern='^api/data/(knowledge|wiki)/'
 
     cd "$repo_dir" || return 2
 
@@ -642,7 +643,7 @@ needs_api_restart() {
         local base
         base=$(git merge-base HEAD "${GIT_REMOTE:-origin}/${GIT_BRANCH:-main}" 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
         if [ -n "$base" ]; then
-            if git diff --name-only "$base" HEAD | grep -qE '^api/'; then
+            if git diff --name-only "$base" HEAD | grep -qE "$api_restart_pattern"; then
                 return 0  # True, needs restart
             fi
         else
@@ -651,11 +652,11 @@ needs_api_restart() {
         fi
     else
         if [ -n "$prev_head" ]; then
-            if git diff --name-only "$prev_head" HEAD | grep -qE '^api/'; then
+            if git diff --name-only "$prev_head" HEAD | grep -qE "$api_restart_pattern"; then
                 return 0  # True, needs restart
             fi
         else
-            if git diff --name-only "HEAD@{1}" HEAD | grep -qE '^api/'; then
+            if git diff --name-only "HEAD@{1}" HEAD | grep -qE "$api_restart_pattern"; then
                 return 0  # True, needs restart
             fi
         fi

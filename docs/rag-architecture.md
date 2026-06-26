@@ -99,6 +99,14 @@ User Query
 - Purpose: compiled internal support knowledge derived from canonical docs, verified FAQs, and support evidence
 - Only markdown files with `status: reviewed` or `status: active` and non-empty `source_refs` enter the RAG index
 - Draft, proposed, and deprecated pages are ignored so AI-generated synthesis never becomes authoritative before review
+- Admin-only level-2 sections named `Review Notes` or `Last Change Summary` are stripped before RAG indexing
+- Approved review feedback is stored separately for future LLM Wiki generator improvement and is not customer-facing RAG content
+
+### Deferred Grounding Sources
+
+- Codebase-derived facts are not indexed into customer-facing RAG yet.
+- Infrastructure and seed-node state are not static RAG sources yet; they should enter later as timestamped live context or reviewed staff-only evidence.
+- Before adding either source, add retrieval evaluation cases that separately measure leakage, recall, and answer faithfulness.
 
 Example frontmatter:
 
