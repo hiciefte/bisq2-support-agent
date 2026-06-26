@@ -26,6 +26,7 @@ class StaffAssistPayload:
     question: str
     draft_answer: str | None
     knowledge_sources: list[dict[str, Any]]
+    grounding_brief: dict[str, Any] | None
     ai_response_mode: str
     updated_at: str
 
@@ -38,10 +39,12 @@ class StaffAssistService:
         *,
         policy_service: Any | None = None,
         publisher: Any | None = None,
+        grounding_brief_service: Any | None = None,
         max_cached_threads: int = 500,
     ) -> None:
         self.policy_service = policy_service
         self.publisher = publisher
+        self.grounding_brief_service = grounding_brief_service
         self.max_cached_threads = max(1, int(max_cached_threads))
         self._latest_by_thread: OrderedDict[str, StaffAssistPayload] = OrderedDict()
 
@@ -83,15 +86,21 @@ class StaffAssistService:
         """Publish one staff-assist payload snapshot."""
         normalized_channel = str(channel_id or "").strip().lower()
         normalized_thread = str(thread_id or "").strip()
+        question = str(getattr(incoming, "question", "") or "").strip()
+        knowledge_sources = self._extract_sources(response)
         payload = StaffAssistPayload(
             case_id=str(case_id or "").strip() or normalized_thread,
             channel_id=normalized_channel,
             thread_id=normalized_thread,
             room_or_conversation_id=str(room_or_conversation_id or "").strip(),
             state=str(state or "").strip().lower() or "waiting_window",
-            question=str(getattr(incoming, "question", "") or "").strip(),
+            question=question,
             draft_answer=self._extract_draft_answer(response),
-            knowledge_sources=self._extract_sources(response),
+            knowledge_sources=knowledge_sources,
+            grounding_brief=self._build_grounding_brief(
+                question=question,
+                knowledge_sources=knowledge_sources,
+            ),
             ai_response_mode=get_ai_response_mode(
                 self.policy_service, normalized_channel
             ),
@@ -137,6 +146,27 @@ class StaffAssistService:
             elif isinstance(source, dict):
                 output.append(dict(source))
         return output
+
+    def _build_grounding_brief(
+        self,
+        *,
+        question: str,
+        knowledge_sources: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if self.grounding_brief_service is None:
+            return None
+
+        build = getattr(self.grounding_brief_service, "build", None)
+        if not callable(build):
+            return None
+
+        try:
+            brief = build(question=question, knowledge_sources=knowledge_sources)
+        except Exception:
+            logger.exception("Failed to build staff grounding brief")
+            return None
+
+        return brief if isinstance(brief, dict) else None
 
     async def _publish_to_sink(self, payload: StaffAssistPayload) -> None:
         if self.publisher is None:

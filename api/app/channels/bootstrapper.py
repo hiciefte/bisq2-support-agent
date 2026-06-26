@@ -6,6 +6,7 @@ Provides ChannelBootstrapper for automated channel loading based on configuratio
 import importlib
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from app.channels.registry import ChannelRegistry, get_registered_channel_types
@@ -182,7 +183,26 @@ class ChannelBootstrapper:
     def _register_arbitration_services(runtime: ChannelRuntime) -> None:
         """Register shared arbitration + staff-assist services."""
         from app.channels.arbitration import ArbitrationCoordinator
-        from app.channels.staff_assist import StaffAssistService
+        from app.channels.staff_assist import GroundingBriefService, StaffAssistService
+        from app.services.rag.code_evidence import (
+            CodeEvidenceLoader,
+            StaffCodeEvidenceRetriever,
+        )
+
+        if runtime.resolve_optional("staff_grounding_brief_service") is None:
+            data_dir = getattr(runtime.settings, "DATA_DIR", None)
+            if isinstance(data_dir, (str, Path)) and str(data_dir).strip():
+                evidence_path = (
+                    Path(data_dir) / "code_knowledge" / "code_evidence.jsonl"
+                )
+                code_retriever = StaffCodeEvidenceRetriever(
+                    CodeEvidenceLoader(evidence_path)
+                )
+                runtime.register(
+                    "staff_grounding_brief_service",
+                    GroundingBriefService(code_retriever=code_retriever),
+                    allow_override=True,
+                )
 
         if runtime.resolve_optional("staff_assist_service") is None:
             runtime.register(
@@ -190,6 +210,9 @@ class ChannelBootstrapper:
                 StaffAssistService(
                     policy_service=runtime.resolve_optional(
                         "channel_autoresponse_policy_service"
+                    ),
+                    grounding_brief_service=runtime.resolve_optional(
+                        "staff_grounding_brief_service"
                     ),
                 ),
                 allow_override=True,
