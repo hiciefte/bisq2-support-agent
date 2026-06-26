@@ -86,6 +86,7 @@ interface GroundingBrief {
   safe_customer_guidance?: string[]
   uncertainties?: string[]
   do_not_say?: string[]
+  staff_enriched_answer?: string
 }
 
 interface GroundingBriefResponse {
@@ -176,8 +177,10 @@ function StaffGroundingBriefPanel({
   const safeGuidance = (brief?.safe_customer_guidance || []).filter(Boolean)
   const uncertainties = (brief?.uncertainties || []).filter(Boolean)
   const doNotSay = (brief?.do_not_say || []).filter(Boolean)
+  const staffEnrichedAnswer = brief?.staff_enriched_answer?.trim() || ""
   const hasContent =
     Boolean(brief?.summary?.trim()) ||
+    Boolean(staffEnrichedAnswer) ||
     evidence.length > 0 ||
     safeGuidance.length > 0 ||
     uncertainties.length > 0 ||
@@ -259,6 +262,20 @@ function StaffGroundingBriefPanel({
 
       {brief.summary?.trim() && (
         <p className="text-sm leading-relaxed text-foreground/90">{brief.summary}</p>
+      )}
+
+      {staffEnrichedAnswer && (
+        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-sky-200">Internal enriched answer</p>
+            <Badge variant="outline" className="border-sky-500/30 text-[10px] text-sky-200">
+              Not sent
+            </Badge>
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+            {staffEnrichedAnswer}
+          </p>
+        </div>
       )}
 
       {evidence.length > 0 && (

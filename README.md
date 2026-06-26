@@ -292,7 +292,7 @@ The RAG system uses a **hybrid retrieval pipeline** combining:
 - **Keyword Search**: BM25 sparse vectors for exact term matching
 - **Semantic Search**: Dense vector embeddings for meaning-based retrieval
 - **Weighted Fusion**: 60% semantic + 40% keyword scoring (configurable via `HYBRID_SEMANTIC_WEIGHT`/`HYBRID_KEYWORD_WEIGHT`)
-- **Staff-only Code Evidence**: internal grounding briefs for support admins, not customer-facing RAG
+- **Staff-only Code Evidence**: internal code-grounded enrichment for staff-room/admin review, not customer-facing RAG
 
 ### Retrieval Pipeline
 

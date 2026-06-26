@@ -202,7 +202,8 @@ Output:
 
 Where to attach it:
 
-- Extend `StaffAssistPayload` with `grounding_brief`.
+- Extend response metadata and `StaffAssistPayload` with staff-only grounding fields.
+- Add `staff_enriched_answer` for Matrix staff-room/admin review so code facts can enrich the support workflow without changing the copy-ready customer draft.
 - Keep `knowledge_sources` unchanged for backward compatibility.
 - Add a staff UI rendering section that separates public sources from internal evidence.
 
@@ -993,20 +994,21 @@ Implemented locally after Phase A:
 3. Added redaction for obvious secret, token, password, and API-key text during loading.
 4. Added a minimum relevance gate so incidental metadata matches do not create noisy staff briefs.
 5. Added `GroundingBriefService` and wired it into `StaffAssistService` through channel bootstrap.
-6. Staff-only evidence is attached to `StaffAssistPayload.grounding_brief`; public `knowledge_sources` remain unchanged.
-7. Code evidence is not indexed into the public Qdrant collection in this slice.
+6. Matrix/Bisq2 RAG responses with code evidence now get staff-only `staff_grounding_brief` and `staff_enriched_answer` metadata.
+7. Code-grounded answers are forced into staff-room human review; reactions and `/send` still send only the copy-ready draft unless staff edits the reply.
+8. Staff-only evidence is attached to `StaffAssistPayload.grounding_brief`; public `knowledge_sources` remain unchanged.
+9. Code evidence is not indexed into the public Qdrant collection in this slice.
 
 Still pending after this slice:
 
 1. Build the actual Bisq2/support-agent code extractor that emits the JSONL records.
 2. Decide whether the next retrieval implementation should use a separate staff-only Qdrant collection or keep file-backed retrieval until volume requires indexing.
-3. Add a staff-admin UI rendering section for `grounding_brief` if the current sink/UI does not expose it yet.
-4. Add `code:` source-ref promotion checks for reviewed LLM Wiki pages.
-5. Add live infrastructure and seed-node state as timestamped context, not static RAG.
+3. Add `code:` source-ref promotion checks for reviewed LLM Wiki pages.
+4. Add live infrastructure and seed-node state as timestamped context, not static RAG.
 
 Current answer to "how far are we with codebase knowledgebase integration":
 
-We are not ingesting raw codebase facts into the customer-facing knowledgebase yet. That is intentional. The prerequisite feedback boundary is in place, and the first staff-only code-evidence pilot now exists as file-backed retrieval feeding `StaffAssistPayload.grounding_brief`. The next safe phases are the actual code extractor, visible staff-admin rendering, `code:` source-ref promotion checks, and live infrastructure context.
+We are not ingesting raw codebase facts into the customer-facing knowledgebase yet. That is intentional. The prerequisite feedback boundary is in place, and the first staff-only code-evidence pilot now exists as file-backed retrieval feeding staff-room/admin enrichment. The RAG answer can now be enriched with codebase context for human support staff, but the code-enriched text is posted only to the special Matrix staff room/admin review surface and is not sent to the public channel by quick approval actions. The next safe phases are the actual code extractor, `code:` source-ref promotion checks, and live infrastructure context.
 
 ## Skills Review
 

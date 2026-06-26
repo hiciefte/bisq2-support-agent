@@ -69,9 +69,13 @@ async def test_clear_thread_removes_only_matching_channel_entry() -> None:
 @pytest.mark.asyncio
 async def test_publish_attaches_grounding_brief_without_polluting_sources() -> None:
     class FakeGroundingBriefService:
-        def build(self, *, question, knowledge_sources):
+        def build(self, *, question, knowledge_sources, draft_answer=None):
             return {
                 "summary": "Staff-only grounding for this support request.",
+                "staff_enriched_answer": (
+                    f"{draft_answer}\n\nStaff-only codebase context:\n"
+                    "- Internal code evidence."
+                ),
                 "evidence": [
                     {
                         "kind": "code_fact",
@@ -107,3 +111,5 @@ async def test_publish_attaches_grounding_brief_without_polluting_sources() -> N
     assert payload.knowledge_sources == response.sources
     assert payload.grounding_brief is not None
     assert payload.grounding_brief["evidence"][0]["audience"] == "staff_only"
+    assert payload.staff_enriched_answer is not None
+    assert "Staff-only codebase context" in payload.staff_enriched_answer

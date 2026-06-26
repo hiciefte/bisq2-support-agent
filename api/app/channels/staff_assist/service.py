@@ -27,6 +27,7 @@ class StaffAssistPayload:
     draft_answer: str | None
     knowledge_sources: list[dict[str, Any]]
     grounding_brief: dict[str, Any] | None
+    staff_enriched_answer: str | None
     ai_response_mode: str
     updated_at: str
 
@@ -88,6 +89,11 @@ class StaffAssistService:
         normalized_thread = str(thread_id or "").strip()
         question = str(getattr(incoming, "question", "") or "").strip()
         knowledge_sources = self._extract_sources(response)
+        grounding_brief = self._resolve_grounding_brief(
+            response=response,
+            question=question,
+            knowledge_sources=knowledge_sources,
+        )
         payload = StaffAssistPayload(
             case_id=str(case_id or "").strip() or normalized_thread,
             channel_id=normalized_channel,
@@ -97,9 +103,10 @@ class StaffAssistService:
             question=question,
             draft_answer=self._extract_draft_answer(response),
             knowledge_sources=knowledge_sources,
-            grounding_brief=self._build_grounding_brief(
-                question=question,
-                knowledge_sources=knowledge_sources,
+            grounding_brief=grounding_brief,
+            staff_enriched_answer=self._extract_staff_enriched_answer(
+                response=response,
+                grounding_brief=grounding_brief,
             ),
             ai_response_mode=get_ai_response_mode(
                 self.policy_service, normalized_channel
@@ -147,12 +154,18 @@ class StaffAssistService:
                 output.append(dict(source))
         return output
 
-    def _build_grounding_brief(
+    def _resolve_grounding_brief(
         self,
         *,
+        response: Any | None,
         question: str,
         knowledge_sources: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
+        metadata = getattr(response, "metadata", None)
+        metadata_brief = getattr(metadata, "staff_grounding_brief", None)
+        if isinstance(metadata_brief, dict):
+            return metadata_brief
+
         if self.grounding_brief_service is None:
             return None
 
@@ -161,12 +174,35 @@ class StaffAssistService:
             return None
 
         try:
-            brief = build(question=question, knowledge_sources=knowledge_sources)
+            brief = build(
+                question=question,
+                knowledge_sources=knowledge_sources,
+                draft_answer=self._extract_draft_answer(response),
+            )
         except Exception:
             logger.exception("Failed to build staff grounding brief")
             return None
 
         return brief if isinstance(brief, dict) else None
+
+    @staticmethod
+    def _extract_staff_enriched_answer(
+        *,
+        response: Any | None,
+        grounding_brief: dict[str, Any] | None,
+    ) -> str | None:
+        metadata = getattr(response, "metadata", None)
+        metadata_answer = getattr(metadata, "staff_enriched_answer", None)
+        if isinstance(metadata_answer, str) and metadata_answer.strip():
+            return metadata_answer.strip()
+        brief_answer = (
+            grounding_brief.get("staff_enriched_answer")
+            if isinstance(grounding_brief, dict)
+            else None
+        )
+        if isinstance(brief_answer, str) and brief_answer.strip():
+            return brief_answer.strip()
+        return None
 
     async def _publish_to_sink(self, payload: StaffAssistPayload) -> None:
         if self.publisher is None:

@@ -251,6 +251,8 @@ class ResponseMetadata(BaseModel):
     localized_question: Optional[str] = None
     localized_answer: Optional[str] = None
     translation_applied: Optional[bool] = None
+    staff_grounding_brief: Optional[Dict[str, Any]] = None
+    staff_enriched_answer: Optional[str] = None
     hooks_executed: List[str] = Field(default_factory=list)
 
 

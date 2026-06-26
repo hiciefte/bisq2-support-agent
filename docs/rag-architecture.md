@@ -126,7 +126,8 @@ source_refs:
 - Loader/retriever: `api/app/services/rag/code_evidence.py`
 - Staff brief builder: `api/app/channels/staff_assist/grounding.py`
 - Purpose: implementation-derived evidence for human support admins
-- Boundary: only `audience=staff_only` records are retrieved, and only into `StaffAssistPayload.grounding_brief`
+- Boundary: only `audience=staff_only` records are retrieved, and only into staff-only response metadata and staff-room/admin review surfaces
+- Matrix/Bisq2 support requests with code evidence are enriched for the staff room and forced into human review; the copy-ready customer draft and public sources are unchanged
 - Current status: code evidence is file-backed and not inserted into the public Qdrant collection
 - Promotion path: durable facts must become reviewed LLM Wiki guidance before customer-facing use
 

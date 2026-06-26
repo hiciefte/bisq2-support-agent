@@ -14,21 +14,26 @@ When an escalation is routed to `staff_room`, the bot posts a notice with:
 
 - Escalation ID
 - User and question summary
-- AI draft answer
+- Copy-ready AI draft answer
+- Optional codebase-enriched staff context, clearly marked internal-only
 - Routing reason and confidence
 - Top sources and admin deep link
 
 ## Actions From Matrix Staff Room
 
-- React `👍` on the escalation notice: approve and send the AI draft to user.
+- React `👍` on the escalation notice: approve and send only the copy-ready draft to the user.
 - React `👎` on the escalation notice: dismiss escalation with no reply.
-- Reply in thread with `/send`: send AI draft unchanged.
+- Reply in thread with `/send`: send only the copy-ready draft unchanged.
 - Reply in thread with `/send <edited reply>`: send edited text to user.
 - Reply in thread with `/dismiss`: dismiss escalation with no reply.
 
 Reactions provide quick approval or dismissal. Thread commands give more control:
 use `/send` to send the draft unchanged, `/send <edited reply>` to send edited
 text, and `/dismiss` to close without replying.
+
+When a notice includes codebase-enriched staff context, that context is for
+internal investigation only. It is not sent by `👍` or `/send`, and staff should
+use it only to decide whether the copy-ready draft needs editing.
 
 Command actions require replying to a staff escalation notice event.
 

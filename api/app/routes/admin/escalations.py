@@ -211,6 +211,7 @@ async def get_grounding_brief(
         brief = build(
             question=escalation.question,
             knowledge_sources=list(escalation.sources or []),
+            draft_answer=escalation.ai_draft_answer,
         )
     except Exception:
         logger.exception(

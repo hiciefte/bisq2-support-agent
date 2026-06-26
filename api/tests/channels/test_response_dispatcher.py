@@ -400,7 +400,7 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
     )
     assert "- Reply in thread with `/dismiss`" in staff_notice_call.args[1].answer
     assert (
-        "- React `👍` to send the reply above to the user."
+        "- React `👍` to send only the copy-ready reply to the user."
         in staff_notice_call.args[1].answer
     )
     assert "- React `👎` to dismiss with no reply." in staff_notice_call.args[1].answer
@@ -540,6 +540,79 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
     assert "Sources to copy:" in staff_notice
     assert "- Bisq Easy docs: https://docs.bisq.network/easy" in staff_notice
     assert "- FAQ entry: https://faq.bisq.network/q/123" in staff_notice
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_staff_room_notice_includes_internal_code_enrichment_without_replacing_copy_ready_reply():
+    incoming = SimpleNamespace(
+        message_id="m-5d",
+        question="why can I not create a sell offer",
+        channel_metadata={
+            "room_id": "!support:matrix.org",
+            "staff_room_id": "!staff:matrix.org",
+        },
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer="Ask for the exact error text before suggesting changes.",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="queue_medium",
+            routing_reason="Codebase evidence attached for staff-room review.",
+            confidence_score=0.91,
+            staff_enriched_answer=(
+                "Ask for the exact error text before suggesting changes.\n\n"
+                "Staff-only codebase context:\n"
+                "- Sell offer creation checks reputation."
+            ),
+        ),
+    )
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=127)
+    )
+
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = SimpleNamespace(
+        public_escalation_notice_enabled=False,
+        escalation_notification_channel="staff_room",
+        escalation_user_notice_mode="none",
+        escalation_user_notice_template="this needs a team member. someone will follow up.",
+    )
+    runtime = MagicMock()
+    runtime.resolve_optional = MagicMock(
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
+    )
+
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.get_delivery_target.return_value = "!support:matrix.org"
+    channel.send_message = AsyncMock(return_value=True)
+
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+    )
+
+    sent = await dispatcher.dispatch(incoming, response)
+
+    assert sent is False
+    channel.send_message.assert_awaited_once()
+    staff_notice = channel.send_message.await_args_list[0].args[1].answer
+    assert "Reply to user (copy-ready):" in staff_notice
+    assert "Ask for the exact error text before suggesting changes." in staff_notice
+    assert "Codebase-enriched staff context" in staff_notice
+    assert "Staff-only codebase context" in staff_notice
+    assert "Sell offer creation checks reputation." in staff_notice
+    assert "not sent by reactions or `/send`" in staff_notice
+    assert "- React `👍` to send only the copy-ready reply to the user." in staff_notice
 
 
 @pytest.mark.unit

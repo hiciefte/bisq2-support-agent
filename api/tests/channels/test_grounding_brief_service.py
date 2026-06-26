@@ -44,6 +44,7 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
     brief = service.build(
         question="Why can I not create a Bisq Easy sell offer?",
         knowledge_sources=[],
+        draft_answer="Ask the user for the exact error text.",
     )
 
     assert brief is not None
@@ -57,6 +58,12 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
     )
     assert brief["safe_customer_guidance"]
     assert brief["do_not_say"]
+    assert "Ask the user for the exact error text." in brief["staff_enriched_answer"]
+    assert "Staff-only codebase context" in brief["staff_enriched_answer"]
+    assert (
+        "Sell offer creation depends on reputation score."
+        in brief["staff_enriched_answer"]
+    )
 
 
 def test_grounding_brief_omits_non_staff_evidence() -> None:

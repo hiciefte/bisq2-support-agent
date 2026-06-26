@@ -439,6 +439,9 @@ async def lifespan(app: FastAPI):
     app.state.staff_assist_service = bootstrap_result.runtime.resolve_optional(
         "staff_assist_service"
     )
+    app.state.staff_grounding_brief_service = bootstrap_result.runtime.resolve_optional(
+        "staff_grounding_brief_service"
+    )
 
     trust_monitor_service = getattr(app.state, "trust_monitor_service", None)
     if trust_monitor_service is not None:

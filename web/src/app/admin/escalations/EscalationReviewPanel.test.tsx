@@ -141,6 +141,8 @@ const groundingBrief = {
   ],
   uncertainties: ['Main-branch behavior may not match older releases.'],
   do_not_say: ['Do not mention internal class names.'],
+  staff_enriched_answer:
+    'Check your Bisq Easy profile and try again.\n\nStaff-only codebase context:\n- Sell offer creation checks reputation score.',
 }
 
 describe('EscalationReviewPanel grounding brief', () => {
@@ -166,6 +168,9 @@ describe('EscalationReviewPanel grounding brief', () => {
       '/admin/escalations/42/grounding-brief'
     )
     expect(await screen.findByText("Sell offer creation checks the maker's reputation score.")).toBeInTheDocument()
+    expect(screen.getByText('Internal enriched answer')).toBeInTheDocument()
+    expect(screen.getByText('Not sent')).toBeInTheDocument()
+    expect(screen.getByText(/Staff-only codebase context/)).toBeInTheDocument()
     expect(screen.getByText('Ask whether the account has enough reputation before suggesting a reinstall.')).toBeInTheDocument()
     expect(screen.getByText('Ask the customer to confirm their reputation setup before changing app settings.')).toBeInTheDocument()
     expect(screen.getByText('Do not mention internal class names.')).toBeInTheDocument()

@@ -41,9 +41,11 @@ Allowed values:
 Current behavior:
 
 - Only `audience=staff_only` records are retrieved by `StaffCodeEvidenceRetriever`.
-- Code evidence is attached only to `StaffAssistPayload.grounding_brief`.
+- Code evidence is attached only to staff-only metadata: `staff_grounding_brief` and `staff_enriched_answer`.
+- Matrix/Bisq2 channel responses with code evidence are forced into human review and posted to the configured staff room.
 - Code evidence is not loaded into the public Qdrant collection.
 - Code evidence is not included in public `knowledge_sources`.
+- Code-enriched staff context is not sent by Matrix reactions or `/send`; those actions send only the copy-ready draft unless staff supplies edited text.
 - Obvious secret/token/password text is redacted during loading.
 
 Promotion path:

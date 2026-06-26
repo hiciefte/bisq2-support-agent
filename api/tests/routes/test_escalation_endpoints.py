@@ -385,6 +385,7 @@ class TestGroundingBriefEndpoint:
         call_kwargs = mock_grounding_brief_service.build.call_args.kwargs
         assert call_kwargs["question"] == "How do I set up Bisq?"
         assert call_kwargs["knowledge_sources"] == []
+        assert call_kwargs["draft_answer"] == "Here's how to set up Bisq..."
 
     def test_grounding_brief_returns_null_when_service_missing(self, admin_client):
         """Test that missing code grounding does not block escalation review."""
