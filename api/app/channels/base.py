@@ -8,6 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Set, runtime_checkable
 
+from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.channels.models import (
     ChannelCapability,
     ChannelType,
@@ -18,7 +19,6 @@ from app.channels.models import (
     ResponseMetadata,
     SendResult,
 )
-from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.channels.rag_query import query_with_channel_context
 from app.channels.response_builder import build_metadata, build_sources
 
