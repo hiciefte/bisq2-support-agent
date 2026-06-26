@@ -99,6 +99,7 @@ User Query
 - Purpose: compiled internal support knowledge derived from canonical docs, verified FAQs, and support evidence
 - Only markdown files with `status: reviewed` or `status: active` and non-empty `source_refs` enter the RAG index
 - Draft, proposed, and deprecated pages are ignored so AI-generated synthesis never becomes authoritative before review
+- Admin-only sections such as `Review Notes` and `Last Change Summary` are stripped before indexing
 
 Example frontmatter:
 
@@ -118,6 +119,19 @@ source_refs:
   - faq:123
 ---
 ```
+
+### Staff-Only Code Evidence
+
+- Source: `{DATA_DIR}/code_knowledge/code_evidence.jsonl`
+- Loader/retriever: `api/app/services/rag/code_evidence.py`
+- Staff brief builder: `api/app/channels/staff_assist/grounding.py`
+- Purpose: implementation-derived evidence for human support admins
+- Boundary: only `audience=staff_only` records are retrieved, and only into staff-only response metadata and staff-room/admin review surfaces
+- Matrix/Bisq2 support requests with code evidence are enriched for the staff room and forced into human review; the copy-ready customer draft and public sources are unchanged
+- Current status: code evidence is file-backed and not inserted into the public Qdrant collection
+- Promotion path: durable facts must become reviewed LLM Wiki guidance before customer-facing use
+
+See [Code Evidence Schema](code-evidence-schema.md).
 
 ## Configuration Reference
 

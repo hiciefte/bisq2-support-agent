@@ -60,6 +60,18 @@ class ConcreteTestChannel(ChannelBase):
         return f"Escalated #{escalation_id}"
 
 
+class ConcreteMatrixTestChannel(ConcreteTestChannel):
+    """Concrete Matrix channel for staff-only code grounding tests."""
+
+    @property
+    def channel_id(self) -> str:
+        return "matrix"
+
+    @property
+    def channel_type(self) -> ChannelType:
+        return ChannelType.MATRIX
+
+
 # =============================================================================
 # Tests for handle_incoming Base Implementation
 # =============================================================================
@@ -339,6 +351,77 @@ class TestChannelBaseHandleIncoming:
         assert result.metadata.rag_strategy == "error"
         assert result.metadata.model_name == "unavailable"
         assert result.in_reply_to == incoming_message.message_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_incoming_attaches_staff_code_grounding_for_matrix(
+        self, mock_runtime
+    ):
+        """Matrix responses can carry staff-only code evidence without changing public answer."""
+
+        class FakeGroundingBriefService:
+            def build(self, *, question, knowledge_sources, draft_answer=None):
+                return {
+                    "summary": "Staff-only grounding for this support request.",
+                    "staff_enriched_answer": (
+                        f"{draft_answer}\n\nStaff-only codebase context:\n"
+                        "- Sell offers require reputation checks."
+                    ),
+                    "evidence": [
+                        {
+                            "kind": "code_fact",
+                            "audience": "staff_only",
+                            "claim": "Sell offers require reputation checks.",
+                        }
+                    ],
+                }
+
+        mock_runtime.rag_service.query.return_value = {
+            "answer": "Ask the user for the exact error text.",
+            "sources": [
+                {
+                    "document_id": "llm-wiki-1",
+                    "title": "Sell offer troubleshooting",
+                    "type": "llm_wiki",
+                    "protocol": "bisq_easy",
+                }
+            ],
+            "rag_strategy": "retrieval",
+            "model_name": "gpt-4",
+            "confidence": 0.96,
+            "routing_action": "auto_send",
+        }
+        mock_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                FakeGroundingBriefService()
+                if name == "staff_grounding_brief_service"
+                else None
+            )
+        )
+        channel = ConcreteMatrixTestChannel(mock_runtime)
+        incoming = IncomingMessage(
+            message_id="matrix-msg-1",
+            channel=ChannelType.MATRIX,
+            question="Why can I not create a Bisq Easy sell offer?",
+            user=UserContext(user_id="@alice:matrix.org"),
+        )
+
+        result = await channel.handle_incoming(incoming)
+
+        assert result.answer == "Ask the user for the exact error text."
+        assert result.requires_human is True
+        assert result.metadata.routing_action == "queue_medium"
+        assert result.metadata.routing_reason == (
+            "Codebase evidence attached for staff-room review."
+        )
+        assert result.metadata.staff_grounding_brief is not None
+        assert (
+            result.metadata.staff_grounding_brief["evidence"][0]["audience"]
+            == "staff_only"
+        )
+        assert result.metadata.staff_enriched_answer is not None
+        assert "Staff-only codebase context" in result.metadata.staff_enriched_answer
+        assert len(result.sources) == 1
 
 
 class TestChannelTypeProperty:

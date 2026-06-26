@@ -8,6 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Set, runtime_checkable
 
+from app.channels.constants import REVIEW_QUEUE_ACTIONS
 from app.channels.models import (
     ChannelCapability,
     ChannelType,
@@ -341,6 +342,7 @@ class ChannelBase(ABC):
                     )
                 ),
             )
+            rag_response = self._attach_staff_code_grounding(message, rag_response)
 
             # Build response components
             sources = self._build_sources(rag_response)
@@ -436,3 +438,77 @@ class ChannelBase(ABC):
             processing_time_ms=processing_time_ms,
             hooks_executed=[],
         )
+
+    def _attach_staff_code_grounding(
+        self,
+        message: IncomingMessage,
+        rag_response: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach staff-only code evidence without changing public sources."""
+        if self.channel_id not in {"matrix", "bisq2"}:
+            return rag_response
+
+        resolve_optional = getattr(self.runtime, "resolve_optional", None)
+        if not callable(resolve_optional):
+            return rag_response
+
+        try:
+            grounding_service = resolve_optional("staff_grounding_brief_service")
+        except Exception:
+            self._logger.debug(
+                "Failed resolving staff grounding service for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return rag_response
+
+        build = getattr(grounding_service, "build", None)
+        if not callable(build):
+            return rag_response
+
+        question = str(
+            rag_response.get("canonical_question_en")
+            or getattr(message, "question", "")
+            or ""
+        ).strip()
+        if not question:
+            return rag_response
+
+        try:
+            brief = build(
+                question=question,
+                knowledge_sources=list(rag_response.get("sources") or []),
+                draft_answer=str(
+                    rag_response.get("canonical_answer_en")
+                    or rag_response.get("answer")
+                    or ""
+                ).strip(),
+            )
+        except Exception:
+            self._logger.exception(
+                "Failed attaching staff-only code grounding for channel=%s",
+                self.channel_id,
+            )
+            return rag_response
+
+        if not isinstance(brief, dict):
+            return rag_response
+
+        enriched_answer = str(brief.get("staff_enriched_answer") or "").strip()
+        if not enriched_answer:
+            return rag_response
+
+        enriched_response = dict(rag_response)
+        enriched_response["staff_grounding_brief"] = brief
+        enriched_response["staff_enriched_answer"] = enriched_answer
+        enriched_response["requires_human"] = True
+
+        routing_action = (
+            str(enriched_response.get("routing_action") or "").strip().lower()
+        )
+        if routing_action not in REVIEW_QUEUE_ACTIONS:
+            enriched_response["routing_action"] = "queue_medium"
+            enriched_response["routing_reason"] = (
+                "Codebase evidence attached for staff-room review."
+            )
+        return enriched_response

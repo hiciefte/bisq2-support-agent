@@ -282,6 +282,59 @@ class TestChannelBootstrapper:
         assert result.runtime.resolve_optional("staff_assist_service") is not None
 
     @pytest.mark.unit
+    def test_bootstrap_registers_staff_grounding_service(self, tmp_path):
+        """bootstrap() wires code-evidence grounding into staff assist."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.DATA_DIR = str(tmp_path)
+
+        bootstrapper = ChannelBootstrapper(settings, MagicMock())
+        result = bootstrapper.bootstrap()
+
+        grounding_service = result.runtime.resolve_optional(
+            "staff_grounding_brief_service"
+        )
+        staff_assist_service = result.runtime.resolve_optional("staff_assist_service")
+
+        assert grounding_service is not None
+        assert staff_assist_service.grounding_brief_service is grounding_service
+
+    @pytest.mark.unit
+    def test_bootstrap_injects_grounding_service_into_shared_staff_assist(
+        self, tmp_path
+    ):
+        """bootstrap() wires code grounding into a pre-registered staff assist."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+        from app.channels.staff_assist import StaffAssistService
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.DATA_DIR = str(tmp_path)
+        staff_assist_service = StaffAssistService()
+
+        bootstrapper = ChannelBootstrapper(
+            settings,
+            MagicMock(),
+            shared_services={"staff_assist_service": staff_assist_service},
+        )
+        result = bootstrapper.bootstrap()
+
+        grounding_service = result.runtime.resolve_optional(
+            "staff_grounding_brief_service"
+        )
+
+        assert grounding_service is not None
+        assert staff_assist_service.grounding_brief_service is grounding_service
+
+    @pytest.mark.unit
     def test_matrix_sync_enabled_flag_enables_matrix_channel(self):
         """MATRIX_SYNC_ENABLED should enable matrix channel loading."""
         from app.channels.bootstrapper import ChannelBootstrapper

@@ -21,12 +21,16 @@ from fastapi.testclient import TestClient
 
 # Try to import the routers - skip tests if not implemented
 try:
+    from app.routes.admin.escalations import (
+        _normalize_knowledge_sources,
+    )
     from app.routes.admin.escalations import router as admin_escalation_router
 
     ADMIN_ROUTER_EXISTS = True
 except ImportError:
     ADMIN_ROUTER_EXISTS = False
     admin_escalation_router = None
+    _normalize_knowledge_sources = None
 
 try:
     from app.routes.escalation_polling import router as polling_router
@@ -179,7 +183,41 @@ def mock_escalation_service():
 
 
 @pytest.fixture
-def admin_app(mock_escalation_service):
+def mock_grounding_brief_service():
+    """Create a mock staff-only grounding brief service."""
+    service = MagicMock()
+    service.build.return_value = {
+        "summary": "Staff-only grounding for this support request.",
+        "likely_protocol": "bisq_easy",
+        "evidence": [
+            {
+                "kind": "code_fact",
+                "claim": "Sell offer creation depends on reputation score.",
+                "support_use": "Use as staff investigation context only.",
+                "audience": "staff_only",
+                "repo": "bisq2",
+                "commit": "abc123",
+                "protocol": "bisq_easy",
+                "freshness_class": "main_branch",
+                "risk_level": "medium",
+                "source_ref": "code:bisq2@abc123:bisq-easy/src/main/java/Foo.java:10-12",
+                "source_refs": [
+                    "code:bisq2@abc123:bisq-easy/src/main/java/Foo.java:10-12"
+                ],
+                "score": 0.91,
+            }
+        ],
+        "safe_customer_guidance": [
+            "Use this as investigation context, not wording to paste to the user."
+        ],
+        "uncertainties": ["Main-branch code may not match the user's release."],
+        "do_not_say": ["Do not expose raw code refs to the user."],
+    }
+    return service
+
+
+@pytest.fixture
+def admin_app(mock_escalation_service, mock_grounding_brief_service):
     """Create FastAPI app with admin escalation router and mocked service."""
     if not ADMIN_ROUTER_EXISTS:
         pytest.skip("Admin router not implemented yet")
@@ -187,6 +225,7 @@ def admin_app(mock_escalation_service):
     app = FastAPI()
     app.include_router(admin_escalation_router)
     app.state.escalation_service = mock_escalation_service
+    app.state.staff_grounding_brief_service = mock_grounding_brief_service
 
     # Override admin access verification
     from app.core.security import verify_admin_access
@@ -327,6 +366,63 @@ class TestGetEscalationCountsEndpoint:
 
         response = client.get("/admin/escalations/counts")
         assert response.status_code in [401, 403]
+
+
+@admin_router_tests
+class TestGroundingBriefEndpoint:
+    """Tests for GET /admin/escalations/{escalation_id}/grounding-brief."""
+
+    def test_normalize_knowledge_sources_accepts_model_dump_objects(self):
+        """Test grounding brief source normalization handles Pydantic-like objects."""
+
+        class SourceModel:
+            def model_dump(self):
+                return {"protocol": "bisq_easy", "title": "Bisq Easy"}
+
+        assert _normalize_knowledge_sources(
+            [SourceModel(), {"protocol": "multisig_v1"}, object()]
+        ) == [
+            {"protocol": "bisq_easy", "title": "Bisq Easy"},
+            {"protocol": "multisig_v1"},
+        ]
+
+    def test_grounding_brief_returns_staff_only_context(
+        self, admin_client, mock_grounding_brief_service
+    ):
+        """Test that the endpoint returns a staff-only grounding brief."""
+        response = admin_client.get("/admin/escalations/1/grounding-brief")
+        assert response.status_code == 200
+
+        payload = response.json()
+        brief = payload["grounding_brief"]
+        assert brief["summary"] == "Staff-only grounding for this support request."
+        assert brief["evidence"][0]["audience"] == "staff_only"
+        assert brief["evidence"][0]["kind"] == "code_fact"
+
+        mock_grounding_brief_service.build.assert_called_once()
+        call_kwargs = mock_grounding_brief_service.build.call_args.kwargs
+        assert call_kwargs["question"] == "How do I set up Bisq?"
+        assert call_kwargs["knowledge_sources"] == []
+        assert call_kwargs["draft_answer"] == "Here's how to set up Bisq..."
+
+    def test_grounding_brief_returns_null_when_service_missing(self, admin_client):
+        """Test that missing code grounding does not block escalation review."""
+        admin_client.app.state.staff_grounding_brief_service = None
+
+        response = admin_client.get("/admin/escalations/1/grounding-brief")
+
+        assert response.status_code == 200
+        assert response.json() == {"grounding_brief": None}
+
+    def test_grounding_brief_returns_404_for_missing_escalation(
+        self, admin_client, mock_escalation_service
+    ):
+        """Test that grounding brief requests still validate escalation IDs."""
+        mock_escalation_service.repository.get_by_id = AsyncMock(return_value=None)
+
+        response = admin_client.get("/admin/escalations/999/grounding-brief")
+
+        assert response.status_code == 404
 
 
 @admin_router_tests

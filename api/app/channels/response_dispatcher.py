@@ -741,13 +741,25 @@ class ChannelResponseDispatcher:
         routing_line = routing_reason or "n/a"
         confidence_line = confidence_text or "n/a"
         draft_block = ai_draft_answer or "_No AI draft answer available._"
+        staff_enriched_answer = self._truncate_notice_text(
+            str(getattr(response_metadata, "staff_enriched_answer", "") or "").strip(),
+            limit=4000,
+        )
+        internal_enrichment_block = ""
+        if staff_enriched_answer and staff_enriched_answer != draft_block:
+            internal_enrichment_block = (
+                "\n\n"
+                "Codebase-enriched staff context (internal; not sent by reactions or `/send`):\n"
+                f"{staff_enriched_answer}"
+            )
 
         text = (
             f"Escalation #{escalation_id or '?'} for {self.channel_id}\n\n"
             f"User: {username}\n"
             f"Question: {question}\n\n"
             "Reply to user (copy-ready):\n"
-            f"{draft_block}\n\n"
+            f"{draft_block}"
+            f"{internal_enrichment_block}\n\n"
             "Sources to copy:\n"
             f"{source_block}\n\n"
             "Review context:\n"
@@ -755,9 +767,9 @@ class ChannelResponseDispatcher:
             f"- Confidence: {confidence_line}\n"
             f"- Admin review: {admin_link}\n\n"
             "How to review in this room:\n"
-            "- React `👍` to send the reply above to the user.\n"
+            "- React `👍` to send only the copy-ready reply to the user.\n"
             "- React `👎` to dismiss with no reply.\n"
-            "- Reply in thread with `/send` to send the reply above unchanged.\n"
+            "- Reply in thread with `/send` to send only the copy-ready reply unchanged.\n"
             "- Reply in thread with `/send <edited reply>` to send an edited reply.\n"
             "- Reply in thread with `/dismiss` to close without reply."
         )

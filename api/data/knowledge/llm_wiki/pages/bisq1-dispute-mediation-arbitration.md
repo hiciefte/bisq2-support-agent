@@ -12,16 +12,22 @@ source_refs:
   - wiki:Dispute Resolution in Bisq 1
   - wiki:Mediation
   - wiki:Arbitration
+  - wiki:Trading rules
+  - wiki:Security deposit
+  - wiki:Account limits
+  - wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
 ---
 ## Canonical Support Answer
 
-Bisq 1 dispute resolution has stages: direct trader chat, mediation, and arbitration. Most problems should first be handled through trade chat and mediation. A mediator can assess the situation and propose a payout, but the mediator does not hold a multisig key and the proposal requires trader cooperation.
+Bisq 1 dispute resolution has stages: trader chat, mediation, and arbitration. Most trade problems should first be handled through the built-in trader chat and then mediation. Keep communication inside Bisq whenever possible so the mediator can review the trade context and evidence.
 
-If the buyer paid fiat in Bisq 1 but BTC was not released, the user should open mediation and provide the requested proof of payment. If a bank transfer failed and both peers agree the trade should be cancelled or unwound, support should still route them through the mediator so the payout/cancellation proposal is documented and signed safely.
+Mediation can be opened from the trade/support flow when the trade period or situation makes it available; in some Bisq 1 contexts support staff may tell the user to use the trade panel shortcut such as `Ctrl+O` or `Cmd+O`. A mediator can review transaction IDs, payment proof, chat context, and trade-rule compliance, then propose a payout. A mediator does not unilaterally control the multisig funds; the proposal needs the protocol's normal cooperation/signature path.
 
-For "what happens if mediation is not accepted" or "how are disputed payouts and reimbursement handled", keep the answer focused: arbitration is the last-resort stage, the arbitrator investigates the evidence, makes the final payout decision, pays a trader if BTC is owed, and later requests reimbursement from the DAO.
+If a buyer sent fiat and the BTC seller has not released BTC, the buyer should keep the trade data intact, communicate in trader chat, and open mediation when the trade cannot complete normally. The buyer should be ready to provide proof of payment. If the seller says payment details are wrong, the payment method failed, or the payment was sent from/to unexpected details, route through mediation instead of giving informal off-platform instructions.
 
-For "when can arbitration be opened", include the timeout rule: the delayed payout transaction can be published only after the protocol timeout, typically 10 days after deposit confirmation for altcoin trades and 20 days after deposit confirmation for fiat trades. Support should tell users to cooperate with mediators/arbitrators, provide requested proof, and respond within the expected window. If a user cannot respond temporarily, they should tell the mediator/arbitrator in advance.
+Arbitration is the last-resort stage after mediation fails or a mediation proposal is rejected and the delayed payout transaction can be published. The delayed payout transaction is time locked: commonly 10 days after deposit confirmation for altcoin trades and 20 days after deposit confirmation for fiat trades. Arbitration decisions are based on the evidence, mediator feedback, trade rules, and on-chain transaction state; response can take days, so users should remain responsive and provide requested evidence.
+
+If the deposit transaction is missing, invalid, or not found on-chain, use the failed-trade workflow instead of treating it as a normal mediation/arbitration case. If the deposit transaction exists and the app or payout state is inconsistent, collect the trade ID, maker fee txid, taker fee txid, deposit txid, payout/delayed-payout txid if present, and logs/screenshots for mediator or support review.
 
 ## Applies When
 
@@ -29,8 +35,11 @@ For "when can arbitration be opened", include the timeout rule: the delayed payo
 - The user asks when arbitration can be opened.
 - The user asks who decides disputed payouts in Bisq 1.
 - The user asks what proof to provide in mediation.
-- The user paid fiat in Bisq 1 but BTC was not released.
-- Both peers want to cancel a Bisq 1 trade after a failed bank transfer.
+- The buyer paid fiat in Bisq 1 but BTC was not released.
+- The seller or buyer is unresponsive during a trade, mediation, or arbitration.
+- Both peers want to cancel or unwind a Bisq 1 trade after payment or banking problems.
+- The user asks why funds are locked after mediation/arbitration or how a payout proposal is accepted.
+- The user asks whether security deposits protect honest traders in the Bisq 1 multisig protocol.
 
 ## Do Not Say
 
@@ -38,19 +47,25 @@ For "when can arbitration be opened", include the timeout rule: the delayed payo
 - Do not recommend opening arbitration before the protocol makes it available.
 - Do not promise a specific payout before mediator/arbitrator review.
 - Do not describe Bisq 1 cancellation as a simple local reject button when funds or payment may be involved.
-- Do not include delayed-payout timeout details when the user only asks how arbitration payout/reimbursement works.
+- Do not tell the user to delete `PendingTrades`, dispute lists, or other database files as a first-line fix for locked funds.
+- Do not tell a buyer to send fiat to changed or mismatching payment details without mediation review.
+- Do not route missing/invalid deposit transactions through normal mediation if the trade never locked funds.
 
 ## Evidence / Sources
 
 - `wiki:Dispute Resolution in Bisq 1` describes trader chat, mediation, arbitration, response expectations, and payout suggestions.
-- `wiki:Mediation` documents mediator duties and proof requests.
-- `wiki:Arbitration` explains arbitration availability, delayed payout transaction mechanics, and DAO reimbursement.
-- `wiki:Arbitration` documents the 10-day altcoin and 20-day fiat timeout before the delayed payout transaction can be published.
+- `wiki:Mediation` documents mediator duties, proof requests, and transaction checks.
+- `wiki:Arbitration` explains arbitration availability, delayed payout transaction mechanics, and DAO reimbursement context.
+- `wiki:Trading rules` documents communication boundaries and payment-rule expectations.
+- `wiki:Security deposit` explains the Bisq 1 security-deposit model.
+- `wiki:Account limits` explains why fiat account limits and signing exist for chargeback-risk methods.
+- `wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees` distinguishes missing/invalid deposit transactions from normal locked-funds disputes.
 
 ## Review Notes
 
 - Current UI shortcuts/buttons for opening mediation/arbitration should be verified against the user's Bisq 1 version.
+- Some production candidates contained case-specific Matrix handles, named traders, or broad risk claims; those were intentionally omitted from the reusable page.
 
 ## Last Change Summary
 
-Converted from generated support playbook into internal LLM Wiki page; ready for local support-admin review.
+Curated the production dispute cluster into a single Bisq 1 mediation/arbitration page covering escalation stages, evidence collection, delayed-payout timing, failed-trade boundaries, and unsafe advice to avoid.

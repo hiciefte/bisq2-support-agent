@@ -12,6 +12,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import {
   Loader2,
@@ -27,6 +29,9 @@ import {
   Pencil,
   Check,
   Clock,
+  Code2,
+  GitCommit,
+  LockKeyhole,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { makeAuthenticatedRequest } from '@/lib/auth'
@@ -57,6 +62,35 @@ interface EscalationReviewPanelProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onUpdated: () => void
+}
+
+interface GroundingEvidence {
+  kind?: string
+  claim?: string
+  support_use?: string
+  audience?: string
+  repo?: string
+  commit?: string
+  protocol?: string
+  freshness_class?: string
+  risk_level?: string
+  source_ref?: string | null
+  source_refs?: string[]
+  score?: number
+}
+
+interface GroundingBrief {
+  summary?: string
+  likely_protocol?: string | null
+  evidence?: GroundingEvidence[]
+  safe_customer_guidance?: string[]
+  uncertainties?: string[]
+  do_not_say?: string[]
+  staff_enriched_answer?: string
+}
+
+interface GroundingBriefResponse {
+  grounding_brief: GroundingBrief | null
 }
 
 function formatTimestamp(timestamp: string): string {
@@ -111,6 +145,281 @@ function isMeaningfullyEditedAnswer(staffAnswer: string, aiDraftAnswer: string):
   return normalizedStaff !== normalizedDraft
 }
 
+function formatGroundingScore(score: number | undefined): string | null {
+  if (typeof score !== "number" || Number.isNaN(score)) return null
+  return `${Math.round(score * 100)}% match`
+}
+
+function getRiskBadgeClassName(riskLevel: string | undefined): string {
+  const normalized = (riskLevel || "").toLowerCase()
+  if (normalized === "high") {
+    return "border-red-500/30 bg-red-500/10 text-red-300"
+  }
+  if (normalized === "medium") {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-300"
+  }
+  if (normalized === "low") {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+  }
+  return "border-border bg-background text-muted-foreground"
+}
+
+function StaffGroundingBriefPanel({
+  brief,
+  isLoading,
+  error,
+}: {
+  brief: GroundingBrief | null
+  isLoading: boolean
+  error: string | null
+}) {
+  const evidence = (brief?.evidence || []).filter((item) => item.claim?.trim())
+  const safeGuidance = (brief?.safe_customer_guidance || []).filter(Boolean)
+  const uncertainties = (brief?.uncertainties || []).filter(Boolean)
+  const doNotSay = (brief?.do_not_say || []).filter(Boolean)
+  const staffEnrichedAnswer = brief?.staff_enriched_answer?.trim() || ""
+  const hasContent =
+    Boolean(brief?.summary?.trim()) ||
+    Boolean(staffEnrichedAnswer) ||
+    evidence.length > 0 ||
+    safeGuidance.length > 0 ||
+    uncertainties.length > 0 ||
+    doNotSay.length > 0
+
+  if (isLoading) {
+    return (
+      <section className="rounded-lg border border-border/70 bg-muted/15 p-4" aria-live="polite">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <p className="text-sm font-medium">Staff-only code grounding</p>
+              <p className="text-xs text-muted-foreground">Loading investigation context from code facts.</p>
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  if (error) {
+    return (
+      <section className="rounded-lg border border-border/70 bg-muted/15 p-4" aria-live="polite">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+            <AlertTriangle className="h-4 w-4 text-amber-300" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Staff-only code grounding</p>
+            <p className="text-xs text-muted-foreground">{error}</p>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  if (!brief || !hasContent) {
+    return null
+  }
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-muted/15 p-4 space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+            <LockKeyhole className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium">Staff-only code grounding</h3>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Use this as investigation context. Keep raw implementation details out of customer replies.
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Badge variant="outline" className="text-[10px]">
+            Staff only
+          </Badge>
+          {brief.likely_protocol && (
+            <Badge variant="secondary" className="text-[10px]">
+              {humanizeEnumValue(brief.likely_protocol)}
+            </Badge>
+          )}
+          {evidence.length > 0 && (
+            <Badge variant="secondary" className="text-[10px] tabular-nums">
+              {evidence.length} code {evidence.length === 1 ? "fact" : "facts"}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {brief.summary?.trim() && (
+        <p className="text-sm leading-relaxed text-foreground/90">{brief.summary}</p>
+      )}
+
+      {staffEnrichedAnswer && (
+        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-sky-200">Internal enriched answer</p>
+            <Badge variant="outline" className="border-sky-500/30 text-[10px] text-sky-200">
+              Not sent
+            </Badge>
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+            {staffEnrichedAnswer}
+          </p>
+        </div>
+      )}
+
+      {evidence.length > 0 && (
+        <div className="space-y-2">
+          {evidence.map((item, index) => {
+            const sourceRefs =
+              item.source_refs && item.source_refs.length > 0
+                ? item.source_refs
+                : item.source_ref
+                  ? [item.source_ref]
+                  : []
+            const scoreLabel = formatGroundingScore(item.score)
+
+            return (
+              <div key={`${item.claim}-${index}`} className="rounded-md border border-border/60 bg-background/70 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-[10px]">
+                    <Code2 className="mr-1 h-3 w-3" aria-hidden="true" />
+                    {item.kind === "code_fact" ? "Code fact" : humanizeEnumValue(item.kind || "Evidence")}
+                  </Badge>
+                  {item.risk_level && (
+                    <Badge variant="outline" className={cn("text-[10px]", getRiskBadgeClassName(item.risk_level))}>
+                      {humanizeEnumValue(item.risk_level)} risk
+                    </Badge>
+                  )}
+                  {item.freshness_class && (
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                      {humanizeEnumValue(item.freshness_class)}
+                    </Badge>
+                  )}
+                  {scoreLabel && (
+                    <Badge variant="secondary" className="text-[10px] tabular-nums">
+                      {scoreLabel}
+                    </Badge>
+                  )}
+                </div>
+
+                <p className="mt-2 text-sm leading-relaxed text-foreground">{item.claim}</p>
+
+                {item.support_use?.trim() && (
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.support_use}</p>
+                )}
+
+                {(item.repo || item.commit || item.protocol || sourceRefs.length > 0) && (
+                  <Collapsible>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="mt-2 h-7 px-0 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Source details
+                        <ChevronDown className="ml-1 h-3 w-3" aria-hidden="true" />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-2 rounded-md border border-border/60 bg-muted/20 p-3 text-xs">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {item.repo && (
+                            <div>
+                              <p className="text-muted-foreground">Repository</p>
+                              <p className="font-mono text-[11px] text-foreground/90">{item.repo}</p>
+                            </div>
+                          )}
+                          {item.commit && (
+                            <div>
+                              <p className="text-muted-foreground">Commit</p>
+                              <p className="font-mono text-[11px] text-foreground/90">
+                                <GitCommit className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                                {item.commit.slice(0, 12)}
+                              </p>
+                            </div>
+                          )}
+                          {item.protocol && (
+                            <div>
+                              <p className="text-muted-foreground">Protocol</p>
+                              <p className="text-foreground/90">{humanizeEnumValue(item.protocol)}</p>
+                            </div>
+                          )}
+                        </div>
+                        {sourceRefs.length > 0 && (
+                          <div className="mt-3 space-y-1">
+                            <p className="text-muted-foreground">Code references</p>
+                            {sourceRefs.map((sourceRef) => (
+                              <p key={sourceRef} className="break-all font-mono text-[11px] leading-relaxed text-foreground/80">
+                                {sourceRef}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {(safeGuidance.length > 0 || doNotSay.length > 0 || uncertainties.length > 0) && (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {safeGuidance.length > 0 && (
+            <div className="rounded-md border border-border/60 bg-background/60 p-3">
+              <p className="text-xs font-medium text-muted-foreground">Safe customer guidance</p>
+              <ul className="mt-2 space-y-1 text-sm leading-relaxed text-foreground/90">
+                {safeGuidance.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(doNotSay.length > 0 || uncertainties.length > 0) && (
+            <div className="rounded-md border border-amber-500/25 bg-amber-500/10 p-3">
+              {doNotSay.length > 0 && (
+                <>
+                  <p className="text-xs font-medium text-amber-200">Do not say</p>
+                  <ul className="mt-2 space-y-1 text-sm leading-relaxed text-amber-100/90">
+                    {doNotSay.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {uncertainties.length > 0 && (
+                <div className={cn(doNotSay.length > 0 ? "mt-3 border-t border-amber-500/20 pt-3" : undefined)}>
+                  <p className="text-xs font-medium text-amber-200">Uncertainties</p>
+                  <ul className="mt-2 space-y-1 text-sm leading-relaxed text-amber-100/90">
+                    {uncertainties.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function EscalationReviewPanel({
   escalation,
   open,
@@ -138,6 +447,9 @@ export function EscalationReviewPanel({
   const [similarFaqs, setSimilarFaqs] = useState<SimilarFAQItem[]>([])
   const [isCheckingSimilarFaqs, setIsCheckingSimilarFaqs] = useState(false)
   const [requiresForceOverride, setRequiresForceOverride] = useState(false)
+  const [groundingBrief, setGroundingBrief] = useState<GroundingBrief | null>(null)
+  const [isLoadingGroundingBrief, setIsLoadingGroundingBrief] = useState(false)
+  const [groundingBriefError, setGroundingBriefError] = useState<string | null>(null)
 
   // Reset form when escalation changes
   useEffect(() => {
@@ -168,6 +480,47 @@ export function EscalationReviewPanel({
     setFaqCategory(inferred.category)
     setFaqProtocol(inferred.protocol)
   }, [escalation])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!open || !escalation.id) {
+      setGroundingBrief(null)
+      setGroundingBriefError(null)
+      setIsLoadingGroundingBrief(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setIsLoadingGroundingBrief(true)
+    setGroundingBriefError(null)
+
+    makeAuthenticatedRequest(`/admin/escalations/${escalation.id}/grounding-brief`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Grounding brief request failed: ${response.status}`)
+        }
+        return (await response.json()) as GroundingBriefResponse
+      })
+      .then((payload) => {
+        if (cancelled) return
+        setGroundingBrief(payload.grounding_brief ?? null)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setGroundingBrief(null)
+        setGroundingBriefError("Code grounding unavailable. Continue review with the current sources.")
+      })
+      .finally(() => {
+        if (cancelled) return
+        setIsLoadingGroundingBrief(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, escalation.id])
 
   useEffect(() => {
     if (!isEditingSuggestedAnswer) return
@@ -838,6 +1191,14 @@ export function EscalationReviewPanel({
                       )}
                   </div>
                 </section>
+              )}
+
+              {phase === 'review' && canRespond && (
+                <StaffGroundingBriefPanel
+                  brief={groundingBrief}
+                  isLoading={isLoadingGroundingBrief}
+                  error={groundingBriefError}
+                />
               )}
 
               {escalation.staff_answer && (escalation.status === 'responded' || escalation.status === 'closed') && (

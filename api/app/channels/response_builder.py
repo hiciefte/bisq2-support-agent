@@ -55,5 +55,7 @@ def build_metadata(
         localized_question=rag_response.get("localized_question"),
         localized_answer=rag_response.get("localized_answer"),
         translation_applied=rag_response.get("translated"),
+        staff_grounding_brief=rag_response.get("staff_grounding_brief"),
+        staff_enriched_answer=rag_response.get("staff_enriched_answer"),
         hooks_executed=hooks_executed if hooks_executed is not None else [],
     )

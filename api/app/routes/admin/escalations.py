@@ -53,6 +53,23 @@ async def get_escalation_service(request: Request):
     return service
 
 
+async def _get_escalation_or_404(service, escalation_id: int) -> Escalation:
+    escalation = await service.repository.get_by_id(escalation_id)
+    if not escalation:
+        raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
+    return escalation
+
+
+def _normalize_knowledge_sources(sources: Any) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for source in list(sources or []):
+        if hasattr(source, "model_dump"):
+            output.append(source.model_dump())
+        elif isinstance(source, dict):
+            output.append(dict(source))
+    return output
+
+
 @router.get("", response_model=EscalationListResponse)
 async def list_escalations(
     status_filter: Optional[EscalationStatus] = Query(None, alias="status"),
@@ -149,10 +166,7 @@ async def get_escalation(
     logger.info(f"Admin request to get escalation: {escalation_id}")
 
     try:
-        escalation = await service.repository.get_by_id(escalation_id)
-        if not escalation:
-            raise EscalationNotFoundError(f"Escalation {escalation_id} not found")
-        return escalation
+        return await _get_escalation_or_404(service, escalation_id)
     except EscalationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -164,6 +178,58 @@ async def get_escalation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get escalation",
         ) from e
+
+
+@router.get("/{escalation_id}/grounding-brief", response_model=Dict[str, Any])
+async def get_grounding_brief(
+    escalation_id: int,
+    request: Request,
+    service=Depends(get_escalation_service),
+) -> Dict[str, Any]:
+    """Build staff-only code grounding for an escalation review."""
+    logger.info(
+        "Admin request to build grounding brief for escalation %s", escalation_id
+    )
+
+    try:
+        escalation = await _get_escalation_or_404(service, escalation_id)
+    except EscalationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Escalation {escalation_id} not found",
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to load escalation %s for grounding brief: %s",
+            escalation_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load escalation",
+        ) from e
+
+    grounding_service = getattr(
+        request.app.state, "staff_grounding_brief_service", None
+    )
+    build = getattr(grounding_service, "build", None)
+    if not callable(build):
+        return {"grounding_brief": None}
+
+    try:
+        brief = build(
+            question=escalation.question,
+            knowledge_sources=_normalize_knowledge_sources(escalation.sources),
+            draft_answer=escalation.ai_draft_answer,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to build grounding brief for escalation %s", escalation_id
+        )
+        return {"grounding_brief": None}
+
+    return {"grounding_brief": brief if isinstance(brief, dict) else None}
 
 
 @router.post("/{escalation_id}/claim", response_model=Escalation)
