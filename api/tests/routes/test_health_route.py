@@ -17,3 +17,20 @@ class TestHealthRoute:
         assert response.status_code == 200
         payload = response.json()
         assert payload["services"]["bisq2_api"]["status"] == "degraded"
+
+    def test_public_health_omits_internal_details(self, test_client):
+        test_client.app.state.rag_service = object()
+
+        response = test_client.get("/health/public")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy"}
+
+    def test_public_health_reports_initializing_before_rag_ready(self, test_client):
+        if hasattr(test_client.app.state, "rag_service"):
+            delattr(test_client.app.state, "rag_service")
+
+        response = test_client.get("/health/public")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "initializing"}

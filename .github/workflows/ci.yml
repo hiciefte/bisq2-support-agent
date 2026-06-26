@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  nginx-config:
+    name: Nginx Config Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate nginx configs
+        run: bash scripts/validate-nginx-config.sh
+
   lint-and-test:
     name: Lint, Type Check & Test
     runs-on: ubuntu-latest

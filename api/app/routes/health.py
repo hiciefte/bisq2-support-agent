@@ -56,6 +56,22 @@ async def health_check(request: Request):
     }
 
 
+@router.get("/health/public")
+async def public_health_check(request: Request):
+    """
+    Public health check for the web proxy.
+
+    This intentionally omits build metadata, system metrics, and dependency
+    details that are useful internally but too verbose for internet-facing
+    readiness checks.
+    """
+    rag_service_status = "initializing"
+    if hasattr(request.app.state, "rag_service") and request.app.state.rag_service:
+        rag_service_status = "healthy"
+
+    return {"status": "healthy" if rag_service_status == "healthy" else "initializing"}
+
+
 @router.get("/health/ready")
 async def readiness_check():
     """

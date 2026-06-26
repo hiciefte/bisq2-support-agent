@@ -191,6 +191,7 @@ docker compose logs nginx | grep maintenance
 docker compose logs -f nginx
 ```
 
-**Health check endpoints remain available** during maintenance (internal only):
+**Health check endpoints remain available** during maintenance:
 - `/health` - Nginx health (always available)
-- `/api/health` - API health (via proxy when backend is up)
+- `/api/health` - Minimal public API status (via proxy when backend is up)
+- `/api/health/ready` and `/api/health/live` - API readiness and liveness probes

@@ -189,6 +189,34 @@ def test_api_requirements_change_uses_api_rebuild_not_full_rebuild(
     assert run_git_update_detector("needs_api_rebuild", tmp_path, prev_head) == 0
 
 
+def test_api_tests_do_not_request_api_restart(tmp_path: Path) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "api/tests/test_nginx_health_routes.py",
+        "def test_route():\n    pass\n",
+        "change api tests",
+    )
+
+    assert run_git_update_detector("needs_api_rebuild", tmp_path, prev_head) == 1
+    assert run_git_update_detector("needs_api_restart", tmp_path, prev_head) == 1
+
+
+def test_api_knowledge_data_change_requests_api_restart(tmp_path: Path) -> None:
+    init_git_repo(tmp_path)
+    prev_head = commit_file(tmp_path, "README.md", "base\n", "base")
+    commit_file(
+        tmp_path,
+        "api/data/knowledge/llm_wiki/pages/example.md",
+        "---\nid: example\n---\n",
+        "change llm wiki page",
+    )
+
+    assert run_git_update_detector("needs_api_rebuild", tmp_path, prev_head) == 1
+    assert run_git_update_detector("needs_api_restart", tmp_path, prev_head) == 0
+
+
 def test_web_package_change_uses_web_rebuild_not_full_rebuild(
     tmp_path: Path,
 ) -> None:
