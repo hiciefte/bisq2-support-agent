@@ -43,7 +43,9 @@ class GroundingBriefService:
             return None
 
         evidence = [
-            self._format_code_fact(doc) for doc in docs if self._is_staff_code_fact(doc)
+            self._format_code_fact(doc)
+            for doc in docs
+            if self._is_staff_code_fact(doc, expected_protocol=protocol)
         ]
         if not evidence:
             return None
@@ -80,11 +82,17 @@ class GroundingBriefService:
                 return protocol
         return None
 
-    def _is_staff_code_fact(self, doc: RetrievedDocument) -> bool:
+    def _is_staff_code_fact(
+        self, doc: RetrievedDocument, *, expected_protocol: str | None
+    ) -> bool:
         metadata = doc.metadata or {}
+        doc_protocol = str(metadata.get("protocol") or "").strip()
         return (
             metadata.get("type") == CODE_EVIDENCE_TYPE
             and metadata.get("audience") == STAFF_ONLY_AUDIENCE
+            and (
+                expected_protocol is None or doc_protocol in {expected_protocol, "all"}
+            )
         )
 
     def _format_code_fact(self, doc: RetrievedDocument) -> dict[str, Any]:

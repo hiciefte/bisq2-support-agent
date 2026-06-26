@@ -204,19 +204,27 @@ class ChannelBootstrapper:
                     allow_override=True,
                 )
 
-        if runtime.resolve_optional("staff_assist_service") is None:
+        grounding_brief_service = runtime.resolve_optional(
+            "staff_grounding_brief_service"
+        )
+        staff_assist_service = runtime.resolve_optional("staff_assist_service")
+        if staff_assist_service is None:
             runtime.register(
                 "staff_assist_service",
                 StaffAssistService(
                     policy_service=runtime.resolve_optional(
                         "channel_autoresponse_policy_service"
                     ),
-                    grounding_brief_service=runtime.resolve_optional(
-                        "staff_grounding_brief_service"
-                    ),
+                    grounding_brief_service=grounding_brief_service,
                 ),
                 allow_override=True,
             )
+        elif (
+            grounding_brief_service is not None
+            and hasattr(staff_assist_service, "grounding_brief_service")
+            and getattr(staff_assist_service, "grounding_brief_service", None) is None
+        ):
+            staff_assist_service.grounding_brief_service = grounding_brief_service
 
         if runtime.resolve_optional("arbitration_service") is None:
             runtime.register(

@@ -87,3 +87,15 @@ def test_grounding_brief_passes_protocol_from_sources() -> None:
     assert retriever.calls == [
         {"query": "Why is my deposit stuck?", "protocol": "multisig_v1", "k": 3}
     ]
+
+
+def test_grounding_brief_rejects_wrong_protocol_evidence_from_retriever() -> None:
+    retriever = FakeRetriever([_code_doc(protocol="multisig_v1")])
+    service = GroundingBriefService(code_retriever=retriever)
+
+    brief = service.build(
+        question="Why can I not create a sell offer?",
+        knowledge_sources=[{"protocol": "bisq_easy"}],
+    )
+
+    assert brief is None

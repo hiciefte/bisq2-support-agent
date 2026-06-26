@@ -60,6 +60,36 @@ def test_loader_validates_and_redacts_sensitive_values(tmp_path: Path) -> None:
     assert records[0].support_use == "Do not share [REDACTED] with users."
 
 
+def test_loader_redacts_compact_api_key_and_wallet_seed_text(tmp_path: Path) -> None:
+    source = tmp_path / "code_knowledge" / "code_evidence.jsonl"
+    _write_jsonl(
+        source,
+        [
+            _valid_record(
+                claim="api_key=abcd1234 and wallet_seed:abandon should stay private.",
+                support_use="The password:swordfish value is fake test data.",
+            )
+        ],
+    )
+
+    records = CodeEvidenceLoader(source).load()
+
+    assert records[0].claim == (
+        "[REDACTED]=[REDACTED] and [REDACTED]:[REDACTED] " "should stay private."
+    )
+    assert records[0].support_use == (
+        "The [REDACTED]:[REDACTED] value is fake test data."
+    )
+
+
+def test_loader_rejects_boolean_line_numbers(tmp_path: Path) -> None:
+    source = tmp_path / "code_knowledge" / "code_evidence.jsonl"
+    _write_jsonl(source, [_valid_record(line_start=True)])
+
+    with pytest.raises(ValueError, match="line_start"):
+        CodeEvidenceLoader(source).load()
+
+
 def test_loader_rejects_invalid_audience(tmp_path: Path) -> None:
     source = tmp_path / "code_knowledge" / "code_evidence.jsonl"
     _write_jsonl(source, [_valid_record(audience="public")])

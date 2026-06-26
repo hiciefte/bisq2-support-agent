@@ -22,15 +22,21 @@ ALLOWED_RISK_LEVELS = {"low", "medium", "high"}
 ALLOWED_PROTOCOLS = {"bisq_easy", "multisig_v1", "musig", "all"}
 
 _SECRET_TOKEN_RE = re.compile(
-    r"\b(?:sk|pk|xox[baprs]|gh[pousr]|glpat|AKIA)[A-Za-z0-9_\-]{6,}\b"
+    r"\b(?:sk|pk|xox[baprs]|gh[pousr]|glpat|AKIA|xprv)[A-Za-z0-9_\-]{6,}\b"
 )
 _SENSITIVE_WORD_RE = re.compile(
-    r"\b(password|passwd|secret|token|api[ _-]?key|private[ _-]?key)\b",
+    r"\b("
+    r"password|passwd|secret|token|api[ _-]?key|private[ _-]?key|"
+    r"mnemonic|seed[ _-]?phrase|wallet[ _-]?seed"
+    r")\b",
     re.IGNORECASE,
 )
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
-    r"\b(?P<key>password|passwd|secret|token|api[ _-]?key|private[ _-]?key)"
-    r"(?P<middle>[^.?!\n]{0,80}?\b(?:is|=|:)\s+)"
+    r"\b(?P<key>"
+    r"password|passwd|secret|token|api[ _-]?key|private[ _-]?key|"
+    r"mnemonic|seed[ _-]?phrase|wallet[ _-]?seed"
+    r")"
+    r"(?P<middle>[^.?!\n]{0,80}?\b(?:is|=|:)\s*)"
     r"(?P<value>[A-Za-z0-9._/\-+=]{4,})",
     re.IGNORECASE,
 )
@@ -59,7 +65,7 @@ def _require_string(data: dict[str, Any], field: str) -> str:
 
 def _require_int(data: dict[str, Any], field: str) -> int:
     value = data.get(field)
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"Code evidence field '{field}' must be an integer")
     return value
 

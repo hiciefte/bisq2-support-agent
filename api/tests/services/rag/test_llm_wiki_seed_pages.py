@@ -67,7 +67,9 @@ def test_seed_pages_use_durable_resolvable_sources() -> None:
             else:
                 failures.append(f"{page.name}: non-durable source {source_ref}")
 
-    assert failures == []
+    assert (
+        failures == []
+    ), f"First 10 failures: {failures[:10]} (total: {len(failures)})"
 
 
 def test_faq_refs_handles_missing_or_empty_fixture(tmp_path: Path) -> None:
@@ -82,10 +84,18 @@ def test_faq_refs_handles_missing_or_empty_fixture(tmp_path: Path) -> None:
 def _wiki_titles(wiki_dir: Path) -> set[str]:
     titles: set[str] = set()
     for path in sorted(wiki_dir.glob("*.jsonl")):
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise AssertionError(
+                    f"Invalid JSONL in {path.name}:{line_number}: {exc}"
+                ) from exc
             title = str(row.get("title") or "").strip()
             if title:
                 titles.add(title)
@@ -96,16 +106,13 @@ def _faq_refs(db_path: Path) -> set[str] | None:
     if not db_path.exists():
         return None
 
-    conn = sqlite3.connect(db_path)
-    try:
+    with sqlite3.connect(db_path) as conn:
         table_exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faqs'"
         ).fetchone()
         if table_exists is None:
             return None
         rows = conn.execute("SELECT id, slug FROM faqs").fetchall()
-    finally:
-        conn.close()
 
     refs = {str(row[0]) for row in rows}
     refs.update(str(row[1]) for row in rows if row[1])

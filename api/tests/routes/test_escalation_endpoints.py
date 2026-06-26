@@ -21,12 +21,16 @@ from fastapi.testclient import TestClient
 
 # Try to import the routers - skip tests if not implemented
 try:
+    from app.routes.admin.escalations import (
+        _normalize_knowledge_sources,
+    )
     from app.routes.admin.escalations import router as admin_escalation_router
 
     ADMIN_ROUTER_EXISTS = True
 except ImportError:
     ADMIN_ROUTER_EXISTS = False
     admin_escalation_router = None
+    _normalize_knowledge_sources = None
 
 try:
     from app.routes.escalation_polling import router as polling_router
@@ -367,6 +371,20 @@ class TestGetEscalationCountsEndpoint:
 @admin_router_tests
 class TestGroundingBriefEndpoint:
     """Tests for GET /admin/escalations/{escalation_id}/grounding-brief."""
+
+    def test_normalize_knowledge_sources_accepts_model_dump_objects(self):
+        """Test grounding brief source normalization handles Pydantic-like objects."""
+
+        class SourceModel:
+            def model_dump(self):
+                return {"protocol": "bisq_easy", "title": "Bisq Easy"}
+
+        assert _normalize_knowledge_sources(
+            [SourceModel(), {"protocol": "multisig_v1"}, object()]
+        ) == [
+            {"protocol": "bisq_easy", "title": "Bisq Easy"},
+            {"protocol": "multisig_v1"},
+        ]
 
     def test_grounding_brief_returns_staff_only_context(
         self, admin_client, mock_grounding_brief_service

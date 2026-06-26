@@ -60,6 +60,16 @@ async def _get_escalation_or_404(service, escalation_id: int) -> Escalation:
     return escalation
 
 
+def _normalize_knowledge_sources(sources: Any) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for source in list(sources or []):
+        if hasattr(source, "model_dump"):
+            output.append(source.model_dump())
+        elif isinstance(source, dict):
+            output.append(dict(source))
+    return output
+
+
 @router.get("", response_model=EscalationListResponse)
 async def list_escalations(
     status_filter: Optional[EscalationStatus] = Query(None, alias="status"),
@@ -210,7 +220,7 @@ async def get_grounding_brief(
     try:
         brief = build(
             question=escalation.question,
-            knowledge_sources=list(escalation.sources or []),
+            knowledge_sources=_normalize_knowledge_sources(escalation.sources),
             draft_answer=escalation.ai_draft_answer,
         )
     except Exception:

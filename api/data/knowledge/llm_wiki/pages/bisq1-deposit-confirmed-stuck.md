@@ -32,7 +32,7 @@ If the deposit transaction is missing, `N/A`, invalid, or not found on-chain, us
 
 If the transaction is real but still unconfirmed in the mempool, the next step is usually waiting or advanced fee/CPFP analysis, not repeated SPV resync. If the symptom is generic wallet balance mismatch, many ghost UTXOs, or SPV resync repeatedly failing, use the wallet/data-directory recovery page.
 
-DAO-state resync is only relevant when the error is explicitly DAO/DPT related. Do not recommend DAO resync for ordinary wallet-chain display problems.
+DAO-state resync is only relevant when the error is explicitly DAO/DPT-related. Do not recommend DAO resync for ordinary wallet-chain display problems.
 
 ## Applies When
 
