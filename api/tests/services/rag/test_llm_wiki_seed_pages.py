@@ -57,7 +57,10 @@ def test_seed_pages_use_durable_resolvable_sources() -> None:
                 if source_ref.removeprefix("wiki:") not in wiki_titles:
                     failures.append(f"{page.name}: missing wiki source {source_ref}")
             elif source_ref.startswith("faq:"):
-                if source_ref.removeprefix("faq:") not in faq_refs:
+                if (
+                    faq_refs is not None
+                    and source_ref.removeprefix("faq:") not in faq_refs
+                ):
                     failures.append(f"{page.name}: missing FAQ source {source_ref}")
             elif source_ref.startswith("llm_wiki:"):
                 continue
@@ -65,6 +68,15 @@ def test_seed_pages_use_durable_resolvable_sources() -> None:
                 failures.append(f"{page.name}: non-durable source {source_ref}")
 
     assert failures == []
+
+
+def test_faq_refs_handles_missing_or_empty_fixture(tmp_path: Path) -> None:
+    missing_db = tmp_path / "missing-faqs.db"
+    empty_db = tmp_path / "empty-faqs.db"
+    sqlite3.connect(empty_db).close()
+
+    assert _faq_refs(missing_db) is None
+    assert _faq_refs(empty_db) is None
 
 
 def _wiki_titles(wiki_dir: Path) -> set[str]:
@@ -80,10 +92,21 @@ def _wiki_titles(wiki_dir: Path) -> set[str]:
     return titles
 
 
-def _faq_refs(db_path: Path) -> set[str]:
+def _faq_refs(db_path: Path) -> set[str] | None:
+    if not db_path.exists():
+        return None
+
     conn = sqlite3.connect(db_path)
-    rows = conn.execute("SELECT id, slug FROM faqs").fetchall()
-    conn.close()
+    try:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faqs'"
+        ).fetchone()
+        if table_exists is None:
+            return None
+        rows = conn.execute("SELECT id, slug FROM faqs").fetchall()
+    finally:
+        conn.close()
+
     refs = {str(row[0]) for row in rows}
     refs.update(str(row[1]) for row in rows if row[1])
     return refs
