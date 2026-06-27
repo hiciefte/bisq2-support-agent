@@ -21,7 +21,7 @@ def _frontmatter(path: Path) -> dict:
 
 def test_reviewed_llm_wiki_seed_pages_are_indexable_without_admin_sections() -> None:
     pages_dir = _repo_root() / "api" / "data" / "knowledge" / "llm_wiki" / "pages"
-    pages = sorted(pages_dir.glob("*.md"))
+    pages = sorted(pages_dir.rglob("*.md"))
     assert pages, "Expected committed LLM Wiki seed pages"
 
     indexable_pages = []

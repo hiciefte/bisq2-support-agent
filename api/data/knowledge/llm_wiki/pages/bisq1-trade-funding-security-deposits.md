@@ -33,7 +33,7 @@ An open offer deactivating before a trade starts is different from a funded trad
 
 After a trade is funded, a user usually cannot cancel it unilaterally without consequences. If a buyer cannot pay, payment details are invalid, a bank blocks the transfer, or the peer is unresponsive, the safe path is trader chat and mediation. Penalties depend on the trade rules, evidence, mediator/arbitrator review, and security-deposit size. Do not promise a no-penalty cancellation unless the protocol/support evidence clearly supports it.
 
-Account limits and signing affect who can take offers and at what size. Sellers do not need account signing in the same way fiat buyers do; signing and limits are primarily about reducing chargeback risk for fiat payment methods. For very large trade-size questions, explain that Bisq allows to participate in multiple trades of smaller amounts.
+Account limits and signing affect who can take offers and at what size. Sellers do not need account signing in the same way fiat buyers do; signing and limits are primarily about reducing chargeback risk for fiat payment methods. For very large trade-size questions, explain that users can participate in multiple trades of smaller amounts.
 
 ## Applies When
 

@@ -39,7 +39,7 @@ If a seller has received fiat but the UI state is stuck, the trade can be comple
 
 For ACH and similar payment methods, keep guidance conservative. ACH may take several days, is not available for every bank account, and bank micro-deposit verification must not be accepted by sellers. If the payment path cannot be completed safely, use another seller or payment method and involve mediation if funds were already sent.
 
-Bisq Easy trade limits and seller eligibility depend on reputation and current client rules, currently a fiat value of 600 USD is the absolute maximum trade amount. Do not quote hard limits unless they are current for the user's version; when needed, explain that Bisq Easy is intended for relatively small BTC trades and that seller reputation controls buyer trust and available trade size.
+Bisq Easy trade limits and seller eligibility depend on reputation and current client rules. Do not quote hard limits unless they are current for the user's version; when needed, explain that Bisq Easy is intended for relatively small BTC trades and that seller reputation controls buyer trust and available trade size.
 
 Named traders, bots, and temporary incidents should not become reusable support policy. If the user names a specific seller/bot, keep the answer case-specific: ask them to use trade chat, wait for the payment method's normal processing time, and open mediation if BTC is not released or communication fails.
 

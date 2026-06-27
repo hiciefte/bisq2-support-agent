@@ -27,7 +27,7 @@ If a buyer sent fiat and the BTC seller has not released BTC, the buyer should k
 
 Arbitration is the last-resort stage after mediation fails or a mediation proposal is rejected and the delayed payout transaction can be published. The delayed payout transaction is time locked: 10 days after deposit confirmation for altcoin trades and 20 days after deposit confirmation for fiat trades, both denominated in number of blocks. Arbitration decisions are based on the evidence, mediator feedback, trade rules, and on-chain transaction state; RefundAgent, the contributor role responsible for arbitration, has up to 5 days to reply in chat, so users should remain responsive and provide requested evidence.
 
-Once the timelock on the DPT (delayed payout transaction) has expired, arbitration can also be started using the `Ctrl-O` or `Cmd-O` shortcut from the trade panel, or by dumping the DPTs from the command line, and broadcasting the transaction hex.
+Once the timelock on the DPT (delayed payout transaction) has expired, arbitration can also be started using the `Ctrl+O` or `Cmd+O` shortcut from the trade panel, or by dumping the DPTs from the command line, and broadcasting the transaction hex.
 
 If the deposit transaction is missing, invalid, or not found on-chain, use the failed-trade workflow instead of treating it as a normal mediation/arbitration case. If the deposit transaction exists and the app or payout state is inconsistent, collect the trade ID, maker fee txid, taker fee txid, deposit txid, payout/delayed-payout txid if present, and logs/screenshots for mediator or support review.
 

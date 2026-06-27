@@ -45,7 +45,12 @@ def main(argv: list[str] | None = None) -> int:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(f"{rendered}\n", encoding="utf-8")
     print(rendered)
-    return 1 if result.invalid_pages or result.admin_section_leakage else 0
+    failed = (
+        result.invalid_pages
+        or result.missing_originals
+        or result.admin_section_leakage
+    )
+    return 1 if failed else 0
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

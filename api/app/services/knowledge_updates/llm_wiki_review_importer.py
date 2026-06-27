@@ -132,6 +132,7 @@ class ReviewedLLMWikiBatchImporter:
         )
         originals = self._original_page_index()
         pages: List[ReviewedLLMWikiPageImportResult] = []
+        feedback_payloads: List[tuple[ReviewedLLMWikiPageImportResult, str, str]] = []
         missing_originals: List[str] = []
         invalid_pages: List[str] = []
 
@@ -145,9 +146,20 @@ class ReviewedLLMWikiBatchImporter:
                     continue
 
                 page_id = str(reviewed.frontmatter.get("id") or "").strip()
-                original_path = originals.by_filename.get(
-                    reviewed_file.name
-                ) or originals.by_page_id.get(page_id)
+                original_by_id = originals.by_page_id.get(page_id)
+                original_by_filename = originals.by_filename.get(reviewed_file.name)
+                if (
+                    original_by_id is not None
+                    and original_by_filename is not None
+                    and original_by_id != original_by_filename
+                ):
+                    invalid_pages.append(
+                        f"{relative_name}: id {page_id} and filename "
+                        f"{reviewed_file.name} match different originals"
+                    )
+                    continue
+
+                original_path = original_by_id or original_by_filename
                 if original_path is None:
                     missing_originals.append(relative_name)
                     continue
@@ -171,17 +183,31 @@ class ReviewedLLMWikiBatchImporter:
                     reviewed_at=reviewed_at,
                 )
                 pages.append(result)
+                feedback_payloads.append((result, original_text, reviewed_text))
 
-                if apply:
-                    target = output_root / reviewed_file.name
+            loader_document_count, admin_section_leakage = self._validate_loader_output(
+                pages=pages,
+            )
+            can_commit_side_effects = not (
+                missing_originals or invalid_pages or admin_section_leakage
+            )
+
+            if can_commit_side_effects and apply:
+                for result in pages:
+                    target = output_root / result.filename
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(result.normalized_markdown, encoding="utf-8")
 
-                if self.knowledge_update_service is not None and record_feedback:
+            if (
+                can_commit_side_effects
+                and self.knowledge_update_service is not None
+                and record_feedback
+            ):
+                for result, original_text, reviewed_text in feedback_payloads:
                     self.knowledge_update_service.record_external_review_feedback(
                         target_page_id=result.page_id,
                         target_page_title=result.title,
-                        page_path=str(original_path),
+                        page_path=result.original_path,
                         reviewed_by=reviewer,
                         reviewed_at=reviewed_at,
                         review_notes=result.review_notes,
@@ -197,12 +223,6 @@ class ReviewedLLMWikiBatchImporter:
                         issues=result.issues,
                         source_batch_id=reviewed_path.name,
                     )
-
-            loader_document_count, admin_section_leakage = self._validate_loader_output(
-                pages=pages,
-                output_root=output_root,
-                use_applied_output=apply,
-            )
 
         return ReviewedLLMWikiBatchImportResult(
             matched_count=len(pages),
@@ -236,20 +256,15 @@ class ReviewedLLMWikiBatchImporter:
         self,
         *,
         pages: List[ReviewedLLMWikiPageImportResult],
-        output_root: Path,
-        use_applied_output: bool,
     ) -> tuple[int, List[str]]:
-        if use_applied_output:
-            documents = self.loader.load_documents(output_root)
-        else:
-            with tempfile.TemporaryDirectory(prefix="llm-wiki-review-import-") as tmp:
-                validation_root = Path(tmp)
-                for page in pages:
-                    (validation_root / page.filename).write_text(
-                        page.normalized_markdown,
-                        encoding="utf-8",
-                    )
-                documents = self.loader.load_documents(validation_root)
+        with tempfile.TemporaryDirectory(prefix="llm-wiki-review-import-") as tmp:
+            validation_root = Path(tmp)
+            for page in pages:
+                (validation_root / page.filename).write_text(
+                    page.normalized_markdown,
+                    encoding="utf-8",
+                )
+            documents = self.loader.load_documents(validation_root)
 
         leakage: List[str] = []
         for document in documents:
@@ -338,6 +353,7 @@ def _build_page_result(
         reviewed_body,
     )
     issues = _issues(
+        original_text=original_text,
         reviewed_text=reviewed_text,
         reviewed_frontmatter=reviewed_frontmatter,
         changed_sections=changed_sections,
@@ -358,7 +374,7 @@ def _build_page_result(
     return ReviewedLLMWikiPageImportResult(
         page_id=page_id,
         title=title,
-        filename=reviewed_file.name,
+        filename=original_path.name,
         original_path=str(original_path),
         reviewed_path=str(reviewed_file),
         protocol=frontmatter["protocol"],
@@ -403,6 +419,7 @@ def _feedback_tags_for_import(
 
 def _issues(
     *,
+    original_text: str,
     reviewed_text: str,
     reviewed_frontmatter: Dict[str, Any],
     changed_sections: Iterable[str],
@@ -417,7 +434,7 @@ def _issues(
         or not str(reviewed_frontmatter.get("reviewed_at") or "").strip()
     ):
         issues.append("metadata_not_reviewed")
-    if _has_copy_edit_signal(reviewed_text):
+    if _has_copy_edit_signal(original_text) or _has_copy_edit_signal(reviewed_text):
         issues.append("copy_edit_needed")
     if source_sensitive_additions and "Evidence / Sources" not in changed:
         issues.append("source_coverage_needed")

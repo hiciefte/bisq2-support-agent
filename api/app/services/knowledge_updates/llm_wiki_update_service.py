@@ -916,6 +916,8 @@ class KnowledgeUpdateService:
             raise ValueError("target_page_id is required")
         source_name = _optional_text(source) or "batch_import"
         reviewer_name = _optional_text(reviewed_by)
+        if not reviewer_name:
+            raise ValueError("reviewed_by is required")
         reviewed_at_value = _optional_text(reviewed_at) or _now_iso()
         normalized_tags = _feedback_tags(feedback_tags)
         normalized_diff = _section_diff_summary_from_json(

@@ -4,7 +4,7 @@
 
 Input reviewed batch:
 
-- `/Users/takahiro/Downloads/llm-wiki-pages.new.zip`
+- reviewed batch zip file provided by the support admin
 - 20 markdown pages under `llm-wiki-pages.new/`
 
 Compared against generated originals:

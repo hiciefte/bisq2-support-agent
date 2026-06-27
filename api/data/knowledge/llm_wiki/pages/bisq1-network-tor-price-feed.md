@@ -23,7 +23,7 @@ For Bisq 1 connection, Tor, Bitcoin-peer, offerbook, or price-feed issues, separ
 
 If Bisq is online but price-node, offerbook, or peer errors persist, refresh Tor files from the documented Settings/Network/Tor settings and restart. Keep the Tor hidden-service identity file when the source says to preserve it. If the issue is weak connectivity, try a different network or hotspot to distinguish local network blocking from Bisq/Tor issues.
 
-If Tor connections seem to not work, ask to verify Tor Browser functionality on the same system, check whether the ISP might be blocking outgoing Tor connections, and verify whether disabling the VPN, where enabled, allows Tor to work again.
+If Tor connections do not seem to work, ask to verify Tor Browser functionality on the same system, check whether the ISP might be blocking outgoing Tor connections, and verify whether disabling the VPN, where enabled, allows Tor to work again.
 
 If the Bitcoin network connection is the problem, try the documented provided Bitcoin nodes or a trusted personal Bitcoin node configuration. For a local Bitcoin Core node, Bisq needs a reachable unpruned node with settings such as `server=1`, `prune=0`, and `peerbloomfilters=1`; if the node is on another machine on the same network, confirm the address, firewall, and listening interface. Start9/Ronin/custom-node reports may require platform-specific support rather than generic Bisq instructions.
 

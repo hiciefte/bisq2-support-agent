@@ -23,7 +23,7 @@ source_refs:
 
 Bisq 2 does not include a built-in Bitcoin wallet like in Bisq 1. In Bisq Easy, users provide an external Bitcoin wallet address or lightning invoice for receiving BTC. Bisq 2 also does not provide an integrated Lightning wallet.
 
-For most Bisq Easy users who want normal bitcoin custody and a first UTXO, to cover the security deposit amount for Bisq 1 trades, receiving to an on-chain address is the default recommendation. Lightning can be used only when the buyer and seller intentionally agree on that payment route, and both have access to a functional lightning wallet.
+For most Bisq Easy users who want normal bitcoin self-custody, broad wallet compatibility, and a first on-chain UTXO, receiving to an on-chain address is the default recommendation. Lightning can be used only when the buyer and seller intentionally agree on that payment route, and both have access to a functional lightning wallet.
 
 If the user accidentally selected Lightning but wanted on-chain Bitcoin, they should immediately tell the counterparty in trade chat and provide the correct on-chain address before the seller sends BTC. They should also be informed that changing the settlement method might incur additional costs due to different fees across the two networks.
 
