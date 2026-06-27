@@ -608,6 +608,8 @@ async def test_staff_room_notice_includes_internal_code_enrichment_without_repla
     staff_notice = channel.send_message.await_args_list[0].args[1].answer
     assert "Reply to user (copy-ready):" in staff_notice
     assert "Ask for the exact error text before suggesting changes." in staff_notice
+    assert "Customer-safe codebase draft" not in staff_notice
+    assert "Review and send with `/send <edited reply>`" not in staff_notice
     assert "Codebase-enriched staff context" in staff_notice
     assert "Staff-only codebase context" in staff_notice
     assert "Sell offer creation checks reputation." in staff_notice

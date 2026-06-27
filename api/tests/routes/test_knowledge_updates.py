@@ -5,15 +5,20 @@ import pytest
 from app.core.config import Settings
 from app.routes.admin.knowledge_updates import (
     KnowledgeReviewRequest,
+    PromoteCodeEvidenceRequest,
     approve_knowledge_update,
     get_current_knowledge_update,
     get_generator_feedback_records,
     get_knowledge_update_counts,
+    promote_code_evidence_to_knowledge_update,
 )
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidate
+from app.services.training.unified_repository import (
+    UnifiedFAQCandidate,
+    UnifiedFAQCandidateRepository,
+)
 
 
 def _candidate(**overrides) -> UnifiedFAQCandidate:
@@ -505,3 +510,95 @@ async def test_generator_feedback_records_endpoint_returns_export(
         service=service,
     )
     assert missing_target["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
+    tmp_path: Path,
+) -> None:
+    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    pipeline = type("Pipeline", (), {"repository": repository})()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=repository.db_path,
+    )
+    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
+
+    response = await promote_code_evidence_to_knowledge_update(
+        request_body=PromoteCodeEvidenceRequest(
+            question="The app says Offer not found. What should I do?",
+            public_guidance=(
+                "If a user sees Offer not found, explain that the offer may "
+                "already have been taken or removed. Ask them to refresh the "
+                "offer list and retry."
+            ),
+            evidence={
+                "id": "bisq2:abc123:HTTPException.404:42",
+                "kind": "code_fact",
+                "repo": "bisq2",
+                "commit": "abc123",
+                "path": "api/src/main/java/bisq/api/OfferResource.java",
+                "line_start": 42,
+                "line_end": 44,
+                "symbol": "OfferResource.HTTPException.404",
+                "protocol": "bisq_easy",
+                "audience": "staff_only",
+                "freshness_class": "release_bound",
+                "risk_level": "medium",
+                "claim": "OfferResource can return user-visible error detail: Offer not found.",
+                "support_use": "Use when users report that an offer disappeared.",
+                "source_refs": [source_ref],
+            },
+        ),
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["candidate"]["source"] == "code_evidence"
+    assert response["candidate"]["routing"] == "FULL_REVIEW"
+    assert response["proposal"]["status"] == "pending"
+    assert source_ref in response["proposal"]["source_refs"]
+
+
+@pytest.mark.asyncio
+async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
+    tmp_path: Path,
+) -> None:
+    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    pipeline = type("Pipeline", (), {"repository": repository})()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=repository.db_path,
+    )
+    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
+
+    response = await promote_code_evidence_to_knowledge_update(
+        request_body=PromoteCodeEvidenceRequest(
+            question="The app says Offer not found. What should I do?",
+            public_guidance=(
+                "If a user sees Offer not found, ask them to refresh the offer "
+                "list and retry."
+            ),
+            evidence={
+                "id": "bisq2:abc123:HTTPException.404:42",
+                "kind": "code_fact",
+                "repo": "bisq2",
+                "commit": "abc123",
+                "path": "api/src/main/java/bisq/api/OfferResource.java",
+                "line_start": 42,
+                "line_end": 44,
+                "protocol": "bisq_easy",
+                "audience": "staff_only",
+                "freshness_class": "release_bound",
+                "risk_level": "medium",
+                "claim": "OfferResource can return user-visible error detail: Offer not found.",
+                "support_use": "Use when users report that an offer disappeared.",
+                "source_refs": [source_ref],
+            },
+        ),
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["candidate"]["source"] == "code_evidence"
+    assert source_ref in response["proposal"]["source_refs"]

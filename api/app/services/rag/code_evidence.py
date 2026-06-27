@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -84,6 +84,23 @@ def _require_string_list(data: dict[str, Any], field: str) -> list[str]:
     return output
 
 
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _optional_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        str(item).strip()
+        for item in value
+        if isinstance(item, str) and str(item).strip()
+    ]
+
+
 @dataclass(frozen=True)
 class CodeEvidenceRecord:
     """Structured code-derived support evidence.
@@ -108,6 +125,8 @@ class CodeEvidenceRecord:
     claim: str
     support_use: str
     source_refs: list[str]
+    public_guidance: str | None = None
+    applies_to_versions: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CodeEvidenceRecord":
@@ -138,6 +157,13 @@ class CodeEvidenceRecord:
         if line_start <= 0 or line_end < line_start:
             raise ValueError("Code evidence line range must be positive and ordered")
 
+        public_guidance = _optional_string(data.get("public_guidance"))
+        if audience in {"public_review_candidate", "public_reviewed"}:
+            if not public_guidance:
+                raise ValueError(
+                    "Public code evidence requires non-empty public_guidance"
+                )
+
         return cls(
             id=_require_string(data, "id"),
             type=record_type,
@@ -154,6 +180,10 @@ class CodeEvidenceRecord:
             claim=_redact_sensitive_text(_require_string(data, "claim")),
             support_use=_redact_sensitive_text(_require_string(data, "support_use")),
             source_refs=_require_string_list(data, "source_refs"),
+            public_guidance=(
+                _redact_sensitive_text(public_guidance) if public_guidance else None
+            ),
+            applies_to_versions=_optional_string_list(data.get("applies_to_versions")),
         )
 
     def to_retrieved_document(self, *, score: float = 0.0) -> RetrievedDocument:
@@ -184,9 +214,15 @@ class CodeEvidenceRecord:
                 "claim": self.claim,
                 "support_use": self.support_use,
                 "source_refs": list(self.source_refs),
+                "public_guidance": self.public_guidance,
+                "applies_to_versions": list(self.applies_to_versions),
             },
             score=score,
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation."""
+        return asdict(self)
 
 
 class CodeEvidenceLoader:

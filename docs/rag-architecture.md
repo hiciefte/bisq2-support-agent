@@ -124,12 +124,18 @@ source_refs:
 
 - Source: `{DATA_DIR}/code_knowledge/code_evidence.jsonl`
 - Loader/retriever: `api/app/services/rag/code_evidence.py`
+- Generator/freshness check: `api/app/services/rag/code_evidence_extractor.py`
+- Retrieval evaluator: `api/app/services/rag/code_evidence_evaluation.py`
 - Staff brief builder: `api/app/channels/staff_assist/grounding.py`
 - Purpose: implementation-derived evidence for human support admins
 - Boundary: only `audience=staff_only` records are retrieved, and only into staff-only response metadata and staff-room/admin review surfaces
 - Matrix/Bisq2 support requests with code evidence are enriched for the staff room and forced into human review; the copy-ready customer draft and public sources are unchanged
 - Current status: code evidence is file-backed and not inserted into the public Qdrant collection
-- Promotion path: durable facts must become reviewed LLM Wiki guidance before customer-facing use
+- Generation status: deterministic extraction supports Java constants, enums, REST annotations, static exception messages, FastAPI `HTTPException` details, config defaults, and markdown specification sections; generated rows are schema-validated and freshness-checked before use
+- Evaluation status: offline golden-case retrieval evaluation reports Recall@k and MRR without invoking Qdrant or an LLM
+- Promotion path: durable facts can be promoted from staff grounding evidence into the LLM Wiki review queue only with customer-safe guidance and precise pinned `code:` refs
+- Public boundary: approved code-derived guidance enters customer-facing RAG as reviewed LLM Wiki content; raw `code_fact` evidence remains outside public retrieval
+- Source-ref guardrail: reviewed or active LLM Wiki pages with `code:` refs must cite `code:<repo>@<commit>:<path>:<line_start>-<line_end>` refs, and promotion verifies the ref matches the structured code evidence
 
 See [Code Evidence Schema](code-evidence-schema.md).
 

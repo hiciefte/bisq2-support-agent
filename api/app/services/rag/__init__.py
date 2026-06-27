@@ -10,6 +10,30 @@ from typing import Any
 _EXPORT_MAP = {
     "AutoSendRouter": ("app.services.rag.auto_send_router", "AutoSendRouter"),
     "ConfidenceScorer": ("app.services.rag.confidence_scorer", "ConfidenceScorer"),
+    "CodeEvidenceEvalCase": (
+        "app.services.rag.code_evidence_evaluation",
+        "CodeEvidenceEvalCase",
+    ),
+    "CodeEvidenceExtractor": (
+        "app.services.rag.code_evidence_extractor",
+        "CodeEvidenceExtractor",
+    ),
+    "CodeEvidenceFreshnessChecker": (
+        "app.services.rag.code_evidence_extractor",
+        "CodeEvidenceFreshnessChecker",
+    ),
+    "CodeEvidenceFreshnessReport": (
+        "app.services.rag.code_evidence_extractor",
+        "CodeEvidenceFreshnessReport",
+    ),
+    "CodeEvidenceRetrievalEvaluationResult": (
+        "app.services.rag.code_evidence_evaluation",
+        "CodeEvidenceRetrievalEvaluationResult",
+    ),
+    "CodeEvidenceRetrievalEvaluator": (
+        "app.services.rag.code_evidence_evaluation",
+        "CodeEvidenceRetrievalEvaluator",
+    ),
     "ConversationState": ("app.services.rag.conversation_state", "ConversationState"),
     "ConversationStateManager": (
         "app.services.rag.conversation_state",

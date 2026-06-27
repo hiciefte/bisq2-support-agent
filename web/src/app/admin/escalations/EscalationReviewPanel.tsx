@@ -65,17 +65,25 @@ interface EscalationReviewPanelProps {
 }
 
 interface GroundingEvidence {
+  id?: string
   kind?: string
+  type?: string
   claim?: string
   support_use?: string
   audience?: string
   repo?: string
   commit?: string
+  path?: string
+  line_start?: number
+  line_end?: number
+  symbol?: string | null
   protocol?: string
   freshness_class?: string
   risk_level?: string
   source_ref?: string | null
   source_refs?: string[]
+  public_guidance?: string | null
+  applies_to_versions?: string[]
   score?: number
 }
 
@@ -168,11 +176,16 @@ function StaffGroundingBriefPanel({
   brief,
   isLoading,
   error,
+  question,
 }: {
   brief: GroundingBrief | null
   isLoading: boolean
   error: string | null
+  question: string
 }) {
+  const [promotingEvidenceId, setPromotingEvidenceId] = useState<string | null>(null)
+  const [promotedEvidenceIds, setPromotedEvidenceIds] = useState<Set<string>>(() => new Set())
+  const [guidanceDrafts, setGuidanceDrafts] = useState<Record<string, string>>({})
   const evidence = (brief?.evidence || []).filter((item) => item.claim?.trim())
   const safeGuidance = (brief?.safe_customer_guidance || []).filter(Boolean)
   const uncertainties = (brief?.uncertainties || []).filter(Boolean)
@@ -227,6 +240,52 @@ function StaffGroundingBriefPanel({
 
   if (!brief || !hasContent) {
     return null
+  }
+
+  const promoteCodeEvidence = async (
+    item: GroundingEvidence,
+    sourceRefs: string[],
+    publicGuidance: string,
+  ) => {
+    const evidenceId = item.id || item.source_ref || item.claim || ""
+    const normalizedGuidance = publicGuidance.trim()
+    if (!evidenceId || !normalizedGuidance) {
+      toast.error("Add customer-safe guidance before drafting an LLM Wiki proposal.")
+      return
+    }
+
+    setPromotingEvidenceId(evidenceId)
+    try {
+      const response = await makeAuthenticatedRequest(
+        "/admin/knowledge-updates/code-evidence/proposals",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            evidence: {
+              ...item,
+              source_refs: sourceRefs,
+              type: item.type || item.kind || "code_fact",
+            },
+            question,
+            public_guidance: normalizedGuidance,
+          }),
+        },
+      )
+      if (!response.ok) {
+        throw new Error(`Code evidence promotion failed: ${response.status}`)
+      }
+      await response.json()
+      setPromotedEvidenceIds((current) => {
+        const next = new Set(current)
+        next.add(evidenceId)
+        return next
+      })
+      toast.success("LLM Wiki proposal drafted for review.")
+    } catch {
+      toast.error("Could not draft an LLM Wiki proposal from this code fact.")
+    } finally {
+      setPromotingEvidenceId(null)
+    }
   }
 
   return (
@@ -288,28 +347,65 @@ function StaffGroundingBriefPanel({
                   ? [item.source_ref]
                   : []
             const scoreLabel = formatGroundingScore(item.score)
+            const evidenceId = item.id || item.source_ref || item.claim || `${index}`
+            const isPromoting = promotingEvidenceId === evidenceId
+            const isPromoted = promotedEvidenceIds.has(evidenceId)
+            const guidanceValue = guidanceDrafts[evidenceId] ?? item.public_guidance ?? ""
+            const guidanceInputId = `code-guidance-${index}`
+            const hasPromotionMetadata =
+              sourceRefs.length > 0 &&
+              Boolean(item.repo) &&
+              Boolean(item.commit) &&
+              Boolean(item.path) &&
+              typeof item.line_start === "number" &&
+              typeof item.line_end === "number" &&
+              Boolean(item.protocol) &&
+              Boolean(item.freshness_class) &&
+              Boolean(item.risk_level)
+            const canPromote = hasPromotionMetadata && Boolean(guidanceValue.trim())
 
             return (
               <div key={`${item.claim}-${index}`} className="rounded-md border border-border/60 bg-background/70 p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="text-[10px]">
-                    <Code2 className="mr-1 h-3 w-3" aria-hidden="true" />
-                    {item.kind === "code_fact" ? "Code fact" : humanizeEnumValue(item.kind || "Evidence")}
-                  </Badge>
-                  {item.risk_level && (
-                    <Badge variant="outline" className={cn("text-[10px]", getRiskBadgeClassName(item.risk_level))}>
-                      {humanizeEnumValue(item.risk_level)} risk
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="text-[10px]">
+                      <Code2 className="mr-1 h-3 w-3" aria-hidden="true" />
+                      {item.kind === "code_fact" ? "Code fact" : humanizeEnumValue(item.kind || "Evidence")}
                     </Badge>
-                  )}
-                  {item.freshness_class && (
-                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                      {humanizeEnumValue(item.freshness_class)}
-                    </Badge>
-                  )}
-                  {scoreLabel && (
-                    <Badge variant="secondary" className="text-[10px] tabular-nums">
-                      {scoreLabel}
-                    </Badge>
+                    {item.risk_level && (
+                      <Badge variant="outline" className={cn("text-[10px]", getRiskBadgeClassName(item.risk_level))}>
+                        {humanizeEnumValue(item.risk_level)} risk
+                      </Badge>
+                    )}
+                    {item.freshness_class && (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                        {humanizeEnumValue(item.freshness_class)}
+                      </Badge>
+                    )}
+                    {scoreLabel && (
+                      <Badge variant="secondary" className="text-[10px] tabular-nums">
+                        {scoreLabel}
+                      </Badge>
+                    )}
+                  </div>
+                  {hasPromotionMetadata && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      disabled={!canPromote || isPromoting || isPromoted}
+                      onClick={() => promoteCodeEvidence(item, sourceRefs, guidanceValue)}
+                    >
+                      {isPromoting ? (
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" />
+                      ) : isPromoted ? (
+                        <Check className="mr-1 h-3 w-3" aria-hidden="true" />
+                      ) : (
+                        <Pencil className="mr-1 h-3 w-3" aria-hidden="true" />
+                      )}
+                      {isPromoted ? "Proposal drafted" : "Draft LLM Wiki proposal"}
+                    </Button>
                   )}
                 </div>
 
@@ -317,6 +413,33 @@ function StaffGroundingBriefPanel({
 
                 {item.support_use?.trim() && (
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.support_use}</p>
+                )}
+
+                {hasPromotionMetadata && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/15 p-3">
+                    <Label htmlFor={guidanceInputId} className="text-xs font-medium text-muted-foreground">
+                      Customer-safe guidance
+                    </Label>
+                    {item.public_guidance?.trim() ? (
+                      <p className="mt-2 text-sm leading-relaxed text-foreground/90">
+                        {guidanceValue}
+                      </p>
+                    ) : (
+                      <Textarea
+                        id={guidanceInputId}
+                        value={guidanceValue}
+                        onChange={(event) => {
+                          const nextValue = event.target.value
+                          setGuidanceDrafts((current) => ({
+                            ...current,
+                            [evidenceId]: nextValue,
+                          }))
+                        }}
+                        placeholder="Write the customer-facing guidance this code fact supports."
+                        className="mt-2 min-h-20 resize-y text-sm"
+                      />
+                    )}
+                  </div>
                 )}
 
                 {(item.repo || item.commit || item.protocol || sourceRefs.length > 0) && (
@@ -1198,6 +1321,7 @@ export function EscalationReviewPanel({
                   brief={groundingBrief}
                   isLoading={isLoadingGroundingBrief}
                   error={groundingBriefError}
+                  question={getCanonicalQuestion(escalation)}
                 />
               )}
 

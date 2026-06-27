@@ -65,6 +65,7 @@ class GroundingBriefService:
             "likely_protocol": protocol or self._infer_protocol_from_evidence(evidence),
             "evidence": evidence,
             "safe_customer_guidance": safe_customer_guidance,
+            "customer_safe_draft": None,
             "uncertainties": uncertainties,
             "do_not_say": do_not_say,
             "staff_enriched_answer": self._build_staff_enriched_answer(
@@ -99,7 +100,9 @@ class GroundingBriefService:
         metadata = doc.metadata or {}
         source_refs = list(metadata.get("source_refs") or [])
         return {
+            "id": metadata.get("id") or doc.id,
             "kind": CODE_EVIDENCE_TYPE,
+            "type": CODE_EVIDENCE_TYPE,
             "claim": str(metadata.get("claim") or doc.content or "").strip(),
             "support_use": str(metadata.get("support_use") or "").strip(),
             "source_ref": source_refs[0] if source_refs else None,
@@ -107,9 +110,15 @@ class GroundingBriefService:
             "audience": STAFF_ONLY_AUDIENCE,
             "repo": metadata.get("repo"),
             "commit": metadata.get("commit"),
+            "path": metadata.get("path"),
+            "line_start": metadata.get("line_start"),
+            "line_end": metadata.get("line_end"),
+            "symbol": metadata.get("symbol"),
             "protocol": metadata.get("protocol"),
             "freshness_class": metadata.get("freshness_class"),
             "risk_level": metadata.get("risk_level"),
+            "public_guidance": metadata.get("public_guidance"),
+            "applies_to_versions": metadata.get("applies_to_versions") or [],
             "score": round(float(doc.score or 0.0), 4),
         }
 
