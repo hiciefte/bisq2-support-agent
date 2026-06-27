@@ -324,9 +324,10 @@ def test_importer_skips_side_effects_when_loader_validation_fails(
 
     assert result.admin_section_leakage == ["bisq-easy-payments: Review Notes"]
     assert not (output_dir / "bisq-easy-payments.md").exists()
-    assert service.list_generator_feedback_records(
-        target_page_id="bisq-easy-payments"
-    ) == []
+    assert (
+        service.list_generator_feedback_records(target_page_id="bisq-easy-payments")
+        == []
+    )
 
 
 def test_imported_batch_feedback_is_used_for_future_generation(

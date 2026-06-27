@@ -46,9 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         args.report.write_text(f"{rendered}\n", encoding="utf-8")
     print(rendered)
     failed = (
-        result.invalid_pages
-        or result.missing_originals
-        or result.admin_section_leakage
+        result.invalid_pages or result.missing_originals or result.admin_section_leakage
     )
     return 1 if failed else 0
 
