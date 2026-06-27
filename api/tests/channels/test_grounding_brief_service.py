@@ -26,6 +26,10 @@ def _code_doc(**metadata) -> RetrievedDocument:
         "freshness_class": "main_branch",
         "claim": "Sell offer creation depends on reputation score.",
         "support_use": "Use only as staff investigation evidence.",
+        "public_guidance": (
+            "Ask the user to confirm their reputation setup before changing "
+            "application settings."
+        ),
         "source_refs": ["code:bisq2@abc123:bisq-easy/src/main/java/Foo.java:10-12"],
     }
     md.update(metadata)
@@ -60,6 +64,7 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
         == "Sell offer creation depends on reputation score."
     )
     assert brief["safe_customer_guidance"]
+    assert brief["customer_safe_draft"] is None
     assert brief["do_not_say"]
     assert "Ask the user for the exact error text." in brief["staff_enriched_answer"]
     assert "Staff-only codebase context" in brief["staff_enriched_answer"]
@@ -67,6 +72,36 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
         "Sell offer creation depends on reputation score."
         in brief["staff_enriched_answer"]
     )
+
+
+def test_grounding_brief_does_not_generate_customer_safe_draft_from_staff_only_guidance() -> None:
+    retriever = FakeRetriever([_code_doc()])
+    service = GroundingBriefService(code_retriever=retriever)
+
+    brief = service.build(
+        question="Why can I not create a Bisq Easy sell offer?",
+        knowledge_sources=[],
+        draft_answer="Ask the user for the exact error text.",
+    )
+
+    assert brief is not None
+    assert brief["evidence"][0]["audience"] == "staff_only"
+    assert brief["evidence"][0]["public_guidance"]
+    assert brief["customer_safe_draft"] is None
+
+
+def test_grounding_brief_does_not_generate_customer_safe_draft_from_raw_claims() -> None:
+    retriever = FakeRetriever([_code_doc(public_guidance=None)])
+    service = GroundingBriefService(code_retriever=retriever)
+
+    brief = service.build(
+        question="Why can I not create a Bisq Easy sell offer?",
+        knowledge_sources=[],
+        draft_answer="Ask the user for the exact error text.",
+    )
+
+    assert brief is not None
+    assert brief["customer_safe_draft"] is None
 
 
 def test_grounding_brief_omits_non_staff_evidence() -> None:

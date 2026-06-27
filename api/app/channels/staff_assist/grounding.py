@@ -65,6 +65,7 @@ class GroundingBriefService:
             "likely_protocol": protocol or self._infer_protocol_from_evidence(evidence),
             "evidence": evidence,
             "safe_customer_guidance": safe_customer_guidance,
+            "customer_safe_draft": None,
             "uncertainties": uncertainties,
             "do_not_say": do_not_say,
             "staff_enriched_answer": self._build_staff_enriched_answer(

@@ -113,3 +113,4 @@ async def test_publish_attaches_grounding_brief_without_polluting_sources() -> N
     assert payload.grounding_brief["evidence"][0]["audience"] == "staff_only"
     assert payload.staff_enriched_answer is not None
     assert "Staff-only codebase context" in payload.staff_enriched_answer
+    assert not hasattr(payload, "customer_safe_draft")
