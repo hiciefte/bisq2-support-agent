@@ -3,21 +3,21 @@ id: bisq1-payout-output-inconsistency
 title: Bisq 1 payout output and address-reuse inconsistency after payment confirmation
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Trade payout address reuse issue
-  - wiki:Support Agent Knowledge Base
-  - wiki:Mediation
+- wiki:Trade payout address reuse issue
+- wiki:Support Agent Knowledge Base
+- wiki:Mediation
 ---
 ## Canonical Support Answer
 
-If a Bisq 1 trade shows completed, cancelled, or output-related errors after payment was marked received, separate UI state from on-chain payout state. First check whether the payout transaction actually exists and whether the buyer received the expected trade amount plus security deposit in the Bisq wallet transaction history or on a block explorer.
+If a Bisq 1 trade status shows completed right after payment was marked as sent, separate UI state from on-chain payout state. First check whether the payout transaction actually exists and whether the buyer received the expected trade amount plus security deposit in the Bisq wallet transaction history or on a block explorer.
 
-For the question "After confirming payment received, a trade shows cancelled/output errors. What should be checked?", answer with the checks, not a conclusion: payout transaction existence, buyer wallet history, block explorer status, trade ID, onion address, deposit transaction ID, and any payout transaction details.
+For the question "After confirming payment received, a trade shows cancelled/output errors. What should be checked?", answer with the checks, not a conclusion: payout transaction existence, buyer wallet history, block explorer status, deposit transaction ID, and any payout transaction details.
 
 If the payout is not visible or the app state is inconsistent, keep the trade data intact and open mediation or contact support with the trade ID, onion address, deposit transaction ID, and any payout transaction details. A mediator/support agent may need those transaction IDs to determine whether funds are still locked, already paid out, or affected by an address-reuse/output-state bug.
 

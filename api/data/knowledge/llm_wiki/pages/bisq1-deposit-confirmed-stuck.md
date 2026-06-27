@@ -3,28 +3,28 @@ id: bisq1-deposit-confirmed-stuck
 title: Bisq 1 deposit confirmed but trade appears stuck
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Deposit transaction
-  - wiki:Resyncing SPV file
-  - wiki:Troubleshooting wallet issues
-  - wiki:Dispute Resolution in Bisq 1
-  - wiki:Mediation
-  - wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
-  - faq:855
-  - faq:1116
-  - faq:1137
-  - faq:1175
+- wiki:Deposit transaction
+- wiki:Resyncing SPV file
+- wiki:Troubleshooting wallet issues
+- wiki:Dispute Resolution in Bisq 1
+- wiki:Mediation
+- wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
+- faq:855
+- faq:1116
+- faq:1137
+- faq:1175
 ---
 ## Canonical Support Answer
 
 When a Bisq 1 trade is stuck at `Wait for blockchain confirmation`, first separate the blockchain state from Bisq's local wallet/protocol state. Open the trade details, copy the deposit transaction ID, and check it on a Bitcoin block explorer.
 
-If the deposit transaction is confirmed on-chain but Bisq still shows zero confirmations or does not advance, perform an SPV resync from the Bisq interface and restart as prompted. After the resync, re-check the trade state, wallet balance, and trade details. In some cases the resync may need to complete fully before the UI reflects the confirmed deposit.
+If the deposit transaction is confirmed on-chain but Bisq still shows zero confirmations or does not advance, perform an SPV resync from Settings/Network Info and restart as prompted. After the resync, re-check the trade state, wallet balance, and trade details. In some cases the resync may need to complete fully, and or be repeated, before the UI reflects the confirmed deposit.
 
 If the user is the buyer and the deposit transaction is confirmed but the UI has not advanced, do not blindly send fiat. Only proceed if the trade contract/details clearly show the seller's payment details and the user understands the trade is valid; otherwise ask for mediator/support review. If payment details are absent or inconsistent, keep the trade data intact and use trader chat or mediation.
 
@@ -32,7 +32,7 @@ If the deposit transaction is missing, `N/A`, invalid, or not found on-chain, us
 
 If the transaction is real but still unconfirmed in the mempool, the next step is usually waiting or advanced fee/CPFP analysis, not repeated SPV resync. If the symptom is generic wallet balance mismatch, many ghost UTXOs, or SPV resync repeatedly failing, use the wallet/data-directory recovery page.
 
-DAO-state resync is only relevant when the error is explicitly DAO/DPT-related. Do not recommend DAO resync for ordinary wallet-chain display problems.
+DAO-state resync is only relevant when the error is explicitly DAO/DPT related. Do not recommend DAO resync for ordinary wallet-chain display problems.
 
 ## Applies When
 

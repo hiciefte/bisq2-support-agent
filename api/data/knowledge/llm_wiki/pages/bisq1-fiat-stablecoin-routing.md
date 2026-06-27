@@ -3,20 +3,20 @@ id: bisq1-fiat-stablecoin-routing
 title: Bisq 1 fiat, BTC, and stablecoin routing
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: low
 source_refs:
-  - wiki:Payment methods
-  - wiki:Trading Monero
-  - wiki:Trade Protocols
-  - faq:1041
+- wiki:Payment methods
+- wiki:Trading Monero
+- wiki:Trade Protocols
+- faq:1041
 ---
 ## Canonical Support Answer
 
-Users do not send fiat currency to Bisq itself. Bisq coordinates peer-to-peer trades between users. For fiat-to-altcoin paths in Bisq 1, the normal support guidance is that the user buys BTC with fiat from a peer and then uses BTC markets for supported altcoin trades where available.
+Users do not send fiat currency to Bisq itself. Bisq coordinates peer-to-peer trades between users. To trade fiat-to-altcoin, or fiat-to-stablecoin, in Bisq 1, the supported method is buying BTC with fiat from a peer and then selling it for supported altcoins, or vice versa.
 
 If the user asks about buying stablecoins directly with fiat through Bisq, answer that Bisq does not receive fiat and does not act as a stablecoin broker. If a supported market exists, it is still a peer-to-peer trade with the available protocol, market, liquidity, and payment-method constraints.
 
@@ -32,7 +32,7 @@ Users can check the relevant Bisq market tabs for current offers and completed t
 ## Do Not Say
 
 - Do not provide deposit instructions to send fiat to Bisq.
-- Do not imply Bisq custody or converts fiat on behalf of users.
+- Do not imply Bisq custodies or converts fiat on behalf of users.
 - Do not promise stablecoin or altcoin market liquidity.
 - Do not describe future Bisq 2 protocols as currently available production routes.
 

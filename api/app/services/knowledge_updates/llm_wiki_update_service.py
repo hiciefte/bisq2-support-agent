@@ -270,6 +270,51 @@ class KnowledgeUpdateService:
             SET applied_feedback_json = '{}'
             WHERE applied_feedback_json IS NULL
             """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS llm_wiki_review_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL DEFAULT 'batch_import',
+                source_batch_id TEXT,
+                target_page_id TEXT NOT NULL,
+                target_page_title TEXT,
+                page_path TEXT,
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                review_notes TEXT,
+                last_change_summary TEXT,
+                feedback_tags_json TEXT NOT NULL,
+                future_generator_note TEXT,
+                section_diff_summary_json TEXT NOT NULL,
+                generator_version TEXT,
+                prompt_version TEXT,
+                protocol TEXT,
+                category TEXT,
+                source_refs_json TEXT NOT NULL,
+                original_markdown TEXT,
+                reviewed_markdown TEXT,
+                normalized_markdown TEXT,
+                issues_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_wiki_review_feedback_unique
+            ON llm_wiki_review_feedback (
+                source,
+                target_page_id,
+                reviewed_by,
+                reviewed_at
+            )
+            """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_llm_wiki_review_feedback_target
+            ON llm_wiki_review_feedback (target_page_id)
+            """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_llm_wiki_review_feedback_reviewer
+            ON llm_wiki_review_feedback (reviewed_by)
+            """)
         conn.commit()
         conn.close()
 
@@ -810,6 +855,185 @@ class KnowledgeUpdateService:
         exclude_candidate_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
+        records = [
+            *self._list_proposal_generator_feedback_records(
+                limit=limit,
+                target_page_id=target_page_id,
+                reviewer=reviewer,
+                protocol=protocol,
+                category=category,
+                exclude_candidate_id=exclude_candidate_id,
+            ),
+            *self._list_external_generator_feedback_records(
+                limit=limit,
+                target_page_id=target_page_id,
+                reviewer=reviewer,
+                protocol=protocol,
+                category=category,
+            ),
+        ]
+        return sorted(
+            records,
+            key=lambda record: (
+                str(record.get("reviewed_at") or ""),
+                int(record.get("proposal_id") or record.get("feedback_id") or 0),
+            ),
+            reverse=True,
+        )[:limit]
+
+    def record_external_review_feedback(
+        self,
+        *,
+        target_page_id: str,
+        target_page_title: Optional[str],
+        page_path: Optional[str],
+        reviewed_by: Optional[str],
+        reviewed_at: Optional[str],
+        review_notes: Optional[str],
+        last_change_summary: Optional[str],
+        feedback_tags: Iterable[str],
+        future_generator_note: Optional[str],
+        section_diff_summary: List[Dict[str, Any]],
+        protocol: Optional[str],
+        category: Optional[str] = None,
+        source_refs: Optional[Iterable[str]] = None,
+        original_markdown: Optional[str] = None,
+        reviewed_markdown: Optional[str] = None,
+        normalized_markdown: Optional[str] = None,
+        issues: Optional[Iterable[str]] = None,
+        source: str = "batch_import",
+        source_batch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Persist externally reviewed LLM Wiki edits as generator feedback.
+
+        Offline batch review does not have a training-candidate id, but the
+        reviewer edits are still useful examples for future proposals targeting
+        the same page or protocol/category.
+        """
+
+        page_id = _optional_text(target_page_id)
+        if not page_id:
+            raise ValueError("target_page_id is required")
+        source_name = _optional_text(source) or "batch_import"
+        reviewer_name = _optional_text(reviewed_by)
+        reviewed_at_value = _optional_text(reviewed_at) or _now_iso()
+        normalized_tags = _feedback_tags(feedback_tags)
+        normalized_diff = _section_diff_summary_from_json(
+            json.dumps(section_diff_summary or [])
+        )
+        normalized_issues = _dedupe(str(issue) for issue in issues or [])
+        refs = _durable_source_refs(source_refs or [])
+        category_key = _category_key(category)
+        now = _now_iso()
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO llm_wiki_review_feedback (
+                source,
+                source_batch_id,
+                target_page_id,
+                target_page_title,
+                page_path,
+                reviewed_by,
+                reviewed_at,
+                review_notes,
+                last_change_summary,
+                feedback_tags_json,
+                future_generator_note,
+                section_diff_summary_json,
+                generator_version,
+                prompt_version,
+                protocol,
+                category,
+                source_refs_json,
+                original_markdown,
+                reviewed_markdown,
+                normalized_markdown,
+                issues_json,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            ON CONFLICT(source, target_page_id, reviewed_by, reviewed_at) DO UPDATE SET
+                source_batch_id = excluded.source_batch_id,
+                target_page_title = excluded.target_page_title,
+                page_path = excluded.page_path,
+                review_notes = excluded.review_notes,
+                last_change_summary = excluded.last_change_summary,
+                feedback_tags_json = excluded.feedback_tags_json,
+                future_generator_note = excluded.future_generator_note,
+                section_diff_summary_json = excluded.section_diff_summary_json,
+                generator_version = excluded.generator_version,
+                prompt_version = excluded.prompt_version,
+                protocol = excluded.protocol,
+                category = excluded.category,
+                source_refs_json = excluded.source_refs_json,
+                original_markdown = excluded.original_markdown,
+                reviewed_markdown = excluded.reviewed_markdown,
+                normalized_markdown = excluded.normalized_markdown,
+                issues_json = excluded.issues_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                source_name,
+                _optional_text(source_batch_id),
+                page_id,
+                _optional_text(target_page_title),
+                _optional_text(page_path),
+                reviewer_name,
+                reviewed_at_value,
+                _optional_text(review_notes),
+                _optional_text(last_change_summary),
+                json.dumps(normalized_tags),
+                _optional_text(future_generator_note),
+                json.dumps(normalized_diff),
+                GENERATOR_VERSION,
+                PROMPT_VERSION,
+                _optional_text(protocol),
+                category_key,
+                json.dumps(refs),
+                original_markdown,
+                reviewed_markdown,
+                normalized_markdown,
+                json.dumps(normalized_issues),
+                now,
+                now,
+            ),
+        )
+        row = cursor.execute(
+            """
+            SELECT *
+            FROM llm_wiki_review_feedback
+            WHERE source = ?
+              AND target_page_id = ?
+              AND coalesce(reviewed_by, '') = coalesce(?, '')
+              AND reviewed_at = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (source_name, page_id, reviewer_name, reviewed_at_value),
+        ).fetchone()
+        conn.commit()
+        conn.close()
+        if row is None:
+            raise ValueError("External review feedback could not be persisted")
+        return _external_feedback_record_from_row(row)
+
+    def _list_proposal_generator_feedback_records(
+        self,
+        *,
+        limit: int,
+        target_page_id: Optional[str],
+        reviewer: Optional[str],
+        protocol: Optional[str],
+        category: Optional[str],
+        exclude_candidate_id: Optional[int],
+    ) -> List[Dict[str, Any]]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.create_function("slugify", 1, lambda value: _slugify(str(value or "")))
@@ -868,6 +1092,50 @@ class KnowledgeUpdateService:
         finally:
             conn.close()
 
+    def _list_external_generator_feedback_records(
+        self,
+        *,
+        limit: int,
+        target_page_id: Optional[str],
+        reviewer: Optional[str],
+        protocol: Optional[str],
+        category: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            filters = ["1 = 1"]
+            params: List[Any] = []
+            cleaned_reviewer = _optional_text(reviewer)
+            if cleaned_reviewer:
+                filters.append("lower(coalesce(reviewed_by, '')) = lower(?)")
+                params.append(cleaned_reviewer)
+            match_filters: List[str] = []
+            if target_page_id:
+                match_filters.append("target_page_id = ?")
+                params.append(target_page_id)
+            cleaned_protocol = _optional_text(protocol)
+            cleaned_category = _optional_text(category)
+            if cleaned_protocol and cleaned_category:
+                match_filters.append("(protocol = ? AND category = ?)")
+                params.extend([cleaned_protocol, _slugify(cleaned_category)])
+            if match_filters:
+                filters.append(f"({' OR '.join(match_filters)})")
+            where_clause = " AND ".join(filters)
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM llm_wiki_review_feedback
+                WHERE {where_clause}
+                ORDER BY reviewed_at DESC, id DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+            return [_external_feedback_record_from_row(row) for row in rows]
+        finally:
+            conn.close()
+
     def _build_generator_feedback_context(
         self,
         *,
@@ -913,8 +1181,10 @@ class KnowledgeUpdateService:
                 "notes": notes,
                 "examples": [
                     {
-                        "proposal_id": record["proposal_id"],
-                        "candidate_id": record["candidate_id"],
+                        "review_source": record.get("review_source", "proposal"),
+                        "proposal_id": record.get("proposal_id"),
+                        "feedback_id": record.get("feedback_id"),
+                        "candidate_id": record.get("candidate_id"),
                         "target_page_id": record["target_page_id"],
                         "feedback_tags": record["feedback_tags"],
                         "future_generator_note": record["future_generator_note"],
@@ -1878,6 +2148,11 @@ def _optional_text(value: Any) -> Optional[str]:
     return normalized or None
 
 
+def _category_key(value: Any) -> Optional[str]:
+    normalized = _optional_text(value)
+    return _slugify(normalized) if normalized else None
+
+
 def _dedupe(values: Iterable[str]) -> List[str]:
     seen: set[str] = set()
     result: List[str] = []
@@ -2067,6 +2342,8 @@ def _generator_feedback_note(raw: Optional[Dict[str, Any]]) -> str:
 
 def _feedback_record_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     return {
+        "review_source": "proposal",
+        "feedback_id": None,
         "proposal_id": row["id"],
         "candidate_id": row["candidate_id"],
         "target_page_id": row["target_page_id"],
@@ -2086,6 +2363,40 @@ def _feedback_record_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "protocol": row["candidate_protocol"],
         "category": row["candidate_category"],
         "question_text": row["candidate_question"],
+    }
+
+
+def _external_feedback_record_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "review_source": row["source"] or "batch_import",
+        "feedback_id": row["id"],
+        "proposal_id": None,
+        "candidate_id": None,
+        "target_page_id": row["target_page_id"],
+        "target_page_title": row["target_page_title"],
+        "proposal_kind": "external_review",
+        "reviewed_by": row["reviewed_by"],
+        "reviewed_at": row["reviewed_at"],
+        "review_notes": row["review_notes"],
+        "last_change_summary": row["last_change_summary"],
+        "feedback_tags": _feedback_tags_from_json(row["feedback_tags_json"]),
+        "future_generator_note": row["future_generator_note"],
+        "section_diff_summary": _section_diff_summary_from_json(
+            row["section_diff_summary_json"]
+        ),
+        "generator_version": row["generator_version"] or GENERATOR_VERSION,
+        "prompt_version": row["prompt_version"],
+        "protocol": row["protocol"],
+        "category": row["category"],
+        "question_text": None,
+        "source_refs": _durable_source_refs(
+            _string_list(json.loads(row["source_refs_json"] or "[]"))
+        ),
+        "issues": _dedupe(
+            str(issue) for issue in json.loads(row["issues_json"] or "[]")
+        ),
+        "page_path": row["page_path"],
+        "source_batch_id": row["source_batch_id"],
     }
 
 
