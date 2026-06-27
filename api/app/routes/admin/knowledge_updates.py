@@ -17,11 +17,15 @@ from app.services.faq.duplicate_guard import build_duplicate_faq_detail
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
+from app.services.knowledge_updates.code_evidence_promotion import (
+    CodeEvidencePromotionService,
+)
 from app.services.knowledge_updates.topic_clusters import (
     KnowledgeReviewItem,
     KnowledgeTopicCluster,
     build_knowledge_review_items,
 )
+from app.services.rag.code_evidence import CODE_EVIDENCE_TYPE, CodeEvidenceRecord
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -70,6 +74,12 @@ class RejectKnowledgeUpdateRequest(BaseModel):
 class CreateFAQFromKnowledgeUpdateRequest(BaseModel):
     reviewer: str = Field(default="admin")
     force: bool = Field(default=False)
+
+
+class PromoteCodeEvidenceRequest(BaseModel):
+    evidence: Dict[str, Any]
+    question: Optional[str] = None
+    public_guidance: Optional[str] = None
 
 
 class ActionResponse(BaseModel):
@@ -274,6 +284,47 @@ async def get_generator_feedback_records(
         ) from exc
 
 
+@router.post("/code-evidence/proposals")
+async def promote_code_evidence_to_knowledge_update(
+    request_body: PromoteCodeEvidenceRequest,
+    pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
+) -> Dict[str, Any]:
+    """Promote selected code evidence into the normal LLM Wiki review queue."""
+    try:
+        record = _code_evidence_record_from_payload(
+            request_body.evidence,
+            public_guidance=request_body.public_guidance,
+        )
+        promotion = CodeEvidencePromotionService(
+            settings=service.settings,
+            repository=pipeline_service.repository,
+            knowledge_update_service=service,
+        )
+        result = await run_in_threadpool(
+            lambda: promotion.create_or_get_proposal(
+                record=record,
+                question=request_body.question,
+                public_guidance=request_body.public_guidance,
+            )
+        )
+        return {
+            "candidate": _candidate_to_dict(result.candidate),
+            "proposal": service.to_response(result.proposal, result.candidate),
+        }
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to promote code evidence into knowledge update")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to promote code evidence",
+        ) from exc
+
+
 @router.post("/{candidate_id}/generate")
 async def regenerate_knowledge_update_proposal(
     candidate_id: int,
@@ -356,6 +407,21 @@ async def update_knowledge_update_document(
             detail=str(exc),
         ) from exc
     return service.to_response(proposal, candidate)
+
+
+def _code_evidence_record_from_payload(
+    evidence: Dict[str, Any],
+    *,
+    public_guidance: Optional[str],
+) -> CodeEvidenceRecord:
+    data = dict(evidence or {})
+    if "type" not in data:
+        data["type"] = data.get("kind") or CODE_EVIDENCE_TYPE
+    if "source_refs" not in data and data.get("source_ref"):
+        data["source_refs"] = [data["source_ref"]]
+    if public_guidance:
+        data["public_guidance"] = public_guidance
+    return CodeEvidenceRecord.from_dict(data)
 
 
 @router.post("/{candidate_id}/approve", response_model=KnowledgeUpdateApproveResponse)

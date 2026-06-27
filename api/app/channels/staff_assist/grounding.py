@@ -99,7 +99,9 @@ class GroundingBriefService:
         metadata = doc.metadata or {}
         source_refs = list(metadata.get("source_refs") or [])
         return {
+            "id": metadata.get("id") or doc.id,
             "kind": CODE_EVIDENCE_TYPE,
+            "type": CODE_EVIDENCE_TYPE,
             "claim": str(metadata.get("claim") or doc.content or "").strip(),
             "support_use": str(metadata.get("support_use") or "").strip(),
             "source_ref": source_refs[0] if source_refs else None,
@@ -107,9 +109,15 @@ class GroundingBriefService:
             "audience": STAFF_ONLY_AUDIENCE,
             "repo": metadata.get("repo"),
             "commit": metadata.get("commit"),
+            "path": metadata.get("path"),
+            "line_start": metadata.get("line_start"),
+            "line_end": metadata.get("line_end"),
+            "symbol": metadata.get("symbol"),
             "protocol": metadata.get("protocol"),
             "freshness_class": metadata.get("freshness_class"),
             "risk_level": metadata.get("risk_level"),
+            "public_guidance": metadata.get("public_guidance"),
+            "applies_to_versions": metadata.get("applies_to_versions") or [],
             "score": round(float(doc.score or 0.0), 4),
         }
 

@@ -1001,14 +1001,149 @@ Implemented locally after Phase A:
 
 Still pending after this slice:
 
-1. Build the actual Bisq2/support-agent code extractor that emits the JSONL records.
-2. Decide whether the next retrieval implementation should use a separate staff-only Qdrant collection or keep file-backed retrieval until volume requires indexing.
-3. Add `code:` source-ref promotion checks for reviewed LLM Wiki pages.
+1. Decide whether the next retrieval implementation should use a separate staff-only Qdrant collection or keep file-backed retrieval until volume requires indexing.
+2. Add `code:` source-ref promotion checks for reviewed LLM Wiki pages.
+3. Add live infrastructure and seed-node state as timestamped context, not static RAG.
+
+## Implementation Status - Code Evidence Generation and Evaluation
+
+Implemented after the staff-only code-evidence slice:
+
+1. Added deterministic extraction for conservative code facts from Java constants, enum states, REST annotations, static exception messages, FastAPI `HTTPException` details, config defaults, and markdown specification sections.
+2. Added JSONL writing that validates each row through the same `CodeEvidenceRecord` schema used by runtime loading.
+3. Added freshness checking for missing source files, invalid line ranges, and mismatched `code:` source refs.
+4. Added offline retrieval evaluation for staff-only code evidence with Recall@k, MRR, and per-case missing expected IDs.
+5. Added CLI entrypoints:
+   - `python -m app.scripts.generate_code_evidence`
+   - `python -m app.scripts.evaluate_code_evidence`
+
+Still pending after this generation/evaluation slice:
+
+1. Run the extractor against fresh Bisq2 and support-agent checkouts and review the generated facts before committing a curated fixture.
+2. Create a small golden case file for real code-grounded support questions.
+3. Add live infrastructure and seed-node state as timestamped context, not static RAG.
+
+## Implementation Status - Code Evidence Promotion to LLM Wiki
+
+Implemented after the generation/evaluation slice:
+
+1. Added shared `code:` source-reference parsing and validation for pinned commit and line-range refs.
+2. Enforced precise `code:` source refs for reviewed or active LLM Wiki pages before they can enter the RAG index.
+3. Added `public_guidance` and `applies_to_versions` fields to code evidence records.
+4. Added `code_evidence` as a first-class unified review candidate source, including SQLite migration for existing databases.
+5. Added `CodeEvidencePromotionService` to turn a structured code fact into a normal LLM Wiki review proposal.
+6. Promotion requires customer-safe guidance and a `code:` ref that matches the structured repo, commit, path, and line range.
+7. Added an admin API endpoint at `/admin/knowledge-updates/code-evidence/proposals`.
+8. Added a one-click admin UI path from staff-only code grounding evidence to a draft LLM Wiki proposal. If the code fact has no reviewed `public_guidance`, the UI requires the support admin to write customer-safe guidance first.
+9. Approved code-derived proposals are indexed through the existing reviewed LLM Wiki loader, not by exposing raw code facts to public RAG.
+
+Still pending after this promotion slice:
+
+1. Run the extractor against fresh Bisq2 and support-agent checkouts and curate the first production code-evidence fixture.
+2. Add real-world golden cases for code-grounded support questions and track Recall@k/MRR for those cases.
+3. Decide whether higher-volume code retrieval should remain file-backed, use a separate staff-only Qdrant collection, or use strict filtered indexing.
 4. Add live infrastructure and seed-node state as timestamped context, not static RAG.
 
 Current answer to "how far are we with codebase knowledgebase integration":
 
-We are not ingesting raw codebase facts into the customer-facing knowledgebase yet. That is intentional. The prerequisite feedback boundary is in place, and the first staff-only code-evidence pilot now exists as file-backed retrieval feeding staff-room/admin enrichment. The RAG answer can now be enriched with codebase context for human support staff, but the code-enriched text is posted only to the special Matrix staff room/admin review surface and is not sent to the public channel by quick approval actions. The next safe phases are the actual code extractor, `code:` source-ref promotion checks, and live infrastructure context.
+We are not ingesting raw codebase facts into the customer-facing knowledgebase. That is intentional. The prerequisite feedback boundary is in place, the staff-only code-evidence pilot exists as file-backed retrieval feeding staff-room/admin enrichment, and durable facts can now be promoted into the normal reviewed LLM Wiki flow. The RAG answer can be enriched with codebase context for human support staff, but the code-enriched text is posted only to the special Matrix staff room/admin review surface and is not sent to the public channel by quick approval actions. Customer-facing use now happens only after the fact is converted into reviewed LLM Wiki guidance with customer-safe wording and precise `code:` source refs. The next safe phases are curated generated fixtures from fresh checkouts, real golden cases, scale-up retrieval design, and live infrastructure context.
+
+## Research Update - Open-Source Codebase Evidence
+
+The fact that Bisq2 and the support agent are open source changes the exposure
+boundary, but it does not make raw-code RAG the best support experience.
+
+Updated recommendation:
+
+1. Keep the current staff-only path for high-risk, uncertain, main-branch-only,
+   operational, or implementation-heavy code facts.
+2. Add a `public_review_candidate` promotion path for code-derived facts that are
+   support-answerable, version-aware, and backed by stable `code:` source refs.
+3. Allow `public_reviewed` code-derived facts into customer-facing RAG only after
+   the claim has reviewed wording, version applicability, and citation metadata.
+4. Do not retrieve raw source chunks directly into customer prompts. Retrieve
+   structured facts, reviewed LLM Wiki pages with `code:` refs, or small cited
+   snippets only when the user explicitly asks a developer-level question.
+
+Rationale from current RAG and code-retrieval practice:
+
+- RAG systems need compact, relevant chunks with provenance rather than large
+  document dumps. Code is especially noisy when embedded as raw text.
+- Hybrid retrieval is important for code because users often quote exact symbols,
+  error strings, routes, or config keys. Dense embeddings alone can miss those.
+- Source code should be indexed with structure: repo, commit, path, symbol,
+  language, protocol, audience, freshness, and risk. GitHub code search exposes
+  path and symbol qualifiers, and symbol extraction is based on Tree-sitter; this
+  supports treating code search as structured search, not plain prose search.
+- AST-aware or graph-aware parsing is preferable once we move beyond constants,
+  routes, enums, and exception strings. Tree-sitter based code splitting and
+  code-knowledge graphs preserve syntactic and relational context better than
+  fixed text chunking.
+- Evaluation must remain split: retrieval Recall@k/MRR for code facts first,
+  then generation faithfulness/relevance for the final answer. A customer answer
+  can be wrong even when the right code fact was retrieved, and retrieval can be
+  wrong even when the LLM writes a plausible answer.
+
+For Bisq support, this means codebase knowledge should have three answer modes:
+
+1. `staff_only`: internal investigation context. Examples: raw exception classes,
+   stack-trace mapping, internal endpoints, deployment defaults, main-branch-only
+   behavior, or uncertain issue diagnosis.
+2. `public_review_candidate`: a generated proposal for the LLM Wiki. Examples:
+   "This error usually means the offer no longer exists" with a code ref and a
+   reviewer-facing version caveat.
+3. `public_reviewed`: customer-facing support knowledge. Examples: "If you see
+   'Offer not found', refresh the offer list and retry; the offer may already have
+   been taken or removed" with reviewed wording and source refs.
+
+Security note:
+
+Open source removes much of the confidentiality concern around code-derived
+facts, but not all operational risk. We should still avoid pasting raw stack
+traces, internal paths, exact class names, route internals, local deployment
+details, or exploit-like failure diagnostics into normal support answers unless
+that wording was explicitly reviewed. This is about support quality, user
+comprehension, version correctness, and abuse resistance, not secrecy of the
+source repository.
+
+Revised next implementation phase:
+
+As of the code-evidence promotion slice, items 1-3 below are implemented. Items
+4-7 remain the next improvement track.
+
+1. Add `public_review_candidate` and `public_reviewed` handling to the code
+   evidence promotion pipeline.
+2. Add a "promote to LLM Wiki proposal" operation from staff grounding evidence.
+3. Enforce `code:` source refs and freshness checks for any reviewed LLM Wiki page
+   that contains code-derived claims.
+4. Add release/version metadata to generated code evidence. Prefer release-bound
+   facts for public answers; keep main-branch-only facts staff-only unless the
+   answer explicitly says it applies to current development builds.
+5. Move beyond the file-backed scorer when volume grows: use a separate Qdrant
+   collection or strict metadata filters with payload indexes for `type`,
+   `audience`, `repo`, `commit`, `protocol`, `freshness_class`, and `risk_level`.
+6. Use hybrid retrieval for code evidence: sparse/exact matching for symbols,
+   error strings, config keys, and routes; dense matching for paraphrased user
+   questions; optional reranking for final evidence order.
+7. Build a golden case set from real support questions and known error strings.
+   Track Recall@k/MRR for retrieval and separate answer-grounding checks for
+   customer-facing generation.
+
+Research sources checked:
+
+- Microsoft Azure AI Search RAG overview, especially grounding, chunking,
+  citations, hybrid search, and security trimming guidance.
+- Qdrant filtering and hybrid query documentation for payload filters, payload
+  indexes, dense plus sparse retrieval, and RRF-style result fusion.
+- GitHub Code Search syntax for path, repo, language, content, and symbol
+  qualifiers, including Tree-sitter based symbol search.
+- LlamaIndex `CodeSplitter` documentation for AST/parser-based code splitting.
+- Codebase-Memory paper for Tree-sitter based knowledge graphs, structural code
+  retrieval, call graph traversal, and incremental indexing.
+- OpenAI evals guidance for building explicit eval tasks and iterating against
+  test inputs and criteria.
+- OWASP Error Handling guidance for why raw exception details and stack traces
+  should not be returned directly to users even when code is public.
 
 ## Skills Review
 

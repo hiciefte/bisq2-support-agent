@@ -136,6 +136,7 @@ def test_staff_retriever_filters_by_protocol_and_public_status(tmp_path: Path) -
                 protocol="bisq_easy",
                 audience="public_reviewed",
                 claim="Reviewed public guidance should not be in staff-only raw evidence.",
+                public_guidance="Reviewed public guidance should not be retrieved by the staff-only raw evidence retriever.",
             ),
             _valid_record(
                 id="wrong-protocol",

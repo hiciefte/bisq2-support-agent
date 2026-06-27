@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 import yaml  # type: ignore[import-untyped]
+from app.services.rag.source_refs import imprecise_code_source_refs
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,11 @@ def _validate_page(
         raise ValueError(f"unsupported page_type: {page_type}")
     if status in INDEXABLE_STATUSES and not source_refs:
         raise ValueError("reviewed/active LLM Wiki pages require source_refs")
+    invalid_code_refs = imprecise_code_source_refs(source_refs)
+    if status in INDEXABLE_STATUSES and invalid_code_refs:
+        raise ValueError(
+            "reviewed/active LLM Wiki pages require precise code source_refs"
+        )
     if status in INDEXABLE_STATUSES and not body.strip():
         raise ValueError("reviewed/active LLM Wiki pages require body content")
     if status in INDEXABLE_STATUSES and not _body_for_rag(body):

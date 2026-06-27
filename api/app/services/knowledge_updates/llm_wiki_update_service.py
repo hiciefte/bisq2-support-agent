@@ -30,6 +30,10 @@ from app.services.rag.llm_wiki_loader import (
     REVIEWED_STATUS,
 )
 from app.services.rag.protocol_detector import ProtocolDetector
+from app.services.rag.source_refs import (
+    code_source_refs,
+    imprecise_code_source_refs,
+)
 from app.services.training.unified_repository import UnifiedFAQCandidate
 
 SECTION_ORDER = [
@@ -1022,6 +1026,10 @@ class KnowledgeUpdateService:
                     refs.append(f"faq:{_faq_ref_value(source, title)}")
                 elif source_type == "llm_wiki":
                     refs.append(f"llm_wiki:{title}")
+                elif source_type in {"code", "code_fact"}:
+                    source_ref = str(source.get("source_ref") or "").strip()
+                    if source_ref:
+                        refs.append(source_ref)
 
         return _dedupe(refs)
 
@@ -1256,6 +1264,22 @@ class KnowledgeUpdateService:
                 blocking=True,
             )
         )
+        code_refs = code_source_refs(source_refs)
+        invalid_code_refs = imprecise_code_source_refs(source_refs)
+        if code_refs:
+            checks.append(
+                _check(
+                    code="code_source_refs",
+                    label="Code source references",
+                    status="fail" if invalid_code_refs else "pass",
+                    detail=(
+                        "Code-derived claims must cite pinned commit refs with line ranges."
+                        if invalid_code_refs
+                        else f"{len(code_refs)} precise code source reference(s) attached."
+                    ),
+                    blocking=True,
+                )
+            )
         protocol = candidate.protocol
         checks.append(
             _check(

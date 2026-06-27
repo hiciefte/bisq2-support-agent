@@ -51,6 +51,9 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
     assert brief["summary"] == "Staff-only grounding for this support request."
     assert brief["likely_protocol"] == "bisq_easy"
     assert brief["evidence"][0]["kind"] == "code_fact"
+    assert brief["evidence"][0]["id"] == "code-fact"
+    assert brief["evidence"][0]["path"] == "bisq-easy/src/main/java/Foo.java"
+    assert brief["evidence"][0]["symbol"] is None
     assert brief["evidence"][0]["audience"] == "staff_only"
     assert (
         brief["evidence"][0]["claim"]

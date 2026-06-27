@@ -21,6 +21,73 @@ from typing import Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
+_UNIFIED_CANDIDATES_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS unified_faq_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL CHECK (source IN ('bisq2', 'matrix', 'code_evidence')),
+                source_event_id TEXT UNIQUE NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                staff_answer TEXT NOT NULL,
+                generated_answer TEXT,
+                staff_sender TEXT,
+                embedding_similarity REAL,
+                factual_alignment REAL,
+                contradiction_score REAL,
+                completeness REAL,
+                hallucination_risk REAL,
+                final_score REAL,
+                llm_reasoning TEXT,
+                routing TEXT NOT NULL CHECK (routing IN ('AUTO_APPROVE', 'SPOT_CHECK', 'FULL_REVIEW')),
+                review_status TEXT DEFAULT 'pending',
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                rejection_reason TEXT,
+                rejection_note TEXT,
+                faq_id TEXT,
+                is_calibration_sample BOOLEAN DEFAULT TRUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                skip_order INTEGER DEFAULT 0,
+                protocol TEXT CHECK (protocol IN ('bisq_easy', 'multisig_v1', 'musig', 'all', NULL)),
+                edited_staff_answer TEXT,
+                edited_question_text TEXT,
+                category TEXT DEFAULT 'General'
+            )
+            """
+
+
+def _ensure_code_evidence_source_allowed(cursor: sqlite3.Cursor) -> None:
+    """Rebuild legacy candidate tables whose source CHECK omits code_evidence."""
+    row = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("unified_faq_candidates",),
+    ).fetchone()
+    create_sql = str(row[0] or "") if row else ""
+    if "code_evidence" in create_sql:
+        return
+
+    legacy_table = "unified_faq_candidates_legacy_source_check"
+    cursor.execute(f"ALTER TABLE unified_faq_candidates RENAME TO {legacy_table}")
+    cursor.execute(_UNIFIED_CANDIDATES_TABLE_SQL)
+
+    old_columns = _table_columns(cursor, legacy_table)
+    new_columns = _table_columns(cursor, "unified_faq_candidates")
+    copied_columns = [column for column in old_columns if column in new_columns]
+    column_list = ", ".join(copied_columns)
+    cursor.execute(
+        f"""
+        INSERT INTO unified_faq_candidates ({column_list})
+        SELECT {column_list}
+        FROM {legacy_table}
+        """
+    )
+    cursor.execute(f"DROP TABLE {legacy_table}")
+
+
+def _table_columns(cursor: sqlite3.Cursor, table_name: str) -> list[str]:
+    return [str(row[1]) for row in cursor.execute(f"PRAGMA table_info({table_name})")]
+
 
 @dataclass
 class UnifiedFAQCandidate:
@@ -28,7 +95,7 @@ class UnifiedFAQCandidate:
 
     Attributes:
         id: Database primary key
-        source: Origin source ("bisq2" or "matrix")
+        source: Origin source ("bisq2", "matrix", or "code_evidence")
         source_event_id: Unique identifier from source system
         source_timestamp: When the original message was created
         question_text: The user's question
@@ -55,7 +122,7 @@ class UnifiedFAQCandidate:
     """
 
     id: int
-    source: Literal["bisq2", "matrix"]
+    source: Literal["bisq2", "matrix", "code_evidence"]
     source_event_id: str
     source_timestamp: str
     question_text: str
@@ -233,40 +300,8 @@ class UnifiedFAQCandidateRepository:
         cursor = conn.cursor()
 
         # Create unified_faq_candidates table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS unified_faq_candidates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL CHECK (source IN ('bisq2', 'matrix')),
-                source_event_id TEXT UNIQUE NOT NULL,
-                source_timestamp TEXT NOT NULL,
-                question_text TEXT NOT NULL,
-                staff_answer TEXT NOT NULL,
-                generated_answer TEXT,
-                staff_sender TEXT,
-                embedding_similarity REAL,
-                factual_alignment REAL,
-                contradiction_score REAL,
-                completeness REAL,
-                hallucination_risk REAL,
-                final_score REAL,
-                llm_reasoning TEXT,
-                routing TEXT NOT NULL CHECK (routing IN ('AUTO_APPROVE', 'SPOT_CHECK', 'FULL_REVIEW')),
-                review_status TEXT DEFAULT 'pending',
-                reviewed_by TEXT,
-                reviewed_at TEXT,
-                rejection_reason TEXT,
-                rejection_note TEXT,
-                faq_id TEXT,
-                is_calibration_sample BOOLEAN DEFAULT TRUE,
-                created_at TEXT NOT NULL,
-                updated_at TEXT,
-                skip_order INTEGER DEFAULT 0,
-                protocol TEXT CHECK (protocol IN ('bisq_easy', 'multisig_v1', 'musig', 'all', NULL)),
-                edited_staff_answer TEXT,
-                edited_question_text TEXT,
-                category TEXT DEFAULT 'General'
-            )
-            """)
+        cursor.execute(_UNIFIED_CANDIDATES_TABLE_SQL)
+        _ensure_code_evidence_source_allowed(cursor)
 
         # Create indexes for performance
         cursor.execute(
@@ -470,7 +505,7 @@ class UnifiedFAQCandidateRepository:
 
     def create(
         self,
-        source: Literal["bisq2", "matrix"],
+        source: Literal["bisq2", "matrix", "code_evidence"],
         source_event_id: str,
         source_timestamp: str,
         question_text: str,
@@ -496,7 +531,7 @@ class UnifiedFAQCandidateRepository:
         """Create a new FAQ candidate.
 
         Args:
-            source: Origin source ("bisq2" or "matrix")
+            source: Origin source ("bisq2", "matrix", or "code_evidence")
             source_event_id: Unique identifier from source system
             source_timestamp: When the original message was created
             question_text: The user's question
@@ -643,9 +678,26 @@ class UnifiedFAQCandidateRepository:
 
         return result is not None
 
+    def get_by_event_id(self, source_event_id: str) -> Optional[UnifiedFAQCandidate]:
+        """Get a candidate by the original source event ID."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT * FROM unified_faq_candidates WHERE source_event_id = ?",
+            (source_event_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            return None
+        return self._row_to_candidate(row)
+
     def get_pending(
         self,
-        source: Optional[Literal["bisq2", "matrix"]] = None,
+        source: Optional[Literal["bisq2", "matrix", "code_evidence"]] = None,
         routing: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
