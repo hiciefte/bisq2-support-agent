@@ -51,15 +51,14 @@ _JAVA_METHOD_RE = re.compile(
     r"[\w<>, ?\[\].]+\s+"
     r"(?P<name>[a-zA-Z_][A-Za-z0-9_]*)\s*\("
 )
+_QUOTED_STRING_PATTERN = r'"(?:[^"\\]|\\.)*"'
 _JAVA_THROW_RE = re.compile(
     r"\bthrow\s+new\s+(?P<exception>[A-Za-z_][A-Za-z0-9_]*Exception)\s*"
-    r"\(\s*(?P<message>\"(?:\\.|[^\"])+\")"
+    rf"\(\s*(?P<message>{_QUOTED_STRING_PATTERN})"
 )
-_PY_HTTP_EXCEPTION_RE = re.compile(
-    r"\bHTTPException\s*\((?P<args>[^)]*)\)", re.DOTALL
-)
+_PY_HTTP_EXCEPTION_RE = re.compile(r"\bHTTPException\s*\((?P<args>[^)]*)\)", re.DOTALL)
 _PY_STATUS_CODE_RE = re.compile(r"\bstatus_code\s*=\s*(?P<status>\d{3})")
-_PY_DETAIL_RE = re.compile(r"\bdetail\s*=\s*(?P<message>\"(?:\\.|[^\"])+\")")
+_PY_DETAIL_RE = re.compile(rf"\bdetail\s*=\s*(?P<message>{_QUOTED_STRING_PATTERN})")
 _CONFIG_RE = re.compile(
     r"^(?P<key>[A-Za-z][A-Za-z0-9_.-]{2,})\s*(?:=|:)\s*(?P<value>.+)$"
 )
@@ -175,19 +174,14 @@ class CodeEvidenceExtractor:
                 continue
             exception_name = match.group("exception")
             message = _decode_string_literal(match.group("message"))
-            symbol = (
-                f"{class_name}.{exception_name}" if class_name else exception_name
-            )
+            symbol = f"{class_name}.{exception_name}" if class_name else exception_name
             records.append(
                 self._record(
                     path=relative_path,
                     line_start=line_index,
                     line_end=line_index,
                     symbol=symbol,
-                    claim=(
-                        f"{symbol} can emit exception message: "
-                        f"{message}"
-                    ),
+                    claim=(f"{symbol} can emit exception message: " f"{message}"),
                     support_use=(
                         "Use as staff evidence when matching a user-visible "
                         "exception message to a likely code path. Do not expose "

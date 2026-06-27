@@ -80,13 +80,11 @@ def _ensure_code_evidence_source_allowed(cursor: sqlite3.Cursor) -> None:
     new_columns = _table_columns(cursor, "unified_faq_candidates")
     copied_columns = [column for column in old_columns if column in new_columns]
     column_list = ", ".join(copied_columns)
-    cursor.execute(
-        f"""
+    cursor.execute(f"""
         INSERT INTO unified_faq_candidates ({column_list})
         SELECT {column_list}
         FROM {legacy_table}
-        """
-    )
+        """)
     cursor.execute(f"DROP TABLE {legacy_table}")
 
 

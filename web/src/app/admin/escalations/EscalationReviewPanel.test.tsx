@@ -220,6 +220,9 @@ describe('EscalationReviewPanel grounding brief', () => {
     expect(await screen.findByText('Staff-only code grounding')).toBeInTheDocument()
     expect(screen.queryByText('Customer-safe draft')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /use as response draft/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('This stale field must not become editable customer response text.')
+    ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }))
     expect(screen.getByRole('textbox', { name: /suggested answer/i })).toHaveValue(

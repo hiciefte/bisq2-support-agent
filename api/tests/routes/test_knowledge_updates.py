@@ -15,8 +15,10 @@ from app.routes.admin.knowledge_updates import (
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
-from app.services.training.unified_repository import UnifiedFAQCandidateRepository
-from app.services.training.unified_repository import UnifiedFAQCandidate
+from app.services.training.unified_repository import (
+    UnifiedFAQCandidate,
+    UnifiedFAQCandidateRepository,
+)
 
 
 def _candidate(**overrides) -> UnifiedFAQCandidate:
@@ -520,9 +522,7 @@ async def test_promote_code_evidence_endpoint_creates_reviewable_proposal(
         settings=Settings(DATA_DIR=str(tmp_path)),
         db_path=repository.db_path,
     )
-    source_ref = (
-        "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
-    )
+    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
 
     response = await promote_code_evidence_to_knowledge_update(
         request_body=PromoteCodeEvidenceRequest(
@@ -570,9 +570,7 @@ async def test_promote_code_evidence_endpoint_accepts_symbol_less_evidence(
         settings=Settings(DATA_DIR=str(tmp_path)),
         db_path=repository.db_path,
     )
-    source_ref = (
-        "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
-    )
+    source_ref = "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44"
 
     response = await promote_code_evidence_to_knowledge_update(
         request_body=PromoteCodeEvidenceRequest(

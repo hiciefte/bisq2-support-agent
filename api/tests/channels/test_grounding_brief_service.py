@@ -74,7 +74,9 @@ def test_grounding_brief_includes_staff_only_evidence() -> None:
     )
 
 
-def test_grounding_brief_does_not_generate_customer_safe_draft_from_staff_only_guidance() -> None:
+def test_grounding_brief_does_not_generate_customer_safe_draft_from_staff_only_guidance() -> (
+    None
+):
     retriever = FakeRetriever([_code_doc()])
     service = GroundingBriefService(code_retriever=retriever)
 
@@ -90,7 +92,9 @@ def test_grounding_brief_does_not_generate_customer_safe_draft_from_staff_only_g
     assert brief["customer_safe_draft"] is None
 
 
-def test_grounding_brief_does_not_generate_customer_safe_draft_from_raw_claims() -> None:
+def test_grounding_brief_does_not_generate_customer_safe_draft_from_raw_claims() -> (
+    None
+):
     retriever = FakeRetriever([_code_doc(public_guidance=None)])
     service = GroundingBriefService(code_retriever=retriever)
 

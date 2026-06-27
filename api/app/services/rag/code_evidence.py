@@ -183,9 +183,7 @@ class CodeEvidenceRecord:
             public_guidance=(
                 _redact_sensitive_text(public_guidance) if public_guidance else None
             ),
-            applies_to_versions=_optional_string_list(
-                data.get("applies_to_versions")
-            ),
+            applies_to_versions=_optional_string_list(data.get("applies_to_versions")),
         )
 
     def to_retrieved_document(self, *, score: float = 0.0) -> RetrievedDocument:

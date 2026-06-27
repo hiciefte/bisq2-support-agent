@@ -152,9 +152,7 @@ def load_code_evidence_eval_cases(path: str | Path) -> list[CodeEvidenceEvalCase
     if not isinstance(rows, list):
         raise ValueError("Code evidence evaluation cases must be a JSON list")
     return [
-        CodeEvidenceEvalCase.from_dict(row)
-        for row in rows
-        if isinstance(row, dict)
+        CodeEvidenceEvalCase.from_dict(row) for row in rows if isinstance(row, dict)
     ]
 
 

@@ -44,9 +44,12 @@ class CodeEvidencePromotionService:
     ) -> None:
         self.settings = settings
         self.repository = repository
-        self.knowledge_update_service = knowledge_update_service or KnowledgeUpdateService(
-            settings=settings,
-            db_path=repository.db_path,
+        self.knowledge_update_service = (
+            knowledge_update_service
+            or KnowledgeUpdateService(
+                settings=settings,
+                db_path=repository.db_path,
+            )
         )
 
     def create_or_get_proposal(
@@ -92,8 +95,7 @@ class CodeEvidencePromotionService:
                 source_event_id=source_event_id,
                 source_timestamp=datetime.now(timezone.utc).isoformat(),
                 question_text=(
-                    str(question or "").strip()
-                    or _default_question(record)
+                    str(question or "").strip() or _default_question(record)
                 ),
                 staff_answer=guidance,
                 generated_answer=guidance,

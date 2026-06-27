@@ -14,11 +14,11 @@ from app.routes.admin.training import (
     get_pipeline_service,
 )
 from app.services.faq.duplicate_guard import build_duplicate_faq_detail
-from app.services.knowledge_updates.llm_wiki_update_service import (
-    KnowledgeUpdateService,
-)
 from app.services.knowledge_updates.code_evidence_promotion import (
     CodeEvidencePromotionService,
+)
+from app.services.knowledge_updates.llm_wiki_update_service import (
+    KnowledgeUpdateService,
 )
 from app.services.knowledge_updates.topic_clusters import (
     KnowledgeReviewItem,
