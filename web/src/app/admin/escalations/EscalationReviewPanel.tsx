@@ -76,7 +76,7 @@ interface GroundingEvidence {
   path?: string
   line_start?: number
   line_end?: number
-  symbol?: string
+  symbol?: string | null
   protocol?: string
   freshness_class?: string
   risk_level?: string
@@ -359,7 +359,6 @@ function StaffGroundingBriefPanel({
               Boolean(item.path) &&
               typeof item.line_start === "number" &&
               typeof item.line_end === "number" &&
-              Boolean(item.symbol) &&
               Boolean(item.protocol) &&
               Boolean(item.freshness_class) &&
               Boolean(item.risk_level)

@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.rag.code_evidence_evaluation import (
     CodeEvidenceEvalCase,
     CodeEvidenceRetrievalEvaluator,
@@ -76,3 +78,28 @@ def test_retrieval_evaluator_treats_empty_expected_ids_as_invalid_case() -> None
     assert result.recall_at_k == 0.0
     assert result.mrr == 0.0
     assert result.failures[0]["reason"] == "missing_expected_ids"
+
+
+def test_eval_case_parser_rejects_invalid_expected_ids_shape() -> None:
+    with pytest.raises(ValueError, match="expected_ids"):
+        CodeEvidenceEvalCase.from_dict(
+            {"question": "sell offer limit", "expected_ids": "expected-a"}
+        )
+
+
+def test_eval_case_parser_rejects_blank_expected_ids() -> None:
+    with pytest.raises(ValueError, match="expected_ids"):
+        CodeEvidenceEvalCase.from_dict(
+            {"question": "sell offer limit", "expected_ids": ["expected-a", "  "]}
+        )
+
+
+def test_eval_case_parser_rejects_blank_protocol() -> None:
+    with pytest.raises(ValueError, match="protocol"):
+        CodeEvidenceEvalCase.from_dict(
+            {
+                "question": "sell offer limit",
+                "expected_ids": ["expected-a"],
+                "protocol": "  ",
+            }
+        )

@@ -159,3 +159,27 @@ def test_code_evidence_promotion_rejects_mismatched_source_ref(
         assert "match the structured code evidence" in str(exc)
     else:
         raise AssertionError("promotion with mismatched source ref should fail")
+
+
+def test_code_evidence_promotion_rejects_any_mismatched_source_ref(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    repository = UnifiedFAQCandidateRepository(str(tmp_path / "unified_training.db"))
+    service = CodeEvidencePromotionService(
+        settings=settings,
+        repository=repository,
+    )
+    record = _record(
+        source_refs=[
+            "code:bisq2@abc123:api/src/main/java/bisq/api/OfferResource.java:42-44",
+            "code:bisq2@abc123:api/src/main/java/bisq/api/OtherResource.java:42-44",
+        ],
+    )
+
+    try:
+        service.create_or_get_proposal(record=record)
+    except ValueError as exc:
+        assert "match the structured code evidence" in str(exc)
+    else:
+        raise AssertionError("promotion with any mismatched source ref should fail")

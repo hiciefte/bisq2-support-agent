@@ -419,6 +419,10 @@ def _code_evidence_record_from_payload(
         data["type"] = data.get("kind") or CODE_EVIDENCE_TYPE
     if "source_refs" not in data and data.get("source_ref"):
         data["source_refs"] = [data["source_ref"]]
+    if not str(data.get("symbol") or "").strip():
+        data["symbol"] = (
+            f"{data.get('path')}:{data.get('line_start')}-{data.get('line_end')}"
+        )
     if public_guidance:
         data["public_guidance"] = public_guidance
     return CodeEvidenceRecord.from_dict(data)

@@ -127,7 +127,8 @@ class CodeEvidenceExtractor:
         for path in self.repo_path.rglob("*"):
             if not path.is_file():
                 continue
-            if any(part in _EXCLUDED_DIRS for part in path.parts):
+            relative_parts = path.relative_to(self.repo_path).parts
+            if any(part in _EXCLUDED_DIRS for part in relative_parts[:-1]):
                 continue
             if path.suffix.lower() in {".java", ".py", ".conf", ".properties", ".md"}:
                 yield path
@@ -411,7 +412,7 @@ class CodeEvidenceExtractor:
     ) -> CodeEvidenceRecord:
         source_ref = f"code:{self.repo}@{self.commit}:{path}:{line_start}-{line_end}"
         data = {
-            "id": self._record_id(symbol, line_start),
+            "id": self._record_id(path, symbol, line_start),
             "type": CODE_EVIDENCE_TYPE,
             "repo": self.repo,
             "commit": self.commit,
@@ -429,9 +430,10 @@ class CodeEvidenceExtractor:
         }
         return CodeEvidenceRecord.from_dict(data)
 
-    def _record_id(self, symbol: str, line_start: int) -> str:
+    def _record_id(self, path: str, symbol: str, line_start: int) -> str:
+        path_slug = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", path).strip("-")
         slug = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", symbol).strip("-")
-        return f"{self.repo}:{self.commit[:12]}:{slug}:{line_start}"
+        return f"{self.repo}:{self.commit[:12]}:{path_slug}:{slug}:{line_start}"
 
     def _infer_java_type_name(self, relative_path: str, lines: list[str]) -> str:
         for line in lines[:80]:

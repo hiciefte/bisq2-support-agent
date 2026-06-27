@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.services.rag.code_evidence import ALLOWED_PROTOCOLS
+
 
 @dataclass(frozen=True)
 class CodeEvidenceEvalCase:
@@ -18,21 +20,41 @@ class CodeEvidenceEvalCase:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CodeEvidenceEvalCase":
+        question = data.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError("Code evidence eval case requires non-empty question")
+
         expected_ids = data.get("expected_ids")
-        if not isinstance(expected_ids, list):
-            expected_ids = []
+        if not isinstance(expected_ids, list) or not expected_ids:
+            raise ValueError(
+                "Code evidence eval case expected_ids must be a non-empty list"
+            )
+
+        normalized_expected_ids: list[str] = []
+        for item in expected_ids:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    "Code evidence eval case expected_ids must contain non-empty strings"
+                )
+            normalized_expected_ids.append(item.strip())
+
+        protocol_value = data.get("protocol")
+        protocol: str | None = None
+        if protocol_value is not None:
+            if not isinstance(protocol_value, str) or not protocol_value.strip():
+                raise ValueError(
+                    "Code evidence eval case protocol must be a non-empty string"
+                )
+            protocol = protocol_value.strip()
+            if protocol not in ALLOWED_PROTOCOLS:
+                raise ValueError(
+                    f"Unsupported code evidence eval protocol '{protocol}'"
+                )
+
         return cls(
-            question=str(data.get("question") or ""),
-            expected_ids=[
-                str(item).strip()
-                for item in expected_ids
-                if isinstance(item, str) and item.strip()
-            ],
-            protocol=(
-                str(data.get("protocol")).strip()
-                if data.get("protocol") is not None
-                else None
-            ),
+            question=question.strip(),
+            expected_ids=normalized_expected_ids,
+            protocol=protocol,
         )
 
 

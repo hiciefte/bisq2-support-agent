@@ -11,7 +11,7 @@ _UNPINNED_CODE_REVISIONS = {"head", "latest", "main", "master"}
 _CODE_SOURCE_REF_RE = re.compile(
     r"^code:"
     r"(?P<repo>[A-Za-z0-9_.-]+)"
-    r"@(?P<commit>[A-Za-z0-9_.-]{6,64})"
+    r"@(?P<commit>[A-Fa-f0-9]{6,64})"
     r":(?P<path>[^:\n]+)"
     r":(?P<line_start>[1-9][0-9]*)-(?P<line_end>[1-9][0-9]*)$"
 )

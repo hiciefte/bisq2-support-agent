@@ -180,6 +180,82 @@ class TestRepositoryInit:
         assert legacy is not None
         assert legacy.source == "matrix"
 
+    def test_legacy_source_check_rebuild_preserves_later_candidate_columns(
+        self, temp_db_path
+    ):
+        """Legacy source-check rebuild must not drop additive migration columns."""
+        conn = sqlite3.connect(str(temp_db_path))
+        conn.execute("""
+            CREATE TABLE unified_faq_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL CHECK (source IN ('bisq2', 'matrix')),
+                source_event_id TEXT UNIQUE NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                staff_answer TEXT NOT NULL,
+                generated_answer TEXT,
+                staff_sender TEXT,
+                embedding_similarity REAL,
+                factual_alignment REAL,
+                contradiction_score REAL,
+                completeness REAL,
+                hallucination_risk REAL,
+                final_score REAL,
+                llm_reasoning TEXT,
+                routing TEXT NOT NULL CHECK (routing IN ('AUTO_APPROVE', 'SPOT_CHECK', 'FULL_REVIEW')),
+                review_status TEXT DEFAULT 'pending',
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                rejection_reason TEXT,
+                rejection_note TEXT,
+                faq_id TEXT,
+                is_calibration_sample BOOLEAN DEFAULT TRUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                skip_order INTEGER DEFAULT 0,
+                protocol TEXT,
+                edited_staff_answer TEXT,
+                edited_question_text TEXT,
+                category TEXT DEFAULT 'General',
+                generated_answer_sources TEXT,
+                original_user_question TEXT,
+                original_staff_answer TEXT,
+                generation_confidence REAL,
+                has_correction INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            INSERT INTO unified_faq_candidates (
+                source, source_event_id, source_timestamp, question_text,
+                staff_answer, routing, created_at, generated_answer_sources,
+                original_user_question, original_staff_answer,
+                generation_confidence, has_correction
+            )
+            VALUES (
+                'matrix', '$legacy-with-new-columns',
+                '2026-06-01T00:00:00+00:00',
+                'Legacy question', 'Legacy answer', 'FULL_REVIEW',
+                '2026-06-01T00:00:00+00:00',
+                '[{"type":"llm_wiki"}]',
+                'Original user wording',
+                'Original staff wording',
+                0.84,
+                1
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        repo = UnifiedFAQCandidateRepository(str(temp_db_path))
+        legacy = repo.get_by_event_id("$legacy-with-new-columns")
+
+        assert legacy is not None
+        assert legacy.generated_answer_sources == '[{"type":"llm_wiki"}]'
+        assert legacy.original_user_question == "Original user wording"
+        assert legacy.original_staff_answer == "Original staff wording"
+        assert legacy.generation_confidence == 0.84
+        assert legacy.has_correction is True
+
 
 # =============================================================================
 # TASK 1.2: CRUD Operations

@@ -52,7 +52,12 @@ _UNIFIED_CANDIDATES_TABLE_SQL = """
                 protocol TEXT CHECK (protocol IN ('bisq_easy', 'multisig_v1', 'musig', 'all', NULL)),
                 edited_staff_answer TEXT,
                 edited_question_text TEXT,
-                category TEXT DEFAULT 'General'
+                category TEXT DEFAULT 'General',
+                generated_answer_sources TEXT,
+                original_user_question TEXT,
+                original_staff_answer TEXT,
+                generation_confidence REAL,
+                has_correction INTEGER DEFAULT 0
             )
             """
 

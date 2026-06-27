@@ -204,6 +204,60 @@ def test_write_code_evidence_jsonl_round_trips_through_existing_loader(
     assert raw_rows[0]["type"] == "code_fact"
 
 
+def test_extractor_record_ids_include_path_to_avoid_cross_file_collisions(
+    tmp_path: Path,
+) -> None:
+    for module in ("module-a", "module-b"):
+        _write(
+            tmp_path / module / "src/main/java/bisq/Config.java",
+            """
+            package bisq;
+
+            public class Config {
+                public static final int LIMIT = 3;
+            }
+            """,
+        )
+
+    records = CodeEvidenceExtractor(
+        repo_path=tmp_path,
+        repo="bisq2",
+        commit="abc123",
+    ).extract()
+    limit_records = [record for record in records if record.symbol == "Config.LIMIT"]
+
+    assert len(limit_records) == 2
+    assert len({record.id for record in limit_records}) == 2
+    assert {record.path.split("/", 1)[0] for record in limit_records} == {
+        "module-a",
+        "module-b",
+    }
+
+
+def test_extractor_excludes_directories_only_relative_to_repo_root(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "build" / "repo"
+    _write(
+        repo_path / "src/main/java/bisq/RuntimeConfig.java",
+        """
+        package bisq;
+
+        public class RuntimeConfig {
+            public static final int LIMIT = 3;
+        }
+        """,
+    )
+
+    records = CodeEvidenceExtractor(
+        repo_path=repo_path,
+        repo="bisq2",
+        commit="abc123",
+    ).extract()
+
+    assert any(record.symbol == "RuntimeConfig.LIMIT" for record in records)
+
+
 def test_freshness_checker_reports_missing_files_and_invalid_line_ranges(
     tmp_path: Path,
 ) -> None:

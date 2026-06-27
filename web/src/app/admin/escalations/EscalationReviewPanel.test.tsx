@@ -263,6 +263,33 @@ describe('EscalationReviewPanel grounding brief', () => {
     expect(await screen.findByRole('button', { name: /proposal drafted/i })).toBeDisabled()
   })
 
+  test('allows drafting code evidence proposals when symbol is absent', async () => {
+    makeAuthenticatedRequestMock.mockResolvedValueOnce(
+      jsonResponse({
+        grounding_brief: {
+          ...groundingBrief,
+          evidence: groundingBrief.evidence.map((item) => ({
+            ...item,
+            symbol: null,
+          })),
+        },
+      })
+    )
+
+    render(
+      <EscalationReviewPanel
+        escalation={createEscalation()}
+        open
+        onOpenChange={jest.fn()}
+        onUpdated={jest.fn()}
+      />
+    )
+
+    expect(
+      await screen.findByRole('button', { name: /draft llm wiki proposal/i })
+    ).toBeEnabled()
+  })
+
   test('requires customer-safe guidance before drafting from raw code evidence', async () => {
     const briefWithoutGuidance = {
       ...groundingBrief,

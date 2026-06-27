@@ -189,7 +189,21 @@ def test_loader_skips_reviewed_page_with_imprecise_code_source_ref(
     _write_playbook(
         tmp_path,
         "bad-code-ref.md",
-        source_refs="- code:bisq2@main:bisq-easy/src/main/java/Foo.java",
+        source_refs="- code:bisq2@abc123:bisq-easy/src/main/java/Foo.java",
+    )
+
+    docs = LLMWikiLoader().load_documents(tmp_path)
+
+    assert docs == []
+
+
+def test_loader_skips_reviewed_page_with_unpinned_code_source_ref(
+    tmp_path: Path,
+) -> None:
+    _write_playbook(
+        tmp_path,
+        "unpinned-code-ref.md",
+        source_refs="- code:bisq2@main:bisq-easy/src/main/java/Foo.java:10-12",
     )
 
     docs = LLMWikiLoader().load_documents(tmp_path)

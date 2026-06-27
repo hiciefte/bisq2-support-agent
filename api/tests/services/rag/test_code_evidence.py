@@ -7,6 +7,7 @@ from app.services.rag.code_evidence import (
     CodeEvidenceRecord,
     StaffCodeEvidenceRetriever,
 )
+from app.services.rag.source_refs import parse_code_source_ref
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -180,3 +181,15 @@ def test_staff_retriever_scores_query_terms(tmp_path: Path) -> None:
 
     assert [doc.id for doc in docs] == ["reputation"]
     assert docs[0].score > 0
+
+
+def test_code_source_refs_reject_branch_or_tag_like_revisions() -> None:
+    assert parse_code_source_ref(
+        "code:bisq2@abc123:bisq-easy/src/main/java/Foo.java:10-12"
+    ) is not None
+    assert parse_code_source_ref(
+        "code:bisq2@release-2.1:bisq-easy/src/main/java/Foo.java:10-12"
+    ) is None
+    assert parse_code_source_ref(
+        "code:bisq2@develop:bisq-easy/src/main/java/Foo.java:10-12"
+    ) is None

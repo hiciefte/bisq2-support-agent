@@ -74,14 +74,15 @@ class CodeEvidencePromotionService:
             raise ValueError(
                 "Code evidence promotion requires precise code source refs"
             )
-        primary_ref = parse_code_source_ref(code_refs[0])
-        if primary_ref is None or not _source_ref_matches_record(
-            source_ref=primary_ref,
-            record=record,
-        ):
-            raise ValueError(
-                "Code evidence source refs must match the structured code evidence"
-            )
+        for source_ref in code_refs:
+            parsed_ref = parse_code_source_ref(source_ref)
+            if parsed_ref is None or not _source_ref_matches_record(
+                source_ref=parsed_ref,
+                record=record,
+            ):
+                raise ValueError(
+                    "Code evidence source refs must match the structured code evidence"
+                )
 
         source_event_id = code_refs[0]
         candidate = self.repository.get_by_event_id(source_event_id)
