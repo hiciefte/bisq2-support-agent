@@ -3,37 +3,37 @@ id: bisq1-trade-funding-security-deposits
 title: Bisq 1 trade funding, security deposits, and cancellation boundaries
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Security deposit
-  - wiki:Trading rules
-  - wiki:Deposit transaction
-  - wiki:Dispute Resolution in Bisq 1
-  - wiki:Mediation
-  - wiki:Arbitration
-  - wiki:Account limits
-  - wiki:Payment account age witness
-  - wiki:Support Agent Knowledge Base
-  - faq:1117
-  - faq:1155
-  - faq:1156
-  - faq:1174
+- wiki:Security deposit
+- wiki:Trading rules
+- wiki:Deposit transaction
+- wiki:Dispute Resolution in Bisq 1
+- wiki:Mediation
+- wiki:Arbitration
+- wiki:Account limits
+- wiki:Payment account age witness
+- wiki:Support Agent Knowledge Base
+- faq:1117
+- faq:1155
+- faq:1156
+- faq:1174
 ---
 ## Canonical Support Answer
 
-In Bisq 1 multisig trades, the trade amount and both security deposits are locked in the deposit transaction after an offer is taken and the transaction confirms. The security deposit is the main economic incentive for both traders to follow the rules; it is not held by Bisq as a custodial escrow account.
+In Bisq 1 multisig trades, the trade amount and both security deposits are locked in the security deposit transaction after an offer is taken and the transaction confirms. The security deposit is the main economic incentive for both traders to follow the protocol rules; it is not held by Bisq as a custodial escrow account.
 
-Before making or taking an offer, the wallet must have enough spendable BTC for the trade amount if applicable, security deposit, trading fee, and miner fees. A displayed wallet balance may still be hard to use if it is split across many small UTXOs or if wallet state is stale. If funding looks sufficient but Bisq says it is not, check spendable UTXOs and wallet sync before assuming a bug.
+Before making or taking an offer, the wallet must have enough spendable BTC for the trade amount if applicable, security deposit, trading fee, and miner fees. A displayed wallet balance may still be hard to use if it is split across many small UTXOs or if wallet state is stale. If funding looks sufficient but Bisq says it is not, check spendable UTXOs and wallet sync before assuming a bug. Multiple smaller UTXOs may need to be consolidated into one, before the offer can be successfully taken.
 
 An open offer deactivating before a trade starts is different from a funded trade with a confirmed deposit transaction. A maker fee might be lost if an offer publication fails, but the security deposit is not locked until the deposit transaction exists. If the deposit transaction is missing, use the failed-trade workflow; if it is confirmed, use mediation/dispute guidance for cancellation or payout problems.
 
 After a trade is funded, a user usually cannot cancel it unilaterally without consequences. If a buyer cannot pay, payment details are invalid, a bank blocks the transfer, or the peer is unresponsive, the safe path is trader chat and mediation. Penalties depend on the trade rules, evidence, mediator/arbitrator review, and security-deposit size. Do not promise a no-penalty cancellation unless the protocol/support evidence clearly supports it.
 
-Account limits and signing affect who can take offers and at what size. Sellers generally do not need account signing in the same way fiat buyers do; signing and limits are primarily about reducing chargeback risk for fiat payment methods. For very large trade-size questions, keep the answer conservative: respect payment-method limits, account limits, liquidity, and risk controls rather than encouraging users to split huge amounts into many trades.
+Account limits and signing affect who can take offers and at what size. Sellers do not need account signing in the same way fiat buyers do; signing and limits are primarily about reducing chargeback risk for fiat payment methods. For very large trade-size questions, explain that users can participate in multiple trades of smaller amounts.
 
 ## Applies When
 
@@ -52,7 +52,6 @@ Account limits and signing affect who can take offers and at what size. Sellers 
 - Do not say a security deposit is locked before a valid deposit transaction exists.
 - Do not promise cancellation without penalty after the trade is funded.
 - Do not tell users to send funds to changed or invalid payment details outside mediation.
-- Do not encourage very large trades without considering account limits, payment-method limits, liquidity, and dispute risk.
 - Do not conflate Bisq 1 multisig security deposits with Bisq Easy reputation.
 
 ## Evidence / Sources

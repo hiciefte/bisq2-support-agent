@@ -3,29 +3,29 @@ id: bisq2-wallet-lightning-onchain
 title: Bisq 2 wallet, Lightning, and on-chain receiving
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: bisq_easy
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: low
 source_refs:
-  - wiki:Bisq 2 Wallet
-  - wiki:Bisq Easy
-  - wiki:Trade Protocols
-  - faq:23
-  - faq:55
-  - faq:56
-  - faq:75
-  - faq:81
-  - faq:691
+- wiki:Bisq 2 Wallet
+- wiki:Bisq Easy
+- wiki:Trade Protocols
+- faq:23
+- faq:55
+- faq:56
+- faq:75
+- faq:81
+- faq:691
 ---
 ## Canonical Support Answer
 
-Bisq 2 does not include the built-in Bitcoin wallet that Bisq 1 has. In Bisq Easy, users provide an external Bitcoin wallet or invoice/address for receiving BTC. Bisq 2 also does not provide an integrated Lightning wallet.
+Bisq 2 does not include a built-in Bitcoin wallet like in Bisq 1. In Bisq Easy, users provide an external Bitcoin wallet address or lightning invoice for receiving BTC. Bisq 2 also does not provide an integrated Lightning wallet.
 
-For most Bisq Easy users who want normal bitcoin custody and a first UTXO for later Bisq 1 use, on-chain receiving is the default recommendation. Lightning can be used only when the buyer and seller intentionally agree on that payment route and the buyer has an external Lightning wallet/invoice.
+For most Bisq Easy users who want normal bitcoin self-custody, broad wallet compatibility, and a first on-chain UTXO, receiving to an on-chain address is the default recommendation. Lightning can be used only when the buyer and seller intentionally agree on that payment route, and both have access to a functional lightning wallet.
 
-If the user accidentally selected Lightning but wanted on-chain Bitcoin, they should immediately tell the counterparty in trade chat and provide the correct on-chain address before the seller sends BTC.
+If the user accidentally selected Lightning but wanted on-chain Bitcoin, they should immediately tell the counterparty in trade chat and provide the correct on-chain address before the seller sends BTC. They should also be informed that changing the settlement method might incur additional costs due to different fees across the two networks.
 
 ## Applies When
 
@@ -54,4 +54,4 @@ If the user accidentally selected Lightning but wanted on-chain Bitcoin, they sh
 
 ## Last Change Summary
 
-Converted from generated support playbook into internal LLM Wiki page; ready for local support-admin review.
+Improved wording and added guidance about different fees when changing the settlement network.

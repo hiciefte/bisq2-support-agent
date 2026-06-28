@@ -53,8 +53,10 @@ type ReviewFeedbackTag = {
 };
 
 interface GeneratorFeedbackExample {
-  proposal_id: number;
-  candidate_id: number;
+  review_source?: string;
+  proposal_id: number | null;
+  feedback_id?: number | null;
+  candidate_id: number | null;
   target_page_id: string | null;
   feedback_tags: string[];
   future_generator_note: string | null;

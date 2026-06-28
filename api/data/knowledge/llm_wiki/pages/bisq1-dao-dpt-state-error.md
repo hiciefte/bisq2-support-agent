@@ -3,30 +3,30 @@ id: bisq1-dao-dpt-state-error
 title: Bisq 1 DAO state and delayed payout transaction mismatch errors
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: medium
 source_refs:
-  - wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error
-  - wiki:Arbitration
-  - wiki:DAO technical overview
-  - wiki:Phase zero
-  - wiki:Payment account age witness
-  - wiki:Troubleshooting network issues
-  - faq:1163
-  - faq:1198
-  - faq:1162
-  - faq:1165
+- wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error
+- wiki:Arbitration
+- wiki:DAO technical overview
+- wiki:Phase zero
+- wiki:Payment account age witness
+- wiki:Troubleshooting network issues
+- faq:1163
+- faq:1198
+- faq:1162
+- faq:1165
 ---
 ## Canonical Support Answer
 
 Errors such as `BuyerVerifiesPreparedDelayedPayoutTx`, delayed payout transaction mismatch, `snapshot height doesn't match`, or repeated DAO-state warnings usually mean the local Bisq DAO state needs to be checked before the user continues trading. A common reason is that one peer has stale or inconsistent DAO state, which can cause peers to construct different delayed payout transactions.
 
-The user should check DAO network status/DAO network monitor and confirm whether their DAO state is in consensus with seed nodes. The safest local corrective step is the built-in rebuild/resync DAO state from resources option in settings/preferences. This is different from SPV resync: DAO resync rebuilds Bisq DAO state, while SPV resync rebuilds wallet-chain state.
+The user should check DAO/Network monitor and confirm whether their DAO state is in consensus with seed nodes. The safest local corrective step is the built-in "Rebuild DAO state from resources" button in Settings/Preferences. This is different from SPV resync: DAO resync rebuilds Bisq DAO state, while SPV resync rebuilds wallet-chain state.
 
-If the local user's DAO state is correct but the peer is out of sync, the local user may not be able to fix the trade alone. Collect the exact error, trade ID, relevant transaction IDs, DAO/network status screenshots, and involve support/mediation if a trade is affected.
+If the local user's DAO state is correct but the peer is out of sync, the local user will not be able to fix the trade alone.
 
 Temporary seed-node workarounds such as explicit `--seedNodes` or `--bannedSeedNodes` should be treated as incident-specific and advanced. Use them only when the source/current incident supports that advice, and remove temporary overrides afterward. For normal user support, prefer the built-in DAO rebuild/resync path first.
 
@@ -62,7 +62,6 @@ If a failed trade has no valid deposit transaction, use the failed-trade page fo
 
 ## Review Notes
 
-- Confirm current Bisq 1 menu labels for DAO-state rebuild before giving exact navigation.
 - Keep seed-node advice incident-specific; stale onion addresses should not become permanent support guidance.
 
 ## Last Change Summary

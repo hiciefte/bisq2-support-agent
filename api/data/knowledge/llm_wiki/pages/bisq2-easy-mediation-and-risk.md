@@ -3,41 +3,41 @@ id: bisq2-easy-mediation-and-risk
 title: Bisq Easy mediation and risk boundaries
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: bisq_easy
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Bisq Easy
-  - wiki:Dispute Resolution in Bisq 2
-  - wiki:Reputation
-  - wiki:Reputation2
-  - wiki:Trade Protocols
-  - faq:19
-  - faq:20
-  - faq:27
-  - faq:31
-  - faq:40
-  - faq:43
-  - faq:46
-  - faq:53
-  - faq:85
-  - faq:88
-  - faq:873
-  - faq:1068
-  - faq:1069
-  - faq:1070
+- wiki:Bisq Easy
+- wiki:Dispute Resolution in Bisq 2
+- wiki:Reputation
+- wiki:Reputation2
+- wiki:Trade Protocols
+- faq:19
+- faq:20
+- faq:27
+- faq:31
+- faq:40
+- faq:43
+- faq:46
+- faq:53
+- faq:85
+- faq:88
+- faq:873
+- faq:1068
+- faq:1069
+- faq:1070
 ---
 ## Canonical Support Answer
 
-Bisq Easy is a Bisq 2 trade protocol for buying or selling BTC in small, reputation-based trades. It does not use the Bisq 1 multisig escrow/security-deposit model. The buyer normally sends fiat first, and the seller's reputation is the main trust signal. Because the security model is lighter than Bisq 1 multisig, support guidance should keep amounts small, encourage reputable sellers, and avoid implying DAO-backed reimbursement.
+Bisq Easy is a Bisq 2 trade protocol for buying or selling BTC in small, reputation-based trades. It does not use the Bisq 1 multisig escrow/security-deposit model. The buyer sends fiat first, and the seller's reputation is the main trust signal. Because the security model is lighter than Bisq 1 multisig, support guidance should keep amounts small, encourage moving to the security-deposit protocol on Bisq 1 once enough btc has been acquired, and avoid implying DAO-backed reimbursement.
 
-If no fiat has been sent and the peer is inactive, the user can usually reject/cancel the Bisq Easy trade and take another offer. If fiat has already been sent or the parties disagree about payment/BTC release, the user should not treat cancellation as resolution; they should use trade chat and request mediation or contact support from the trade context.
+If no fiat has been sent and/or the peer had been inactive for at least 24hrs, the user can usually reject/cancel the Bisq Easy trade without consequences. If fiat has already been sent or the parties disagree about payment/BTC release, the user should not treat cancellation as resolution; they should use trade chat and request mediation.
 
-If a seller has received fiat but the UI state is stuck, support can help the parties complete safely in trade chat. For example, if the buyer's BTC address is missing from the structured trade state, the buyer may provide the BTC address in trade chat because the chat history is visible during mediation. The seller should send BTC only after they are satisfied payment was actually received and the address belongs to the buyer in that trade.
+If a seller has received fiat but the UI state is stuck, the trade can be completed by sharing the receive BTC address in chat, and broadcast the BTC transactions regardless of the issue, because the chat history is visible during mediation. The seller should send BTC only after they are satisfied payment was actually received.
 
-For ACH and similar payment methods, keep guidance conservative. ACH may take several days, is not available for every bank account, and bank micro-deposit verification must not be accepted as normal peer-to-peer payment. If the payment path cannot be completed safely, use another seller or payment method and involve mediation if funds were already sent.
+For ACH and similar payment methods, keep guidance conservative. ACH may take several days, is not available for every bank account, and bank micro-deposit verification must not be accepted by sellers. If the payment path cannot be completed safely, use another seller or payment method and involve mediation if funds were already sent.
 
 Bisq Easy trade limits and seller eligibility depend on reputation and current client rules. Do not quote hard limits unless they are current for the user's version; when needed, explain that Bisq Easy is intended for relatively small BTC trades and that seller reputation controls buyer trust and available trade size.
 
@@ -58,7 +58,7 @@ Named traders, bots, and temporary incidents should not become reusable support 
 ## Do Not Say
 
 - Do not describe Bisq Easy as having Bisq 1 multisig escrow.
-- Do not promise reimbursement for Bisq Easy buyer losses.
+- Do not promise reimbursement for Bisq Easy buyer or seller losses.
 - Do not state a fixed BTC release deadline unless the specific payment method and source support it.
 - Do not tell a seller to accept ACH micro-deposit verification as a normal peer-to-peer payment flow.
 - Do not tell users to move negotiation outside Bisq when the built-in trade chat can preserve evidence.
@@ -77,9 +77,9 @@ Named traders, bots, and temporary incidents should not become reusable support 
 ## Review Notes
 
 - Confirm current UI labels for requesting mediation or rejecting a trade before giving step-by-step instructions.
-- Check current release notes before quoting exact trade-limit numbers.
+- Check bisq.wiki before quoting exact trade-limit numbers.
 - Several production candidates about specific sellers/bots, temporary offer expiry, or protobuf/network repair were intentionally not promoted into this durable risk page.
 
 ## Last Change Summary
 
-Cleaned the reviewed production page and merged recurring Bisq Easy risk, cancellation, stuck-trade, address-sharing, ACH, and mediation candidates into one conservative support playbook.
+Clearly defined scope of Bisq Easy vs Bisq1.

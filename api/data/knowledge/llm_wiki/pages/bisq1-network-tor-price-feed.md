@@ -3,27 +3,29 @@ id: bisq1-network-tor-price-feed
 title: Bisq 1 network, Tor, Bitcoin peers, and price-feed troubleshooting
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: medium
 source_refs:
-  - wiki:Troubleshooting network issues
-  - wiki:Network status indicator
-  - wiki:Connecting to your own Bitcoin node
-  - wiki:Installing your own Bitcoin node
-  - wiki:Command line options
-  - wiki:Resyncing SPV file
-  - faq:1139
+- wiki:Troubleshooting network issues
+- wiki:Network status indicator
+- wiki:Connecting to your own Bitcoin node
+- wiki:Installing your own Bitcoin node
+- wiki:Command line options
+- wiki:Resyncing SPV file
+- faq:1139
 ---
 ## Canonical Support Answer
 
-For Bisq 1 connection, Tor, Bitcoin-peer, offerbook, or price-feed issues, separate network reachability from wallet-chain state. First verify basic local causes: the operating-system clock is synchronized, the user is on the latest supported Bisq version, the network status indicator has peer connections, and Tor/Bitcoin connectivity is not blocked by the OS, firewall, VPN, antivirus, router, or local network.
+For Bisq 1 connection, Tor, Bitcoin-peer, offerbook, or price-feed issues, separate network reachability from wallet-chain state. First verify basic local causes: the operating-system clock is synchronized with internet time, the user is on the latest supported Bisq version, the network status indicator has incoming peer connections (it is green), and Tor/Bitcoin connectivity is not blocked by the OS, firewall, VPN, antivirus, router, or ISP.
 
-If Bisq is online but price-node, offerbook, or peer errors persist, refresh Tor files from the documented network/Tor settings and restart. Keep the Tor hidden-service identity file when the source says to preserve it. If the issue is weak connectivity, try a different network or hotspot to distinguish local network blocking from Bisq/Tor issues.
+If Bisq is online but price-node, offerbook, or peer errors persist, refresh Tor files from the documented Settings/Network/Tor settings and restart. Keep the Tor hidden-service identity file when the source says to preserve it. If the issue is weak connectivity, try a different network or hotspot to distinguish local network blocking from Bisq/Tor issues.
 
-If the Bitcoin network connection is the problem, try the documented provided Bitcoin nodes or a trusted personal Bitcoin node configuration. For a local Bitcoin Core node, Bisq needs a reachable unpruned node with settings such as `server=1`, `prune=0`, and `peerbloomfilters=1`; if the node is on another machine, confirm the address, firewall, and listen settings. Start9/Ronin/custom-node reports may require platform-specific support rather than generic Bisq instructions.
+If Tor connections do not seem to work, ask to verify Tor Browser functionality on the same system, check whether the ISP might be blocking outgoing Tor connections, and verify whether disabling the VPN, where enabled, allows Tor to work again.
+
+If the Bitcoin network connection is the problem, try the documented provided Bitcoin nodes or a trusted personal Bitcoin node configuration. For a local Bitcoin Core node, Bisq needs a reachable unpruned node with settings such as `server=1`, `prune=0`, and `peerbloomfilters=1`; if the node is on another machine on the same network, confirm the address, firewall, and listening interface. Start9/Ronin/custom-node reports may require platform-specific support rather than generic Bisq instructions.
 
 Temporary seed-node bans, custom seed nodes, or command-line network overrides should be given only when source-backed and incident-specific. Tell users to remove temporary bans or overrides after the incident is resolved so they do not accumulate stale configuration.
 
@@ -41,7 +43,7 @@ If the symptom is a trade or wallet transaction not advancing after network reco
 
 ## Do Not Say
 
-- Do not tell users to delete the data directory as a first network-troubleshooting step.
+- Do not tell users to delete the data directory as a network-troubleshooting step.
 - Do not present temporary seed-node bans or custom node overrides as permanent configuration.
 - Do not use SPV resync for generic Tor or price-feed failures unless wallet-chain state is also wrong.
 - Do not assume a network error means funds are lost.
@@ -50,9 +52,9 @@ If the symptom is a trade or wallet transaction not advancing after network reco
 
 ## Evidence / Sources
 
-- `wiki:Troubleshooting network issues` documents connection troubleshooting and Tor reset paths.
+- `wiki:Troubleshooting network issues` documents connection troubleshooting, Tor reset paths, and hidden-service identity preservation caveats.
 - `wiki:Network status indicator` explains how to interpret network connection state.
-- `wiki:Connecting to your own Bitcoin node` and `wiki:Installing your own Bitcoin node` document Bitcoin-node configuration boundaries.
+- `wiki:Connecting to your own Bitcoin node` and `wiki:Installing your own Bitcoin node` document Bitcoin-node configuration boundaries, including reachable unpruned node requirements and Bitcoin Core settings such as `server=1`, `prune=0`, and `peerbloomfilters=1`.
 - `wiki:Command line options` covers command-line network overrides.
 - `wiki:Resyncing SPV file` and `faq:1139` apply when wallet-chain state is stale after connectivity is restored.
 

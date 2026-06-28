@@ -3,37 +3,37 @@ id: bisq1-wallet-spv-balance
 title: Bisq 1 wallet balance, SPV resync, BSQ, and external asset accounts
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Wallet
-  - wiki:Watch keys
-  - wiki:Import Bisq wallet as watch only wallet in Sparrow
-  - wiki:Resyncing SPV file
-  - wiki:Troubleshooting wallet issues
-  - wiki:Create a new wallet for your data directory
-  - wiki:Emergency wallet
-  - wiki:BSQ
-  - wiki:Trading Monero
-  - faq:1119
-  - faq:1134
-  - faq:1139
-  - faq:1149
-  - faq:1162
-  - faq:1166
+- wiki:Wallet
+- wiki:Watch keys
+- wiki:Import Bisq wallet as watch only wallet in Sparrow
+- wiki:Resyncing SPV file
+- wiki:Troubleshooting wallet issues
+- wiki:Create a new wallet for your data directory
+- wiki:Emergency wallet
+- wiki:BSQ
+- wiki:Trading Monero
+- faq:1119
+- faq:1134
+- faq:1139
+- faq:1149
+- faq:1162
+- faq:1166
 ---
 ## Canonical Support Answer
 
 For Bisq 1 wallet balance problems, separate wallet-chain display state from actual on-chain funds. If Bisq shows a balance that does not match the blockchain, if confirmed transactions are missing, or if UTXOs shown under `Funds > Send funds` no longer exist on a block explorer, the normal first recovery step is an SPV resync from `Settings > Network Info > Resync SPV Wallet`.
 
-SPV resync rebuilds local blockchain data used by Bisq's Bitcoin wallet. It can take minutes or hours depending on wallet age, transaction count, hardware, and network conditions. Back up the data directory first, let the resync complete, and do not treat a slow resync as proof that funds are lost. For old wallets with hundreds of transactions or repeated SPV-resync pain, consider the documented new-wallet workflow only after all open trades, offers, mediations, arbitrations, BSQ actions, and DAO actions are settled.
+SPV resync rebuilds local blockchain data used by Bisq's Bitcoin wallet. It can take minutes or hours depending on wallet age, transaction count, hardware, and network conditions. Back up the data directory first, let the resync complete, and do not treat a slow resync as proof that funds are lost. For old wallets with hundreds of transactions or repeated SPV-resync needed, consider the documented new-wallet workflow only after all open trades, offers, mediations, arbitrations, BSQ actions, and DAO actions are settled.
 
 If the user needs to independently inspect wallet state, compare Bisq's UTXOs with a block explorer or a watch-only wallet. Do not ask for seed words or private keys in chat. If normal wallet recovery fails and Bisq cannot spend funds, use wallet backup restore or emergency-wallet guidance only as a last resort and preferably with support review.
 
-BSQ is not the same as plain BTC. BSQ balances belong in the DAO/BSQ wallet flow and can depend on DAO sync. When moving BTC away from an old Bisq wallet, keep enough BTC for any needed BSQ transaction fees if the user still needs to move BSQ. Moving BSQ outside Bisq's UI is advanced and not officially supported as a routine path.
+BSQ is not the same as plain BTC. BSQ balances belong in the DAO/BSQ wallet flow and require DAO sync to be recognized and spent. When moving BTC away from an old Bisq wallet, keep enough BTC for any needed BSQ transaction fees if the user still needs to move BSQ. Moving BSQ outside Bisq's UI is advanced and not officially supported as a routine path.
 
 Bisq 1 does not include an XMR wallet. For Monero trades, the user configures an external Monero wallet address in the altcoin account settings and verifies incoming XMR in that external Monero wallet. Do not tell users to look for an internal Bisq XMR wallet.
 

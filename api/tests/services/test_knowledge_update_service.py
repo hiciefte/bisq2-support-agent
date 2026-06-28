@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
 from app.core.config import Settings
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
@@ -540,6 +541,80 @@ def test_future_proposal_finds_matching_feedback_before_limit(
         "Future drafts should keep reputation scope narrow."
         in proposal.generator_feedback["notes"]
     )
+
+
+def test_future_proposal_uses_external_feedback_by_protocol_category(
+    tmp_path: Path,
+) -> None:
+    _write_page(tmp_path)
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    service.record_external_review_feedback(
+        target_page_id="bisq2-payment-method-safety",
+        target_page_title="Bisq Easy payment method safety",
+        page_path="bisq2-payment-method-safety.md",
+        reviewed_by="support-admin",
+        reviewed_at="2026-06-27",
+        review_notes=None,
+        last_change_summary="Human narrowed payment-method guidance.",
+        feedback_tags=["scope_narrowing"],
+        future_generator_note=(
+            "Future drafts should keep payment-method advice version scoped."
+        ),
+        section_diff_summary=[
+            {
+                "section": "Canonical Support Answer",
+                "before_chars": 80,
+                "after_chars": 140,
+            }
+        ],
+        protocol="bisq_easy",
+        category="Payment Methods",
+        source_refs=["wiki:Bisq Easy"],
+    )
+
+    proposal = service.get_or_create_proposal(
+        candidate=_candidate(
+            id=8,
+            category="payment methods",
+            question_text="Which payment method should I use in Bisq Easy?",
+            staff_answer="Use a payment method both peers understand.",
+        )
+    )
+
+    assert proposal.generator_feedback["example_count"] == 1
+    assert proposal.generator_feedback["feedback_tags"] == ["scope_narrowing"]
+    assert (
+        "Future drafts should keep payment-method advice version scoped."
+        in proposal.generator_feedback["notes"]
+    )
+
+
+def test_external_review_feedback_requires_reviewer(tmp_path: Path) -> None:
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+
+    with pytest.raises(ValueError, match="reviewed_by is required"):
+        service.record_external_review_feedback(
+            target_page_id="bisq2-payment-method-safety",
+            target_page_title="Bisq Easy payment method safety",
+            page_path="bisq2-payment-method-safety.md",
+            reviewed_by=None,
+            reviewed_at="2026-06-27",
+            review_notes=None,
+            last_change_summary=None,
+            feedback_tags=["scope_narrowing"],
+            future_generator_note=None,
+            section_diff_summary=[],
+            protocol="bisq_easy",
+            source_refs=["wiki:Bisq Easy"],
+        )
 
 
 def test_generator_feedback_export_returns_structured_records(

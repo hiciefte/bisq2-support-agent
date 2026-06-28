@@ -3,25 +3,28 @@ id: bisq1-failed-trade-fees
 title: Bisq 1 failed trades and fee reimbursement
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: multisig_v1
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: high
 source_refs:
-  - wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
-  - wiki:Deposit transaction
-  - wiki:Mediation
-  - wiki:Resyncing SPV file
-  - wiki:Troubleshooting wallet issues
-  - wiki:Fee Reimbursement Agent
-  - wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error
+- wiki:Failed Trades - Reimbursement of Trade Fees and Miner Fees
+- wiki:Deposit transaction
+- wiki:Mediation
+- wiki:Resyncing SPV file
+- wiki:Troubleshooting wallet issues
+- wiki:Fee Reimbursement Agent
+- wiki:BuyerVerifiesPreparedDelayedPayoutTx Exception error
 ---
 ## Canonical Support Answer
 
-A Bisq 1 failed trade is primarily about whether the maker fee transaction, taker fee transaction, and deposit transaction actually exist and are confirmed on-chain. If there is no valid deposit transaction, the trade amount and security deposits were not locked in multisig, so the user's possible loss is normally limited to trade fees and miner fees.
+A Bisq 1 failed trade happens when the deposit transaction was never published on the blockchain, and this could be caused by:
+- failed maker fee transaction, because the offer maker wallet was in an inconsistent state
+- failed taker fee transaction, because the offer taker wallet was in an inconsistent state
+- failure in building of the delayed payout transaction, because of DAO state mismatch between trade peers
 
-The practical support path is to inspect the trade details, copy the maker fee txid, taker fee txid, and deposit txid if present, and verify each on a Bitcoin block explorer. If the deposit txid is missing, `N/A`, invalid, or not found on-chain, treat it as a failed trade. Perform an SPV resync if Bisq's wallet state appears stale, then move the trade to failed when the UI offers that path. If the deposit transaction is confirmed on-chain but Bisq is not recognizing it, use the confirmed-deposit-stuck page instead.
+The practical support path is to inspect the trade details, copy the maker fee txid, taker fee txid, and deposit txid if present, and verify each on a Bitcoin block explorer. If the deposit txid is missing, `N/A`, invalid, or not found on-chain, treat it as a failed trade. Perform an SPV resync if Bisq's wallet state appears stale, then move the trade to failed when the UI offers that path (this might require an application restart). If the deposit transaction is confirmed on-chain but Bisq is not recognizing it, the trade was started successfully, so use the confirmed-deposit-stuck page instead.
 
 A failed trade does not refund the trade amount or security deposit because those funds were never locked by a valid deposit transaction. If the UI balance does not reflect that, the likely issue is stale wallet state; use SPV resync and verify wallet UTXOs before concluding funds are missing.
 

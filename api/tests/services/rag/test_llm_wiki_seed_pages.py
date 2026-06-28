@@ -19,18 +19,29 @@ def _frontmatter(path: Path) -> dict:
     return parsed
 
 
-def test_initial_llm_wiki_seed_pages_require_human_review() -> None:
+def test_reviewed_llm_wiki_seed_pages_are_indexable_without_admin_sections() -> None:
     pages_dir = _repo_root() / "api" / "data" / "knowledge" / "llm_wiki" / "pages"
-    pages = sorted(pages_dir.glob("*.md"))
+    pages = sorted(pages_dir.rglob("*.md"))
     assert pages, "Expected committed LLM Wiki seed pages"
 
+    indexable_pages = []
     for page in pages:
         frontmatter = _frontmatter(page)
-        assert frontmatter["status"] in {"proposed", "deprecated"}, page.name
-        assert frontmatter.get("reviewed_by") is None, page.name
-        assert frontmatter.get("reviewed_at") is None, page.name
+        assert frontmatter["status"] in {"reviewed", "active", "deprecated"}, page.name
+        if frontmatter["status"] == "deprecated":
+            continue
+        indexable_pages.append(page)
+        assert frontmatter.get("reviewed_by"), page.name
+        assert frontmatter.get("reviewed_at"), page.name
+        assert frontmatter.get("source_refs"), page.name
 
-    assert LLMWikiLoader().load_documents(pages_dir) == []
+    documents = LLMWikiLoader().load_documents(pages_dir)
+    assert len(documents) == len(indexable_pages)
+    for document in documents:
+        assert "## Review Notes" not in document.page_content
+        assert "## Last Change Summary" not in document.page_content
+        assert document.metadata.get("reviewed_by")
+        assert document.metadata.get("reviewed_at")
 
 
 def test_seed_pages_do_not_reference_stale_local_faq_1147() -> None:

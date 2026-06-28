@@ -3,23 +3,23 @@ id: bisq2-overview-trade-totals
 title: Bisq 2 overview totals, trade history, and stale notifications
 type: llm_wiki
 page_type: known_issue
-status: proposed
+status: reviewed
 protocol: bisq_easy
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: low
 source_refs:
-  - wiki:Bisq 2
-  - wiki:Bisq Easy
-  - faq:77
-  - faq:708
-  - faq:869
+- wiki:Bisq 2
+- wiki:Bisq Easy
+- faq:77
+- faq:708
+- faq:869
 ---
 ## Canonical Support Answer
 
-If Bisq 2 overview totals, historical trade counts, or completed-trade history look incomplete, do not assume funds are missing. Bisq 2 is privacy-oriented and Bisq Easy is designed around local profile state, so the UI may not provide a complete long-term accounting/export view.
+If the user asks about the value presented by Bisq 2 overview totals in their profile, explain that those statistics only refer to the total amounts currently being offered in the offer book, and do not represent the total value bought or sold in past trades.
 
-Ask the user to check the relevant Bisq Easy profile/identity and the trade list for the completed trades. If the individual completed trades are visible, explain that overview totals or reporting views may be limited by current-profile, current-version, or local-history scope. If completed trades are not visible under the expected profile, treat it as a profile/data-directory recovery question instead of a balance-loss question.
+If the completed-trade history under Bisq Easy > Trade History tab looks incomplete, explain that Bisq Easy is centered around data privacy, so unless the trade flow was completed correctly, the trade will not show in the history.
 
 If the issue is a stale open-trade badge or ghost notification after a trade was completed outside the app and both parties received what they expected, clearing notifications or rejecting/canceling the completed stale trade entry can be appropriate. If fiat or BTC delivery is still unresolved, do not clear the UI state as a fix; use trade chat and mediation/support.
 
@@ -50,9 +50,8 @@ For tax/accounting requests, explain that Bisq Easy may not provide a complete C
 
 ## Review Notes
 
-- Verify exact current UI labels for overview totals, trade history, and notification clearing before giving click-by-click instructions.
-- This page replaces the previous non-durable support-chat source with durable wiki/FAQ references.
+- representation of "overview totals" was very wrong in the original guide
 
 ## Last Change Summary
 
-Reworked the page to avoid permanent support-chat evidence and cover overview totals, incomplete history, stale notifications, and CSV/reporting limits from durable sources.
+Fixed the description of the scope for trade overview totals and removed redundant paragraphs.

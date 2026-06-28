@@ -1,34 +1,34 @@
 ---
 id: bisq2-btc-only-altcoin-path
-title: "Bisq Easy BTC scope: buying and selling Bitcoin only"
+title: 'Bisq Easy BTC scope: buying and selling Bitcoin only'
 type: llm_wiki
 page_type: support_playbook
-status: proposed
+status: reviewed
 protocol: bisq_easy
-reviewed_by: null
-reviewed_at: null
+reviewed_by: suddenwhipvapor
+reviewed_at: '2026-06-27'
 risk_level: low
 source_refs:
-  - wiki:Bisq Easy
-  - wiki:Trade Protocols
-  - faq:53
-  - faq:69
-  - faq:70
-  - faq:88
-  - faq:107
-  - faq:340
-  - faq:697
-  - faq:1058
+- wiki:Bisq Easy
+- wiki:Trade Protocols
+- faq:53
+- faq:69
+- faq:70
+- faq:88
+- faq:107
+- faq:340
+- faq:697
+- faq:1058
 ---
 ## Canonical Support Answer
 
-Bisq Easy is currently BTC-focused from the user's asset perspective: it helps users buy bitcoin or sell bitcoin. It is especially useful for a new user who needs their first BTC/UTXO without KYC and without a security deposit.
+Bisq Easy is currently BTC-focused from the user's asset perspective: it allows users to buy or sell bitcoin. It is especially useful for a new user who needs their first BTC UTXO without KYC and without a security deposit.
 
-For the direct question "Is Bisq Easy only for buying Bitcoin?", answer: no, Bisq Easy can be used to buy or sell BTC, but BTC is the traded asset in the current Bisq Easy support flow. Do not phrase this as direct stablecoin or altcoin trading.
+For the direct question "Is Bisq Easy only for buying Bitcoin?", answer: no, Bisq Easy can be used to both buy and sell BTC, but BTC is still the central asset in Bisq Easy. Do not phrase this as direct stablecoin or altcoin trading.
 
-Users may pay for BTC with fiat, and some Bisq Easy documentation mentions paying with altcoins, but support should not present Bisq Easy as a direct stablecoin or altcoin trading venue. If the user wants altcoins or other non-BTC assets, the normal guidance is not to send fiat to Bisq or expect Bisq Easy to custody stablecoins. They can first acquire BTC, then use Bisq 1 where supported altcoin markets exist, or wait for future Bisq 2 protocols that may support other assets.
+Users may pay for BTC with fiat, and some Bisq Easy documentation mentions paying with altcoins, but support should not present Bisq Easy as a stablecoin or altcoin trading venue. If the user wants altcoins or other non-BTC assets, the normal guidance is to point them to Bisq 1. Bisq does not receive fiat or custody digital assets, whether bitcoin, altcoins, or stablecoins. Users looking to obtain altcoins or stablecoins can first acquire BTC, then use Bisq 1 where supported altcoin markets exist, or wait for future Bisq 2 protocols that may support other assets.
 
-Bisq 1 and Bisq 2 can both be relevant: Bisq Easy can help a new user obtain initial BTC, while Bisq 1 currently offers the multisig protocol and additional markets.
+Bisq 1 and Bisq 2 can both be relevant: Bisq Easy can help a new user obtain initial BTC, while Bisq 1 currently offers the multisig protocol and additional markets, featuring larger volume and liquidity, and smaller spread.
 
 ## Applies When
 
@@ -57,8 +57,10 @@ Bisq 1 and Bisq 2 can both be relevant: Bisq Easy can help a new user obtain ini
 
 ## Review Notes
 
-- Re-check when new Bisq 2 trade protocols become production-ready.
+- Improved wording and semantics
+- Clearly presented Bisq 1 as the platform for normal trading, and Bisq Easy as introduction for nocoiners
+- General outlook of the original article was acceptable
 
 ## Last Change Summary
 
-Tightened BTC-only wording after RAGAS showed ambiguity around direct altcoin/stablecoin support.
+Clarified Bisq Easy scope, and altcoin/stablecoin paths availability
