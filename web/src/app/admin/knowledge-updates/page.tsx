@@ -137,6 +137,38 @@ interface KnowledgeUpdateResponse {
   cluster: KnowledgeCluster | null;
 }
 
+interface KnowledgeReworkExample {
+  candidate_id: number;
+  question: string;
+  answer: string;
+}
+
+interface KnowledgeReworkGroup {
+  action: string;
+  reason: string;
+  size: number;
+  candidate_ids: number[];
+  issue_codes: string[];
+  inferred_protocol: string | null;
+  inferred_protocol_confidence: number;
+  target_page_id: string | null;
+  target_page_title: string | null;
+  topic: string;
+  source_ref_count: number;
+  source_ref_examples: string[];
+  examples: KnowledgeReworkExample[];
+  requires_human_review: boolean;
+}
+
+interface KnowledgeReworkTriage {
+  total_candidates: number;
+  total_blocked: number;
+  group_count: number;
+  action_counts: Record<string, number>;
+  issue_counts: Record<string, number>;
+  groups: KnowledgeReworkGroup[];
+}
+
 const QUEUE_LABELS: Record<RoutingCategory, string> = {
   FULL_REVIEW: "1. Full review",
   SPOT_CHECK: "2. Spot check",
@@ -486,6 +518,17 @@ function actionLabel(action: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function reworkActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    bulk_reject_non_durable: "Bulk reject non-durable",
+    repair_metadata: "Repair protocol metadata",
+    repair_sources: "Retrieve durable sources",
+    review_cluster: "Review as cluster",
+    manual_decision: "Manual decision",
+  };
+  return labels[action] ?? actionLabel(action);
+}
+
 function parseConversation(value: string | null): Array<{ sender?: string; content: string; timestamp?: string }> {
   if (!value) return [];
   try {
@@ -664,6 +707,98 @@ function KnowledgeUpdateReviewGuide({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function KnowledgeReworkTriagePanel({
+  triage,
+}: {
+  triage: KnowledgeReworkTriage | null;
+}) {
+  if (!triage || triage.total_blocked === 0) return null;
+
+  const recoverableCount =
+    (triage.action_counts.repair_metadata ?? 0) +
+    (triage.action_counts.repair_sources ?? 0) +
+    (triage.action_counts.review_cluster ?? 0);
+  const bulkRejectCount = triage.action_counts.bulk_reject_non_durable ?? 0;
+
+  return (
+    <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold">
+            <Bot className="h-4 w-4 text-sky-600" aria-hidden="true" />
+            AI-assisted rework triage
+          </p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+            {triage.total_blocked.toLocaleString()} blocked candidates are grouped into{" "}
+            {triage.group_count.toLocaleString()} action bucket
+            {triage.group_count === 1 ? "" : "s"} before human review. These items
+            still need safe promotion gates; they are not raw manual tasks.
+          </p>
+        </div>
+        <div className="grid min-w-[220px] grid-cols-3 gap-2 text-center">
+          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
+            <p className="text-base font-semibold tabular-nums">
+              {recoverableCount.toLocaleString()}
+            </p>
+            <p className="text-[11px] leading-4 text-muted-foreground">recoverable groups</p>
+          </div>
+          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
+            <p className="text-base font-semibold tabular-nums">
+              {bulkRejectCount.toLocaleString()}
+            </p>
+            <p className="text-[11px] leading-4 text-muted-foreground">bulk reject groups</p>
+          </div>
+          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
+            <p className="text-base font-semibold tabular-nums">
+              {(triage.action_counts.manual_decision ?? 0).toLocaleString()}
+            </p>
+            <p className="text-[11px] leading-4 text-muted-foreground">manual decisions</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {triage.groups.slice(0, 4).map((group) => (
+          <div
+            key={`${group.action}:${group.candidate_ids.join("-")}`}
+            className="rounded-lg border border-border/70 bg-background/80 p-3"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{reworkActionLabel(group.action)}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {group.reason}
+                </p>
+              </div>
+              <Badge variant="outline" className="shrink-0 tabular-nums">
+                {group.size.toLocaleString()} candidates
+              </Badge>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {group.inferred_protocol && (
+                <Badge variant="secondary">
+                  {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
+                </Badge>
+              )}
+              <Badge variant="outline">{topicLabel(group.topic)}</Badge>
+              {group.target_page_id && (
+                <Badge variant="outline" className="max-w-full truncate">
+                  {group.target_page_id}
+                </Badge>
+              )}
+            </div>
+            {group.examples[0] && (
+              <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                {group.examples[0].question}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -891,6 +1026,7 @@ export default function KnowledgeUpdatesPage() {
     SPOT_CHECK: 0,
     AUTO_APPROVE: 0,
   });
+  const [reworkTriage, setReworkTriage] = useState<KnowledgeReworkTriage | null>(null);
   const [activeQueue, setActiveQueue] = useState<RoutingCategory>("FULL_REVIEW");
   const [data, setData] = useState<KnowledgeUpdateResponse | null>(null);
   const [operations, setOperations] = useState<KnowledgeOperation[]>([]);
@@ -1017,6 +1153,15 @@ export default function KnowledgeUpdatesPage() {
     setIsRefreshing(true);
     setError(null);
     try {
+      void makeAuthenticatedRequest("/admin/knowledge-updates/rework-triage?limit=8")
+        .then(async (reworkResponse) => {
+          if (!reworkResponse.ok) {
+            setReworkTriage(null);
+            return;
+          }
+          setReworkTriage((await reworkResponse.json()) as KnowledgeReworkTriage);
+        })
+        .catch(() => setReworkTriage(null));
       const [countsResponse, currentResponse] = await Promise.all([
         makeAuthenticatedRequest("/admin/knowledge-updates/counts"),
         makeAuthenticatedRequest(`/admin/knowledge-updates/current?queue=${activeQueue}`),
@@ -1382,6 +1527,8 @@ export default function KnowledgeUpdatesPage() {
         onDismiss={handleDismissReviewGuide}
         onShow={handleShowReviewGuide}
       />
+
+      <KnowledgeReworkTriagePanel triage={reworkTriage} />
 
       {error && (
         <Card className="border-destructive/30 bg-destructive/5">
