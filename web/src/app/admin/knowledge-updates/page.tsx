@@ -1153,22 +1153,26 @@ export default function KnowledgeUpdatesPage() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [countsResponse, currentResponse, reworkResponse] = await Promise.all([
+      void makeAuthenticatedRequest("/admin/knowledge-updates/rework-triage?limit=8")
+        .then(async (reworkResponse) => {
+          if (!reworkResponse.ok) {
+            setReworkTriage(null);
+            return;
+          }
+          setReworkTriage((await reworkResponse.json()) as KnowledgeReworkTriage);
+        })
+        .catch(() => setReworkTriage(null));
+      const [countsResponse, currentResponse] = await Promise.all([
         makeAuthenticatedRequest("/admin/knowledge-updates/counts"),
         makeAuthenticatedRequest(`/admin/knowledge-updates/current?queue=${activeQueue}`),
-        makeAuthenticatedRequest("/admin/knowledge-updates/rework-triage?limit=8"),
       ]);
       if (!countsResponse.ok) throw new Error("Failed to load queue counts");
       if (!currentResponse.ok) throw new Error("Failed to load current knowledge update");
 
       const counts = await countsResponse.json();
       const current = (await currentResponse.json()) as KnowledgeUpdateResponse | null;
-      const rework = reworkResponse.ok
-        ? ((await reworkResponse.json()) as KnowledgeReworkTriage)
-        : null;
       setQueueCounts(counts);
       setData(current);
-      setReworkTriage(rework);
       setOperations(current?.proposal.operations ?? []);
       setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
       setFeedbackTags(current?.proposal.feedback_tags ?? []);

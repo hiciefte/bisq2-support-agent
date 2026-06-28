@@ -90,6 +90,33 @@ def test_triage_repairs_missing_protocol_with_inferred_protocol(
     assert group.issue_codes == ["missing_protocol"]
 
 
+def test_triage_reinfers_conflicting_protocol(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    candidate = _candidate(
+        id=11,
+        protocol="multisig_v1",
+        category="Troubleshooting",
+        question_text=(
+            "My Bisq2 says 0 connections to Tor and does not list any offers. "
+            "Bisq1 connects just fine. Using MacOS version. Any ideas?"
+        ),
+        staff_answer=(
+            "Ensure your system clock is synchronized with the internet clock. "
+            "Also verify that you have downloaded the latest version of Bisq."
+        ),
+    )
+
+    triage = CandidateReworkTriageService(service).build([candidate])
+
+    assert triage.total_blocked == 1
+    assert triage.action_counts == {"repair_metadata": 1}
+    group = triage.groups[0]
+    assert group.action == "repair_metadata"
+    assert group.inferred_protocol == "bisq_easy"
+    assert group.target_page_id
+    assert "protocol_conflict" in group.issue_codes
+
+
 def test_triage_groups_missing_source_refs_for_source_repair(
     tmp_path: Path,
 ) -> None:

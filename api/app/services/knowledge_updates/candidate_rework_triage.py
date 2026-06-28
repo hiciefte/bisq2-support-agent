@@ -159,7 +159,10 @@ class CandidateReworkTriageService:
         issues = tuple(
             self.knowledge_update_service.candidate_reviewability_issues(candidate)
         )
-        inferred_protocol, confidence = self._inferred_protocol(candidate)
+        inferred_protocol, confidence = self._inferred_protocol(
+            candidate,
+            force_inference="protocol_conflict" in issues,
+        )
         enriched = (
             replace(candidate, protocol=inferred_protocol)
             if inferred_protocol in ALLOWED_PROTOCOLS
@@ -225,9 +228,12 @@ class CandidateReworkTriageService:
         )
 
     def _inferred_protocol(
-        self, candidate: UnifiedFAQCandidate
+        self,
+        candidate: UnifiedFAQCandidate,
+        *,
+        force_inference: bool = False,
     ) -> tuple[str | None, float]:
-        if candidate.protocol in ALLOWED_PROTOCOLS:
+        if not force_inference and candidate.protocol in ALLOWED_PROTOCOLS:
             return candidate.protocol, 1.0
         text = " ".join(
             str(value or "")

@@ -588,9 +588,11 @@ def _render_markdown(
         example_question = ""
         if examples and isinstance(examples[0], dict):
             example_question = str(examples[0].get("question") or "")[:140]
+        target_page_id = group.get("target_page_id")
+        target_label = str(target_page_id) if target_page_id else "manual triage"
         lines.append(
             f"- {size} {candidate_label} `{group.get('action')}` "
-            f"-> `{group.get('target_page_id')}` "
+            f"-> `{target_label}` "
             f"({', '.join(group.get('issue_codes') or [])}): {example_question}"
         )
 
