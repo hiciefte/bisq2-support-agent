@@ -166,3 +166,40 @@ def test_audit_existing_proposals_uses_edited_candidate_text() -> None:
     )
 
     assert rows[0]["flags"] == []
+
+
+def test_render_markdown_uses_singular_candidate_for_rework_group() -> None:
+    rework_triage = {
+        "groups": [
+            {
+                "size": 1,
+                "action": "manual_decision",
+                "target_page_id": "all-trading",
+                "issue_codes": ["missing_protocol"],
+                "examples": [{"question": "How do I open mediation?"}],
+            }
+        ]
+    }
+    summary = {
+        "candidate_count": 1,
+        "duplicate_clusters": 0,
+        "topic_clusters": 0,
+        "admin_clusters": 0,
+        "page_count": 0,
+        "proposal_count": 0,
+        "recommendations": {},
+        "rework_triage": {
+            "total_blocked": 1,
+            "group_count": 1,
+            "action_counts": {"manual_decision": 1},
+        },
+        "blocking_failures": {},
+        "duplicate_page_titles": [],
+        "page_flags": {},
+        "proposal_flags": {},
+    }
+
+    markdown = audit._render_markdown(summary, [], [], [], rework_triage)
+
+    assert "- 1 candidate `manual_decision`" in markdown
+    assert "1 candidates `manual_decision`" not in markdown

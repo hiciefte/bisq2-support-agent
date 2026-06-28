@@ -17,6 +17,9 @@ from app.services.faq.duplicate_guard import build_duplicate_faq_detail
 from app.services.knowledge_updates.code_evidence_promotion import (
     CodeEvidencePromotionService,
 )
+from app.services.knowledge_updates.candidate_rework_triage import (
+    CandidateReworkTriageService,
+)
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
 )
@@ -216,6 +219,34 @@ async def get_knowledge_update_counts(
             detail="Failed to get knowledge update counts",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="KNOWLEDGE_UPDATE_COUNTS_FAILED",
+        ) from exc
+
+
+@router.get("/rework-triage")
+async def get_knowledge_update_rework_triage(
+    limit: int = Query(default=25, ge=1, le=100),
+    pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
+) -> Dict[str, Any]:
+    """Return AI-assisted triage for candidates blocked by safety gates."""
+    try:
+        limit_value = int(getattr(limit, "default", limit))
+        candidates = []
+        async for candidate in _iter_pending_candidates(pipeline_service):
+            candidates.append(candidate)
+        triage = await run_in_threadpool(
+            lambda: CandidateReworkTriageService(service).build(
+                candidates,
+                limit=limit_value,
+            )
+        )
+        return triage.to_response()
+    except Exception as exc:
+        logger.exception("Failed to get knowledge update rework triage")
+        raise BaseAppException(
+            detail="Failed to get knowledge update rework triage",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="KNOWLEDGE_UPDATE_REWORK_TRIAGE_FAILED",
         ) from exc
 
 

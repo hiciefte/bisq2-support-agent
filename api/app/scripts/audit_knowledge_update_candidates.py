@@ -24,6 +24,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.core.config import Settings  # noqa: E402
+from app.services.knowledge_updates.candidate_rework_triage import (  # noqa: E402
+    CandidateReworkTriageService,
+)
 from app.services.knowledge_updates.llm_wiki_update_service import (  # noqa: E402
     KnowledgeUpdateService,
 )
@@ -75,17 +78,27 @@ def main() -> None:
             )
             for candidate in candidates
         ]
+        rework_triage = CandidateReworkTriageService(service).build(
+            candidates,
+        ).to_response()
 
     page_rows = _audit_pages(export)
     proposal_rows = _audit_existing_proposals(export)
-    summary = _summary(candidate_rows, page_rows, proposal_rows)
+    summary = _summary(candidate_rows, page_rows, proposal_rows, rework_triage)
 
     _write_json(out_dir / "knowledge_candidate_audit.json", candidate_rows)
     _write_json(out_dir / "knowledge_page_audit.json", page_rows)
     _write_json(out_dir / "knowledge_proposal_audit.json", proposal_rows)
+    _write_json(out_dir / "knowledge_rework_triage.json", rework_triage)
     _write_csv(out_dir / "knowledge_candidate_audit.csv", candidate_rows)
     (out_dir / "knowledge_candidate_audit.md").write_text(
-        _render_markdown(summary, candidate_rows, page_rows, proposal_rows),
+        _render_markdown(
+            summary,
+            candidate_rows,
+            page_rows,
+            proposal_rows,
+            rework_triage,
+        ),
         encoding="utf-8",
     )
 
@@ -463,6 +476,7 @@ def _summary(
     candidate_rows: list[dict[str, Any]],
     page_rows: list[dict[str, Any]],
     proposal_rows: list[dict[str, Any]],
+    rework_triage: dict[str, Any],
 ) -> dict[str, Any]:
     recommendations = Counter(row["recommendation"] for row in candidate_rows)
     protocols = Counter(str(row["protocol"]) for row in candidate_rows)
@@ -523,6 +537,12 @@ def _summary(
         "page_flags": dict(page_flags),
         "proposal_count": len(proposal_rows),
         "proposal_flags": dict(proposal_flags),
+        "rework_triage": {
+            "total_blocked": rework_triage.get("total_blocked", 0),
+            "group_count": rework_triage.get("group_count", 0),
+            "action_counts": rework_triage.get("action_counts", {}),
+            "issue_counts": rework_triage.get("issue_counts", {}),
+        },
     }
 
 
@@ -531,6 +551,7 @@ def _render_markdown(
     candidate_rows: list[dict[str, Any]],
     page_rows: list[dict[str, Any]],
     proposal_rows: list[dict[str, Any]],
+    rework_triage: dict[str, Any],
 ) -> str:
     lines = [
         "# Knowledge Update Candidate Audit",
@@ -543,12 +564,31 @@ def _render_markdown(
         f"- Admin clusters with {TOPIC_CLUSTER_MIN_SIZE}-{TOPIC_CLUSTER_MAX_SIZE} candidates: {summary['admin_clusters']}",
         f"- LLM Wiki pages in export: {summary['page_count']}",
         f"- Existing proposals in export: {summary['proposal_count']}",
+        f"- Blocked candidates grouped for rework: {summary['rework_triage']['total_blocked']} candidates in {summary['rework_triage']['group_count']} group(s)",
         "",
         "## Recommendations",
         "",
     ]
     for key, count in sorted(summary["recommendations"].items()):
         lines.append(f"- {key}: {count}")
+
+    lines.extend(["", "## AI-Assisted Rework Triage", ""])
+    for key, count in sorted(summary["rework_triage"]["action_counts"].items()):
+        lines.append(f"- {key}: {count}")
+
+    lines.extend(["", "### Top Rework Groups", ""])
+    for group in rework_triage.get("groups", [])[:20]:
+        size = int(group.get("size") or 0)
+        candidate_label = "candidate" if size == 1 else "candidates"
+        examples = group.get("examples") or []
+        example_question = ""
+        if examples and isinstance(examples[0], dict):
+            example_question = str(examples[0].get("question") or "")[:140]
+        lines.append(
+            f"- {size} {candidate_label} `{group.get('action')}` "
+            f"-> `{group.get('target_page_id')}` "
+            f"({', '.join(group.get('issue_codes') or [])}): {example_question}"
+        )
 
     lines.extend(["", "## Blocking Failures", ""])
     for key, count in sorted(summary["blocking_failures"].items()):

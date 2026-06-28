@@ -9,6 +9,7 @@ from app.routes.admin.knowledge_updates import (
     approve_knowledge_update,
     get_current_knowledge_update,
     get_generator_feedback_records,
+    get_knowledge_update_rework_triage,
     get_knowledge_update_counts,
     promote_code_evidence_to_knowledge_update,
 )
@@ -127,6 +128,94 @@ async def test_knowledge_update_counts_only_include_reviewable_candidates(
     )
 
     assert counts == {"AUTO_APPROVE": 0, "SPOT_CHECK": 1, "FULL_REVIEW": 1}
+
+
+@pytest.mark.asyncio
+async def test_rework_triage_endpoint_groups_blocked_candidates(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(id=1, routing="FULL_REVIEW"),
+            _candidate(
+                id=2,
+                routing="FULL_REVIEW",
+                protocol=None,
+                source="bisq2",
+                category="Account",
+                question_text="How do I restore my Bisq 2 profile on another computer?",
+                generated_answer_sources='[{"type":"wiki","title":"Data directory"}]',
+            ),
+            _candidate(
+                id=3,
+                routing="FULL_REVIEW",
+                protocol=None,
+                question_text="My account is temporarily locked. How do I notify my counterparty?",
+                staff_answer="Notify the counterparty in the trade chat.",
+                generated_answer_sources=None,
+            ),
+        ]
+    )
+
+    response = await get_knowledge_update_rework_triage(
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["total_blocked"] == 2
+    assert response["action_counts"] == {
+        "bulk_reject_non_durable": 1,
+        "repair_metadata": 1,
+    }
+    assert response["group_count"] == 2
+    assert response["groups"][0]["action"] == "bulk_reject_non_durable"
+    assert response["groups"][1]["action"] == "repair_metadata"
+
+
+@pytest.mark.asyncio
+async def test_rework_triage_endpoint_limits_visible_groups(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService(
+        [
+            _candidate(
+                id=1,
+                routing="FULL_REVIEW",
+                protocol=None,
+                source="bisq2",
+                category="Account",
+                question_text="How do I restore my Bisq 2 profile on another computer?",
+                generated_answer_sources='[{"type":"wiki","title":"Data directory"}]',
+            ),
+            _candidate(
+                id=2,
+                routing="FULL_REVIEW",
+                protocol=None,
+                question_text="My account is temporarily locked. How do I notify my counterparty?",
+                staff_answer="Notify the counterparty in the trade chat.",
+                generated_answer_sources=None,
+            ),
+        ]
+    )
+
+    response = await get_knowledge_update_rework_triage(
+        limit=1,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["total_blocked"] == 2
+    assert response["group_count"] == 2
+    assert len(response["groups"]) == 1
+    assert response["groups"][0]["action"] == "bulk_reject_non_durable"
 
 
 @pytest.mark.asyncio
