@@ -78,9 +78,13 @@ def main() -> None:
             )
             for candidate in candidates
         ]
-        rework_triage = CandidateReworkTriageService(service).build(
-            candidates,
-        ).to_response()
+        rework_triage = (
+            CandidateReworkTriageService(service)
+            .build(
+                candidates,
+            )
+            .to_response()
+        )
 
     page_rows = _audit_pages(export)
     proposal_rows = _audit_existing_proposals(export)

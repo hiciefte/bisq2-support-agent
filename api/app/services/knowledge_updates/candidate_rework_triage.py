@@ -189,10 +189,10 @@ class CandidateReworkTriageService:
 
     def _group(self, signals: list[CandidateReworkSignal]) -> CandidateReworkGroup:
         first = signals[0]
-        issue_codes = sorted({issue for signal in signals for issue in signal.issue_codes})
-        source_refs = _dedupe(
-            ref for signal in signals for ref in signal.source_refs
+        issue_codes = sorted(
+            {issue for signal in signals for issue in signal.issue_codes}
         )
+        source_refs = _dedupe(ref for signal in signals for ref in signal.source_refs)
         confidence = min(signal.inferred_protocol_confidence for signal in signals)
         action, reason, requires_human_review = _action_for_group(signals, source_refs)
         return CandidateReworkGroup(
@@ -242,10 +242,12 @@ class CandidateReworkTriageService:
             )
         )
         source = candidate.source if candidate.source in {"bisq2", "matrix"} else None
-        protocol, confidence = self.protocol_detector.detect_protocol_with_source_default(
-            text,
-            source,
-            return_confidence=True,
+        protocol, confidence = (
+            self.protocol_detector.detect_protocol_with_source_default(
+                text,
+                source,
+                return_confidence=True,
+            )
         )
         if protocol in ALLOWED_PROTOCOLS:
             return protocol, confidence
@@ -263,7 +265,10 @@ def _action_for_group(
             "The reviewed answer is operational handoff or too case-specific for durable LLM Wiki guidance.",
             False,
         )
-    if all("missing_source_refs" in issues for issues in issue_sets) and not source_refs:
+    if (
+        all("missing_source_refs" in issues for issues in issue_sets)
+        and not source_refs
+    ):
         return (
             "repair_sources",
             "Retrieve durable wiki/FAQ/code evidence for the cluster before generating an LLM Wiki proposal.",
