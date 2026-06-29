@@ -20,6 +20,9 @@ from app.services.knowledge_updates.candidate_rework_triage import (
 from app.services.knowledge_updates.code_evidence_promotion import (
     CodeEvidencePromotionService,
 )
+from app.services.knowledge_updates.llm_wiki_coverage_reconciliation import (
+    LLMWikiCoverageReconciliationService,
+)
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateProposal,
     KnowledgeUpdateService,
@@ -32,7 +35,15 @@ from app.services.knowledge_updates.topic_clusters import (
 from app.services.rag.code_evidence import CODE_EVIDENCE_TYPE, CodeEvidenceRecord
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from app.services.training.unified_repository import UnifiedFAQCandidate
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -79,6 +90,10 @@ class ApplyKnowledgeReworkActionRequest(BaseModel):
         )
     )
     candidate_ids: List[int] = Field(min_length=1, max_length=500)
+
+
+class KnowledgeCoverageReconciliationRequest(BaseModel):
+    apply: bool = Field(default=False)
 
 
 class RejectKnowledgeUpdateRequest(BaseModel):
@@ -316,6 +331,95 @@ async def get_knowledge_update_counts(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             error_code="KNOWLEDGE_UPDATE_COUNTS_FAILED",
         ) from exc
+
+
+@router.post("/coverage-reconciliation")
+async def reconcile_reviewed_knowledge_coverage(
+    request_body: KnowledgeCoverageReconciliationRequest,
+    request: Request,
+    pipeline_service=Depends(get_pipeline_service()),
+    service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
+) -> Dict[str, Any]:
+    """Resolve pending candidates already covered by reviewed LLM Wiki pages.
+
+    The endpoint is dry-run by default. Applying uses pending-only approvals so
+    human actions made after the dry-run cannot be overwritten.
+    """
+    try:
+        candidates = []
+        async for candidate in _iter_pending_candidates(pipeline_service):
+            candidates.append(candidate)
+        reconciler = LLMWikiCoverageReconciliationService(service.settings)
+        report = await run_in_threadpool(
+            lambda: reconciler.reconcile(
+                candidates,
+                apply=request_body.apply,
+                repository=(
+                    pipeline_service.repository if request_body.apply else None
+                ),
+                reviewer=_authenticated_admin_reviewer(request),
+            )
+        )
+        return report.to_response()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to reconcile reviewed LLM Wiki coverage")
+        raise BaseAppException(
+            detail="Failed to reconcile reviewed knowledge coverage",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_code="KNOWLEDGE_COVERAGE_RECONCILIATION_FAILED",
+        ) from exc
+
+
+async def _run_automatic_coverage_reconciliation(
+    *,
+    pipeline_service,
+    service: KnowledgeUpdateService,
+    trigger_page_id: str,
+    reviewer: str = "auto-coverage-reconciliation",
+) -> Dict[str, Any]:
+    reconciler = LLMWikiCoverageReconciliationService(service.settings)
+    report = await run_in_threadpool(
+        lambda: reconciler.reconcile_pending_repository(
+            pipeline_service.repository,
+            apply=True,
+            reviewer=reviewer,
+            page_size=KNOWLEDGE_UPDATE_PAGE_SIZE,
+        )
+    )
+    logger.info(
+        "Automatic reviewed coverage reconciliation after %s: applied=%s, "
+        "spot_check=%s, remaining=%s, stale=%s",
+        trigger_page_id,
+        report.applied_count,
+        report.spot_check_count,
+        report.remaining_count,
+        report.skipped_stale_count,
+    )
+    return report.to_response()
+
+
+async def _run_automatic_coverage_reconciliation_safely(
+    *,
+    pipeline_service,
+    service: KnowledgeUpdateService,
+    trigger_page_id: str,
+) -> None:
+    try:
+        await _run_automatic_coverage_reconciliation(
+            pipeline_service=pipeline_service,
+            service=service,
+            trigger_page_id=trigger_page_id,
+        )
+    except Exception:
+        logger.exception(
+            "Automatic reviewed coverage reconciliation failed after approving %s",
+            trigger_page_id,
+        )
 
 
 @router.get("/rework-triage")
@@ -881,6 +985,7 @@ async def approve_knowledge_update(
     candidate_id: int,
     request_body: KnowledgeReviewRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     pipeline_service=Depends(get_pipeline_service()),
     service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
 ):
@@ -934,6 +1039,12 @@ async def approve_knowledge_update(
                 item_id=str(page_id),
                 metadata={"candidate_id": candidate_id},
             )
+        background_tasks.add_task(
+            _run_automatic_coverage_reconciliation_safely,
+            pipeline_service=pipeline_service,
+            service=service,
+            trigger_page_id=str(page_id),
+        )
         return KnowledgeUpdateApproveResponse(success=True, page_id=page_id)
     except ValueError as exc:
         raise HTTPException(

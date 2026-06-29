@@ -19,6 +19,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Settings,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -34,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownContent } from "@/components/chat/components/markdown-content";
 import { SourceBadges } from "@/components/chat/components/source-badges";
@@ -42,9 +44,17 @@ import { stripGeneratedAnswerFooter } from "@/lib/answer-format";
 import { cn } from "@/lib/utils";
 import type { Source } from "@/components/chat/types/chat.types";
 import type { QueueCounts, RoutingCategory, UnifiedCandidate } from "@/components/admin/training/types";
+import {
+  changedMarkdownSections,
+  deriveReviewFeedbackPanelState,
+  feedbackTagsForApproval,
+  inferFeedbackTags,
+  supportKnowledgeSections,
+  type AnswerRating,
+} from "./review-feedback";
+import { linkifySourceRefsInMarkdown } from "./source-ref-links";
 
 type CheckStatus = "pass" | "warn" | "fail";
-type AnswerRating = "good" | "needs_improvement";
 type DocumentReviewMode = "diff" | "preview";
 type ReviewFeedbackTag = {
   id: string;
@@ -112,6 +122,7 @@ interface KnowledgeProposal {
   prompt_version: string | null;
   generator_feedback: GeneratorFeedbackContext;
   source_refs: string[];
+  source_ref_links: Record<string, string>;
   checks: KnowledgeCheck[];
   status: string;
   current_page_markdown: string | null;
@@ -361,63 +372,6 @@ function splitMarkdownLines(markdown: string): string[] {
   return markdown.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 }
 
-function splitMarkdownSections(markdown: string): Record<string, string> {
-  const sections: Record<string, string[]> = {};
-  let currentSection: string | null = null;
-  for (const line of splitMarkdownLines(stripFrontmatter(markdown))) {
-    if (line.startsWith("## ")) {
-      currentSection = line.slice(3).trim();
-      sections[currentSection] = sections[currentSection] ?? [];
-      continue;
-    }
-    if (currentSection) {
-      sections[currentSection].push(line);
-    }
-  }
-  return Object.fromEntries(
-    Object.entries(sections).map(([section, lines]) => [
-      section,
-      lines.join("\n").trim(),
-    ]),
-  );
-}
-
-function changedMarkdownSections(
-  beforeMarkdown: string | null | undefined,
-  afterMarkdown: string,
-): string[] {
-  const before = splitMarkdownSections(beforeMarkdown ?? "");
-  const after = splitMarkdownSections(afterMarkdown);
-  const names = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return Array.from(names).filter((name) => (before[name] ?? "") !== (after[name] ?? ""));
-}
-
-function inferFeedbackTags(
-  changedSections: string[],
-  answerRating: AnswerRating | null,
-): string[] {
-  const tags = new Set<string>();
-  if (changedSections.length === 0 && answerRating !== "needs_improvement") {
-    tags.add("good_generation");
-  }
-  if (answerRating === "needs_improvement") {
-    tags.add("factual_correction");
-  }
-  if (changedSections.includes("Canonical Support Answer")) {
-    tags.add("factual_correction");
-  }
-  if (changedSections.includes("Applies When")) {
-    tags.add("scope_narrowing");
-  }
-  if (changedSections.includes("Do Not Say")) {
-    tags.add("missing_caveat");
-  }
-  if (changedSections.includes("Evidence / Sources")) {
-    tags.add("source_support");
-  }
-  return Array.from(tags);
-}
-
 function buildLineDiff(beforeMarkdown: string | null, afterMarkdown: string): DiffRow[] {
   const before = splitMarkdownLines(beforeMarkdown ?? "");
   const after = splitMarkdownLines(afterMarkdown);
@@ -617,6 +571,14 @@ function feedbackTagLabel(tag: string): string {
   return REVIEW_FEEDBACK_TAG_LABELS[tag] ?? tag.replace(/_/g, " ");
 }
 
+function feedbackHistorySummary(feedback: GeneratorFeedbackContext): string {
+  const tagLabels = feedback.feedback_tags.slice(0, 3).map(feedbackTagLabel);
+  if (tagLabels.length > 0) {
+    return `Prior reviews for this topic included ${tagLabels.join(", ")}. Check claims carefully and preserve the reviewed guardrails.`;
+  }
+  return "Prior reviews matched this topic. Check claims carefully and preserve the reviewed guardrails.";
+}
+
 function ContextBadge({
   label,
   value,
@@ -675,100 +637,48 @@ function KnowledgeUpdateReviewGuide({
   }
 
   return (
-    <Card className="relative border-primary/20 bg-secondary/40 shadow-sm">
+    <section className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pr-12">
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={onDismiss}
-        className="absolute right-[13px] top-[13px] z-10 h-8 w-8 text-muted-foreground hover:bg-background/70 hover:text-foreground"
+        className="absolute right-2 top-2 h-8 w-8 text-muted-foreground hover:bg-background/70 hover:text-foreground"
         aria-label="Hide review guide"
         title="Hide review guide"
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </Button>
-      <CardContent className="p-4 pr-14 md:p-5 md:pr-16">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
-          <div className="space-y-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 rounded-full bg-primary/10 p-2 text-primary">
-                <BookOpenCheck className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold">Your job: approve one reusable LLM Wiki page at a time</h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  The page turns repeated support evidence into internal knowledge the bot can retrieve later.
-                  It is not asking you to create hundreds of FAQs. Read the proposed page first, edit it if
-                  needed, then spot-check sources only when a claim looks wrong, unsupported, or risky.
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-2 md:grid-cols-3">
-              {[
-                ["1", "Read the wiki page", "Check whether the reusable answer is precise and durable."],
-                ["2", "Open sources only if needed", "Use support evidence to verify suspicious or high-impact claims."],
-                ["3", "Approve, skip, or reject", "Approval updates internal LLM Wiki knowledge, not a public FAQ."],
-              ].map(([step, title, body]) => (
-                <div key={step} className="rounded-lg border border-border/70 bg-background/70 p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-[11px] font-semibold text-background">
-                      {step}
-                    </span>
-                    <p className="text-sm font-medium">{title}</p>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-xl border border-border/70 bg-background/80 p-4">
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{guidance.title}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{guidance.body}</p>
-                  <p className="mt-1 text-xs font-medium text-foreground">{guidance.nextAction}</p>
-                </div>
-                <Badge variant="secondary" className="shrink-0 justify-center tabular-nums">
-                  {formatReviewItemCount(activeCount)}
-                </Badge>
-              </div>
-            </div>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">About the backlog</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  The lane numbers are review items, not raw support messages. Clustered topics are collapsed
-                  into one synthesis task so one good LLM Wiki page can absorb many similar future questions.
-                </p>
-              </div>
-              <Badge variant="outline" className="shrink-0 tabular-nums">
-                {total.toLocaleString()}
-              </Badge>
-            </div>
-            <div className="mt-3 grid gap-2 text-xs">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Full review</span>
-                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.FULL_REVIEW)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Spot check</span>
-                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.SPOT_CHECK)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Ready queue</span>
-                <span className="font-medium tabular-nums">{formatReviewItemCount(counts.AUTO_APPROVE)}</span>
-              </div>
-            </div>
-          </div>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold">
+            <BookOpenCheck className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            Review one reusable wiki page
+          </p>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-muted-foreground">
+            Read the proposed page first, edit only what is weak or risky, then approve, skip, or reject.
+            Sources are for spot-checking claims, not a required step for every line.
+          </p>
         </div>
-      </CardContent>
-    </Card>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Badge variant="secondary" className="tabular-nums">
+            {formatReviewItemCount(activeCount)}
+          </Badge>
+          <Badge variant="outline" className="tabular-nums">
+            {total.toLocaleString()} total review items
+          </Badge>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{guidance.title}</span>
+        <span className="hidden sm:inline">·</span>
+        <span>{guidance.nextAction}</span>
+      </div>
+    </section>
   );
 }
 
-function KnowledgeReworkTriagePanel({
+function KnowledgeReworkTriageTools({
   triage,
   actionLoading,
   onApplyAction,
@@ -787,112 +697,129 @@ function KnowledgeReworkTriagePanel({
   const visibleGroups = triage.groups.slice(0, 4);
 
   return (
-    <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <p className="inline-flex items-center gap-2 text-sm font-semibold">
-            <Bot className="h-4 w-4 text-sky-600" aria-hidden="true" />
-            AI-assisted rework triage
-          </p>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-            {triage.total_blocked.toLocaleString()} blocked candidates are grouped into{" "}
-            {triage.group_count.toLocaleString()} action bucket
-            {triage.group_count === 1 ? "" : "s"} before human review. These items
-            still need safe promotion gates; they are not raw manual tasks.
-          </p>
-        </div>
-        <div className="grid min-w-[220px] grid-cols-3 gap-2 text-center">
-          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
-            <p className="text-base font-semibold tabular-nums">
-              {recoverableCount.toLocaleString()}
-            </p>
-            <p className="text-[11px] leading-4 text-muted-foreground">recoverable groups</p>
-          </div>
-          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
-            <p className="text-base font-semibold tabular-nums">
-              {bulkRejectCount.toLocaleString()}
-            </p>
-            <p className="text-[11px] leading-4 text-muted-foreground">bulk reject groups</p>
-          </div>
-          <div className="rounded-lg border border-sky-500/20 bg-background/70 p-2">
-            <p className="text-base font-semibold tabular-nums">
-              {(triage.action_counts.manual_decision ?? 0).toLocaleString()}
-            </p>
-            <p className="text-[11px] leading-4 text-muted-foreground">manual decisions</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 xl:grid-cols-2">
-        {visibleGroups.map((group) => {
-          const buttonKey = `rework:${group.action}:${group.candidate_ids.join("-")}`;
-          const isCurrentAction = actionLoading === buttonKey;
-          const ActionIcon = reworkActionIcon(group.action);
-          const canApply = isExecutableReworkAction(group.action);
-
-          return (
-            <div
-              key={`${group.action}:${group.candidate_ids.join("-")}`}
-              className="rounded-lg border border-border/70 bg-background/80 p-3"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{reworkActionLabel(group.action)}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {group.reason}
-                  </p>
-                </div>
-                <Badge variant="outline" className="shrink-0 tabular-nums">
-                  {group.size.toLocaleString()} candidates
-                </Badge>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {group.inferred_protocol && (
-                  <Badge variant="secondary">
-                    {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
-                  </Badge>
-                )}
-                <Badge variant="outline">{topicLabel(group.topic)}</Badge>
-                {group.target_page_id && (
-                  <Badge variant="outline" className="max-w-full truncate">
-                    {group.target_page_id}
-                  </Badge>
-                )}
-              </div>
-              {group.examples[0] && (
-                <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {group.examples[0].question}
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-9 w-9 p-0 text-muted-foreground"
+          aria-label="Open maintenance tools"
+          title="Maintenance tools"
+        >
+          <Settings className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="max-h-[min(720px,calc(100vh-8rem))] w-[min(calc(100vw-2rem),760px)] overflow-y-auto p-4"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="inline-flex items-center gap-2 text-sm font-semibold">
+                <Bot className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                Optional intake cleanup
+              </p>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
+                These blocked candidates are separate from the normal review queues. Use this only
+                when you want to rescue usable candidates or reject intake noise before it becomes a wiki proposal.
+              </p>
+            </div>
+            <div className="grid w-full grid-cols-3 gap-2 text-center sm:w-[260px]">
+              <div className="rounded-lg border border-border/70 bg-background/70 p-2">
+                <p className="text-base font-semibold tabular-nums">
+                  {recoverableCount.toLocaleString()}
                 </p>
-              )}
-              <div className="mt-3 flex justify-end">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={group.action === "bulk_reject_non_durable" ? "outline" : "default"}
-                  onClick={() => onApplyAction(group)}
-                  disabled={!canApply || actionLoading !== null}
-                  className="h-8 gap-2"
-                  title={reworkActionButtonLabel(group.action)}
-                >
-                  {isCurrentAction ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <ActionIcon className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  {reworkActionButtonLabel(group.action)}
-                </Button>
+                <p className="text-[11px] leading-4 text-muted-foreground">repair</p>
+              </div>
+              <div className="rounded-lg border border-border/70 bg-background/70 p-2">
+                <p className="text-base font-semibold tabular-nums">
+                  {bulkRejectCount.toLocaleString()}
+                </p>
+                <p className="text-[11px] leading-4 text-muted-foreground">reject</p>
+              </div>
+              <div className="rounded-lg border border-border/70 bg-background/70 p-2">
+                <p className="text-base font-semibold tabular-nums">
+                  {(triage.action_counts.manual_decision ?? 0).toLocaleString()}
+                </p>
+                <p className="text-[11px] leading-4 text-muted-foreground">manual</p>
               </div>
             </div>
-          );
-        })}
-      </div>
-      {triage.group_count > visibleGroups.length && (
-        <p className="mt-3 text-xs leading-5 text-muted-foreground">
-          Showing {visibleGroups.length.toLocaleString()} of {triage.group_count.toLocaleString()} groups.
-          Refresh after each action to load the next highest-impact group.
-        </p>
-      )}
-    </section>
+          </div>
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
+            {visibleGroups.map((group) => {
+              const buttonKey = `rework:${group.action}:${group.candidate_ids.join("-")}`;
+              const isCurrentAction = actionLoading === buttonKey;
+              const ActionIcon = reworkActionIcon(group.action);
+              const canApply = isExecutableReworkAction(group.action);
+
+              return (
+                <div
+                  key={`${group.action}:${group.candidate_ids.join("-")}`}
+                  className="rounded-lg border border-border/70 bg-background/80 p-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{reworkActionLabel(group.action)}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {group.reason}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0 tabular-nums">
+                      {group.size.toLocaleString()} candidates
+                    </Badge>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {group.inferred_protocol && (
+                      <Badge variant="secondary">
+                        {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
+                      </Badge>
+                    )}
+                    <Badge variant="outline">{topicLabel(group.topic)}</Badge>
+                    {group.target_page_id && (
+                      <Badge variant="outline" className="max-w-full truncate">
+                        {group.target_page_id}
+                      </Badge>
+                    )}
+                  </div>
+                  {group.examples[0] && (
+                    <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                      {group.examples[0].question}
+                    </p>
+                  )}
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={group.action === "bulk_reject_non_durable" ? "outline" : "default"}
+                      onClick={() => onApplyAction(group)}
+                      disabled={!canApply || actionLoading !== null}
+                      className="h-8 gap-2"
+                      title={reworkActionButtonLabel(group.action)}
+                    >
+                      {isCurrentAction ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <ActionIcon className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {reworkActionButtonLabel(group.action)}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {triage.group_count > visibleGroups.length && (
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              Showing {visibleGroups.length.toLocaleString()} of {triage.group_count.toLocaleString()} groups.
+              Refresh after each action to load the next highest-impact group.
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -968,46 +895,68 @@ function ClusterContextCard({ cluster }: { cluster: KnowledgeCluster }) {
 }
 
 function GeneratorFeedbackCard({ feedback }: { feedback: GeneratorFeedbackContext }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   if (!feedback.example_count) return null;
 
+  const detailGuidance = feedback.guidance.slice(0, 3);
+  const detailNotes = feedback.notes.slice(0, 2);
+  const hasDetails =
+    feedback.feedback_tags.length > 0 ||
+    detailGuidance.length > 0 ||
+    detailNotes.length > 0;
+
   return (
-    <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-3">
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <section className="rounded-xl border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="inline-flex items-center gap-2 text-sm font-semibold">
-            <Sparkles className="h-4 w-4 text-sky-600" aria-hidden="true" />
-            Learned from prior reviews
+            <BookOpenCheck className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            Prior review guidance
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {feedback.example_count.toLocaleString()} approved review example{feedback.example_count === 1 ? "" : "s"} matched this page or topic.
-            This guidance is saved for generator improvement and is excluded from customer-facing RAG.
+            {feedbackHistorySummary(feedback)}
           </p>
         </div>
-        {feedback.feedback_tags.length > 0 && (
-          <div className="flex max-w-full flex-wrap gap-1.5">
-            {feedback.feedback_tags.slice(0, 3).map((tag) => (
-              <Badge key={tag} variant="outline" className="border-sky-500/30 bg-background/70 text-sky-700">
-                {feedbackTagLabel(tag)}
-              </Badge>
-            ))}
-          </div>
+        {hasDetails && (
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-8 gap-2 text-xs text-muted-foreground">
+              Details
+              <ChevronDown className={cn("h-4 w-4 transition-transform", isOpen && "rotate-180")} />
+            </Button>
+          </CollapsibleTrigger>
         )}
       </div>
-      {feedback.guidance.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          {feedback.guidance.slice(0, 3).map((guidance) => (
-            <p key={guidance} className="text-xs leading-5 text-foreground">
-              {guidance}
+      {hasDetails && (
+        <CollapsibleContent className="mt-3 space-y-3">
+          {feedback.feedback_tags.length > 0 && (
+            <div className="flex max-w-full flex-wrap gap-1.5">
+              {feedback.feedback_tags.slice(0, 5).map((tag) => (
+                <Badge key={tag} variant="outline" className="bg-background/70">
+                  {feedbackTagLabel(tag)}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {detailGuidance.length > 0 && (
+            <div className="space-y-1.5">
+              {detailGuidance.map((guidance) => (
+                <p key={guidance} className="text-xs leading-5 text-muted-foreground">
+                  {guidance}
+                </p>
+              ))}
+            </div>
+          )}
+          {detailNotes.map((note) => (
+            <p key={note} className="rounded-lg border border-border/70 bg-background/70 p-2 text-xs leading-5 text-muted-foreground">
+              {note}
             </p>
           ))}
-        </div>
+        </CollapsibleContent>
       )}
-      {feedback.notes.length > 0 && (
-        <div className="mt-3 rounded-lg border border-sky-500/20 bg-background/70 p-2 text-xs leading-5 text-muted-foreground">
-          {feedback.notes[0]}
-        </div>
-      )}
-    </section>
+      </section>
+    </Collapsible>
   );
 }
 
@@ -1125,6 +1074,7 @@ export default function KnowledgeUpdatesPage() {
   const [data, setData] = useState<KnowledgeUpdateResponse | null>(null);
   const [operations, setOperations] = useState<KnowledgeOperation[]>([]);
   const [documentMarkdown, setDocumentMarkdown] = useState("");
+  const [reviewBaselineMarkdown, setReviewBaselineMarkdown] = useState("");
   const [documentMode, setDocumentMode] = useState<DocumentReviewMode>("diff");
   const [editingDocumentLine, setEditingDocumentLine] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -1137,8 +1087,9 @@ export default function KnowledgeUpdatesPage() {
   const [showSupportingEdits, setShowSupportingEdits] = useState(false);
   const [answerRating, setAnswerRating] = useState<AnswerRating | null>(null);
   const [ratingLoading, setRatingLoading] = useState<AnswerRating | null>(null);
-  const [feedbackTags, setFeedbackTags] = useState<string[]>([]);
+  const [feedbackTags, setFeedbackTags] = useState<string[] | null>(null);
   const [futureGeneratorNote, setFutureGeneratorNote] = useState("");
+  const [showLearningSignalControls, setShowLearningSignalControls] = useState(false);
   const [isReviewGuideDismissed, setIsReviewGuideDismissed] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reviewStateKeyRef = useRef<string | null>(null);
@@ -1185,8 +1136,17 @@ export default function KnowledgeUpdatesPage() {
   );
 
   const previewBody = useMemo(
-    () => stripFrontmatter(documentMarkdown),
-    [documentMarkdown],
+    () =>
+      linkifySourceRefsInMarkdown(
+        stripFrontmatter(documentMarkdown),
+        data?.proposal.source_ref_links ?? {},
+        data?.candidate.generated_answer_sources,
+      ),
+    [
+      documentMarkdown,
+      data?.candidate.generated_answer_sources,
+      data?.proposal.source_ref_links,
+    ],
   );
 
   const documentDiffRows = useMemo(
@@ -1194,26 +1154,46 @@ export default function KnowledgeUpdatesPage() {
     [data?.proposal.current_page_markdown, documentMarkdown],
   );
 
-  const changedSections = useMemo(
+  const proposalChangedSections = useMemo(
     () =>
-      changedMarkdownSections(
-        data?.proposal.generated_markdown ?? data?.proposal.preview_markdown,
-        documentMarkdown,
+      supportKnowledgeSections(
+        changedMarkdownSections(data?.proposal.current_page_markdown ?? null, documentMarkdown),
       ),
-    [data?.proposal.generated_markdown, data?.proposal.preview_markdown, documentMarkdown],
+    [data?.proposal.current_page_markdown, documentMarkdown],
+  );
+
+  const reviewerChangedSections = useMemo(
+    () =>
+      supportKnowledgeSections(
+        changedMarkdownSections(reviewBaselineMarkdown, documentMarkdown),
+      ),
+    [reviewBaselineMarkdown, documentMarkdown],
   );
 
   const inferredFeedbackTags = useMemo(
-    () => inferFeedbackTags(changedSections, answerRating),
-    [changedSections, answerRating],
+    () => inferFeedbackTags(reviewerChangedSections, answerRating),
+    [reviewerChangedSections, answerRating],
   );
 
-  const effectiveFeedbackTags = feedbackTags.length > 0 ? feedbackTags : inferredFeedbackTags;
+  const effectiveFeedbackTags = feedbackTags ?? inferredFeedbackTags;
 
-  const feedbackSummary =
-    changedSections.length > 0
-      ? `Changed ${changedSections.length} section${changedSections.length === 1 ? "" : "s"}`
-      : "No material document edits detected";
+  const feedbackPanelState = useMemo(
+    () =>
+      deriveReviewFeedbackPanelState({
+        proposalChangedSections,
+        reviewerChangedSections,
+        feedbackTags,
+        futureGeneratorNote,
+        answerRating,
+      }),
+    [
+      answerRating,
+      feedbackTags,
+      futureGeneratorNote,
+      proposalChangedSections,
+      reviewerChangedSections,
+    ],
+  );
 
   const cleanedGeneratedAnswer = useMemo(
     () => stripGeneratedAnswerFooter(data?.candidate.generated_answer ?? ""),
@@ -1246,10 +1226,14 @@ export default function KnowledgeUpdatesPage() {
     setData(current);
     setOperations(current?.proposal.operations ?? []);
     setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
-    setFeedbackTags(current?.proposal.feedback_tags ?? []);
+    setReviewBaselineMarkdown(current?.proposal.preview_markdown ?? "");
+    setFeedbackTags(
+      current?.proposal.feedback_tags?.length ? current.proposal.feedback_tags : null,
+    );
     setFutureGeneratorNote(current?.proposal.future_generator_note ?? "");
     setDocumentMode("diff");
     setEditingDocumentLine(null);
+    setShowLearningSignalControls(false);
     setShowConversation(Boolean(current?.candidate.has_correction || current?.candidate.routing === "FULL_REVIEW"));
     setShowFaqFallback(false);
   }, []);
@@ -1311,7 +1295,9 @@ export default function KnowledgeUpdatesPage() {
     setRatingLoading(null);
     setShowSupportingEdits(false);
     setEditingDocumentLine(null);
-    setFeedbackTags(data?.proposal.feedback_tags ?? []);
+    setFeedbackTags(
+      data?.proposal.feedback_tags?.length ? data.proposal.feedback_tags : null,
+    );
     setFutureGeneratorNote(data?.proposal.future_generator_note ?? "");
   }, [data, reviewStateKey]);
 
@@ -1453,12 +1439,14 @@ export default function KnowledgeUpdatesPage() {
       ? await persistDocumentMarkdown()
       : await persistOperations();
     if (!saved) return;
-    const savedChangedSections = changedMarkdownSections(
-      saved.generated_markdown ?? saved.preview_markdown,
-      saved.preview_markdown,
+    const savedReviewerChangedSections = supportKnowledgeSections(
+      changedMarkdownSections(reviewBaselineMarkdown, saved.preview_markdown),
     );
-    const savedInferredFeedbackTags = inferFeedbackTags(savedChangedSections, answerRating);
-    const approvalFeedbackTags = feedbackTags.length > 0 ? feedbackTags : savedInferredFeedbackTags;
+    const approvalFeedbackTags = feedbackTagsForApproval(
+      feedbackTags,
+      savedReviewerChangedSections,
+      answerRating,
+    );
     setActionLoading("approve");
     try {
       const response = await makeAuthenticatedRequest(
@@ -1537,11 +1525,7 @@ export default function KnowledgeUpdatesPage() {
       );
       if (!response.ok) throw new Error("Failed to regenerate proposal");
       const proposal = (await response.json()) as KnowledgeProposal;
-      setData((current) => current ? { ...current, proposal } : current);
-      setOperations(proposal.operations);
-      setDocumentMarkdown(proposal.preview_markdown);
-      setDocumentMode("diff");
-      setEditingDocumentLine(null);
+      applyLoadedKnowledgeUpdate({ ...data, proposal });
       toast.success("Proposal regenerated");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to regenerate proposal";
@@ -1590,7 +1574,7 @@ export default function KnowledgeUpdatesPage() {
 
   const toggleFeedbackTag = (tag: string) => {
     setFeedbackTags((current) => {
-      const base = current.length > 0 ? current : inferredFeedbackTags;
+      const base = current ?? inferredFeedbackTags;
       if (base.includes(tag)) {
         return base.filter((item) => item !== tag);
       }
@@ -1641,20 +1625,27 @@ export default function KnowledgeUpdatesPage() {
         isRefreshing={isRefreshing}
         onRefresh={() => void loadData({ silent: true })}
         rightSlot={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRegenerate}
-            disabled={!data || actionLoading === "regenerate"}
-            className="gap-2"
-          >
-            {actionLoading === "regenerate" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            Regenerate
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRegenerate}
+              disabled={!data || actionLoading === "regenerate"}
+              className="gap-2"
+            >
+              {actionLoading === "regenerate" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Regenerate
+            </Button>
+            <KnowledgeReworkTriageTools
+              triage={reworkTriage}
+              actionLoading={actionLoading}
+              onApplyAction={handleApplyReworkAction}
+            />
+          </>
         }
       />
 
@@ -1670,12 +1661,6 @@ export default function KnowledgeUpdatesPage() {
         isDismissed={isReviewGuideDismissed}
         onDismiss={handleDismissReviewGuide}
         onShow={handleShowReviewGuide}
-      />
-
-      <KnowledgeReworkTriagePanel
-        triage={reworkTriage}
-        actionLoading={actionLoading}
-        onApplyAction={handleApplyReworkAction}
       />
 
       {error && (
@@ -2006,59 +1991,80 @@ export default function KnowledgeUpdatesPage() {
                 <div className="rounded-lg border border-border/70 bg-muted/15 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm font-medium">Review outcome</p>
+                      <p className="text-sm font-medium">{feedbackPanelState.title}</p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {feedbackSummary}. Saved as generator feedback, not RAG content.
+                        {feedbackPanelState.summary}. {feedbackPanelState.description}
                       </p>
                     </div>
-                    {effectiveFeedbackTags.length === 1 && effectiveFeedbackTags[0] === "good_generation" && (
-                      <Badge variant="outline" className="border-emerald-500/30 text-emerald-700">
-                        Auto
-                      </Badge>
-                    )}
+                    <Badge variant="outline" className="shrink-0">
+                      {feedbackPanelState.badge}
+                    </Badge>
                   </div>
-                  {changedSections.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {changedSections.slice(0, 4).map((section) => (
-                        <Badge key={section} variant="secondary" className="text-[11px]">
-                          {section}
+                  {feedbackPanelState.showFeedbackTags && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {effectiveFeedbackTags.map((tag) => (
+                        <Badge key={tag} variant="secondary" className="text-[11px]">
+                          {feedbackTagLabel(tag)}
                         </Badge>
                       ))}
-                      {changedSections.length > 4 && (
-                        <Badge variant="outline" className="text-[11px]">
-                          +{changedSections.length - 4}
-                        </Badge>
-                      )}
                     </div>
                   )}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {REVIEW_FEEDBACK_TAGS.map((tag) => {
-                      const isSelected = effectiveFeedbackTags.includes(tag.id);
-                      return (
-                        <Button
-                          key={tag.id}
-                          type="button"
-                          variant={isSelected ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => toggleFeedbackTag(tag.id)}
-                          title={tag.description}
-                          className={cn(
-                            "h-7 rounded-md px-2 text-[11px]",
-                            isSelected && "bg-primary text-primary-foreground",
-                          )}
-                        >
-                          {tag.label}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                  <Textarea
-                    value={futureGeneratorNote}
-                    onChange={(event) => setFutureGeneratorNote(event.target.value)}
-                    placeholder="Optional future generator note"
-                    className="mt-3 min-h-16 resize-y bg-background/80 text-xs"
-                    aria-label="Future generator note"
-                  />
+                  {feedbackPanelState.visibleSections.length > 0 && (
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                      {feedbackPanelState.mode === "learning" ? "Reviewer changed" : "Draft touches"}:{" "}
+                      {feedbackPanelState.visibleSections.slice(0, 4).join(", ")}
+                      {feedbackPanelState.visibleSections.length > 4
+                        ? `, +${feedbackPanelState.visibleSections.length - 4} more`
+                        : ""}
+                      .
+                    </p>
+                  )}
+                  <Collapsible
+                    open={showLearningSignalControls}
+                    onOpenChange={setShowLearningSignalControls}
+                    className="mt-3"
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-8 w-full justify-between px-2 text-xs text-muted-foreground">
+                        {feedbackPanelState.mode === "learning" ? "Adjust learning signal" : "Set learning signal"}
+                        <ChevronDown className={cn("h-4 w-4 transition-transform", showLearningSignalControls && "rotate-180")} />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-3 pt-2">
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        Usually no action is needed. Change these only when the final review should teach
+                        the generator a different lesson.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {REVIEW_FEEDBACK_TAGS.map((tag) => {
+                          const isSelected = effectiveFeedbackTags.includes(tag.id);
+                          return (
+                            <Button
+                              key={tag.id}
+                              type="button"
+                              variant={isSelected ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => toggleFeedbackTag(tag.id)}
+                              title={tag.description}
+                              className={cn(
+                                "h-7 rounded-md px-2 text-[11px]",
+                                isSelected && "bg-primary text-primary-foreground",
+                              )}
+                            >
+                              {tag.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      <Textarea
+                        value={futureGeneratorNote}
+                        onChange={(event) => setFutureGeneratorNote(event.target.value)}
+                        placeholder="Optional note for future generated drafts"
+                        className="min-h-16 resize-y bg-background/80 text-xs"
+                        aria-label="Optional note for future generated drafts"
+                      />
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
                 <Button
                   onClick={handleApprove}

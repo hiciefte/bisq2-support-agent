@@ -5,6 +5,7 @@ import pytest
 from app.core.config import Settings
 from app.routes.admin.knowledge_updates import (
     ApplyKnowledgeReworkActionRequest,
+    KnowledgeCoverageReconciliationRequest,
     KnowledgeReviewRequest,
     PromoteCodeEvidenceRequest,
     apply_knowledge_update_rework_action,
@@ -14,6 +15,7 @@ from app.routes.admin.knowledge_updates import (
     get_knowledge_update_counts,
     get_knowledge_update_rework_triage,
     promote_code_evidence_to_knowledge_update,
+    reconcile_reviewed_knowledge_coverage,
 )
 from app.services.knowledge_updates.llm_wiki_update_service import (
     KnowledgeUpdateService,
@@ -22,7 +24,7 @@ from app.services.training.unified_repository import (
     UnifiedFAQCandidate,
     UnifiedFAQCandidateRepository,
 )
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 
 def _candidate(**overrides) -> UnifiedFAQCandidate:
@@ -68,6 +70,49 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
     return UnifiedFAQCandidate(**values)
 
 
+def _write_reviewed_llm_wiki_page(data_dir: Path) -> None:
+    llm_wiki_dir = data_dir / "knowledge" / "llm_wiki" / "pages"
+    llm_wiki_dir.mkdir(parents=True, exist_ok=True)
+    (llm_wiki_dir / "bisq2-reputation-basics.md").write_text(
+        """---
+id: bisq2-reputation-basics
+title: Bisq Easy reputation basics
+type: llm_wiki
+page_type: support_playbook
+status: reviewed
+protocol: bisq_easy
+reviewed_by: support-admin
+reviewed_at: "2026-06-12"
+risk_level: medium
+source_refs:
+  - wiki:Reputation
+---
+## Canonical Support Answer
+
+Buyers can buy BTC in Bisq Easy without reputation. Seller reputation is the main safety signal.
+
+## Applies When
+
+- The user asks whether buyers need reputation in Bisq Easy.
+
+## Do Not Say
+
+- Do not say buyer reputation is required.
+
+## Evidence / Sources
+
+- `wiki:Reputation`
+
+## Review Notes
+
+## Last Change Summary
+
+Reviewed support guidance.
+""",
+        encoding="utf-8",
+    )
+
+
 class _Repository:
     def __init__(self, candidates):
         self.candidates = candidates
@@ -99,6 +144,19 @@ class _Repository:
             candidate.review_status = "approved"
             candidate.reviewed_by = reviewer
             candidate.faq_id = faq_id
+
+    def approve_pending(self, candidate_id, reviewer, faq_id):
+        candidate = self.get_by_id(candidate_id)
+        if (
+            candidate is None
+            or candidate.review_status != "pending"
+            or candidate.id in self.stale_pending_write_ids
+        ):
+            return False
+        candidate.review_status = "approved"
+        candidate.reviewed_by = reviewer
+        candidate.faq_id = faq_id
+        return True
 
     def reject(self, candidate_id, reviewer, reason, reason_note=None):
         candidate = self.get_by_id(candidate_id)
@@ -203,6 +261,84 @@ async def test_knowledge_update_counts_only_include_reviewable_candidates(
     )
 
     assert counts == {"AUTO_APPROVE": 0, "SPOT_CHECK": 1, "FULL_REVIEW": 1}
+
+
+@pytest.mark.asyncio
+async def test_reviewed_knowledge_coverage_dry_run_does_not_mutate_candidates(
+    tmp_path: Path,
+) -> None:
+    _write_reviewed_llm_wiki_page(tmp_path)
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    covered = _candidate(
+        id=41,
+        generated_answer_sources=(
+            '[{"type":"wiki","title":"Reputation"},'
+            '{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+        ),
+    )
+    pipeline = _PipelineService([covered])
+    request = _Request()
+
+    response = await reconcile_reviewed_knowledge_coverage(
+        request_body=KnowledgeCoverageReconciliationRequest(apply=False),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["high_confidence_count"] == 1
+    assert response["applied_count"] == 0
+    assert response["items"][0]["action"] == "approve_covered"
+    assert response["items"][0]["page_ref"] == "llm_wiki:bisq2-reputation-basics"
+    assert pipeline.repository.get_by_id(41).review_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_reviewed_knowledge_coverage_apply_marks_safe_matches_approved(
+    tmp_path: Path,
+) -> None:
+    _write_reviewed_llm_wiki_page(tmp_path)
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    covered = _candidate(
+        id=51,
+        generated_answer_sources=(
+            '[{"type":"wiki","title":"Reputation"},'
+            '{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+        ),
+    )
+    unsafe = _candidate(
+        id=52,
+        contradiction_score=0.6,
+        generated_answer_sources=(
+            '[{"type":"wiki","title":"Reputation"},'
+            '{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+        ),
+    )
+    pipeline = _PipelineService([covered, unsafe])
+    request = _Request()
+
+    response = await reconcile_reviewed_knowledge_coverage(
+        request_body=KnowledgeCoverageReconciliationRequest(apply=True),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["high_confidence_count"] == 1
+    assert response["applied_count"] == 1
+    assert response["remaining_count"] == 1
+    assert pipeline.repository.get_by_id(51).review_status == "approved"
+    assert pipeline.repository.get_by_id(51).reviewed_by == "support-admin"
+    assert (
+        pipeline.repository.get_by_id(51).faq_id == "llm_wiki:bisq2-reputation-basics"
+    )
+    assert pipeline.repository.get_by_id(52).review_status == "pending"
 
 
 @pytest.mark.asyncio
@@ -979,6 +1115,7 @@ async def test_approve_knowledge_update_passes_review_outcome_feedback(
             future_generator_note="Future drafts should avoid unsupported UI labels.",
         ),
         request=request,
+        background_tasks=BackgroundTasks(),
         pipeline_service=pipeline,
         service=service,
     )
@@ -991,6 +1128,94 @@ async def test_approve_knowledge_update_passes_review_outcome_feedback(
         approved.future_generator_note
         == "Future drafts should avoid unsupported UI labels."
     )
+
+
+@pytest.mark.asyncio
+async def test_approve_knowledge_update_queues_automatic_coverage_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+    request.app.state.learning_engine = None
+    request.app.state.rag_service = None
+    service.get_or_create_proposal(candidate=candidate)
+    calls = []
+
+    async def _record_reconciliation(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        knowledge_updates,
+        "_run_automatic_coverage_reconciliation",
+        _record_reconciliation,
+    )
+
+    background_tasks = BackgroundTasks()
+
+    response = await approve_knowledge_update(
+        candidate_id=candidate.id,
+        request_body=KnowledgeReviewRequest(reviewer="admin"),
+        request=request,
+        background_tasks=background_tasks,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response.success is True
+    assert len(background_tasks.tasks) == 1
+    await background_tasks()
+    assert len(calls) == 1
+    assert calls[0]["pipeline_service"] is pipeline
+    assert calls[0]["service"] is service
+    assert calls[0]["trigger_page_id"] == "bisq-easy-reputation"
+
+
+@pytest.mark.asyncio
+async def test_approve_knowledge_update_ignores_coverage_reconciliation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate()
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+    request.app.state.learning_engine = None
+    request.app.state.rag_service = None
+    service.get_or_create_proposal(candidate=candidate)
+
+    async def _fail_reconciliation(**kwargs):
+        raise RuntimeError("coverage reconciliation failed")
+
+    monkeypatch.setattr(
+        knowledge_updates,
+        "_run_automatic_coverage_reconciliation",
+        _fail_reconciliation,
+    )
+
+    background_tasks = BackgroundTasks()
+
+    response = await approve_knowledge_update(
+        candidate_id=candidate.id,
+        request_body=KnowledgeReviewRequest(reviewer="admin"),
+        request=request,
+        background_tasks=background_tasks,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response.success is True
+    await background_tasks()
+    assert service.get_by_candidate_id(candidate.id).status == "approved"
 
 
 @pytest.mark.asyncio

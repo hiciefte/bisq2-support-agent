@@ -882,6 +882,36 @@ class UnifiedFAQCandidateRepository:
         conn.commit()
         conn.close()
 
+    def approve_pending(self, candidate_id: int, reviewer: str, faq_id: str) -> bool:
+        """Approve a candidate only if it is still pending.
+
+        Returns True when exactly one pending row was updated. This is used by
+        batch reconciliation jobs that must not overwrite a human action made
+        between dry-run and apply.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                UPDATE unified_faq_candidates
+                SET review_status = 'approved',
+                    reviewed_by = ?,
+                    reviewed_at = ?,
+                    faq_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND review_status = 'pending'
+                """,
+                (reviewer, now, faq_id, now, candidate_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
     def reject(
         self,
         candidate_id: int,
