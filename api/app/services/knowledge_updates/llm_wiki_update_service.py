@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import quote
 
 import yaml  # type: ignore[import-untyped]
 from app.core.config import Settings
+from app.services.faq.slug_manager import SlugManager
 from app.services.knowledge_updates.topic_clusters import (
     KnowledgeTopicCluster,
     topic_cluster_key,
@@ -35,6 +37,7 @@ from app.services.rag.source_refs import (
     imprecise_code_source_refs,
 )
 from app.services.training.unified_repository import UnifiedFAQCandidate
+from app.utils.wiki_url_generator import generate_wiki_url
 
 SECTION_ORDER = [
     "Canonical Support Answer",
@@ -689,6 +692,9 @@ class KnowledgeUpdateService:
             "prompt_version": proposal.prompt_version,
             "generator_feedback": proposal.generator_feedback,
             "source_refs": proposal.source_refs,
+            "source_ref_links": _source_ref_links_for_refs(
+                self.settings, proposal.source_refs
+            ),
             "checks": proposal.checks,
             "status": proposal.status,
             "reviewed_by": proposal.reviewed_by,
@@ -1955,6 +1961,76 @@ def _faq_ref_value(source: Dict[str, Any], fallback: str) -> str:
     if url:
         return url.rstrip("/").rsplit("/", 1)[-1] or fallback
     return fallback.strip()
+
+
+def _source_ref_links_for_refs(
+    settings: Settings,
+    refs: Iterable[str],
+) -> Dict[str, str]:
+    """Resolve durable source refs to verification links for admin previews."""
+    slug_manager = SlugManager()
+    normalized_refs = [str(ref).strip() for ref in refs if str(ref).strip()]
+    numeric_faq_ids = [
+        ref.removeprefix("faq:")
+        for ref in normalized_refs
+        if ref.startswith("faq:") and ref.removeprefix("faq:").isdigit()
+    ]
+    faq_id_links = _faq_id_links(settings, numeric_faq_ids, slug_manager)
+    links: Dict[str, str] = {}
+
+    for ref in normalized_refs:
+        if ref.startswith("faq:"):
+            value = ref.removeprefix("faq:").strip()
+            if value.isdigit():
+                href = faq_id_links.get(value)
+                if href:
+                    links[ref] = href
+            elif slug_manager.validate_slug(value):
+                links[ref] = f"/faq/{quote(value, safe='')}"
+        elif ref.startswith("wiki:"):
+            url = generate_wiki_url(ref.removeprefix("wiki:").strip())
+            if url:
+                links[ref] = url
+
+    return links
+
+
+def _faq_id_links(
+    settings: Settings,
+    faq_ids: Iterable[str],
+    slug_manager: SlugManager,
+) -> Dict[str, str]:
+    unique_ids = sorted({faq_id for faq_id in faq_ids if faq_id.isdigit()}, key=int)
+    if not unique_ids:
+        return {}
+
+    db_path = Path(settings.FAQ_DB_PATH)
+    if not db_path.exists():
+        return {}
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faqs'"
+            ).fetchone()
+            if table_exists is None:
+                return {}
+
+            placeholders = ",".join("?" for _ in unique_ids)
+            rows = conn.execute(
+                f"SELECT id, question FROM faqs WHERE id IN ({placeholders})",
+                unique_ids,
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+
+    links: Dict[str, str] = {}
+    for row in rows:
+        faq_id = str(row["id"])
+        slug = slug_manager.generate_slug(str(row["question"] or ""), faq_id)
+        links[faq_id] = f"/faq/{quote(slug, safe='')}"
+    return links
 
 
 def _durable_source_refs(refs: Iterable[str]) -> List[str]:
