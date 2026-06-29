@@ -210,6 +210,8 @@ def verify_admin_access(
         logger.debug(
             f"Admin access granted via cookie from {request.client.host if request.client else 'unknown'}"
         )
+        request.state.admin_actor = "admin_session"
+        request.state.admin_auth_method = "cookie"
         # Refresh cookie to implement sliding session window
         set_admin_cookie(response)
         return True
@@ -235,6 +237,8 @@ def verify_admin_access(
                 logger.debug(
                     f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
                 )
+            request.state.admin_actor = "admin_api_key"
+            request.state.admin_auth_method = "api_key"
             # Set session cookie after successful header-based auth for better UX
             set_admin_cookie(response)
             return True

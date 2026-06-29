@@ -784,6 +784,7 @@ function KnowledgeReworkTriagePanel({
     (triage.action_counts.repair_sources ?? 0) +
     (triage.action_counts.review_cluster ?? 0);
   const bulkRejectCount = triage.action_counts.bulk_reject_non_durable ?? 0;
+  const visibleGroups = triage.groups.slice(0, 4);
 
   return (
     <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
@@ -823,7 +824,7 @@ function KnowledgeReworkTriagePanel({
       </div>
 
       <div className="mt-4 grid gap-3 xl:grid-cols-2">
-        {triage.groups.slice(0, 4).map((group) => {
+        {visibleGroups.map((group) => {
           const buttonKey = `rework:${group.action}:${group.candidate_ids.join("-")}`;
           const isCurrentAction = actionLoading === buttonKey;
           const ActionIcon = reworkActionIcon(group.action);
@@ -885,9 +886,9 @@ function KnowledgeReworkTriagePanel({
           );
         })}
       </div>
-      {triage.group_count > triage.groups.length && (
+      {triage.group_count > visibleGroups.length && (
         <p className="mt-3 text-xs leading-5 text-muted-foreground">
-          Showing {triage.groups.length.toLocaleString()} of {triage.group_count.toLocaleString()} groups.
+          Showing {visibleGroups.length.toLocaleString()} of {triage.group_count.toLocaleString()} groups.
           Refresh after each action to load the next highest-impact group.
         </p>
       )}
@@ -1347,7 +1348,6 @@ export default function KnowledgeUpdatesPage() {
           body: JSON.stringify({
             action: group.action,
             candidate_ids: group.candidate_ids,
-            reviewer: "admin",
           }),
         },
       );

@@ -79,7 +79,6 @@ class ApplyKnowledgeReworkActionRequest(BaseModel):
         )
     )
     candidate_ids: List[int] = Field(min_length=1, max_length=500)
-    reviewer: str = Field(default="admin")
 
 
 class RejectKnowledgeUpdateRequest(BaseModel):
@@ -292,6 +291,13 @@ def _create_forced_knowledge_update_proposal(
     return service.get_or_create_proposal(candidate=candidate, force=True)
 
 
+def _authenticated_admin_reviewer(request: Request) -> str:
+    reviewer = getattr(getattr(request, "state", None), "admin_actor", None)
+    if reviewer:
+        return str(reviewer)
+    return "admin"
+
+
 @router.get("/counts")
 async def get_knowledge_update_counts(
     pipeline_service=Depends(get_pipeline_service()),
@@ -381,11 +387,13 @@ async def apply_knowledge_update_rework_action(
             detail="One or more candidates are no longer pending.",
         )
 
+    reviewer = _authenticated_admin_reviewer(request)
+
     if group.action == "bulk_reject_non_durable":
         return await _apply_rework_bulk_reject(
             group=group,
             candidates=group_candidates,
-            reviewer=request_body.reviewer,
+            reviewer=reviewer,
             request=request,
             pipeline_service=pipeline_service,
             service=service,
@@ -432,21 +440,65 @@ async def _apply_rework_bulk_reject(
         f"Reason: {group.reason}"
     )
 
-    def reject_candidates() -> None:
+    def reject_candidates() -> int:
+        reject_pending_many = getattr(
+            pipeline_service.repository, "reject_pending_many", None
+        )
+        if reject_pending_many is not None:
+            return int(
+                reject_pending_many(
+                    [candidate.id for candidate in candidates],
+                    reviewer,
+                    reason,
+                    reason_note=note,
+                )
+            )
+
+        rejected_count = 0
+        for candidate in candidates:
+            reject_pending = getattr(
+                pipeline_service.repository, "reject_pending", None
+            )
+            if reject_pending is None:
+                if getattr(candidate, "review_status", None) != "pending":
+                    continue
+                pipeline_service.repository.reject(
+                    candidate.id,
+                    reviewer,
+                    reason,
+                    reason_note=note,
+                )
+                rejected_count += 1
+                continue
+
+            if reject_pending(
+                candidate.id,
+                reviewer,
+                reason,
+                reason_note=note,
+            ):
+                rejected_count += 1
+        return rejected_count
+
+    rejected_count = await run_in_threadpool(reject_candidates)
+    if rejected_count != len(candidates):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "One or more candidates changed before rejection could be applied. "
+                "Refresh triage before retrying."
+            ),
+        )
+
+    def mark_rejected_proposals() -> None:
         for candidate in candidates:
             service.mark_rejected(
                 candidate_id=candidate.id,
                 reviewer=reviewer,
                 reason=reason,
             )
-            pipeline_service.repository.reject(
-                candidate.id,
-                reviewer,
-                reason,
-                reason_note=note,
-            )
 
-    await run_in_threadpool(reject_candidates)
+    await run_in_threadpool(mark_rejected_proposals)
     for candidate in candidates:
         _record_learning_review(
             request=request,
@@ -458,8 +510,8 @@ async def _apply_rework_bulk_reject(
     return _rework_action_response(
         action=group.action,
         candidate_ids=group.candidate_ids,
-        rejected_count=len(candidates),
-        message=f"Rejected {len(candidates)} non-durable candidate(s).",
+        rejected_count=rejected_count,
+        message=f"Rejected {rejected_count} non-durable candidate(s).",
     )
 
 
@@ -476,17 +528,18 @@ async def _apply_rework_metadata_repair(
             detail="This group no longer has a repairable inferred protocol.",
         )
 
-    def repair_candidates() -> tuple[int, int, Dict[str, List[str]]]:
+    def repair_candidates() -> tuple[int, int, Dict[str, List[str]], List[int]]:
         updated_count = 0
         proposal_count = 0
         remaining: Dict[str, List[str]] = {}
+        stale_candidate_ids: List[int] = []
         for candidate in candidates:
-            updated = pipeline_service.repository.update_candidate(
+            updated = pipeline_service.repository.update_pending_candidate(
                 candidate.id,
                 protocol=group.inferred_protocol,
             )
             if updated is None:
-                remaining[str(candidate.id)] = ["candidate_missing"]
+                stale_candidate_ids.append(candidate.id)
                 continue
             updated_count += 1
             issues = service.candidate_reviewability_issues(updated)
@@ -495,11 +548,19 @@ async def _apply_rework_metadata_repair(
                 continue
             service.get_or_create_proposal(candidate=updated, force=True)
             proposal_count += 1
-        return updated_count, proposal_count, remaining
+        return updated_count, proposal_count, remaining, stale_candidate_ids
 
-    updated_count, proposal_count, remaining = await run_in_threadpool(
-        repair_candidates
+    updated_count, proposal_count, remaining, stale_candidate_ids = (
+        await run_in_threadpool(repair_candidates)
     )
+    if stale_candidate_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "One or more candidates changed before metadata repair could be "
+                "applied. Refresh triage before retrying."
+            ),
+        )
     return _rework_action_response(
         action=group.action,
         candidate_ids=group.candidate_ids,
@@ -519,7 +580,9 @@ async def _apply_rework_source_repair(
     pipeline_service,
     service: KnowledgeUpdateService,
 ) -> Dict[str, Any]:
-    regenerate = getattr(pipeline_service, "regenerate_candidate_answer", None)
+    regenerate = getattr(pipeline_service, "regenerate_pending_candidate_answer", None)
+    if regenerate is None:
+        regenerate = getattr(pipeline_service, "regenerate_candidate_answer", None)
     if regenerate is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -529,6 +592,7 @@ async def _apply_rework_source_repair(
     updated_count = 0
     proposal_count = 0
     failed: List[int] = []
+    stale_candidate_ids: List[int] = []
     remaining: Dict[str, List[str]] = {}
     for candidate in candidates:
         protocol = candidate.protocol or group.inferred_protocol
@@ -538,8 +602,7 @@ async def _apply_rework_source_repair(
             continue
         updated = await regenerate(candidate.id, protocol)
         if updated is None:
-            failed.append(candidate.id)
-            remaining[str(candidate.id)] = ["candidate_missing"]
+            stale_candidate_ids.append(candidate.id)
             continue
         updated_count += 1
         issues = service.candidate_reviewability_issues(updated)
@@ -550,6 +613,15 @@ async def _apply_rework_source_repair(
             _create_forced_knowledge_update_proposal, service, updated
         )
         proposal_count += 1
+
+    if stale_candidate_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "One or more candidates changed before source repair could be "
+                "applied. Refresh triage before retrying."
+            ),
+        )
 
     return _rework_action_response(
         action=group.action,
