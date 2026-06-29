@@ -4,7 +4,7 @@ const FAQ_REF_PREFIX = "faq:";
 const WIKI_REF_PREFIX = "wiki:";
 const FAQ_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
 const COMPACT_SOURCE_REF_PATTERN =
-  /(^|[\s(,;])((?:faq:[a-z0-9][a-z0-9-]*[a-z0-9]|wiki:[A-Za-z0-9][A-Za-z0-9_-]*))(?=$|[\s),.;\]])/g;
+  /(^|[\s(,;])((?:faq:[a-z0-9][a-z0-9-]*[a-z0-9]|wiki:[A-Za-z0-9][A-Za-z0-9_-]*(?: [A-Za-z0-9][A-Za-z0-9_-]*)*))(?=$|[\s),.;\]])/g;
 
 export function linkifySourceRefsInMarkdown(
   markdown: string,
@@ -30,6 +30,13 @@ export function linkifySourceRefsInMarkdown(
   return withKnownRefs.replace(
     COMPACT_SOURCE_REF_PATTERN,
     (match, prefix: string, ref: string) => {
+      const knownRef = longestKnownSourceRefPrefix(ref, links);
+      if (knownRef) {
+        const href = resolveSourceRefHref(knownRef, links);
+        return href
+          ? `${prefix}${markdownLink(knownRef, href)}${ref.slice(knownRef.length)}`
+          : match;
+      }
       const href = resolveSourceRefHref(ref, links);
       return href ? `${prefix}${markdownLink(ref, href)}` : match;
     },
@@ -95,10 +102,22 @@ function resolveSourceRefHref(
   }
 
   if (ref.startsWith(WIKI_REF_PREFIX)) {
-    return wikiUrlForTitle(ref.slice(WIKI_REF_PREFIX.length).trim());
+    const title = ref.slice(WIKI_REF_PREFIX.length).trim();
+    return title.includes(" ") ? null : wikiUrlForTitle(title);
   }
 
   return null;
+}
+
+function longestKnownSourceRefPrefix(
+  ref: string,
+  sourceRefLinks: Record<string, string>,
+): string | null {
+  return (
+    Object.keys(sourceRefLinks)
+      .filter((knownRef) => ref === knownRef || ref.startsWith(`${knownRef} `))
+      .sort((left, right) => right.length - left.length)[0] ?? null
+  );
 }
 
 function markdownLink(label: string, href: string): string {
