@@ -73,7 +73,10 @@ def test_run_reconciliation_applies_pending_covered_candidates(tmp_path: Path) -
 
     assert result["applied_count"] == 1
     assert repository.get_by_id(candidate.id).review_status == "approved"
-    assert repository.get_by_id(candidate.id).reviewed_by == "scheduled-coverage-reconciliation"
+    assert (
+        repository.get_by_id(candidate.id).reviewed_by
+        == "scheduled-coverage-reconciliation"
+    )
 
 
 def test_run_reconciliation_supports_dry_run(tmp_path: Path) -> None:

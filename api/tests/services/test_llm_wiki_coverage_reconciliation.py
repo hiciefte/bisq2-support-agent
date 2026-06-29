@@ -241,7 +241,9 @@ def test_apply_reports_stale_pending_write_once(tmp_path: Path) -> None:
     _write_page(tmp_path)
 
     class _StaleRepository:
-        def approve_pending(self, candidate_id: int, reviewer: str, faq_id: str) -> bool:
+        def approve_pending(
+            self, candidate_id: int, reviewer: str, faq_id: str
+        ) -> bool:
             return False
 
     service = LLMWikiCoverageReconciliationService(Settings(DATA_DIR=str(tmp_path)))

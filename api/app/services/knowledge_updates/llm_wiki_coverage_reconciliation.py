@@ -54,8 +54,9 @@ TOKEN_STOPWORDS = {
 
 
 class CandidateApprovalRepository(Protocol):
-    def approve_pending(self, candidate_id: int, reviewer: str, faq_id: str) -> bool:
-        ...
+    def approve_pending(
+        self, candidate_id: int, reviewer: str, faq_id: str
+    ) -> bool: ...
 
     def get_pending(
         self,
@@ -63,8 +64,7 @@ class CandidateApprovalRepository(Protocol):
         routing: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UnifiedFAQCandidate]:
-        ...
+    ) -> list[UnifiedFAQCandidate]: ...
 
 
 @dataclass(frozen=True)
@@ -269,7 +269,9 @@ class LLMWikiCoverageReconciliationService:
 
         best = self._best_score(candidate, pages)
         if best is None:
-            return _empty_item(candidate_id=candidate.id, reason="no_reviewed_page_match")
+            return _empty_item(
+                candidate_id=candidate.id, reason="no_reviewed_page_match"
+            )
 
         action = "leave_pending"
         if _is_high_confidence(best):
@@ -455,7 +457,9 @@ def _lexical_support(candidate_text: str, page_text: str) -> float:
     page_tokens = _tokens(page_text)
     if not page_tokens:
         return 0.0
-    matched = sum(count for token, count in candidate_counts.items() if token in page_tokens)
+    matched = sum(
+        count for token, count in candidate_counts.items() if token in page_tokens
+    )
     total = sum(candidate_counts.values())
     return matched / total if total else 0.0
 

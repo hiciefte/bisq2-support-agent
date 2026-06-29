@@ -335,7 +335,9 @@ async def test_reviewed_knowledge_coverage_apply_marks_safe_matches_approved(
     assert response["remaining_count"] == 1
     assert pipeline.repository.get_by_id(51).review_status == "approved"
     assert pipeline.repository.get_by_id(51).reviewed_by == "support-admin"
-    assert pipeline.repository.get_by_id(51).faq_id == "llm_wiki:bisq2-reputation-basics"
+    assert (
+        pipeline.repository.get_by_id(51).faq_id == "llm_wiki:bisq2-reputation-basics"
+    )
     assert pipeline.repository.get_by_id(52).review_status == "pending"
 
 
