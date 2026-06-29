@@ -276,7 +276,10 @@ class LLMWikiCoverageReconciliationService:
         action = "leave_pending"
         if _is_high_confidence(best):
             action = "approve_covered"
-        elif best.confidence >= SPOT_CHECK_THRESHOLD:
+        elif (
+            best.confidence >= SPOT_CHECK_THRESHOLD
+            and best.lexical_support >= MIN_SPOT_LEXICAL_SUPPORT
+        ):
             action = "spot_check"
 
         return LLMWikiCoverageItem(

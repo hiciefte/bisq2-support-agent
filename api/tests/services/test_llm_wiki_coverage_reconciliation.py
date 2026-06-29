@@ -155,6 +155,29 @@ def test_reconciliation_leaves_unsafe_or_unsupported_candidates_pending(
     assert {item.action for item in report.items} == {"leave_pending"}
 
 
+def test_spot_check_requires_minimum_lexical_support(tmp_path: Path) -> None:
+    _write_page(tmp_path)
+    service = LLMWikiCoverageReconciliationService(Settings(DATA_DIR=str(tmp_path)))
+
+    report = service.reconcile(
+        [
+            _candidate(
+                question_text="How do I troubleshoot unrelated wallet restore errors?",
+                staff_answer="Check the data directory backup and restart logs.",
+                generated_answer_sources=(
+                    '[{"type":"wiki","title":"Reputation"},'
+                    '{"type":"llm_wiki","title":"Bisq Easy reputation basics"}]'
+                ),
+            )
+        ],
+        apply=False,
+    )
+
+    assert report.items[0].confidence >= 0.65
+    assert report.items[0].lexical_support < 0.25
+    assert report.items[0].action == "leave_pending"
+
+
 def test_strong_durable_source_overlap_can_cover_preexisting_candidates(
     tmp_path: Path,
 ) -> None:

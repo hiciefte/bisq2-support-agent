@@ -25,13 +25,35 @@ export function linkifySourceRefsInMarkdown(
     },
   );
 
-  return withBacktickedRefs.replace(
+  const withKnownRefs = linkKnownSourceRefs(withBacktickedRefs, links);
+
+  return withKnownRefs.replace(
     COMPACT_SOURCE_REF_PATTERN,
     (match, prefix: string, ref: string) => {
       const href = resolveSourceRefHref(ref, links);
       return href ? `${prefix}${markdownLink(ref, href)}` : match;
     },
   );
+}
+
+function linkKnownSourceRefs(
+  markdown: string,
+  sourceRefLinks: Record<string, string>,
+): string {
+  return Object.keys(sourceRefLinks)
+    .filter((ref) => ref.startsWith(FAQ_REF_PREFIX) || ref.startsWith(WIKI_REF_PREFIX))
+    .sort((left, right) => right.length - left.length)
+    .reduce((current, ref) => {
+      const href = resolveSourceRefHref(ref, sourceRefLinks);
+      if (!href) return current;
+      const pattern = new RegExp(
+        `(^|[\\s(,;])(${escapeRegExp(ref)})(?=$|[\\s),.;\\]])`,
+        "g",
+      );
+      return current.replace(pattern, (_match, prefix: string) => {
+        return `${prefix}${markdownLink(ref, href)}`;
+      });
+    }, markdown);
 }
 
 function sourceRefLinksFromSources(
@@ -103,7 +125,12 @@ function faqSlugFromUrl(url: string | undefined): string | null {
     }
   }
   const match = path.match(/\/faq\/([^/?#]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 function isValidFaqSlug(value: string): boolean {
@@ -130,4 +157,8 @@ function safeSourceHref(href: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

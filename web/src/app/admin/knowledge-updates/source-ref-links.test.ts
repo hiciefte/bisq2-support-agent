@@ -32,6 +32,16 @@ describe("knowledge update source ref links", () => {
     expect(linked).toContain("[wiki:Reputation](https://bisq.wiki/Reputation)");
   });
 
+  it("links known compact wiki refs that contain spaces", () => {
+    const markdown = "- wiki:Bisq Easy";
+
+    const linked = linkifySourceRefsInMarkdown(markdown, {
+      "wiki:Bisq Easy": "https://bisq.wiki/Bisq_Easy",
+    });
+
+    expect(linked).toBe("- [wiki:Bisq Easy](https://bisq.wiki/Bisq_Easy)");
+  });
+
   it("leaves unresolved numeric FAQ refs unchanged", () => {
     expect(linkifySourceRefsInMarkdown("See `faq:1071`.", {})).toBe(
       "See `faq:1071`.",
@@ -49,5 +59,19 @@ describe("knowledge update source ref links", () => {
         },
       ]),
     ).toBe("See [faq:broken](/faq/broken).");
+  });
+
+  it("ignores malformed percent escapes in source FAQ URLs", () => {
+    expect(
+      linkifySourceRefsInMarkdown("See `faq:1071`.", {}, [
+        {
+          type: "faq",
+          id: "1071",
+          title: "Broken source",
+          content: "",
+          url: "/faq/bad%zz",
+        },
+      ]),
+    ).toBe("See `faq:1071`.");
   });
 });

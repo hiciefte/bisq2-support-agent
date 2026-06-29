@@ -37,8 +37,12 @@ describe("knowledge update review feedback", () => {
     expect(state.showFeedbackTags).toBe(true);
   });
 
-  it("records good generation when an untouched draft is approved", () => {
-    expect(feedbackTagsForApproval([], [], null)).toEqual(["good_generation"]);
+  it("infers good generation when no tag override is provided", () => {
+    expect(feedbackTagsForApproval(null, [], null)).toEqual(["good_generation"]);
+  });
+
+  it("preserves an explicit empty feedback tag override", () => {
+    expect(feedbackTagsForApproval([], ["Canonical Support Answer"], null)).toEqual([]);
   });
 
   it("records correction tags from reviewer-changed sections", () => {

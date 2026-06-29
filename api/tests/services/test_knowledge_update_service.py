@@ -793,6 +793,41 @@ def test_response_resolves_clickable_faq_and_wiki_source_ref_links(
     )
 
 
+def test_response_resolves_source_ref_links_from_rendered_preview(
+    tmp_path: Path,
+) -> None:
+    faq_question = "How do I recover a wallet backup?"
+    with sqlite3.connect(tmp_path / "faqs.db") as conn:
+        conn.execute(
+            "CREATE TABLE faqs (id INTEGER PRIMARY KEY, question TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO faqs (id, question) VALUES (?, ?)",
+            (1072, faq_question),
+        )
+
+    settings = Settings(DATA_DIR=str(tmp_path))
+    service = KnowledgeUpdateService(
+        settings=settings,
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        generated_answer_sources='[{"type":"wiki","title":"Bisq Easy"}]'
+    )
+    proposal = service.get_or_create_proposal(candidate=candidate)
+    edited = proposal.preview_markdown.replace(
+        "source_refs:\n- wiki:Bisq Easy",
+        "source_refs:\n- faq:1072\n- wiki:Bisq Easy",
+        1,
+    )
+    updated = service.update_document_markdown(candidate=candidate, markdown=edited)
+
+    response = service.to_response(updated, candidate)
+
+    expected_slug = SlugManager().generate_slug(faq_question, "1072")
+    assert response["source_ref_links"]["faq:1072"] == f"/faq/{expected_slug}"
+
+
 def test_low_source_support_adds_non_blocking_warning(tmp_path: Path) -> None:
     settings = Settings(DATA_DIR=str(tmp_path))
     service = KnowledgeUpdateService(

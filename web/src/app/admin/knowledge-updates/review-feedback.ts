@@ -85,13 +85,11 @@ export function inferFeedbackTags(
 }
 
 export function feedbackTagsForApproval(
-  feedbackTags: string[],
+  feedbackTags: string[] | null | undefined,
   reviewerChangedSections: string[],
   answerRating: AnswerRating | null,
 ): string[] {
-  return feedbackTags.length > 0
-    ? feedbackTags
-    : inferFeedbackTags(reviewerChangedSections, answerRating);
+  return feedbackTags ?? inferFeedbackTags(reviewerChangedSections, answerRating);
 }
 
 function sectionCountSummary(prefix: string, sections: string[]): string {
@@ -108,13 +106,13 @@ export function deriveReviewFeedbackPanelState({
 }: {
   proposalChangedSections: string[];
   reviewerChangedSections: string[];
-  feedbackTags: string[];
+  feedbackTags: string[] | null | undefined;
   futureGeneratorNote: string | null | undefined;
   answerRating: AnswerRating | null;
 }): ReviewFeedbackPanelState {
   const hasReviewerSignal =
     reviewerChangedSections.length > 0 ||
-    feedbackTags.length > 0 ||
+    (feedbackTags?.length ?? 0) > 0 ||
     Boolean(futureGeneratorNote?.trim()) ||
     answerRating !== null;
 

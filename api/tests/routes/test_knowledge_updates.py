@@ -24,7 +24,7 @@ from app.services.training.unified_repository import (
     UnifiedFAQCandidate,
     UnifiedFAQCandidateRepository,
 )
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 
 def _candidate(**overrides) -> UnifiedFAQCandidate:
@@ -1115,6 +1115,7 @@ async def test_approve_knowledge_update_passes_review_outcome_feedback(
             future_generator_note="Future drafts should avoid unsupported UI labels.",
         ),
         request=request,
+        background_tasks=BackgroundTasks(),
         pipeline_service=pipeline,
         service=service,
     )
@@ -1130,7 +1131,7 @@ async def test_approve_knowledge_update_passes_review_outcome_feedback(
 
 
 @pytest.mark.asyncio
-async def test_approve_knowledge_update_runs_automatic_coverage_reconciliation(
+async def test_approve_knowledge_update_queues_automatic_coverage_reconciliation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1156,15 +1157,20 @@ async def test_approve_knowledge_update_runs_automatic_coverage_reconciliation(
         _record_reconciliation,
     )
 
+    background_tasks = BackgroundTasks()
+
     response = await approve_knowledge_update(
         candidate_id=candidate.id,
         request_body=KnowledgeReviewRequest(reviewer="admin"),
         request=request,
+        background_tasks=background_tasks,
         pipeline_service=pipeline,
         service=service,
     )
 
     assert response.success is True
+    assert len(background_tasks.tasks) == 1
+    await background_tasks()
     assert len(calls) == 1
     assert calls[0]["pipeline_service"] is pipeline
     assert calls[0]["service"] is service
@@ -1196,15 +1202,19 @@ async def test_approve_knowledge_update_ignores_coverage_reconciliation_failure(
         _fail_reconciliation,
     )
 
+    background_tasks = BackgroundTasks()
+
     response = await approve_knowledge_update(
         candidate_id=candidate.id,
         request_body=KnowledgeReviewRequest(reviewer="admin"),
         request=request,
+        background_tasks=background_tasks,
         pipeline_service=pipeline,
         service=service,
     )
 
     assert response.success is True
+    await background_tasks()
     assert service.get_by_candidate_id(candidate.id).status == "approved"
 
 

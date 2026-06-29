@@ -670,6 +670,7 @@ class KnowledgeUpdateService:
             proposal=proposal,
             target=target,
         )
+        preview_refs = _effective_source_refs(proposal.source_refs, preview_markdown)
         return {
             "id": proposal.id,
             "candidate_id": proposal.candidate_id,
@@ -692,9 +693,7 @@ class KnowledgeUpdateService:
             "prompt_version": proposal.prompt_version,
             "generator_feedback": proposal.generator_feedback,
             "source_refs": proposal.source_refs,
-            "source_ref_links": _source_ref_links_for_refs(
-                self.settings, proposal.source_refs
-            ),
+            "source_ref_links": _source_ref_links_for_refs(self.settings, preview_refs),
             "checks": proposal.checks,
             "status": proposal.status,
             "reviewed_by": proposal.reviewed_by,

@@ -17,10 +17,7 @@ if ! docker ps --format '{{.Names}}' | grep -q "$API_CONTAINER_NAME"; then
   exit 1
 fi
 
-OUTPUT=$(docker exec "$API_CONTAINER_NAME" python3 -m app.scripts.reconcile_llm_wiki_coverage 2>&1)
-EXIT_CODE=$?
-
-if [ $EXIT_CODE -ne 0 ]; then
+if ! OUTPUT=$(docker exec "$API_CONTAINER_NAME" python3 -m app.scripts.reconcile_llm_wiki_coverage 2>&1); then
   log "ERROR: LLM Wiki coverage reconciliation failed"
   log "Output: $OUTPUT"
   exit 1

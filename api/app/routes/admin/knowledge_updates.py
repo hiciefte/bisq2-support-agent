@@ -35,7 +35,15 @@ from app.services.knowledge_updates.topic_clusters import (
 from app.services.rag.code_evidence import CODE_EVIDENCE_TYPE, CodeEvidenceRecord
 from app.services.training.unified_pipeline_service import DuplicateFAQError
 from app.services.training.unified_repository import UnifiedFAQCandidate
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -393,6 +401,25 @@ async def _run_automatic_coverage_reconciliation(
         report.skipped_stale_count,
     )
     return report.to_response()
+
+
+async def _run_automatic_coverage_reconciliation_safely(
+    *,
+    pipeline_service,
+    service: KnowledgeUpdateService,
+    trigger_page_id: str,
+) -> None:
+    try:
+        await _run_automatic_coverage_reconciliation(
+            pipeline_service=pipeline_service,
+            service=service,
+            trigger_page_id=trigger_page_id,
+        )
+    except Exception:
+        logger.exception(
+            "Automatic reviewed coverage reconciliation failed after approving %s",
+            trigger_page_id,
+        )
 
 
 @router.get("/rework-triage")
@@ -958,6 +985,7 @@ async def approve_knowledge_update(
     candidate_id: int,
     request_body: KnowledgeReviewRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     pipeline_service=Depends(get_pipeline_service()),
     service: KnowledgeUpdateService = Depends(get_knowledge_update_service),
 ):
@@ -1011,17 +1039,12 @@ async def approve_knowledge_update(
                 item_id=str(page_id),
                 metadata={"candidate_id": candidate_id},
             )
-        try:
-            await _run_automatic_coverage_reconciliation(
-                pipeline_service=pipeline_service,
-                service=service,
-                trigger_page_id=str(page_id),
-            )
-        except Exception:
-            logger.exception(
-                "Automatic reviewed coverage reconciliation failed after approving %s",
-                page_id,
-            )
+        background_tasks.add_task(
+            _run_automatic_coverage_reconciliation_safely,
+            pipeline_service=pipeline_service,
+            service=service,
+            trigger_page_id=str(page_id),
+        )
         return KnowledgeUpdateApproveResponse(success=True, page_id=page_id)
     except ValueError as exc:
         raise HTTPException(

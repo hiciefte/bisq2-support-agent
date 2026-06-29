@@ -571,6 +571,14 @@ function feedbackTagLabel(tag: string): string {
   return REVIEW_FEEDBACK_TAG_LABELS[tag] ?? tag.replace(/_/g, " ");
 }
 
+function feedbackHistorySummary(feedback: GeneratorFeedbackContext): string {
+  const tagLabels = feedback.feedback_tags.slice(0, 3).map(feedbackTagLabel);
+  if (tagLabels.length > 0) {
+    return `Prior reviews for this topic included ${tagLabels.join(", ")}. Check claims carefully and preserve the reviewed guardrails.`;
+  }
+  return "Prior reviews matched this topic. Check claims carefully and preserve the reviewed guardrails.";
+}
+
 function ContextBadge({
   label,
   value,
@@ -908,7 +916,7 @@ function GeneratorFeedbackCard({ feedback }: { feedback: GeneratorFeedbackContex
             Prior review guidance
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Prior reviews flagged this topic for factual corrections and missing caveats. Check claims carefully and preserve the reviewed guardrails.
+            {feedbackHistorySummary(feedback)}
           </p>
         </div>
         {hasDetails && (
@@ -1079,7 +1087,7 @@ export default function KnowledgeUpdatesPage() {
   const [showSupportingEdits, setShowSupportingEdits] = useState(false);
   const [answerRating, setAnswerRating] = useState<AnswerRating | null>(null);
   const [ratingLoading, setRatingLoading] = useState<AnswerRating | null>(null);
-  const [feedbackTags, setFeedbackTags] = useState<string[]>([]);
+  const [feedbackTags, setFeedbackTags] = useState<string[] | null>(null);
   const [futureGeneratorNote, setFutureGeneratorNote] = useState("");
   const [showLearningSignalControls, setShowLearningSignalControls] = useState(false);
   const [isReviewGuideDismissed, setIsReviewGuideDismissed] = useState<boolean | null>(null);
@@ -1167,7 +1175,7 @@ export default function KnowledgeUpdatesPage() {
     [reviewerChangedSections, answerRating],
   );
 
-  const effectiveFeedbackTags = feedbackTags.length > 0 ? feedbackTags : inferredFeedbackTags;
+  const effectiveFeedbackTags = feedbackTags ?? inferredFeedbackTags;
 
   const feedbackPanelState = useMemo(
     () =>
@@ -1219,7 +1227,9 @@ export default function KnowledgeUpdatesPage() {
     setOperations(current?.proposal.operations ?? []);
     setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
     setReviewBaselineMarkdown(current?.proposal.preview_markdown ?? "");
-    setFeedbackTags(current?.proposal.feedback_tags ?? []);
+    setFeedbackTags(
+      current?.proposal.feedback_tags?.length ? current.proposal.feedback_tags : null,
+    );
     setFutureGeneratorNote(current?.proposal.future_generator_note ?? "");
     setDocumentMode("diff");
     setEditingDocumentLine(null);
@@ -1285,7 +1295,9 @@ export default function KnowledgeUpdatesPage() {
     setRatingLoading(null);
     setShowSupportingEdits(false);
     setEditingDocumentLine(null);
-    setFeedbackTags(data?.proposal.feedback_tags ?? []);
+    setFeedbackTags(
+      data?.proposal.feedback_tags?.length ? data.proposal.feedback_tags : null,
+    );
     setFutureGeneratorNote(data?.proposal.future_generator_note ?? "");
   }, [data, reviewStateKey]);
 
@@ -1513,11 +1525,7 @@ export default function KnowledgeUpdatesPage() {
       );
       if (!response.ok) throw new Error("Failed to regenerate proposal");
       const proposal = (await response.json()) as KnowledgeProposal;
-      setData((current) => current ? { ...current, proposal } : current);
-      setOperations(proposal.operations);
-      setDocumentMarkdown(proposal.preview_markdown);
-      setDocumentMode("diff");
-      setEditingDocumentLine(null);
+      applyLoadedKnowledgeUpdate({ ...data, proposal });
       toast.success("Proposal regenerated");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to regenerate proposal";
@@ -1566,7 +1574,7 @@ export default function KnowledgeUpdatesPage() {
 
   const toggleFeedbackTag = (tag: string) => {
     setFeedbackTags((current) => {
-      const base = current.length > 0 ? current : inferredFeedbackTags;
+      const base = current ?? inferredFeedbackTags;
       if (base.includes(tag)) {
         return base.filter((item) => item !== tag);
       }
