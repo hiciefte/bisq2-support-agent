@@ -4,8 +4,10 @@ import app.routes.admin.knowledge_updates as knowledge_updates
 import pytest
 from app.core.config import Settings
 from app.routes.admin.knowledge_updates import (
+    ApplyKnowledgeReworkActionRequest,
     KnowledgeReviewRequest,
     PromoteCodeEvidenceRequest,
+    apply_knowledge_update_rework_action,
     approve_knowledge_update,
     get_current_knowledge_update,
     get_generator_feedback_records,
@@ -20,6 +22,7 @@ from app.services.training.unified_repository import (
     UnifiedFAQCandidate,
     UnifiedFAQCandidateRepository,
 )
+from fastapi import HTTPException
 
 
 def _candidate(**overrides) -> UnifiedFAQCandidate:
@@ -68,12 +71,14 @@ def _candidate(**overrides) -> UnifiedFAQCandidate:
 class _Repository:
     def __init__(self, candidates):
         self.candidates = candidates
+        self.stale_pending_write_ids = set()
 
     def get_pending(self, source=None, routing=None, limit=100, offset=0):
         rows = [
             candidate
             for candidate in self.candidates
-            if (routing is None or candidate.routing == routing)
+            if candidate.review_status == "pending"
+            and (routing is None or candidate.routing == routing)
             and (source is None or candidate.source == source)
         ]
         return rows[offset : offset + limit]
@@ -95,10 +100,80 @@ class _Repository:
             candidate.reviewed_by = reviewer
             candidate.faq_id = faq_id
 
+    def reject(self, candidate_id, reviewer, reason, reason_note=None):
+        candidate = self.get_by_id(candidate_id)
+        if candidate is not None:
+            candidate.review_status = "rejected"
+            candidate.reviewed_by = reviewer
+            candidate.rejection_reason = reason
+            candidate.rejection_note = reason_note
+
+    def reject_pending_many(self, candidate_ids, reviewer, reason, reason_note=None):
+        candidates = [self.get_by_id(candidate_id) for candidate_id in candidate_ids]
+        if any(
+            candidate is None
+            or candidate.review_status != "pending"
+            or candidate.id in self.stale_pending_write_ids
+            for candidate in candidates
+        ):
+            return 0
+        for candidate in candidates:
+            candidate.review_status = "rejected"
+            candidate.reviewed_by = reviewer
+            candidate.rejection_reason = reason
+            candidate.rejection_note = reason_note
+        return len(candidates)
+
+    def reject_pending(self, candidate_id, reviewer, reason, reason_note=None):
+        return (
+            self.reject_pending_many([candidate_id], reviewer, reason, reason_note) == 1
+        )
+
+    def update_candidate(self, candidate_id, **updates):
+        candidate = self.get_by_id(candidate_id)
+        if candidate is None:
+            return None
+        updates.pop("require_pending", None)
+        for key, value in updates.items():
+            if value is not None and hasattr(candidate, key):
+                setattr(candidate, key, value)
+        return candidate
+
+    def update_pending_candidate(self, candidate_id, **updates):
+        candidate = self.get_by_id(candidate_id)
+        if (
+            candidate is None
+            or candidate.review_status != "pending"
+            or candidate.id in self.stale_pending_write_ids
+        ):
+            return None
+        return self.update_candidate(candidate_id, **updates)
+
 
 class _PipelineService:
     def __init__(self, candidates):
         self.repository = _Repository(candidates)
+        self.regenerate_calls = []
+
+    async def regenerate_candidate_answer(self, candidate_id, protocol):
+        self.regenerate_calls.append((candidate_id, protocol))
+        return self.repository.update_candidate(
+            candidate_id,
+            protocol=protocol,
+            generated_answer="Regenerated answer with durable source support.",
+            generated_answer_sources='[{"type":"wiki","title":"Wallet sync"}]',
+            generation_confidence=0.81,
+        )
+
+    async def regenerate_pending_candidate_answer(self, candidate_id, protocol):
+        candidate = self.repository.get_by_id(candidate_id)
+        if (
+            candidate is None
+            or candidate.review_status != "pending"
+            or candidate.id in self.repository.stale_pending_write_ids
+        ):
+            return None
+        return await self.regenerate_candidate_answer(candidate_id, protocol)
 
 
 @pytest.mark.asyncio
@@ -216,6 +291,371 @@ async def test_rework_triage_endpoint_limits_visible_groups(
     assert response["group_count"] == 2
     assert len(response["groups"]) == 1
     assert response["groups"][0]["action"] == "bulk_reject_non_durable"
+
+
+def test_rework_action_request_does_not_accept_spoofable_reviewer() -> None:
+    assert "reviewer" not in ApplyKnowledgeReworkActionRequest.model_fields
+
+
+@pytest.mark.asyncio
+async def test_rework_action_bulk_rejects_non_durable_group(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidates = [
+        _candidate(
+            id=index,
+            protocol=None,
+            question_text="My account is temporarily locked. How can I notify my counterparty?",
+            staff_answer="Notify the counterparty in the trade chat.",
+            generated_answer_sources=None,
+        )
+        for index in (31, 32)
+    ]
+    pipeline = _PipelineService([*candidates, _candidate(id=33)])
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    response = await apply_knowledge_update_rework_action(
+        request_body=ApplyKnowledgeReworkActionRequest(
+            action="bulk_reject_non_durable",
+            candidate_ids=[31, 32],
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["success"] is True
+    assert response["rejected_count"] == 2
+    assert response["updated_count"] == 0
+    assert response["proposal_count"] == 0
+    assert pipeline.repository.get_by_id(31).review_status == "rejected"
+    assert pipeline.repository.get_by_id(31).reviewed_by == "support-admin"
+    assert pipeline.repository.get_by_id(32).rejection_reason == "not_durable"
+    assert (
+        "AI-assisted rework triage" in pipeline.repository.get_by_id(32).rejection_note
+    )
+    assert pipeline.repository.get_by_id(33).review_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_rework_action_bulk_reject_detects_stale_pending_write(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidates = [
+        _candidate(
+            id=index,
+            protocol=None,
+            question_text="My account is temporarily locked. How can I notify my counterparty?",
+            staff_answer="Notify the counterparty in the trade chat.",
+            generated_answer_sources=None,
+        )
+        for index in (34, 35)
+    ]
+    pipeline = _PipelineService(candidates)
+    pipeline.repository.stale_pending_write_ids.add(34)
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_knowledge_update_rework_action(
+            request_body=ApplyKnowledgeReworkActionRequest(
+                action="bulk_reject_non_durable",
+                candidate_ids=[34, 35],
+            ),
+            request=request,
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert [candidate.review_status for candidate in candidates] == [
+        "pending",
+        "pending",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rework_action_repairs_metadata_and_prepares_normal_proposal(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=41,
+        source="bisq2",
+        protocol=None,
+        category="Account",
+        question_text="How do I restore my Bisq 2 profile on another computer?",
+        staff_answer=(
+            "Bisq 2 profile recovery depends on the local data directory. "
+            "Restore from a backup of the profile data instead of creating a "
+            "new profile."
+        ),
+        generated_answer_sources='[{"type":"wiki","title":"Data directory"}]',
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    response = await apply_knowledge_update_rework_action(
+        request_body=ApplyKnowledgeReworkActionRequest(
+            action="repair_metadata",
+            candidate_ids=[41],
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    updated = pipeline.repository.get_by_id(41)
+    proposal = service.get_by_candidate_id(41)
+    assert response["success"] is True
+    assert response["updated_count"] == 1
+    assert response["proposal_count"] == 1
+    assert response["remaining_blocked_count"] == 0
+    assert updated.protocol == "bisq_easy"
+    assert proposal is not None
+    assert proposal.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_rework_action_metadata_repair_detects_stale_pending_write(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=42,
+        source="bisq2",
+        protocol=None,
+        category="Account",
+        question_text="How do I restore my Bisq 2 profile on another computer?",
+        generated_answer_sources='[{"type":"wiki","title":"Data directory"}]',
+    )
+    pipeline = _PipelineService([candidate])
+    pipeline.repository.stale_pending_write_ids.add(42)
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_knowledge_update_rework_action(
+            request_body=ApplyKnowledgeReworkActionRequest(
+                action="repair_metadata",
+                candidate_ids=[42],
+            ),
+            request=request,
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert pipeline.repository.get_by_id(42).protocol is None
+    assert service.get_by_candidate_id(42) is None
+
+
+@pytest.mark.asyncio
+async def test_rework_action_repairs_sources_through_rag_regeneration(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=51,
+        protocol="multisig_v1",
+        category="Troubleshooting",
+        question_text=(
+            "My Bisq 1 deposit transaction is confirmed but the trade still "
+            "says wait for blockchain confirmation. What should I do?"
+        ),
+        staff_answer=(
+            "Check the deposit txid on a block explorer and use SPV resync "
+            "if Bisq has stale wallet-chain state."
+        ),
+        generated_answer_sources=None,
+    )
+    pipeline = _PipelineService([candidate])
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    response = await apply_knowledge_update_rework_action(
+        request_body=ApplyKnowledgeReworkActionRequest(
+            action="repair_sources",
+            candidate_ids=[51],
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    updated = pipeline.repository.get_by_id(51)
+    proposal = service.get_by_candidate_id(51)
+    assert response["success"] is True
+    assert response["updated_count"] == 1
+    assert response["proposal_count"] == 1
+    assert response["remaining_blocked_count"] == 0
+    assert pipeline.regenerate_calls == [(51, "multisig_v1")]
+    assert updated.generated_answer_sources == '[{"type":"wiki","title":"Wallet sync"}]'
+    assert proposal is not None
+    assert "wiki:Wallet sync" in proposal.source_refs
+
+
+@pytest.mark.asyncio
+async def test_rework_action_reports_remaining_source_repair_blocks(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=52,
+        protocol="multisig_v1",
+        category="Troubleshooting",
+        question_text=(
+            "My Bisq 1 deposit transaction is confirmed but the trade still "
+            "says wait for blockchain confirmation. What should I do?"
+        ),
+        staff_answer=(
+            "Check the deposit txid on a block explorer and use SPV resync "
+            "if Bisq has stale wallet-chain state."
+        ),
+        generated_answer_sources=None,
+    )
+    pipeline = _PipelineService([candidate])
+
+    async def regenerate_without_sources(candidate_id, protocol):
+        pipeline.regenerate_calls.append((candidate_id, protocol))
+        return pipeline.repository.update_candidate(
+            candidate_id,
+            protocol=protocol,
+            generated_answer="Regenerated answer without durable source support.",
+            generated_answer_sources=None,
+        )
+
+    pipeline.regenerate_candidate_answer = regenerate_without_sources
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    response = await apply_knowledge_update_rework_action(
+        request_body=ApplyKnowledgeReworkActionRequest(
+            action="repair_sources",
+            candidate_ids=[52],
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["success"] is False
+    assert response["updated_count"] == 1
+    assert response["proposal_count"] == 0
+    assert response["remaining_blocked_count"] == 1
+    assert response["remaining_issues_by_candidate"] == {"52": ["missing_source_refs"]}
+
+
+@pytest.mark.asyncio
+async def test_rework_action_source_repair_detects_stale_pending_write(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidate = _candidate(
+        id=53,
+        protocol="multisig_v1",
+        category="Troubleshooting",
+        question_text="My Bisq 1 wallet is out of sync. What should I do?",
+        staff_answer="Use SPV resync when the wallet chain state is stale.",
+        generated_answer_sources=None,
+    )
+    pipeline = _PipelineService([candidate])
+    pipeline.repository.stale_pending_write_ids.add(53)
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_knowledge_update_rework_action(
+            request_body=ApplyKnowledgeReworkActionRequest(
+                action="repair_sources",
+                candidate_ids=[53],
+            ),
+            request=request,
+            pipeline_service=pipeline,
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert pipeline.regenerate_calls == []
+    assert service.get_by_candidate_id(53) is None
+
+
+@pytest.mark.asyncio
+async def test_rework_action_opens_cluster_review_without_marking_reviewed(
+    tmp_path: Path,
+) -> None:
+    service = KnowledgeUpdateService(
+        settings=Settings(DATA_DIR=str(tmp_path)),
+        db_path=str(tmp_path / "unified_training.db"),
+    )
+    candidates = [
+        _candidate(
+            id=index,
+            protocol="musig",
+            category="Policy",
+            question_text=f"How should support handle recurring policy topic {index}?",
+            staff_answer=(
+                "Support should explain the durable policy and avoid making "
+                "case-specific promises."
+            ),
+            generated_answer_sources='[{"type":"wiki","title":"Support policy"}]',
+        )
+        for index in (61, 62, 63)
+    ]
+    pipeline = _PipelineService(candidates)
+    request = _Request()
+    request.app.state.learning_engine = None
+
+    response = await apply_knowledge_update_rework_action(
+        request_body=ApplyKnowledgeReworkActionRequest(
+            action="review_cluster",
+            candidate_ids=[61, 62, 63],
+        ),
+        request=request,
+        pipeline_service=pipeline,
+        service=service,
+    )
+
+    assert response["success"] is True
+    assert response["proposal_count"] == 1
+    assert response["cluster"]["size"] == 3
+    assert response["cluster"]["candidate_ids"] == [61, 62, 63]
+    assert response["candidate"]["id"] == 61
+    assert response["proposal"]["status"] == "pending"
+    assert any(
+        check["code"] == "cluster_synthesis_review"
+        for check in response["proposal"]["checks"]
+    )
+    assert [candidate.review_status for candidate in candidates] == [
+        "pending",
+        "pending",
+        "pending",
+    ]
 
 
 @pytest.mark.asyncio
@@ -512,6 +952,8 @@ class _Request:
     def __init__(self):
         self.app = _State()
         self.app.state = _State()
+        self.state = _State()
+        self.state.admin_actor = "support-admin"
 
 
 @pytest.mark.asyncio

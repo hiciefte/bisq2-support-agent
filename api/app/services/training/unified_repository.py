@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -897,13 +897,89 @@ class UnifiedFAQCandidateRepository:
             reason: Reason for rejection
             reason_note: Optional reviewer note with additional context
         """
+        self._reject_candidate(
+            candidate_id=candidate_id,
+            reviewer=reviewer,
+            reason=reason,
+            reason_note=reason_note,
+            require_pending=False,
+        )
+
+    def reject_pending(
+        self,
+        candidate_id: int,
+        reviewer: str,
+        reason: str,
+        reason_note: Optional[str] = None,
+    ) -> bool:
+        """Reject a candidate only if it is still pending."""
+        return self._reject_candidate(
+            candidate_id=candidate_id,
+            reviewer=reviewer,
+            reason=reason,
+            reason_note=reason_note,
+            require_pending=True,
+        )
+
+    def reject_pending_many(
+        self,
+        candidate_ids: Sequence[int],
+        reviewer: str,
+        reason: str,
+        reason_note: Optional[str] = None,
+    ) -> int:
+        """Reject pending candidates atomically and return affected row count."""
+        unique_ids = list(dict.fromkeys(candidate_ids))
+        if not unique_ids:
+            return 0
+
         now = datetime.now(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in unique_ids)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN")
+            cursor.execute(
+                f"""
+                UPDATE unified_faq_candidates
+                SET review_status = 'rejected',
+                    reviewed_by = ?,
+                    reviewed_at = ?,
+                    rejection_reason = ?,
+                    rejection_note = ?,
+                    updated_at = ?
+                WHERE id IN ({placeholders})
+                  AND review_status = 'pending'
+                """,
+                (reviewer, now, reason, reason_note, now, *unique_ids),
+            )
+            affected = cursor.rowcount
+            if affected != len(unique_ids):
+                conn.rollback()
+                return affected
+            conn.commit()
+            return affected
+        finally:
+            conn.close()
+
+    def _reject_candidate(
+        self,
+        *,
+        candidate_id: int,
+        reviewer: str,
+        reason: str,
+        reason_note: Optional[str],
+        require_pending: bool,
+    ) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        pending_clause = " AND review_status = 'pending'" if require_pending else ""
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute(
-            """
+            f"""
             UPDATE unified_faq_candidates
             SET review_status = 'rejected',
                 reviewed_by = ?,
@@ -911,13 +987,15 @@ class UnifiedFAQCandidateRepository:
                 rejection_reason = ?,
                 rejection_note = ?,
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ?{pending_clause}
             """,
             (reviewer, now, reason, reason_note, now, candidate_id),
         )
+        affected = cursor.rowcount
 
         conn.commit()
         conn.close()
+        return affected == 1
 
     def skip(self, candidate_id: int) -> None:
         """Skip a candidate, moving it to the end of the queue.
@@ -1000,6 +1078,7 @@ class UnifiedFAQCandidateRepository:
         staff_answer: Optional[str] = None,
         has_correction: Optional[bool] = None,
         generation_confidence: Optional[float] = None,
+        require_pending: bool = False,
     ) -> Optional[UnifiedFAQCandidate]:
         """Update a candidate with new values.
 
@@ -1027,6 +1106,7 @@ class UnifiedFAQCandidateRepository:
             staff_answer: Updated staff answer (for corrections)
             has_correction: Whether this candidate has been corrected
             generation_confidence: RAG confidence score (0.0-1.0)
+            require_pending: Only update if the candidate is still pending
 
         Returns:
             The updated candidate, or None if not found
@@ -1109,14 +1189,21 @@ class UnifiedFAQCandidateRepository:
 
         if not updates:
             # Nothing to update, return current candidate
-            return self.get_by_id(candidate_id)
+            candidate = self.get_by_id(candidate_id)
+            if (
+                require_pending
+                and candidate is not None
+                and candidate.review_status != "pending"
+            ):
+                return None
+            return candidate
 
         # Always update updated_at
         updates.append("updated_at = ?")
         params.append(datetime.now(timezone.utc).isoformat())
 
-        # Add candidate_id to params
         params.append(candidate_id)
+        pending_clause = " AND review_status = 'pending'" if require_pending else ""
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -1124,14 +1211,29 @@ class UnifiedFAQCandidateRepository:
         query = f"""
             UPDATE unified_faq_candidates
             SET {', '.join(updates)}
-            WHERE id = ?
+            WHERE id = ?{pending_clause}
         """
 
         cursor.execute(query, params)
+        affected = cursor.rowcount
         conn.commit()
         conn.close()
 
+        if affected == 0:
+            return None
         return self.get_by_id(candidate_id)
+
+    def update_pending_candidate(
+        self,
+        candidate_id: int,
+        **updates,
+    ) -> Optional[UnifiedFAQCandidate]:
+        """Update a candidate only if it is still pending."""
+        return self.update_candidate(
+            candidate_id=candidate_id,
+            require_pending=True,
+            **updates,
+        )
 
     def is_calibration_mode(self) -> bool:
         """Check if the system is in calibration mode.

@@ -1532,6 +1532,8 @@ class UnifiedPipelineService:
         self,
         candidate_id: int,
         protocol: str,
+        *,
+        require_pending: bool = False,
     ) -> Optional[UnifiedFAQCandidate]:
         """
         Regenerate the RAG answer for a candidate with a specific protocol.
@@ -1543,12 +1545,15 @@ class UnifiedPipelineService:
         Args:
             candidate_id: ID of the candidate
             protocol: Protocol to use (bisq_easy, multisig_v1, musig, all)
+            require_pending: Only persist the regenerated answer if still pending
 
         Returns:
             Updated candidate with new generated answer and scores, or None if not found
         """
         candidate = self.repository.get_by_id(candidate_id)
         if candidate is None:
+            return None
+        if require_pending and candidate.review_status != "pending":
             return None
 
         # Convert protocol to version string for RAG filtering
@@ -1598,6 +1603,19 @@ class UnifiedPipelineService:
             routing=routing,
             generated_answer_sources=sources_json,
             generation_confidence=generation_confidence,
+            require_pending=require_pending,
+        )
+
+    async def regenerate_pending_candidate_answer(
+        self,
+        candidate_id: int,
+        protocol: str,
+    ) -> Optional[UnifiedFAQCandidate]:
+        """Regenerate a candidate answer only if the candidate is still pending."""
+        return await self.regenerate_candidate_answer(
+            candidate_id,
+            protocol,
+            require_pending=True,
         )
 
     def get_pending_reviews(

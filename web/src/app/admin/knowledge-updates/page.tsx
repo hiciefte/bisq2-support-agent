@@ -169,6 +169,22 @@ interface KnowledgeReworkTriage {
   groups: KnowledgeReworkGroup[];
 }
 
+interface KnowledgeReworkActionResponse {
+  success: boolean;
+  action: string;
+  candidate_ids: number[];
+  updated_count: number;
+  rejected_count: number;
+  proposal_count: number;
+  failed_candidate_ids: number[];
+  remaining_blocked_count: number;
+  remaining_issues_by_candidate: Record<string, string[]>;
+  message: string;
+  candidate?: UnifiedCandidate;
+  proposal?: KnowledgeProposal;
+  cluster?: KnowledgeCluster | null;
+}
+
 const QUEUE_LABELS: Record<RoutingCategory, string> = {
   FULL_REVIEW: "1. Full review",
   SPOT_CHECK: "2. Spot check",
@@ -529,6 +545,48 @@ function reworkActionLabel(action: string): string {
   return labels[action] ?? actionLabel(action);
 }
 
+function reworkActionButtonLabel(action: string): string {
+  const labels: Record<string, string> = {
+    bulk_reject_non_durable: "Reject group",
+    repair_metadata: "Apply protocol",
+    repair_sources: "Refresh sources",
+    review_cluster: "Open cluster",
+  };
+  return labels[action] ?? "Manual review";
+}
+
+function reworkActionIcon(action: string): LucideIcon {
+  const icons: Record<string, LucideIcon> = {
+    bulk_reject_non_durable: XCircle,
+    repair_metadata: CheckCircle2,
+    repair_sources: RefreshCw,
+    review_cluster: FileText,
+  };
+  return icons[action] ?? HelpCircle;
+}
+
+function isExecutableReworkAction(action: string): boolean {
+  return [
+    "bulk_reject_non_durable",
+    "repair_metadata",
+    "repair_sources",
+    "review_cluster",
+  ].includes(action);
+}
+
+function reworkResultMessage(result: KnowledgeReworkActionResponse): string {
+  if (result.rejected_count > 0) {
+    return `Rejected ${result.rejected_count.toLocaleString()} candidate${result.rejected_count === 1 ? "" : "s"}`;
+  }
+  if (result.action === "review_cluster") {
+    return "Cluster review opened";
+  }
+  if (result.proposal_count > 0) {
+    return `Prepared ${result.proposal_count.toLocaleString()} review proposal${result.proposal_count === 1 ? "" : "s"}`;
+  }
+  return result.message || "Rework action completed";
+}
+
 function parseConversation(value: string | null): Array<{ sender?: string; content: string; timestamp?: string }> {
   if (!value) return [];
   try {
@@ -712,8 +770,12 @@ function KnowledgeUpdateReviewGuide({
 
 function KnowledgeReworkTriagePanel({
   triage,
+  actionLoading,
+  onApplyAction,
 }: {
   triage: KnowledgeReworkTriage | null;
+  actionLoading: string | null;
+  onApplyAction: (group: KnowledgeReworkGroup) => void;
 }) {
   if (!triage || triage.total_blocked === 0) return null;
 
@@ -722,6 +784,7 @@ function KnowledgeReworkTriagePanel({
     (triage.action_counts.repair_sources ?? 0) +
     (triage.action_counts.review_cluster ?? 0);
   const bulkRejectCount = triage.action_counts.bulk_reject_non_durable ?? 0;
+  const visibleGroups = triage.groups.slice(0, 4);
 
   return (
     <section className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
@@ -761,43 +824,74 @@ function KnowledgeReworkTriagePanel({
       </div>
 
       <div className="mt-4 grid gap-3 xl:grid-cols-2">
-        {triage.groups.slice(0, 4).map((group) => (
-          <div
-            key={`${group.action}:${group.candidate_ids.join("-")}`}
-            className="rounded-lg border border-border/70 bg-background/80 p-3"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{reworkActionLabel(group.action)}</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {group.reason}
-                </p>
+        {visibleGroups.map((group) => {
+          const buttonKey = `rework:${group.action}:${group.candidate_ids.join("-")}`;
+          const isCurrentAction = actionLoading === buttonKey;
+          const ActionIcon = reworkActionIcon(group.action);
+          const canApply = isExecutableReworkAction(group.action);
+
+          return (
+            <div
+              key={`${group.action}:${group.candidate_ids.join("-")}`}
+              className="rounded-lg border border-border/70 bg-background/80 p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{reworkActionLabel(group.action)}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {group.reason}
+                  </p>
+                </div>
+                <Badge variant="outline" className="shrink-0 tabular-nums">
+                  {group.size.toLocaleString()} candidates
+                </Badge>
               </div>
-              <Badge variant="outline" className="shrink-0 tabular-nums">
-                {group.size.toLocaleString()} candidates
-              </Badge>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {group.inferred_protocol && (
-                <Badge variant="secondary">
-                  {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
-                </Badge>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {group.inferred_protocol && (
+                  <Badge variant="secondary">
+                    {protocolLabel(group.inferred_protocol as UnifiedCandidate["protocol"])}
+                  </Badge>
+                )}
+                <Badge variant="outline">{topicLabel(group.topic)}</Badge>
+                {group.target_page_id && (
+                  <Badge variant="outline" className="max-w-full truncate">
+                    {group.target_page_id}
+                  </Badge>
+                )}
+              </div>
+              {group.examples[0] && (
+                <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                  {group.examples[0].question}
+                </p>
               )}
-              <Badge variant="outline">{topicLabel(group.topic)}</Badge>
-              {group.target_page_id && (
-                <Badge variant="outline" className="max-w-full truncate">
-                  {group.target_page_id}
-                </Badge>
-              )}
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={group.action === "bulk_reject_non_durable" ? "outline" : "default"}
+                  onClick={() => onApplyAction(group)}
+                  disabled={!canApply || actionLoading !== null}
+                  className="h-8 gap-2"
+                  title={reworkActionButtonLabel(group.action)}
+                >
+                  {isCurrentAction ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ActionIcon className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {reworkActionButtonLabel(group.action)}
+                </Button>
+              </div>
             </div>
-            {group.examples[0] && (
-              <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                {group.examples[0].question}
-              </p>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {triage.group_count > visibleGroups.length && (
+        <p className="mt-3 text-xs leading-5 text-muted-foreground">
+          Showing {visibleGroups.length.toLocaleString()} of {triage.group_count.toLocaleString()} groups.
+          Refresh after each action to load the next highest-impact group.
+        </p>
+      )}
     </section>
   );
 }
@@ -1148,6 +1242,18 @@ export default function KnowledgeUpdatesPage() {
     [queueCounts],
   );
 
+  const applyLoadedKnowledgeUpdate = useCallback((current: KnowledgeUpdateResponse | null) => {
+    setData(current);
+    setOperations(current?.proposal.operations ?? []);
+    setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
+    setFeedbackTags(current?.proposal.feedback_tags ?? []);
+    setFutureGeneratorNote(current?.proposal.future_generator_note ?? "");
+    setDocumentMode("diff");
+    setEditingDocumentLine(null);
+    setShowConversation(Boolean(current?.candidate.has_correction || current?.candidate.routing === "FULL_REVIEW"));
+    setShowFaqFallback(false);
+  }, []);
+
   const loadData = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setIsLoading(true);
     setIsRefreshing(true);
@@ -1172,15 +1278,7 @@ export default function KnowledgeUpdatesPage() {
       const counts = await countsResponse.json();
       const current = (await currentResponse.json()) as KnowledgeUpdateResponse | null;
       setQueueCounts(counts);
-      setData(current);
-      setOperations(current?.proposal.operations ?? []);
-      setDocumentMarkdown(current?.proposal.preview_markdown ?? "");
-      setFeedbackTags(current?.proposal.feedback_tags ?? []);
-      setFutureGeneratorNote(current?.proposal.future_generator_note ?? "");
-      setDocumentMode("diff");
-      setEditingDocumentLine(null);
-      setShowConversation(Boolean(current?.candidate.has_correction || current?.candidate.routing === "FULL_REVIEW"));
-      setShowFaqFallback(false);
+      applyLoadedKnowledgeUpdate(current);
       setLastUpdatedAt(new Date());
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load Knowledge Updates";
@@ -1190,7 +1288,7 @@ export default function KnowledgeUpdatesPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [activeQueue]);
+  }, [activeQueue, applyLoadedKnowledgeUpdate]);
 
   useEffect(() => {
     void loadData();
@@ -1234,6 +1332,52 @@ export default function KnowledgeUpdatesPage() {
       // Local storage can be unavailable in hardened browser contexts.
     }
   }, []);
+
+  const handleApplyReworkAction = useCallback(async (group: KnowledgeReworkGroup) => {
+    if (isDirty) {
+      toast.error("Save or approve the current edit before applying a rework action");
+      return;
+    }
+    const actionKey = `rework:${group.action}:${group.candidate_ids.join("-")}`;
+    setActionLoading(actionKey);
+    try {
+      const response = await makeAuthenticatedRequest(
+        "/admin/knowledge-updates/rework-triage/actions",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            action: group.action,
+            candidate_ids: group.candidate_ids,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail || "Failed to apply rework action");
+      }
+      const result = (await response.json()) as KnowledgeReworkActionResponse;
+      if (result.action === "review_cluster" && result.candidate && result.proposal) {
+        applyLoadedKnowledgeUpdate({
+          candidate: result.candidate,
+          proposal: result.proposal,
+          cluster: result.cluster ?? null,
+        });
+        setLastUpdatedAt(new Date());
+      } else {
+        await loadData({ silent: true });
+      }
+      if (result.success) {
+        toast.success(reworkResultMessage(result));
+      } else {
+        toast.error(result.message || "Some candidates still need manual review");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to apply rework action";
+      toast.error(message);
+    } finally {
+      setActionLoading(null);
+    }
+  }, [applyLoadedKnowledgeUpdate, isDirty, loadData]);
 
   const persistOperations = async (): Promise<KnowledgeProposal | null> => {
     if (!data || !isOperationDirty) return data?.proposal ?? null;
@@ -1528,7 +1672,11 @@ export default function KnowledgeUpdatesPage() {
         onShow={handleShowReviewGuide}
       />
 
-      <KnowledgeReworkTriagePanel triage={reworkTriage} />
+      <KnowledgeReworkTriagePanel
+        triage={reworkTriage}
+        actionLoading={actionLoading}
+        onApplyAction={handleApplyReworkAction}
+      />
 
       {error && (
         <Card className="border-destructive/30 bg-destructive/5">
