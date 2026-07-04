@@ -42,6 +42,7 @@ class FakeQdrantClient:
         self._collections = set(collections)
         self.upsert_calls: List[Any] = []
         self.delete_calls: List[Any] = []
+        self.ops: List[str] = []
 
     def get_collections(self):
         return SimpleNamespace(
@@ -51,19 +52,25 @@ class FakeQdrantClient:
     def upsert(self, collection_name: str, points, **kwargs):
         assert collection_name in self._collections
         self.upsert_calls.append(list(points))
+        self.ops.append("upsert")
         for point in points:
             self.points[point.id] = point
 
     def delete(self, collection_name: str, points_selector, **kwargs):
         assert collection_name in self._collections
         self.delete_calls.append(points_selector)
+        self.ops.append("delete")
         conditions = {
             cond.key: cond.match.value for cond in points_selector.filter.must
         }
+        excluded_ids = set()
+        for cond in getattr(points_selector.filter, "must_not", None) or []:
+            excluded_ids.update(getattr(cond, "has_id", None) or [])
         stale = [
             point_id
             for point_id, point in self.points.items()
-            if all(point.payload.get(k) == v for k, v in conditions.items())
+            if point_id not in excluded_ids
+            and all(point.payload.get(k) == v for k, v in conditions.items())
         ]
         for point_id in stale:
             del self.points[point_id]
@@ -152,6 +159,49 @@ class TestUpsertFAQDocuments:
         payload = client.points[_stable_int_id("faq:faq-1:chunk:0")].payload
         assert "New answer." in payload["content"]
         assert not client.search_contents("Old answer.")
+
+    def test_upsert_happens_before_stale_delete(self, manager, client):
+        """No availability gap: new points land before stale cleanup runs."""
+        manager.upsert_faq_documents(
+            faq_id="faq-1",
+            documents=[_faq_doc("faq-1", "How do I trade?", "Answer.")],
+            embeddings=_embeddings(),
+        )
+
+        assert client.ops == ["upsert", "delete"]
+
+    def test_stale_delete_excludes_freshly_upserted_points(self, manager, client):
+        """The cleanup filter must never match the points just written."""
+        manager.upsert_faq_documents(
+            faq_id="faq-1",
+            documents=[_faq_doc("faq-1", "How do I trade?", "Answer.")],
+            embeddings=_embeddings(),
+        )
+
+        stale_filter = client.delete_calls[-1].filter
+        excluded = set()
+        for cond in getattr(stale_filter, "must_not", None) or []:
+            excluded.update(getattr(cond, "has_id", None) or [])
+        assert _stable_int_id("faq:faq-1:chunk:0") in excluded
+        # The fresh point survived the cleanup pass.
+        assert _stable_int_id("faq:faq-1:chunk:0") in client.points
+
+    def test_stale_rebuild_era_points_removed_after_upsert(self, manager, client):
+        """Content-hash points from a full rebuild are cleaned up without a gap."""
+        legacy_point = SimpleNamespace(
+            id=999_999,
+            payload={"type": "faq", "id": "faq-1", "content": "Legacy answer."},
+        )
+        client.points[legacy_point.id] = legacy_point
+
+        manager.upsert_faq_documents(
+            faq_id="faq-1",
+            documents=[_faq_doc("faq-1", "How do I trade?", "New answer.")],
+            embeddings=_embeddings(),
+        )
+
+        assert 999_999 not in client.points
+        assert _stable_int_id("faq:faq-1:chunk:0") in client.points
 
     def test_new_faq_visible_to_search_without_rebuild(self, manager, client):
         manager.upsert_faq_documents(

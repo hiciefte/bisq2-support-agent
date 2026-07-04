@@ -325,9 +325,11 @@ class QdrantIndexManager:
         """Incrementally upsert one FAQ's documents into the live collection.
 
         Point IDs are derived deterministically from the FAQ id and chunk
-        index, so re-upserting the same FAQ overwrites its points. Stale
-        points (from a previous version with more chunks, or from a full
-        rebuild that used content-hash IDs) are removed first.
+        index, so re-upserting the same FAQ overwrites its points in place.
+        Stale points (from a previous version with more chunks, or from a
+        full rebuild that used content-hash IDs) are removed only AFTER the
+        new points are live, so concurrent queries never observe a window
+        where the FAQ has zero indexed points.
 
         Returns:
             Number of points upserted.
@@ -384,16 +386,33 @@ class QdrantIndexManager:
                 )
             )
 
-        self.delete_faq_points(faq_id)
         for upsert_points in self._iter_batches(points, upsert_batch_size):
             self._client.upsert(
                 collection_name=self.collection_name,
                 points=upsert_points,
                 wait=True,
             )
+        self._delete_stale_faq_points(faq_id, keep_ids=[p.id for p in points])
 
         logger.info(f"Incrementally upserted {len(points)} point(s) for FAQ {faq_id}")
         return len(points)
+
+    def _delete_stale_faq_points(self, faq_id: str, keep_ids: List[int]) -> None:
+        """Remove a FAQ's leftover points while keeping the ones just written.
+
+        Runs after the new points are upserted; excluding ``keep_ids`` via
+        ``must_not`` makes the cleanup safe to run against the live index.
+        """
+        base = self._faq_points_filter(faq_id)
+        stale_filter = rest.Filter(
+            must=base.must,
+            must_not=[rest.HasIdCondition(has_id=keep_ids)],
+        )
+        self._client.delete(
+            collection_name=self.collection_name,
+            points_selector=rest.FilterSelector(filter=stale_filter),
+            wait=True,
+        )
 
     def _build_doc_key(self, doc: Document) -> str:
         md = doc.metadata or {}
