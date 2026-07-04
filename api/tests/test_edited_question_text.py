@@ -294,6 +294,10 @@ class TestEditedQuestionTextService:
         mock_candidate.edited_staff_answer = None
         mock_candidate.protocol = "bisq_easy"
         mock_candidate.category = "Trading"
+        # approve_candidate now guards on review status and consults the
+        # faq_id link for crash recovery; model a normal pending candidate.
+        mock_candidate.review_status = "pending"
+        mock_candidate.faq_id = None
         mock_repo.get_by_id.return_value = mock_candidate
 
         # Create service
@@ -332,6 +336,10 @@ class TestEditedQuestionTextService:
         mock_candidate.edited_staff_answer = None
         mock_candidate.protocol = "bisq_easy"
         mock_candidate.category = "General"
+        # approve_candidate now guards on review status and consults the
+        # faq_id link for crash recovery; model a normal pending candidate.
+        mock_candidate.review_status = "pending"
+        mock_candidate.faq_id = None
         mock_repo.get_by_id.return_value = mock_candidate
 
         # Create service

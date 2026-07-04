@@ -8,7 +8,7 @@ operations, abstracting away SQL queries from the service layer.
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.db.database import get_database
@@ -957,3 +957,117 @@ class FeedbackRepository:
                     "negative": row["negative"],
                 }
             return result
+
+    @staticmethod
+    def _ensure_learning_state_table(cursor) -> None:
+        """Create the learning_state table if migrations have not run yet.
+
+        Mirrors migration 004_add_learning_state.sql. Fresh databases are
+        created from schema.sql before migrations run, so learning-state
+        reads/writes must be resilient to the table not existing yet.
+        """
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS learning_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+    def get_learning_state(self, key: str) -> Optional[Any]:
+        """
+        Get a JSON-deserialized learning state value.
+
+        Args:
+            key: State key (e.g. "source_weights", "prompt_guidance")
+
+        Returns:
+            Deserialized value, or None if the key does not exist
+        """
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            self._ensure_learning_state_table(cursor)
+
+            cursor.execute(
+                "SELECT value FROM learning_state WHERE key = ?",
+                (key,),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                return None
+
+            try:
+                return json.loads(row["value"])
+            except (TypeError, json.JSONDecodeError):
+                logger.warning("Invalid JSON in learning_state for key: %s", key)
+                return None
+
+    def set_learning_state(self, key: str, value: Any) -> None:
+        """
+        Persist a JSON-serializable learning state value (upsert).
+
+        Args:
+            key: State key (e.g. "source_weights", "prompt_guidance")
+            value: JSON-serializable value to store
+        """
+        serialized = json.dumps(value)
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            self._ensure_learning_state_table(cursor)
+
+            cursor.execute(
+                """
+                INSERT INTO learning_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, serialized, updated_at),
+            )
+            conn.commit()
+
+    def get_source_feedback_aggregates(
+        self, days: int = 30
+    ) -> Dict[str, Dict[str, int]]:
+        """
+        Aggregate feedback counts per source type over a recent time window.
+
+        Uses a single SQL aggregate (json_each over sources_used, falling back
+        to sources) instead of loading the full feedback corpus into memory.
+
+        Args:
+            days: Size of the time window in days
+
+        Returns:
+            Dict mapping source type -> {positive, negative, total}
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COALESCE(json_extract(s.value, '$.type'), 'unknown')
+                           AS source_type,
+                       SUM(CASE WHEN f.rating = 1 THEN 1 ELSE 0 END) AS positive,
+                       SUM(CASE WHEN f.rating = 1 THEN 0 ELSE 1 END) AS negative,
+                       COUNT(*) AS total
+                FROM feedback f, json_each(COALESCE(f.sources_used, f.sources)) AS s
+                WHERE f.timestamp >= ?
+                GROUP BY source_type
+                """,
+                (cutoff,),
+            )
+
+            return {
+                row["source_type"]: {
+                    "positive": row["positive"],
+                    "negative": row["negative"],
+                    "total": row["total"],
+                }
+                for row in cursor.fetchall()
+            }

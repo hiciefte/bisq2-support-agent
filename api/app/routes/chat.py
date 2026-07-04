@@ -1,9 +1,10 @@
+import asyncio
 import json
 import logging
 import time
 import uuid
-from pathlib import Path
-from typing import List, Literal, Optional, cast
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 from app.channels.escalation_localization import normalize_language_code
 from app.channels.gateway import ChannelGateway
@@ -14,6 +15,7 @@ from app.channels.plugins.web.identity import derive_web_user_context
 from app.channels.translations import get_chat_ui_labels
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
+from app.services.feedback_service import FeedbackService
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram
@@ -355,81 +357,122 @@ async def query(
         CURRENT_RESPONSE_TIME.set(total_time)
 
 
+# Memoization for /stats: FeedbackService caches raw rows for 300s, but the
+# aggregation below still iterates every row. The endpoint is public and hit
+# on each chat page load, so cache the derived dict for a short TTL.
+# Stored as a single (monotonic_timestamp, payload) tuple so reads/writes are
+# atomic without locking; a rare concurrent recompute is benign.
+_CHAT_STATS_TTL_SECONDS = 60.0
+_chat_stats_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+
+# Default average response time (seconds) when no data is available: 5 minutes
+_DEFAULT_AVERAGE_RESPONSE_TIME = 300.0
+
+
+def reset_chat_stats_cache() -> None:
+    """Clear the memoized chat stats payload (used by tests)."""
+    global _chat_stats_cache
+    _chat_stats_cache = None
+
+
+def compute_chat_stats(
+    feedback: List[Dict[str, Any]], now: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """Aggregate response-time statistics from feedback rows.
+
+    Pure, synchronous function so it can run in a worker thread and be
+    unit-tested directly.
+
+    Args:
+        feedback: Raw feedback rows from FeedbackService.load_feedback()
+        now: Reference time for the 24h window (defaults to the current UTC
+            time; naive values are interpreted as UTC)
+
+    Returns:
+        Stats payload with total_queries, average_response_time and
+        last_24h_average_response_time (schema consumed by the web frontend).
+    """
+    stats: Dict[str, Any] = {
+        "total_queries": 0,
+        "average_response_time": _DEFAULT_AVERAGE_RESPONSE_TIME,
+        "last_24h_average_response_time": _DEFAULT_AVERAGE_RESPONSE_TIME,
+    }
+
+    # FeedbackService writes UTC ISO timestamps, so fromisoformat() yields
+    # AWARE datetimes. Normalize both comparison sides to UTC-aware values;
+    # a naive/aware mix would raise TypeError and silently drop recent
+    # feedback out of the 24h window via the tolerant except below.
+    reference_time = now or datetime.now(timezone.utc)
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    cutoff_time = reference_time - timedelta(hours=24)
+
+    total_queries = 0
+    total_response_time = 0.0
+    recent_queries = 0
+    recent_response_time = 0.0
+
+    for item in feedback:
+        metadata = item.get("metadata") or {}
+        response_time = metadata.get("response_time")
+        if not response_time:
+            continue
+
+        total_queries += 1
+        total_response_time += response_time
+
+        timestamp_raw = item.get("timestamp")
+        if timestamp_raw:
+            try:
+                parsed = datetime.fromisoformat(timestamp_raw)
+                if parsed.tzinfo is None:
+                    # Legacy naive timestamps are treated as UTC.
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if parsed > cutoff_time:
+                    recent_queries += 1
+                    recent_response_time += response_time
+            except (ValueError, TypeError):
+                # If timestamp parsing fails, skip the 24h-window check
+                pass
+
+    if total_queries > 0:
+        stats["total_queries"] = total_queries
+        stats["average_response_time"] = total_response_time / total_queries
+
+    if recent_queries > 0:
+        stats["last_24h_average_response_time"] = recent_response_time / recent_queries
+    else:
+        # If no recent queries, use the overall average
+        stats["last_24h_average_response_time"] = stats["average_response_time"]
+
+    return stats
+
+
+def _load_and_compute_chat_stats(feedback_service: FeedbackService) -> Dict[str, Any]:
+    """Load feedback rows and aggregate them (runs in a worker thread)."""
+    return compute_chat_stats(feedback_service.load_feedback())
+
+
 @router.get("/stats")
 async def get_chat_stats(settings: Settings = Depends(get_settings)):
-    """Get statistics about chat responses including average response time."""
+    """Get statistics about chat responses including average response time.
+
+    Statistics are sourced from the SQLite-backed FeedbackService (the
+    authoritative feedback store), computed in a worker thread, and memoized
+    for a short TTL so the endpoint never blocks the event loop.
+    """
+    global _chat_stats_cache
+
     try:
-        # Get the feedback directory from settings
-        feedback_dir = Path(settings.FEEDBACK_DIR_PATH)
+        cached = _chat_stats_cache
+        if cached is not None:
+            cached_at, payload = cached
+            if time.monotonic() - cached_at < _CHAT_STATS_TTL_SECONDS:
+                return payload
 
-        # Default values if no data is available
-        stats = {
-            "total_queries": 0,
-            "average_response_time": 300.0,  # Default to 5 minutes
-            "last_24h_average_response_time": 300.0,
-        }
-
-        if not feedback_dir.exists():
-            return stats
-
-        total_queries = 0
-        total_response_time = 0
-
-        # For tracking recent queries (last 24 hours)
-        import datetime
-
-        recent_queries = 0
-        recent_response_time = 0
-        cutoff_time = datetime.datetime.now() - datetime.timedelta(hours=24)
-
-        # Process all feedback files
-        for feedback_file in feedback_dir.glob("feedback_*.jsonl"):
-            if not feedback_file.exists():
-                continue
-
-            with open(feedback_file) as f:
-                for line in f:
-                    try:
-                        feedback = json.loads(line)
-
-                        # Check if metadata and response_time exist
-                        if feedback.get("metadata") and feedback["metadata"].get(
-                            "response_time"
-                        ):
-                            total_queries += 1
-                            response_time = feedback["metadata"]["response_time"]
-                            total_response_time += response_time
-
-                            # Check if this is a recent query
-                            if "timestamp" in feedback:
-                                try:
-                                    timestamp = datetime.datetime.fromisoformat(
-                                        feedback["timestamp"]
-                                    )
-                                    if timestamp > cutoff_time:
-                                        recent_queries += 1
-                                        recent_response_time += response_time
-                                except (ValueError, TypeError):
-                                    # If timestamp parsing fails, skip this check
-                                    pass
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Invalid JSON in feedback file: {feedback_file}"
-                        )
-                        continue
-
-        # Calculate averages if we have data
-        if total_queries > 0:
-            stats["total_queries"] = total_queries
-            stats["average_response_time"] = total_response_time / total_queries
-
-        if recent_queries > 0:
-            stats["last_24h_average_response_time"] = (
-                recent_response_time / recent_queries
-            )
-        else:
-            # If no recent queries, use the overall average
-            stats["last_24h_average_response_time"] = stats["average_response_time"]
+        feedback_service = FeedbackService(settings=settings)
+        stats = await asyncio.to_thread(_load_and_compute_chat_stats, feedback_service)
+        _chat_stats_cache = (time.monotonic(), stats)
 
         logger.info(f"Calculated chat stats: {stats}")
         return stats

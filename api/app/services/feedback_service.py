@@ -12,6 +12,7 @@ import asyncio
 import logging
 import math
 import os
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,16 @@ from fastapi import Request
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Cooldown between feedback-triggered weight recomputes. The recompute is
+# idempotent (pure function of the 30-day window), so events skipped inside
+# the cooldown window lose nothing.
+_LEARNING_COOLDOWN_SECONDS = 5.0
+
+# TTL for the read-through caches over persisted learning state (weights and
+# prompt guidance), so state written by the weekly cron script becomes
+# visible to the live server without a restart.
+_LEARNING_STATE_TTL_SECONDS = 300.0
 
 
 class FeedbackService:
@@ -80,11 +91,22 @@ class FeedbackService:
 
             logger.info("Feedback service initialized with SQLite database")
 
-            # Initialize modular components
+            # Initialize modular components. Weight manager and prompt
+            # optimizer persist their learning state through the repository
+            # so it survives restarts and process boundaries.
             self.analyzer = FeedbackAnalyzer()
             self.filters = FeedbackFilters()
-            self.weight_manager = FeedbackWeightManager()
-            self.prompt_optimizer = PromptOptimizer()
+            self.weight_manager = FeedbackWeightManager(repository=self.repository)
+            self.prompt_optimizer = PromptOptimizer(repository=self.repository)
+
+            # Debounce state for feedback-triggered weight recomputes
+            self._learning_lock = asyncio.Lock()
+            self._last_learning_trigger: Optional[float] = None
+            self._pending_learning_task: Optional[asyncio.Task] = None
+
+            # Read-through cache timestamps over persisted learning state
+            self._weights_refreshed_at: Optional[float] = None
+            self._guidance_refreshed_at: Optional[float] = None
 
     def _is_valid_feedback_item(self, item: Dict[str, Any]) -> bool:
         """Check if a feedback item has required fields.
@@ -198,9 +220,10 @@ class FeedbackService:
             self._feedback_cache = None
             self._last_load_time = None
 
-            # Apply feedback weights to improve future responses (best-effort)
+            # Apply feedback weights to improve future responses (best-effort,
+            # debounced: the recompute is idempotent over the 30-day window)
             try:
-                await self.apply_feedback_weights_async(feedback_data)
+                await self._trigger_weight_learning()
             except Exception as e:
                 logger.warning(
                     "Learning trigger failed after storing feedback %s (non-fatal): %s",
@@ -355,6 +378,69 @@ class FeedbackService:
         """Analyze feedback to identify common issues. Delegates to analyzer."""
         return self.analyzer.analyze_feedback_issues(feedback)
 
+    async def _trigger_weight_learning(self) -> None:
+        """Trigger feedback weight recalculation with debounce.
+
+        Uses a cooldown window to prevent rapid-fire recalculations when
+        multiple feedback events arrive in quick succession. Because the
+        recompute is an idempotent function of the 30-day window, events
+        skipped inside the cooldown lose nothing: a trailing recompute is
+        scheduled for after the cooldown so their data is always learned,
+        even when no later write arrives.
+        """
+        if self._within_learning_cooldown():
+            self._schedule_trailing_recompute()
+            return
+
+        async with self._learning_lock:
+            # Double-check under lock
+            if self._within_learning_cooldown():
+                self._schedule_trailing_recompute()
+                return
+            await self.apply_feedback_weights_async()
+            self._last_learning_trigger = time.monotonic()
+
+    def _within_learning_cooldown(self) -> bool:
+        """Return True while the debounce cooldown window is active."""
+        return (
+            self._last_learning_trigger is not None
+            and time.monotonic() - self._last_learning_trigger
+            < _LEARNING_COOLDOWN_SECONDS
+        )
+
+    def _schedule_trailing_recompute(self) -> None:
+        """Schedule one recompute for after the cooldown window elapses.
+
+        Writes that land inside the cooldown would otherwise never be
+        learned unless another write arrived later. Only one trailing task
+        is kept pending at a time; the recompute is idempotent, so a
+        duplicate run is harmless.
+        """
+        if (
+            self._pending_learning_task is not None
+            and not self._pending_learning_task.done()
+        ):
+            return
+
+        async def _trailing_recompute() -> None:
+            try:
+                remaining = _LEARNING_COOLDOWN_SECONDS
+                if self._last_learning_trigger is not None:
+                    elapsed = time.monotonic() - self._last_learning_trigger
+                    remaining = max(_LEARNING_COOLDOWN_SECONDS - elapsed, 0.0)
+                await asyncio.sleep(remaining)
+                async with self._learning_lock:
+                    await self.apply_feedback_weights_async()
+                    self._last_learning_trigger = time.monotonic()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "Trailing feedback weight recompute failed (non-fatal): %s", e
+                )
+
+        self._pending_learning_task = asyncio.create_task(_trailing_recompute())
+
     def apply_feedback_weights(self, feedback_data=None) -> bool:
         """Update source weights based on feedback data (synchronous version).
 
@@ -362,8 +448,9 @@ class FeedbackService:
         prioritizing more helpful content sources based on user feedback ratings.
 
         Args:
-            feedback_data: Optional specific feedback entry to use for adjustment.
-                          If None, all feedback will be processed.
+            feedback_data: Retained for backward compatibility; the recompute
+                          always covers the full 30-day window via an SQL
+                          aggregate, so this argument is ignored.
 
         Returns:
             bool: True if weights were successfully updated
@@ -394,43 +481,62 @@ class FeedbackService:
     def _apply_feedback_weights(self, feedback_data=None) -> bool:
         """Core implementation for applying feedback weight adjustments.
 
-        Delegates to FeedbackWeightManager for weight calculations.
+        Aggregates the 30-day feedback window with a single SQL query
+        (instead of reloading the full corpus) and delegates the idempotent
+        recompute to FeedbackWeightManager, which persists the result.
 
         Args:
-            feedback_data: Optional specific feedback entry to process.
-                          If None, all feedback will be processed.
+            feedback_data: Retained for backward compatibility; ignored.
 
         Returns:
             bool: True if weights were successfully updated
         """
         try:
-            feedback = self.load_feedback()
-            if not feedback:
-                logger.info("No feedback available for weight adjustment")
-                return True
-
-            # Delegate to weight manager
-            self.weight_manager.apply_feedback_weights(feedback)
+            aggregates = self.repository.get_source_feedback_aggregates()
+            self.weight_manager.apply_feedback_aggregates(aggregates)
+            # In-process recompute is authoritative — refresh the cache stamp
+            self._weights_refreshed_at = time.monotonic()
             return True
 
         except Exception as e:
             logger.error(f"Error applying feedback weights: {e!s}", exc_info=True)
             return False
 
+    def _learning_state_cache_expired(self, refreshed_at: Optional[float]) -> bool:
+        """Check whether a learning-state read-through cache stamp expired."""
+        return (
+            refreshed_at is None
+            or time.monotonic() - refreshed_at >= _LEARNING_STATE_TTL_SECONDS
+        )
+
     def get_prompt_guidance(self) -> List[str]:
         """Get the current prompt guidance based on feedback.
+
+        Reads through a short-TTL in-memory cache backed by the persisted
+        learning state, so guidance computed by the weekly cron script is
+        visible to the live server without a restart.
 
         Returns:
             List of guidance strings to incorporate into prompts
         """
+        if self._learning_state_cache_expired(self._guidance_refreshed_at):
+            self.prompt_optimizer.load_guidance()
+            self._guidance_refreshed_at = time.monotonic()
         return self.prompt_optimizer.get_prompt_guidance()
 
     def get_source_weights(self) -> Dict[str, float]:
         """Get the current source weights based on feedback.
 
+        Reads through a short-TTL in-memory cache backed by the persisted
+        learning state, so weights recomputed by the weekly cron script are
+        visible to the live server without a restart.
+
         Returns:
             Dictionary mapping source types to their weights
         """
+        if self._learning_state_cache_expired(self._weights_refreshed_at):
+            self.weight_manager.load_weights()
+            self._weights_refreshed_at = time.monotonic()
         return self.weight_manager.get_source_weights()
 
     def get_feedback_with_filters(

@@ -773,6 +773,39 @@ class FAQRepositorySQLite:
 
         return all_faqs
 
+    def get_faq_by_id(self, faq_id: Union[int, str]) -> Optional[FAQIdentifiedItem]:
+        """
+        Get a single FAQ by its ID.
+
+        Avoids full-table scans for single-record lookups (uses the
+        integer primary key index).
+
+        Security mitigations:
+        - Parameterized query prevents SQL injection
+        - Retry logic for SQLITE_BUSY errors
+
+        Args:
+            faq_id: FAQ ID to look up (int or str, converted to int)
+
+        Returns:
+            FAQIdentifiedItem if found, None otherwise
+        """
+        try:
+            faq_id_int = int(faq_id) if isinstance(faq_id, str) else faq_id
+        except ValueError:
+            logger.warning("Invalid FAQ ID for lookup: %s", faq_id)
+            return None
+
+        def _read_operation():
+            with self._read_lock:
+                cursor = self._reader_conn.execute(
+                    "SELECT * FROM faqs WHERE id = ?", (faq_id_int,)
+                )
+                return cursor.fetchone()
+
+        row = self._execute_with_retry(_read_operation)
+        return self._row_to_faq(row) if row else None
+
     def update_faq(
         self, faq_id: Union[int, str], faq_item: FAQItem
     ) -> Optional[FAQIdentifiedItem]:
@@ -871,12 +904,7 @@ class FAQRepositorySQLite:
             return None
 
         # Fetch and return the updated FAQ
-        with self._read_lock:
-            cursor = self._reader_conn.execute(
-                "SELECT * FROM faqs WHERE id = ?", (faq_id_int,)
-            )
-            row = cursor.fetchone()
-            return self._row_to_faq(row) if row else None
+        return self.get_faq_by_id(faq_id_int)
 
     def delete_faq(self, faq_id: Union[int, str]) -> bool:
         """

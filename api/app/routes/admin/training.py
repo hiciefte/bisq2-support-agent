@@ -8,7 +8,10 @@ from typing import Any, Dict, List, Optional
 from app.core.exceptions import BaseAppException
 from app.core.security import verify_admin_access
 from app.services.faq.duplicate_guard import build_duplicate_faq_detail
-from app.services.training.unified_pipeline_service import DuplicateFAQError
+from app.services.training.unified_pipeline_service import (
+    CandidateReviewConflictError,
+    DuplicateFAQError,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -567,6 +570,11 @@ async def approve_candidate(
                 similar_faqs=e.similar_faqs,
                 context={"candidate_id": candidate_id},
             ),
+        ) from e
+    except CandidateReviewConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
         ) from e
     except Exception as e:
         logger.exception(f"Failed to approve candidate {candidate_id}")

@@ -149,6 +149,33 @@ class DuplicateFAQError(Exception):
         self.candidate_id = candidate_id
 
 
+class CandidateReviewConflictError(Exception):
+    """Raised when a review action races or repeats a previous review.
+
+    Covers approving a candidate that is no longer pending (already
+    approved/rejected by another reviewer, or by a previous request) and
+    losing the guarded-update race between the status check and the write.
+    Routes should surface this as an HTTP 409 conflict.
+
+    Attributes:
+        candidate_id: ID of the conflicting candidate
+        review_status: Candidate status observed at conflict time
+        faq_id: FAQ already linked to the candidate, if any
+    """
+
+    def __init__(
+        self,
+        message: str,
+        candidate_id: int,
+        review_status: Optional[str] = None,
+        faq_id: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.candidate_id = candidate_id
+        self.review_status = review_status
+        self.faq_id = faq_id
+
+
 class UnifiedPipelineService:
     """
     Orchestrates the unified FAQ training pipeline.
@@ -986,16 +1013,60 @@ class UnifiedPipelineService:
 
         Raises:
             ValueError: If candidate not found
+            CandidateReviewConflictError: If the candidate is not pending,
+                another reviewer processed it concurrently, or an unlinked
+                FAQ with the exact question text already exists (requires
+                explicit admin resolution or force=True)
             DuplicateFAQError: If similar FAQ(s) already exist and force=False
         """
         candidate = self.repository.get_by_id(candidate_id)
         if candidate is None:
             raise ValueError(f"Candidate {candidate_id} not found")
 
-        # Check for duplicate FAQs before creating (skip if force=True)
+        # Guard: never write a FAQ for a candidate that was already reviewed.
+        if candidate.review_status != "pending":
+            raise CandidateReviewConflictError(
+                f"Candidate {candidate_id} is not pending "
+                f"(status: {candidate.review_status})",
+                candidate_id=candidate_id,
+                review_status=candidate.review_status,
+                faq_id=candidate.faq_id,
+            )
+
         # Use edited question if available (admin may have improved phrasing)
         question_to_check = candidate.edited_question_text or candidate.question_text
-        if self.rag_service is not None and not force:
+
+        # Idempotent recovery: a previous approval may have crashed after
+        # creating the FAQ but before marking the candidate approved. Reuse
+        # that FAQ instead of creating a duplicate - but ONLY via the
+        # candidate's own persisted faq_id link, which proves provenance.
+        recovered_faq_id = self._recover_linked_faq_id(candidate)
+
+        # An unlinked FAQ that merely shares the exact question text may
+        # belong to an UNRELATED candidate (FAQs carry no candidate
+        # provenance). Silently relinking would skip duplicate detection and
+        # could attach this candidate to the wrong FAQ, so surface a conflict
+        # for explicit admin resolution. force=True proceeds to the normal
+        # creation path instead.
+        if recovered_faq_id is None and not force:
+            conflicting_faq_id = self._find_exact_question_faq_id(
+                candidate, question_to_check
+            )
+            if conflicting_faq_id is not None:
+                raise CandidateReviewConflictError(
+                    f"Candidate {candidate_id} matches existing FAQ "
+                    f"{conflicting_faq_id} by exact question text; resolve "
+                    f"the existing FAQ or re-approve with force=True to "
+                    f"create a new FAQ",
+                    candidate_id=candidate_id,
+                    review_status=candidate.review_status,
+                    faq_id=conflicting_faq_id,
+                )
+
+        # Check for duplicate FAQs before creating (skip if force=True or if
+        # we are re-linking the FAQ from an interrupted approval - the
+        # similarity check would flag that very FAQ).
+        if self.rag_service is not None and not force and recovered_faq_id is None:
             similar_faqs = await find_similar_faqs(
                 self.rag_service,
                 question=question_to_check,
@@ -1020,27 +1091,59 @@ class UnifiedPipelineService:
         final_answer = candidate.edited_staff_answer or candidate.staff_answer
         final_question = candidate.edited_question_text or candidate.question_text
 
-        # Create verified FAQ using FAQItem model
-        faq_item = FAQItem(
-            question=final_question,
-            answer=final_answer,
-            source=faq_source,
-            verified=True,  # Pipeline approval = admin verification
-            verified_at=now,
-            created_at=now,
-            protocol=cast(
-                Literal["multisig_v1", "bisq_easy", "musig", "all"],
-                candidate.protocol,
-            ),  # Preserve protocol context from candidate
-            category=candidate.category
-            or "General",  # Preserve category from candidate
-        )
-        faq = self.faq_service.add_faq(faq_item)
+        created_faq = False
+        if recovered_faq_id is not None:
+            faq_id = recovered_faq_id
+            logger.warning(
+                "Reusing existing FAQ %s for candidate %s "
+                "(recovered from interrupted approval)",
+                faq_id,
+                candidate_id,
+            )
+        else:
+            # Create verified FAQ using FAQItem model
+            faq_item = FAQItem(
+                question=final_question,
+                answer=final_answer,
+                source=faq_source,
+                verified=True,  # Pipeline approval = admin verification
+                verified_at=now,
+                created_at=now,
+                protocol=cast(
+                    Literal["multisig_v1", "bisq_easy", "musig", "all"],
+                    candidate.protocol,
+                ),  # Preserve protocol context from candidate
+                category=candidate.category
+                or "General",  # Preserve category from candidate
+            )
+            faq = self.faq_service.add_faq(faq_item)
+            faq_id = faq.id if hasattr(faq, "id") else str(faq)
+            created_faq = True
 
-        faq_id = faq.id if hasattr(faq, "id") else str(faq)
-
-        # Update candidate status
-        self.repository.approve(candidate_id, reviewer, faq_id)
+        # Guarded update: only flips the candidate if it is still pending, so
+        # a concurrent reviewer cannot be silently overwritten.
+        if not self.repository.approve_pending(candidate_id, reviewer, faq_id):
+            if created_faq:
+                # Compensate: remove the FAQ we just created so the lost race
+                # does not leave an orphaned verified FAQ behind.
+                try:
+                    self.faq_service.delete_faq(faq_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to roll back FAQ %s after losing approval "
+                        "race for candidate %s",
+                        faq_id,
+                        candidate_id,
+                    )
+            current = self.repository.get_by_id(candidate_id)
+            current_status = current.review_status if current else "unknown"
+            raise CandidateReviewConflictError(
+                f"Candidate {candidate_id} was reviewed concurrently "
+                f"(status: {current_status})",
+                candidate_id=candidate_id,
+                review_status=current_status,
+                faq_id=current.faq_id if current else None,
+            )
 
         # Close the thread if one exists (Cycle 12)
         thread = self.repository.find_thread_by_candidate_id(candidate_id)
@@ -1052,13 +1155,61 @@ class UnifiedPipelineService:
             )
 
         # Record metrics
-        training_faqs_created.inc()
+        if created_faq:
+            training_faqs_created.inc()
         training_human_reviews.labels(outcome="approved").inc()
 
         # Update queue metrics after approval
         update_queue_metrics(self.repository.get_queue_counts())
 
         return faq_id
+
+    def _recover_linked_faq_id(self, candidate: UnifiedFAQCandidate) -> Optional[str]:
+        """Recover the FAQ created by a previously interrupted approval.
+
+        Only the candidate's own persisted faq_id link (validated against
+        faqs.db) counts as recovery evidence - it proves the FAQ was created
+        for THIS candidate. Exact-question-text matches are handled
+        separately as review conflicts because FAQs carry no candidate
+        provenance.
+
+        Returns:
+            The recoverable FAQ id, or None when a new FAQ must be created.
+        """
+        if candidate.faq_id:
+            if self.faq_service.get_faq_by_id(candidate.faq_id) is not None:
+                return candidate.faq_id
+            logger.warning(
+                "Candidate %s links to missing FAQ %s; creating a new FAQ",
+                candidate.id,
+                candidate.faq_id,
+            )
+        return None
+
+    def _find_exact_question_faq_id(
+        self, candidate: UnifiedFAQCandidate, question: str
+    ) -> Optional[str]:
+        """Find an existing, unlinked FAQ with the exact question text.
+
+        The lookup is best-effort: any failure falls back to normal FAQ
+        creation rather than blocking the approval.
+
+        Returns:
+            The matching FAQ id, or None when no exact match exists.
+        """
+        try:
+            matches = self.faq_service.get_filtered_faqs(search_text=question)
+            for faq in matches:
+                if faq.question == question and faq.id:
+                    return faq.id
+        except Exception:
+            logger.warning(
+                "Could not check faqs.db for an existing FAQ during approval "
+                "of candidate %s; continuing with FAQ creation",
+                candidate.id,
+                exc_info=True,
+            )
+        return None
 
     async def reject_candidate(
         self,

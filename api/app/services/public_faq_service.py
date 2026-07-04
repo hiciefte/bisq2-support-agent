@@ -142,9 +142,7 @@ class PublicFAQService:
         Returns:
             FAQIdentifiedItem or None if not found or not verified
         """
-        faq = next(
-            (faq for faq in self.faq_service.get_all_faqs() if faq.id == faq_id), None
-        )
+        faq = self.faq_service.get_faq_by_id(faq_id)
         # Only return verified FAQs for public consumption
         if faq and not faq.verified:
             return None

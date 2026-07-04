@@ -56,7 +56,7 @@ class TestPublicFAQService:
         mock_service.get_filtered_faqs.return_value = [
             f for f in mock_faqs if f.verified
         ]
-        mock_service.repository.get_faq_by_id.side_effect = lambda faq_id: next(
+        mock_service.get_faq_by_id.side_effect = lambda faq_id: next(
             (faq for faq in mock_faqs if faq.id == faq_id), None
         )
 
@@ -228,6 +228,9 @@ class TestPublicFAQService:
         ]
         mock_service.get_all_faqs.return_value = mock_faqs
         mock_service.get_filtered_faqs.return_value = [mock_faqs[0]]  # Only verified
+        mock_service.get_faq_by_id.side_effect = lambda faq_id: next(
+            (faq for faq in mock_faqs if faq.id == faq_id), None
+        )
 
         # Reset singleton for this test
         PublicFAQService._instance = None

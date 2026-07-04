@@ -1,7 +1,10 @@
 import {
+  changedMarkdownSections,
   deriveReviewFeedbackPanelState,
   feedbackTagsForApproval,
   inferFeedbackTags,
+  PREAMBLE_SECTION_KEY,
+  supportKnowledgeSections,
 } from "./review-feedback";
 
 describe("knowledge update review feedback", () => {
@@ -49,5 +52,52 @@ describe("knowledge update review feedback", () => {
     expect(
       inferFeedbackTags(["Canonical Support Answer", "Evidence / Sources"], null),
     ).toEqual(["factual_correction", "source_support"]);
+  });
+
+  describe("preamble edits before the first section header", () => {
+    const beforeMarkdown = "# Old Title\n\n## Canonical Support Answer\nSame body";
+    const afterMarkdown = "# New Title\n\n## Canonical Support Answer\nSame body";
+
+    it("detects a preamble-only edit as a changed section", () => {
+      expect(changedMarkdownSections(beforeMarkdown, afterMarkdown)).toEqual([
+        PREAMBLE_SECTION_KEY,
+      ]);
+    });
+
+    it("reports no changed sections when the preamble is untouched", () => {
+      expect(changedMarkdownSections(beforeMarkdown, beforeMarkdown)).toEqual([]);
+    });
+
+    it("keeps frontmatter-only differences out of the section diff", () => {
+      const withFrontmatter =
+        "---\ntitle: a\n---\n# Title\n\n## Canonical Support Answer\nBody";
+      const withOtherFrontmatter =
+        "---\ntitle: b\n---\n# Title\n\n## Canonical Support Answer\nBody";
+      expect(
+        changedMarkdownSections(withFrontmatter, withOtherFrontmatter),
+      ).toEqual([]);
+    });
+
+    it("treats a preamble-only reviewer edit as a learning signal, not good generation", () => {
+      const reviewerChangedSections = supportKnowledgeSections(
+        changedMarkdownSections(beforeMarkdown, afterMarkdown),
+      );
+
+      expect(inferFeedbackTags(reviewerChangedSections, null)).not.toContain(
+        "good_generation",
+      );
+
+      const state = deriveReviewFeedbackPanelState({
+        proposalChangedSections: [],
+        reviewerChangedSections,
+        feedbackTags: [],
+        futureGeneratorNote: "",
+        answerRating: null,
+      });
+
+      expect(state.mode).toBe("learning");
+      expect(state.summary).toBe("You changed 1 section");
+      expect(state.visibleSections).toEqual(["Document preamble"]);
+    });
   });
 });

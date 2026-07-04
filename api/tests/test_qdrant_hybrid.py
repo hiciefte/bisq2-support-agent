@@ -365,3 +365,162 @@ class TestBM25TokenizerIntegration:
             token = retriever._bm25_tokenizer.get_token(idx)
             assert token is not None
             assert token in ["bisq", "reputation"]
+
+
+def _scored_result(doc_id: str, score: float, payload=None):
+    """Build a mock Qdrant scored point."""
+    result = MagicMock()
+    result.id = doc_id
+    result.score = score
+    result.payload = payload or {
+        "content": f"Content {doc_id}",
+        "source": f"{doc_id}.md",
+    }
+    return result
+
+
+class TestAbsoluteSimilarityScores:
+    """Absolute vs relative score semantics (review finding G1).
+
+    retrieve_semantic_with_scores() must return raw cosine similarity
+    (calibrated, absolute) so absolute-threshold consumers like duplicate
+    detection work. Min-max normalization stays on the fusion/ranking path,
+    but its degenerate case must not fabricate a perfect 1.0.
+    """
+
+    @pytest.fixture
+    def mock_settings(self):
+        settings = MagicMock()
+        settings.QDRANT_HOST = "localhost"
+        settings.QDRANT_PORT = 6333
+        settings.QDRANT_COLLECTION = "test_collection"
+        settings.HYBRID_SEMANTIC_WEIGHT = 0.7
+        settings.HYBRID_KEYWORD_WEIGHT = 0.3
+        settings.OPENAI_API_KEY = "test-api-key"
+        settings.OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+        return settings
+
+    @pytest.fixture
+    def mock_qdrant_client(self):
+        with patch("app.services.rag.qdrant_hybrid_retriever.QdrantClient") as mock:
+            client = MagicMock()
+            mock.return_value = client
+            yield client
+
+    @pytest.fixture
+    def mock_embeddings(self):
+        with patch(
+            "app.services.rag.embeddings_provider.OpenAIEmbeddingsProvider"
+        ) as mock:
+            embeddings = MagicMock()
+            embeddings.embed_query.return_value = [0.1] * 1536
+            mock.from_settings.return_value = embeddings
+            yield embeddings
+
+    def test_semantic_scores_low_relevance_not_inflated(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """A single barely-related hit keeps its raw cosine score (~0.3)."""
+        mock_qdrant_client.search.return_value = [_scored_result("doc1", 0.3)]
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        docs = retriever.retrieve_semantic_with_scores("unrelated query", k=5)
+
+        assert len(docs) == 1
+        assert docs[0].score == pytest.approx(0.3)
+        # Must NOT pass the FAQ-similarity (0.65) or duplicate (0.85) thresholds
+        assert docs[0].score < 0.65
+        assert docs[0].score < 0.85
+
+    def test_semantic_scores_near_duplicate_passes_threshold(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """A true near-duplicate (cosine ~0.95) passes the 0.85 threshold."""
+        mock_qdrant_client.search.return_value = [_scored_result("doc1", 0.95)]
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        docs = retriever.retrieve_semantic_with_scores("duplicate question", k=5)
+
+        assert len(docs) == 1
+        assert docs[0].score == pytest.approx(0.95)
+        assert docs[0].score >= 0.85
+
+    def test_semantic_scores_clamped_to_unit_interval(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """Raw scores outside [0, 1] are clamped, not min-max rescaled."""
+        mock_qdrant_client.search.return_value = [
+            _scored_result("doc1", 1.3),
+            _scored_result("doc2", -0.2),
+        ]
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        docs = retriever.retrieve_semantic_with_scores("query", k=5)
+
+        assert [doc.score for doc in docs] == [1.0, 0.0]
+
+    def test_semantic_scores_handles_errors_gracefully(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        mock_qdrant_client.search.side_effect = Exception("Search failed")
+
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        assert retriever.retrieve_semantic_with_scores("query", k=5) == []
+
+    def test_normalize_scores_degenerate_cases_clamp_raw(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """All-equal/single-result sets must not fabricate 1.0."""
+        retriever = QdrantHybridRetriever(mock_settings)
+
+        # Single low-relevance result keeps its raw (clamped) score
+        assert retriever._normalize_scores({"a": 0.3}) == {"a": pytest.approx(0.3)}
+        # Equal scores above 1.0 clamp to 1.0
+        assert retriever._normalize_scores({"a": 1.7, "b": 1.7}) == {
+            "a": 1.0,
+            "b": 1.0,
+        }
+        # Negative scores clamp to 0.0
+        assert retriever._normalize_scores({"a": -0.4}) == {"a": 0.0}
+
+    def test_weighted_hybrid_single_result_not_certain_duplicate(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """Fused score of a lone low-relevance hit must not be 1.0."""
+        dense_results = [_scored_result("doc1", 0.3)]
+        sparse_results = [_scored_result("doc1", 2.0)]
+        mock_qdrant_client.search.side_effect = [dense_results, sparse_results]
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        docs = retriever.retrieve_with_scores("query", k=5)
+
+        assert len(docs) == 1
+        # 0.7 * clamp(0.3) + 0.3 * clamp(2.0) = 0.21 + 0.3 = 0.51
+        assert docs[0].score == pytest.approx(0.51)
+        assert docs[0].score < 0.85
+
+    def test_weighted_hybrid_ranking_order_unchanged(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """Multi-result fusion still uses min-max ranking (order stable)."""
+        dense_results = [
+            _scored_result("doc1", 0.9),
+            _scored_result("doc2", 0.5),
+            _scored_result("doc3", 0.1),
+        ]
+        sparse_results = [
+            _scored_result("doc2", 5.0),
+            _scored_result("doc1", 1.0),
+        ]
+        mock_qdrant_client.search.side_effect = [dense_results, sparse_results]
+
+        retriever = QdrantHybridRetriever(mock_settings)
+        docs = retriever.retrieve_with_scores("query", k=5)
+
+        # dense norm: doc1=1.0, doc2=0.5, doc3=0.0; sparse norm: doc2=1.0, doc1=0.0
+        # combined: doc1=0.70, doc2=0.65, doc3=0.0
+        assert [doc.id for doc in docs] == ["doc1", "doc2", "doc3"]
+        assert docs[0].score == pytest.approx(0.70)
+        assert docs[1].score == pytest.approx(0.65)
+        assert docs[2].score == pytest.approx(0.0)

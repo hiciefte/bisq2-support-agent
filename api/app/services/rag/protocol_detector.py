@@ -35,6 +35,43 @@ SOURCE_DEFAULT_PROTOCOLS: Dict[str, Protocol] = {
 SOURCE_DEFAULT_CONFIDENCE = 0.6
 OPERATIONAL_SUPPORT_CONFIDENCE = 0.45
 
+# Word-boundary patterns for explicit version mentions ("bisq 1", "bisq1", ...)
+_BISQ1_MENTION_PATTERN = r"(?:\bbisq\s*1\b|\bbisq1\b)"
+_BISQ2_MENTION_PATTERN = r"(?:\bbisq\s*2\b|\bbisq2\b)"
+
+
+def _compile_negation_pattern(version_pattern: str) -> "re.Pattern[str]":
+    """Compile a pattern matching negated references to a Bisq version.
+
+    Covers phrasings like "not (on/using) bisq 1", "don't use bisq 1",
+    and "no longer on bisq 1".
+    """
+    return re.compile(
+        rf"\b(?:not|never)\s+(?:(?:on|using|use|with|running|run)\s+)?{version_pattern}"
+        rf"|\b(?:do\s+not|don'?t|does\s+not|doesn'?t)\s+(?:use|run|have)\s+{version_pattern}"
+        rf"|\bno\s+longer\s+(?:(?:on|using|use|running|run)\s+)?{version_pattern}"
+    )
+
+
+_BISQ1_NEGATION_RE = _compile_negation_pattern(_BISQ1_MENTION_PATTERN)
+_BISQ2_NEGATION_RE = _compile_negation_pattern(_BISQ2_MENTION_PATTERN)
+
+# "switched/moved/migrated from bisq X to bisq Y" -> signal for Y
+_VERSION_SWITCH_RE = re.compile(
+    rf"\b(?:switch(?:ed|ing)?|mov(?:ed|ing)|migrat(?:ed|ing))(?:\s+over)?\s+from\s+"
+    rf"(?:{_BISQ1_MENTION_PATTERN}|{_BISQ2_MENTION_PATTERN}).{{0,40}}?"
+    rf"\bto\s+(?P<target>{_BISQ1_MENTION_PATTERN}|{_BISQ2_MENTION_PATTERN})"
+)
+
+# Negation words directly (within up to two filler words) before the switch
+# verb: "haven't switched from ...", "never moved from ...", "have not yet
+# switched from ...". A negated switch is not evidence for the target version.
+_SWITCH_NEGATION_PREFIX_RE = re.compile(
+    r"\b(?:not|never|didn'?t|haven'?t|hasn'?t|don'?t|doesn'?t|won'?t|can'?t"
+    r"|cannot|couldn'?t|(?:did|have|has|do|does|will|could)\s+not|yet\s+to)"
+    r"\s+(?:\w+\s+){0,2}$"
+)
+
 
 class ProtocolDetector:
     """Detect Bisq protocol from user questions and context.
@@ -402,11 +439,11 @@ class ProtocolDetector:
 
     @staticmethod
     def _has_bisq1_mention(text: str) -> bool:
-        return bool(re.search(r"\bbisq\s*1\b|\bbisq1\b", text))
+        return bool(re.search(_BISQ1_MENTION_PATTERN, text))
 
     @staticmethod
     def _has_bisq2_mention(text: str) -> bool:
-        return bool(re.search(r"\bbisq\s*2\b|\bbisq2\b", text))
+        return bool(re.search(_BISQ2_MENTION_PATTERN, text))
 
     @staticmethod
     def _has_domain_context(text: str, keywords: Tuple[str, ...]) -> bool:
@@ -487,18 +524,59 @@ class ProtocolDetector:
             return role, content
         return "", str(message).lower()
 
+    def _switch_target_version(self, content: str) -> Optional[str]:
+        """Return the target version of a 'switched from X to Y' phrase.
+
+        Negated switch phrases ("I haven't switched from Bisq 1 to Bisq 2")
+        return None so they fall back to ordinary mixed-mention handling
+        (ambiguous) instead of locking the target version.
+        """
+        match = _VERSION_SWITCH_RE.search(content)
+        if not match:
+            return None
+        if _SWITCH_NEGATION_PREFIX_RE.search(content[: match.start()]):
+            return None
+        target = match.group("target")
+        if self._has_bisq1_mention(target):
+            return "Bisq 1"
+        if self._has_bisq2_mention(target):
+            return "Bisq 2"
+        return None
+
     def _detect_version_in_history_content(
         self, content: str
     ) -> Optional[Tuple[str, float]]:
-        """Detect one-sided version hints from a single history message."""
-        has_bisq1 = "bisq 1" in content or "bisq1" in content
-        has_bisq2 = "bisq 2" in content or "bisq2" in content
+        """Detect one-sided version hints from a single history message.
+
+        Uses word-boundary matching with negation and switch-phrase handling:
+        - "I switched from Bisq 1 to Bisq 2" counts as a Bisq 2 signal.
+        - "I'm not on Bisq 1" is weak evidence for Bisq 2 (and vice versa),
+          never a positive signal for the negated version.
+        - Messages mentioning both versions without a switch phrase stay
+          ambiguous and are skipped.
+        """
+        switch_target = self._switch_target_version(content)
+        if switch_target is not None:
+            return (switch_target, 0.80)
+
+        negated_bisq1 = bool(_BISQ1_NEGATION_RE.search(content))
+        negated_bisq2 = bool(_BISQ2_NEGATION_RE.search(content))
+        has_bisq1 = self._has_bisq1_mention(content) and not negated_bisq1
+        has_bisq2 = self._has_bisq2_mention(content) and not negated_bisq2
+
         if has_bisq1 and has_bisq2:
             return None
         if has_bisq1:
             return ("Bisq 1", 0.80)
         if has_bisq2:
             return ("Bisq 2", 0.80)
+
+        # A negated version without a positive mention of the other version
+        # is weak evidence for the other version.
+        if negated_bisq1 and not negated_bisq2:
+            return ("Bisq 2", 0.70)
+        if negated_bisq2 and not negated_bisq1:
+            return ("Bisq 1", 0.70)
 
         # Check for keyword patterns in history
         bisq1_found = any(kw in content for kw in self.BISQ1_KEYWORDS[:5])

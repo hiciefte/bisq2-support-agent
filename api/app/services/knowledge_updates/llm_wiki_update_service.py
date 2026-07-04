@@ -2007,22 +2007,29 @@ def _faq_id_links(
     if not db_path.exists():
         return {}
 
+    # NOTE: "with sqlite3.connect(...)" only manages the transaction, not the
+    # connection - close explicitly so every call releases its handle.
     try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            table_exists = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faqs'"
-            ).fetchone()
-            if table_exists is None:
-                return {}
-
-            placeholders = ",".join("?" for _ in unique_ids)
-            rows = conn.execute(
-                f"SELECT id, question FROM faqs WHERE id IN ({placeholders})",
-                unique_ids,
-            ).fetchall()
+        conn = sqlite3.connect(db_path)
     except sqlite3.Error:
         return {}
+    try:
+        conn.row_factory = sqlite3.Row
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faqs'"
+        ).fetchone()
+        if table_exists is None:
+            return {}
+
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = conn.execute(
+            f"SELECT id, question FROM faqs WHERE id IN ({placeholders})",
+            unique_ids,
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
 
     links: Dict[str, str] = {}
     for row in rows:

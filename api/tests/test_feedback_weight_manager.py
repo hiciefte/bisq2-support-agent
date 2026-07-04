@@ -6,7 +6,8 @@ Tests cover:
 - Sources fallback (sources_used → sources)
 - Weight range clamping (0.75-1.25)
 - Time window filter (30 days)
-- Cold start dampening
+- Cold start dampening (minimum sample count before leaving defaults)
+- Idempotent recompute (pure function of the 30-day window)
 - Wilson score confidence intervals
 """
 
@@ -47,10 +48,10 @@ class TestFieldNameBugFix:
         entries = [_make_feedback_entry(rating=1, source_type="faq") for _ in range(15)]
         result = mgr.apply_feedback_weights(entries)
 
-        # Weights must have changed from default (entries were processed)
-        assert result["faq"] != default_faq or True  # At minimum, no crash
-        # More importantly: source_scores should have counted entries
-        # If the bug persists, all entries are skipped and weights stay default
+        # Weights must have changed from default (entries were processed).
+        # If the field-name bug persists, all entries are skipped and
+        # weights stay at the default.
+        assert result["faq"] != pytest.approx(default_faq)
 
     def test_entries_with_helpful_field_still_skipped(self):
         """Entries using the OLD 'helpful' field (without 'rating') should be skipped."""
@@ -138,29 +139,96 @@ class TestTimeWindowFilter:
 
 
 class TestColdStartDampening:
-    """First 100 entries use lower learning rate."""
+    """A source needs a minimum sample count before leaving its default.
 
-    def test_cold_start_uses_low_learning_rate(self):
-        """With few entries, weight adjustment should be more conservative."""
-        mgr_small = FeedbackWeightManager()
-        mgr_large = FeedbackWeightManager()
+    Note: the previous test here asserted that larger batches move weights
+    further via a higher EMA learning rate. That encoded the frequency-scaled
+    EMA bug (convergence speed scaled with event count), which was replaced by
+    an idempotent pure function of the 30-day window.
+    """
 
-        # Small batch: 15 all-negative (cold start)
+    def test_small_sample_keeps_default_weight(self):
+        """At or below the minimum sample count, weight stays at default."""
+        mgr = FeedbackWeightManager()
+        default_faq = mgr.source_weights["faq"]
+
         small_batch = [
-            _make_feedback_entry(rating=0, source_type="faq") for _ in range(15)
+            _make_feedback_entry(rating=0, source_type="faq") for _ in range(10)
         ]
-        result_small = mgr_small.apply_feedback_weights(small_batch)
-        delta_small = abs(result_small["faq"] - 1.2)
+        result = mgr.apply_feedback_weights(small_batch)
 
-        # Large batch: 150 all-negative (post cold start)
-        large_batch = [
-            _make_feedback_entry(rating=0, source_type="faq") for _ in range(150)
+        assert result["faq"] == pytest.approx(default_faq)
+
+    def test_sufficient_sample_moves_weight(self):
+        """Above the minimum sample count, weight follows the Wilson target."""
+        mgr = FeedbackWeightManager()
+        default_faq = mgr.source_weights["faq"]
+
+        batch = [_make_feedback_entry(rating=0, source_type="faq") for _ in range(15)]
+        result = mgr.apply_feedback_weights(batch)
+
+        assert result["faq"] < default_faq
+
+
+class TestIdempotentRecompute:
+    """Recompute is a pure function of the window — reapplying is a no-op."""
+
+    def test_reapplying_same_data_is_a_noop(self):
+        """N applications of the same window must equal one application."""
+        entries = [_make_feedback_entry(rating=1, source_type="faq") for _ in range(12)]
+        entries += [_make_feedback_entry(rating=0, source_type="faq") for _ in range(4)]
+
+        mgr = FeedbackWeightManager()
+        first = dict(mgr.apply_feedback_weights(entries))
+        for _ in range(10):
+            mgr.apply_feedback_weights(entries)
+
+        assert mgr.get_source_weights() == pytest.approx(first)
+
+    def test_weight_matches_single_application_regardless_of_event_frequency(self):
+        """Convergence must not scale with how often events arrive."""
+        entries = [
+            _make_feedback_entry(rating=0, source_type="wiki") for _ in range(20)
         ]
-        result_large = mgr_large.apply_feedback_weights(large_batch)
-        delta_large = abs(result_large["faq"] - 1.2)
 
-        # Larger batch should have bigger delta (higher learning rate)
-        assert delta_large > delta_small
+        mgr_once = FeedbackWeightManager()
+        mgr_once.apply_feedback_weights(entries)
+
+        mgr_many = FeedbackWeightManager()
+        for _ in range(50):  # 50 "events" over the same window
+            mgr_many.apply_feedback_weights(entries)
+
+        assert mgr_many.get_source_weights()["wiki"] == pytest.approx(
+            mgr_once.get_source_weights()["wiki"]
+        )
+
+    def test_apply_feedback_aggregates_is_pure_function_of_window(self):
+        """Aggregate-driven recompute yields the same result as raw entries."""
+        entries = [_make_feedback_entry(rating=1, source_type="faq") for _ in range(15)]
+
+        mgr_entries = FeedbackWeightManager()
+        mgr_entries.apply_feedback_weights(entries)
+
+        mgr_aggregates = FeedbackWeightManager()
+        mgr_aggregates.apply_feedback_aggregates(
+            {"faq": {"positive": 15, "negative": 0, "total": 15}}
+        )
+
+        assert mgr_aggregates.get_source_weights()["faq"] == pytest.approx(
+            mgr_entries.get_source_weights()["faq"]
+        )
+
+    def test_empty_aggregates_leave_weights_unchanged(self):
+        """An empty window keeps current weights (no destructive reset)."""
+        mgr = FeedbackWeightManager()
+        mgr.apply_feedback_aggregates(
+            {"faq": {"positive": 0, "negative": 20, "total": 20}}
+        )
+        lowered = mgr.get_source_weights()["faq"]
+
+        mgr.apply_feedback_aggregates({})
+
+        assert mgr.get_source_weights()["faq"] == pytest.approx(lowered)
 
 
 class TestWilsonScore:

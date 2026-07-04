@@ -85,6 +85,53 @@ def _parse_tool_content(content: str) -> str:
     return content
 
 
+# OpenAI reasoning-model families reject `max_tokens` (they require
+# `max_completion_tokens`) and only support the default temperature.
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+
+
+def _completion_params(
+    model_id: str, temperature: float, max_tokens: int
+) -> dict[str, Any]:
+    """Build per-model kwargs for chat.completions.create.
+
+    AISuite passes kwargs verbatim to the provider, so reasoning-class
+    OpenAI models (o1/o3/o4/gpt-5 families) need `max_completion_tokens`
+    instead of `max_tokens` and must not receive a non-default temperature.
+
+    Args:
+        model_id: Model identifier, optionally with provider prefix
+            (e.g. "openai:o4-mini", "xai:grok-3")
+        temperature: Configured sampling temperature
+        max_tokens: Configured completion token budget
+
+    Returns:
+        Keyword arguments adapted to the model family
+    """
+    model_name = model_id.rpartition(":")[2]
+    if model_name.startswith(_REASONING_MODEL_PREFIXES):
+        return {"max_completion_tokens": max_tokens}
+    return {"temperature": temperature, "max_tokens": max_tokens}
+
+
+def _build_messages(prompt: str, system_content: str | None) -> list[dict[str, str]]:
+    """Build the chat message list, keeping guardrails at system trust level.
+
+    Args:
+        prompt: User-level content (the question)
+        system_content: Optional system-level content (persona, guardrails,
+            chat history, retrieved context)
+
+    Returns:
+        Chat messages for chat.completions.create
+    """
+    messages: list[dict[str, str]] = []
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
 @dataclass
 class LLMResponse:
     """Response from LLM invocation."""
@@ -255,11 +302,13 @@ class AISuiteLLMWrapper:
 
         logger.info(f"AISuite LLM initialized: {model}, MCP URL: {mcp_url}")
 
-    def invoke(self, prompt: str) -> LLMResponse:
+    def invoke(self, prompt: str, system_content: str | None = None) -> LLMResponse:
         """Invoke LLM without tools.
 
         Args:
-            prompt: The prompt text
+            prompt: User-level prompt text (the question)
+            system_content: Optional system-level content (persona,
+                guardrails, chat history, retrieved context)
 
         Returns:
             LLMResponse with content and optional usage statistics
@@ -267,14 +316,13 @@ class AISuiteLLMWrapper:
         Raises:
             RuntimeError: If LLM invocation fails
         """
-        messages = [{"role": "user", "content": prompt}]
+        messages = _build_messages(prompt, system_content)
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model_id,
                 messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                **_completion_params(self.model_id, self.temperature, self.max_tokens),
             )
 
             usage = None
@@ -292,7 +340,12 @@ class AISuiteLLMWrapper:
             logger.exception(f"LLM invocation failed: {e}")
             raise RuntimeError(f"Failed to invoke LLM: {e}") from e
 
-    def invoke_with_tools(self, prompt: str, max_turns: int = 3) -> ToolCallResult:
+    def invoke_with_tools(
+        self,
+        prompt: str,
+        max_turns: int = 3,
+        system_content: str | None = None,
+    ) -> ToolCallResult:
         """Invoke LLM with MCP tools via AISuite automatic mode.
 
         AISuite handles the entire tool execution loop automatically
@@ -301,11 +354,13 @@ class AISuiteLLMWrapper:
         Args:
             prompt: User prompt/question
             max_turns: Maximum tool call iterations (default 3)
+            system_content: Optional system-level content (persona,
+                guardrails, chat history, retrieved context)
 
         Returns:
             ToolCallResult with final content and tool call history
         """
-        messages = [{"role": "user", "content": prompt}]
+        messages = _build_messages(prompt, system_content)
 
         # MCP configuration for HTTP transport
         mcp_config = {
@@ -320,8 +375,7 @@ class AISuiteLLMWrapper:
                 messages=messages,
                 tools=[mcp_config],
                 max_turns=max_turns,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                **_completion_params(self.model_id, self.temperature, self.max_tokens),
             )
 
             # Extract tool calls AND their results from intermediate messages
