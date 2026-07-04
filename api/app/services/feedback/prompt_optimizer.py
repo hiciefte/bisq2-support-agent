@@ -5,12 +5,18 @@ This module handles:
 - Generating prompt guidance from feedback patterns
 - Analyzing common issues in negative feedback
 - Dynamic prompt adjustment based on user feedback
+- Durable persistence of guidance via the learning_state store, so
+  guidance computed by the weekly cron script is visible to the live
+  server and survives restarts
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Key under which guidance is persisted in the learning_state table
+PROMPT_GUIDANCE_STATE_KEY = "prompt_guidance"
 
 
 class PromptOptimizer:
@@ -20,14 +26,59 @@ class PromptOptimizer:
     - Analyzing feedback for common issues
     - Generating prompt guidance
     - Dynamically adjusting prompts to address user concerns
+    - Persisting guidance through an optional repository (learning_state)
     """
 
-    def __init__(self):
-        """Initialize the prompt optimizer."""
+    def __init__(self, repository: Optional[Any] = None):
+        """Initialize the prompt optimizer.
+
+        Args:
+            repository: Optional FeedbackRepository used to persist and
+                reload guidance. Without it the optimizer is in-memory only.
+        """
+        self.repository = repository
         # Prompting guidance based on feedback
-        self.prompt_guidance = []
+        self.prompt_guidance: List[str] = []
+        self.load_guidance()
 
         logger.info("Prompt optimizer initialized")
+
+    def load_guidance(self) -> List[str]:
+        """Reload persisted guidance from the learning_state store.
+
+        No-op without a repository.
+
+        Returns:
+            The current prompt guidance after the reload attempt
+        """
+        if self.repository is None:
+            return self.prompt_guidance
+
+        try:
+            stored = self.repository.get_learning_state(PROMPT_GUIDANCE_STATE_KEY)
+        except Exception as e:
+            logger.warning("Could not load persisted prompt guidance: %s", e)
+            return self.prompt_guidance
+
+        if isinstance(stored, list):
+            self.prompt_guidance = [str(item) for item in stored]
+            logger.debug(
+                "Loaded %d persisted prompt guidance entries",
+                len(self.prompt_guidance),
+            )
+
+        return self.prompt_guidance
+
+    def _persist_guidance(self) -> None:
+        """Persist current guidance to the learning_state store (best-effort)."""
+        if self.repository is None:
+            return
+        try:
+            self.repository.set_learning_state(
+                PROMPT_GUIDANCE_STATE_KEY, self.prompt_guidance
+            )
+        except Exception as e:
+            logger.warning("Could not persist prompt guidance: %s", e)
 
     def update_prompt_guidance(
         self, feedback_data: List[Dict[str, Any]], analyzer
@@ -89,6 +140,7 @@ class PromptOptimizer:
         # Update the system template with new guidance
         if prompt_guidance:
             self.prompt_guidance = list(dict.fromkeys(prompt_guidance))
+            self._persist_guidance()
             logger.info(f"Updated prompt guidance based on feedback: {prompt_guidance}")
             return True
 

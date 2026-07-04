@@ -2,8 +2,10 @@
 Admin feedback management routes for the Bisq Support API.
 """
 
+import asyncio
 import logging
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
 from app.core.exceptions import (
@@ -87,17 +89,38 @@ def map_to_controlled_issue_type(issue: str) -> str:
     return "other"
 
 
-@router.get("/feedback", response_model=Dict[str, Any])
-async def get_feedback_analytics() -> Dict[str, Any]:
-    """Get analytics about user feedback.
+# Memoization for the computed analytics payload. FeedbackService caches raw
+# rows for 300s, but the pure-Python aggregation below still ran over every
+# row on every call - and /metrics invokes this on each 15s Prometheus scrape.
+# Caching the derived dict keeps scrapes O(1) between refreshes.
+# Stored as a single (monotonic_timestamp, payload) tuple so reads/writes are
+# atomic without locking; a rare concurrent recompute is benign.
+_ANALYTICS_CACHE_TTL_SECONDS = 60.0
+_analytics_cache: Optional[Tuple[float, Dict[str, Any]]] = None
 
-    This endpoint requires admin authentication via the API key.
-    Authentication can be provided through:
-    - Authorization header with Bearer token
-    - api_key query parameter
+
+def reset_feedback_analytics_cache() -> None:
+    """Clear the memoized analytics payload (used by tests)."""
+    global _analytics_cache
+    _analytics_cache = None
+
+
+def compute_feedback_analytics(
+    feedback: List[Dict[str, Any]], max_unique_issues: int
+) -> Dict[str, Any]:
+    """Aggregate raw feedback rows into the analytics response payload.
+
+    Pure, synchronous function so it can run in a worker thread and be
+    unit-tested directly. The returned shape is consumed by both the
+    /admin/feedback endpoint and the /metrics Prometheus endpoint.
+
+    Args:
+        feedback: Raw feedback rows from FeedbackService.load_feedback()
+        max_unique_issues: Cardinality cap for the common_issues breakdown
+
+    Returns:
+        Analytics payload dictionary
     """
-    feedback = feedback_service.load_feedback()
-
     # Basic analytics
     total = len(feedback)
 
@@ -157,20 +180,18 @@ async def get_feedback_analytics() -> Dict[str, Any]:
     sorted_issues = sorted(common_issues.items(), key=lambda x: x[1], reverse=True)
 
     # Limit to maximum number of unique issues
-    if len(common_issues) > settings.MAX_UNIQUE_ISSUES:
+    if len(common_issues) > max_unique_issues:
         logger.info(
-            f"Found {len(common_issues)} issues, limiting to {settings.MAX_UNIQUE_ISSUES}"
+            f"Found {len(common_issues)} issues, limiting to {max_unique_issues}"
         )
 
-        # Keep the top issues based on MAX_UNIQUE_ISSUES
+        # Keep the top issues based on max_unique_issues
         top_issues = dict(
-            sorted_issues[: settings.MAX_UNIQUE_ISSUES - 1]
+            sorted_issues[: max_unique_issues - 1]
         )  # Leave room for "other"
 
         # Combine remaining issues as "other"
-        other_count = sum(
-            count for _, count in sorted_issues[settings.MAX_UNIQUE_ISSUES - 1 :]
-        )
+        other_count = sum(count for _, count in sorted_issues[max_unique_issues - 1 :])
         if other_count > 0:
             top_issues["other"] = other_count
 
@@ -198,6 +219,38 @@ async def get_feedback_analytics() -> Dict[str, Any]:
         ][-5:],
         # Include recent negative feedback with truncated explanation from metadata
     }
+
+
+def _load_and_compute_analytics() -> Dict[str, Any]:
+    """Load feedback rows and aggregate them (runs in a worker thread)."""
+    feedback = feedback_service.load_feedback()
+    return compute_feedback_analytics(feedback, settings.MAX_UNIQUE_ISSUES)
+
+
+@router.get("/feedback", response_model=Dict[str, Any])
+async def get_feedback_analytics() -> Dict[str, Any]:
+    """Get analytics about user feedback.
+
+    This endpoint requires admin authentication via the API key.
+    Authentication can be provided through:
+    - Authorization header with Bearer token
+    - api_key query parameter
+
+    Results are memoized for a short TTL and computed in a worker thread so
+    frequent callers (the /metrics endpoint is scraped every 15s) never block
+    the event loop or re-aggregate all feedback per request.
+    """
+    global _analytics_cache
+
+    cached = _analytics_cache
+    if cached is not None:
+        cached_at, payload = cached
+        if time.monotonic() - cached_at < _ANALYTICS_CACHE_TTL_SECONDS:
+            return payload
+
+    analytics = await asyncio.to_thread(_load_and_compute_analytics)
+    _analytics_cache = (time.monotonic(), analytics)
+    return analytics
 
 
 @router.get("/feedback/list", response_model=FeedbackListResponse)

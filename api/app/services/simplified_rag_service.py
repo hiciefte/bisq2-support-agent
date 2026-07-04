@@ -27,7 +27,10 @@ from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
-from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.document_retriever import (
+    DocumentRetriever,
+    is_bisq_version_comparison_query,
+)
 from app.services.rag.index_state_manager import IndexStateManager
 from app.services.rag.llm_provider import LLMProvider
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
@@ -270,12 +273,14 @@ class SimplifiedRAGService:
         faq_id: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Handle FAQ updates with optional manual rebuild.
+        """Handle FAQ updates with incremental indexing or full rebuild.
 
         Args:
-            rebuild: If True, rebuild immediately (legacy behavior)
-                    If False, mark for manual rebuild (new behavior)
-            operation: Type of change (add, update, delete, bulk_delete)
+            rebuild: If True, rebuild immediately (legacy behavior).
+                    If False, apply the change incrementally to the live
+                    Qdrant index; falls back to marking the change for a
+                    manual rebuild when the incremental path cannot run.
+            operation: Type of change (add, update, delete, bulk_*)
             faq_id: ID of changed FAQ
             metadata: Additional context about the change
         """
@@ -292,14 +297,103 @@ class SimplifiedRAGService:
                     logger.exception("FAQ-triggered rebuild task failed")
 
             task.add_done_callback(_on_done)
-        else:
-            # New behavior - mark for manual rebuild
-            logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
-            self.state_manager.mark_change(
-                operation=operation or "unknown",
-                item_id=faq_id or "unknown",
-                metadata=metadata,
+            return
+
+        if not self._can_apply_incremental_faq_update(operation, faq_id):
+            self._mark_faq_change(operation, faq_id, metadata)
+            return
+
+        update_coro = self._apply_incremental_faq_update(operation, faq_id, metadata)
+        try:
+            task = asyncio.create_task(update_coro)
+        except RuntimeError:
+            # No running event loop (e.g. sync call path) - fall back to
+            # recording the change for a manual rebuild.
+            update_coro.close()
+            logger.warning(
+                f"No running event loop for incremental index update "
+                f"({operation} on {faq_id}); marking change for rebuild"
             )
+            self._mark_faq_change(operation, faq_id, metadata)
+        else:
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
+    def _can_apply_incremental_faq_update(self, operation: str, faq_id: str) -> bool:
+        """Return True when a change can be applied point-by-point.
+
+        Bulk operations report aggregate pseudo-IDs (e.g. "3_faqs"), so they
+        cannot be resolved to individual FAQ documents and still require a
+        full rebuild.
+        """
+        return (
+            operation in ("add", "update", "delete")
+            and bool(faq_id)
+            and self.faq_service is not None
+        )
+
+    def _mark_faq_change(
+        self,
+        operation: str,
+        faq_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record a FAQ change that requires a manual index rebuild."""
+        logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
+        self.state_manager.mark_change(
+            operation=operation or "unknown",
+            item_id=faq_id or "unknown",
+            metadata=metadata,
+        )
+
+    async def _apply_incremental_faq_update(
+        self,
+        operation: str,
+        faq_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply a single FAQ change to the live Qdrant index off-loop.
+
+        Embedding and Qdrant I/O are blocking, so the work runs in a worker
+        thread. Any failure falls back to mark_change so the change is not
+        lost and surfaces in the manual-rebuild status.
+        """
+        try:
+            await asyncio.to_thread(self._sync_faq_in_index, faq_id)
+            logger.info(f"Applied incremental index update: {operation} on {faq_id}")
+        except Exception:
+            logger.exception(
+                f"Incremental index update failed for FAQ {faq_id} "
+                f"({operation}); marking change for manual rebuild"
+            )
+            self._mark_faq_change(operation, faq_id, metadata)
+
+    def _sync_faq_in_index(self, faq_id: str) -> None:
+        """Blocking worker: reconcile one FAQ's points in the Qdrant index.
+
+        Reuses the FAQ RAG loader and document processor so incremental
+        points are built exactly like full-rebuild points. When the FAQ is
+        no longer part of the verified corpus (deleted or unverified), its
+        points are removed instead.
+        """
+        faq_docs = [
+            doc
+            for doc in self.faq_service.load_faq_data()
+            if (doc.metadata or {}).get("id") == faq_id
+        ]
+
+        if not faq_docs:
+            self.index_manager.delete_faq_points(faq_id)
+            return
+
+        splits = self.document_processor.split_documents(faq_docs)
+        if self.embeddings is None:
+            self.initialize_embeddings()
+        self.index_manager.upsert_faq_documents(
+            faq_id=faq_id,
+            documents=splits,
+            embeddings=self.embeddings,
+        )
 
     async def _handle_source_update(self, source_name: str) -> None:
         """Handle runtime updates to source files (FAQ or wiki).
@@ -599,7 +693,10 @@ class SimplifiedRAGService:
 
     @instrument_stage("generation")
     async def _answer_from_context(
-        self, question: str, chat_history: List[Dict[str, str]]
+        self,
+        question: str,
+        chat_history: List[Dict[str, str]],
+        detected_version: Optional[str] = None,
     ) -> dict:
         """Try to answer a question using only conversation history.
 
@@ -609,6 +706,9 @@ class SimplifiedRAGService:
         Args:
             question: The user's question
             chat_history: List of previous conversation exchanges
+            detected_version: Version detected upstream (e.g. "Bisq 1"), so the
+                context-only prompt policy matches the detected version even
+                when the current question doesn't mention it
 
         Returns:
             dict: Response with answer, metadata, and answer source tracking
@@ -623,13 +723,16 @@ class SimplifiedRAGService:
             # Format chat history using prompt manager
             chat_history_str = self.prompt_manager.format_chat_history(chat_history)
 
-            # Create context-only prompt using prompt manager
-            context_only_prompt = self.prompt_manager.create_context_only_prompt(
-                question, chat_history_str
+            # Create context-only prompt using prompt manager, split into
+            # system-level guardrails and the user-level question
+            system_content, user_content = (
+                self.prompt_manager.create_context_only_prompt_messages(
+                    question, chat_history_str, detected_version
+                )
             )
 
             # Get response from LLM
-            response_text = self.llm.invoke(context_only_prompt)
+            response_text = self.llm.invoke(user_content, system_content=system_content)
             response_content = (
                 response_text.content
                 if hasattr(response_text, "content")
@@ -1136,24 +1239,13 @@ class SimplifiedRAGService:
             #
             # Exception: comparison questions ("Bisq 1 vs Bisq 2") should be allowed through
             # even if we have no Bisq 1 docs, otherwise we can't produce a comparison response.
-            question_lower = preprocessed_question.lower()
-            has_bisq_context = (
-                re.search(
-                    r"\bbisq\b|\bbisq\s*1\b|\bbisq1\b|\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b|\bmultisig\b|\bmultisig_v1\b",
-                    question_lower,
-                )
-                is not None
+            # Shared classifier keeps this mirror consistent with the
+            # DocumentRetriever routing: generic comparison wording without an
+            # explicit version/protocol token is NOT a Bisq 1 vs Bisq 2
+            # comparison (e.g. "difference between SEPA and SEPA Instant").
+            is_comparison_question = is_bisq_version_comparison_query(
+                preprocessed_question
             )
-            has_generic_comparison_terms = (
-                "difference" in question_lower
-                or "compare" in question_lower
-                or "versus" in question_lower
-                or re.search(r"\bvs\b", question_lower) is not None
-            )
-            is_comparison_question = (
-                re.search(r"\bbisq\s*1\b|\bbisq1\b", question_lower)
-                and re.search(r"\bbisq\s*2\b|\bbisq2\b|\bbisq easy\b", question_lower)
-            ) or (has_bisq_context and has_generic_comparison_terms)
 
             if (
                 detected_version in ("Bisq 1", "multisig_v1")
@@ -1193,7 +1285,7 @@ class SimplifiedRAGService:
                         f"Attempting context-aware fallback with {len(chat_history)} messages in history"
                     )
                     return await self._answer_from_context(
-                        preprocessed_question, chat_history
+                        preprocessed_question, chat_history, detected_version
                     )
 
                 # No conversation history either - create feedback entry and return "no info" message
@@ -1246,21 +1338,28 @@ class SimplifiedRAGService:
                     "MCP enabled, using tool-enabled invocation via HTTP transport"
                 )
                 try:
-                    # Build prompt with context from retrieved documents
+                    # Build prompt with context from retrieved documents,
+                    # split into system-level guardrails/context and the
+                    # user-level question
                     context = self._format_docs(docs)
                     chat_history_str = self.prompt_manager.format_chat_history(
                         chat_history
                     )
-                    full_prompt = self.prompt_manager.format_prompt_for_mcp(
-                        context, preprocessed_question, chat_history_str
+                    system_content, user_content = (
+                        self.prompt_manager.format_prompt_messages(
+                            question=preprocessed_question,
+                            chat_history_str=chat_history_str,
+                            context=context,
+                        )
                     )
 
                     # Invoke LLM with MCP tools via AISuite native HTTP transport
                     # The LLM autonomously decides when to call tools
                     # (no tools parameter - MCP config is baked into the wrapper)
                     tool_result = self.llm.invoke_with_tools(
-                        prompt=full_prompt,
+                        prompt=user_content,
                         max_turns=5,
+                        system_content=system_content,
                     )
 
                     # Check if tool invocation actually succeeded
@@ -1304,9 +1403,13 @@ class SimplifiedRAGService:
                     # Fall through to standard RAG chain
 
             if not mcp_invocation_succeeded:
-                # Standard RAG chain invocation (no MCP tools available)
-                # The chain handles retrieval, formatting, and LLM invocation internally
-                response_text = self.rag_chain(preprocessed_question, chat_history)
+                # Standard RAG chain invocation (no MCP tools available).
+                # Pass the already-retrieved, version-aware documents so the
+                # chain does not re-retrieve with a version-blind default and
+                # the generation context matches the reported sources.
+                response_text = self.rag_chain(
+                    preprocessed_question, chat_history, docs=docs
+                )
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -1578,6 +1681,11 @@ class SimplifiedRAGService:
             - protocol: Trade protocol (or None)
 
         Notes:
+            - Uses retrieve_semantic_with_scores() so `similarity` is the raw
+              cosine similarity (absolute, calibrated) rather than a min-max
+              normalized fusion score where the best hit is always 1.0. This
+              matters because `threshold` is an absolute cutoff used for
+              duplicate detection.
             - Uses filter_dict={"type": "faq"} to exclude wiki documents
             - Over-fetches to ensure enough results after filtering/deduplication
             - Returns empty list on errors (graceful degradation)
@@ -1596,7 +1704,7 @@ class SimplifiedRAGService:
                 retrieved = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda: self.retriever.retrieve_with_scores(
+                        lambda: self.retriever.retrieve_semantic_with_scores(
                             question, k=k, filter_dict={"type": "faq"}
                         ),
                     ),

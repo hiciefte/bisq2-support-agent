@@ -7,6 +7,7 @@ processing the documents, and preparing them for use in the RAG system.
 
 import logging
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -20,6 +21,56 @@ from langchain_core.documents import Document
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _parse_verified_range(
+    verified_from: Optional[str], verified_to: Optional[str]
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Parse ISO 8601 verified_at range boundaries into UTC datetimes.
+
+    Shared by all FAQService query paths so the same date range always
+    selects the same result set. Normalization rules:
+    - "Z" suffixes are converted to "+00:00" before parsing.
+    - Timezone-naive values are assumed to be UTC.
+    - Timezone-naive ``verified_to`` values (e.g. date-only strings) are
+      extended to end-of-day (23:59:59.999999) so the range is inclusive.
+    - Invalid values are logged and treated as absent (None).
+
+    Args:
+        verified_from: ISO 8601 date string for start of range, or None
+        verified_to: ISO 8601 date string for end of range, or None
+
+    Returns:
+        Tuple of (verified_from, verified_to) as timezone-aware datetimes,
+        with None for absent or invalid boundaries.
+    """
+    verified_from_dt = None
+    if verified_from:
+        try:
+            parsed = datetime.fromisoformat(verified_from.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            verified_from_dt = parsed
+        except ValueError:
+            logger.warning(f"Invalid verified_from date format: {verified_from}")
+
+    verified_to_dt = None
+    if verified_to:
+        try:
+            parsed = datetime.fromisoformat(verified_to.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(
+                    hour=23,
+                    minute=59,
+                    second=59,
+                    microsecond=999999,
+                    tzinfo=timezone.utc,
+                )
+            verified_to_dt = parsed
+        except ValueError:
+            logger.warning(f"Invalid verified_to date format: {verified_to}")
+
+    return verified_from_dt, verified_to_dt
 
 
 class FAQService:
@@ -123,6 +174,17 @@ class FAQService:
         """Get all FAQs with their stable IDs."""
         return self.repository.get_all_faqs()
 
+    def get_faq_by_id(self, faq_id: str) -> Optional[FAQIdentifiedItem]:
+        """Get a single FAQ by its stable ID.
+
+        Args:
+            faq_id: The FAQ ID to look up
+
+        Returns:
+            The FAQ if found, None otherwise
+        """
+        return self.repository.get_faq_by_id(faq_id)
+
     def get_filtered_faqs(
         self,
         search_text: Optional[str] = None,
@@ -150,30 +212,9 @@ class FAQService:
         Returns:
             List of all FAQs matching the specified filters
         """
-        from datetime import datetime, timezone
-
-        # Parse date strings to datetime objects if provided
-        verified_from_dt = None
-        if verified_from:
-            try:
-                verified_from_dt = datetime.fromisoformat(
-                    verified_from.replace("Z", "+00:00")
-                )
-                if verified_from_dt.tzinfo is None:
-                    verified_from_dt = verified_from_dt.replace(tzinfo=timezone.utc)
-            except ValueError:
-                logger.warning(f"Invalid verified_from date format: {verified_from}")
-
-        verified_to_dt = None
-        if verified_to:
-            try:
-                verified_to_dt = datetime.fromisoformat(
-                    verified_to.replace("Z", "+00:00")
-                )
-                if verified_to_dt.tzinfo is None:
-                    verified_to_dt = verified_to_dt.replace(tzinfo=timezone.utc)
-            except ValueError:
-                logger.warning(f"Invalid verified_to date format: {verified_to}")
+        verified_from_dt, verified_to_dt = _parse_verified_range(
+            verified_from, verified_to
+        )
 
         return self.repository.get_filtered_faqs(
             search_text=search_text,
@@ -223,45 +264,9 @@ class FAQService:
         Returns:
             FAQ list response with pagination metadata
         """
-        from datetime import datetime, timezone
-
-        # Parse date strings to datetime objects if provided
-        # IMPORTANT: Convert to timezone-aware datetime (UTC) for comparison with FAQ timestamps
-        verified_from_dt = None
-        verified_to_dt = None
-
-        if verified_from:
-            try:
-                # Parse the date string
-                parsed_date = datetime.fromisoformat(
-                    verified_from.replace("Z", "+00:00")
-                )
-                # If timezone-naive (no timezone info), assume UTC
-                if parsed_date.tzinfo is None:
-                    verified_from_dt = parsed_date.replace(tzinfo=timezone.utc)
-                else:
-                    verified_from_dt = parsed_date
-            except ValueError:
-                logger.warning(f"Invalid verified_from date format: {verified_from}")
-
-        if verified_to:
-            try:
-                # Parse the date string
-                parsed_date = datetime.fromisoformat(verified_to.replace("Z", "+00:00"))
-                # If timezone-naive (no timezone info), assume UTC
-                # For end date, set time to end of day (23:59:59.999999)
-                if parsed_date.tzinfo is None:
-                    verified_to_dt = parsed_date.replace(
-                        hour=23,
-                        minute=59,
-                        second=59,
-                        microsecond=999999,
-                        tzinfo=timezone.utc,
-                    )
-                else:
-                    verified_to_dt = parsed_date
-            except ValueError:
-                logger.warning(f"Invalid verified_to date format: {verified_to}")
+        verified_from_dt, verified_to_dt = _parse_verified_range(
+            verified_from, verified_to
+        )
 
         # Get response from repository (returns Dict)
         # Note: Repository accepts single category, not list
@@ -336,9 +341,7 @@ class FAQService:
                                that don't affect embeddings.
         """
         # Get current FAQ to check verification status before update
-        current_faq = next(
-            (faq for faq in self.repository.get_all_faqs() if faq.id == faq_id), None
-        )
+        current_faq = self.get_faq_by_id(faq_id)
 
         result = self.repository.update_faq(faq_id, updated_data)
 
@@ -375,9 +378,7 @@ class FAQService:
         as unverified FAQs are not included in the vector store.
         """
         # Get FAQ before deletion to check verification status
-        faq = next(
-            (faq for faq in self.repository.get_all_faqs() if faq.id == faq_id), None
-        )
+        faq = self.get_faq_by_id(faq_id)
 
         result = self.repository.delete_faq(faq_id)
 

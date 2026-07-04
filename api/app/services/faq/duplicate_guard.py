@@ -30,7 +30,12 @@ async def find_similar_faqs(
     limit: int = DEFAULT_DUPLICATE_LIMIT,
     exclude_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return semantic matches from RAG similarity search."""
+    """Return semantic matches from RAG similarity search.
+
+    `threshold` is an ABSOLUTE cosine-similarity cutoff (0.0-1.0);
+    search_faq_similarity() guarantees calibrated semantic scores (raw cosine
+    similarity, not result-set-relative fusion ranking scores).
+    """
     if rag_service is None:
         return []
     return await rag_service.search_faq_similarity(

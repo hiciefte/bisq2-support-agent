@@ -43,6 +43,12 @@ export interface Message {
     detected_version?: string
     version_confidence?: number
     isThankYouMessage?: boolean
+    /**
+     * Marks client-generated error bubbles (failed request, timeout).
+     * These stay visible in the UI but are excluded from the chat_history
+     * payload sent to the API so they never reach the LLM prompt.
+     */
+    isError?: boolean
     /** MCP tools used to fetch live Bisq 2 data (if any) */
     mcp_tools_used?: McpToolUsage[]
     /** Routing action from the RAG system (e.g., "needs_clarification", "auto_send", "queue_medium") */

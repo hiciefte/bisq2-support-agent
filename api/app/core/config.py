@@ -172,7 +172,9 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_MODEL: str = "openai:gpt-4.1-nano"  # Full model ID with provider prefix
     MAX_TOKENS: int = 4096
-    LLM_TEMPERATURE: float = 0.7  # Temperature for LLM responses (0.0-2.0)
+    # Temperature for LLM responses (0.0-2.0). Kept low so grounded support
+    # answers stay deterministic and faithful to the retrieved context.
+    LLM_TEMPERATURE: float = 0.2
 
     # Embedding Provider Configuration
     EMBEDDING_PROVIDER: str = "openai"  # Only openai is currently supported.

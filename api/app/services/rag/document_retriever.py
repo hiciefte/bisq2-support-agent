@@ -31,6 +31,34 @@ _BISQ2_VERSION_RE = re.compile(r"\bbisq\s*2\b|\bbisq2\b")
 _COMPARISON_TOKEN_RE = re.compile(
     r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
 )
+# Explicit version/protocol tokens required for a comparison token to count
+# as a Bisq 1 vs Bisq 2 comparison (instead of e.g. comparing payment methods).
+_VERSION_CONTEXT_TOKEN_RE = re.compile(
+    r"\bbisq\s*1\b|\bbisq1\b|\bbisq\s*2\b|\bbisq2\b|\bbisq\s+easy\b|\bmultisig\b"
+    r"|\bboth\s+versions\b|\bversions?\s+of\s+bisq\b|\bversions?\b"
+)
+
+
+def is_bisq_version_comparison_query(query: str) -> bool:
+    """Return True when the query asks to compare Bisq 1 and Bisq 2.
+
+    A comparison requires either explicit mentions of BOTH versions, or a
+    comparison token combined with an explicit version/protocol token.
+    A comparison token alone (e.g. "difference between SEPA and SEPA Instant
+    in Bisq") must not trigger version-comparison handling.
+
+    Shared by DocumentRetriever routing and SimplifiedRAGService so both
+    classify comparison intent consistently.
+    """
+    query_lower = query.lower()
+    mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
+    mentions_bisq2 = bool(_BISQ2_VERSION_RE.search(query_lower))
+    if mentions_bisq1 and mentions_bisq2:
+        return True
+    return bool(
+        _COMPARISON_TOKEN_RE.search(query_lower)
+        and _VERSION_CONTEXT_TOKEN_RE.search(query_lower)
+    )
 
 
 def _keyword_score(query_lower: str, keywords: List[str]) -> int:
@@ -52,9 +80,7 @@ def _classify_query_protocol(
     query_lower = query.lower()
     query_mentions_bisq1 = bool(_BISQ1_VERSION_RE.search(query_lower))
     query_mentions_bisq2 = bool(_BISQ2_VERSION_RE.search(query_lower))
-    is_comparison_query = (query_mentions_bisq1 and query_mentions_bisq2) or bool(
-        _COMPARISON_TOKEN_RE.search(query_lower)
-    )
+    is_comparison_query = is_bisq_version_comparison_query(query)
 
     if is_comparison_query:
         return True, True, True

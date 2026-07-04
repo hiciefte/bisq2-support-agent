@@ -265,6 +265,136 @@ class QdrantIndexManager:
             field_schema=rest.PayloadSchemaType.KEYWORD,
         )
 
+    def _faq_point_id(self, faq_id: str, chunk_index: int) -> int:
+        """Deterministic point ID for a FAQ chunk (re-upsert overwrites)."""
+        return _stable_int_id(f"faq:{faq_id}:chunk:{chunk_index}")
+
+    def _faq_points_filter(self, faq_id: str) -> rest.Filter:
+        """Payload filter matching every indexed point of one FAQ."""
+        return rest.Filter(
+            must=[
+                rest.FieldCondition(key="type", match=rest.MatchValue(value="faq")),
+                rest.FieldCondition(key="id", match=rest.MatchValue(value=faq_id)),
+            ]
+        )
+
+    def _load_sparse_tokenizer(self) -> Optional[BM25SparseTokenizer]:
+        """Load the frozen BM25 vocabulary persisted by the last full rebuild.
+
+        Incremental upserts must vectorize with the same corpus statistics the
+        query side uses, otherwise sparse scores drift. Returns None when no
+        vocabulary exists yet (dense-only points are still retrievable).
+        """
+        if not self.vocab_path.exists():
+            return None
+        try:
+            tokenizer = BM25SparseTokenizer()
+            tokenizer.load_vocabulary(self.vocab_path.read_text(encoding="utf-8"))
+            return tokenizer
+        except Exception as e:
+            logger.warning(
+                f"Failed to load BM25 vocabulary from {self.vocab_path} for "
+                f"incremental upsert: {e}"
+            )
+            return None
+
+    def delete_faq_points(self, faq_id: str) -> None:
+        """Remove all indexed points belonging to a FAQ.
+
+        Deletes by payload filter (type=faq, id=faq_id) so points created by
+        either the full rebuild (content-hash IDs) or the incremental path
+        (deterministic chunk IDs) are removed.
+        """
+        if not faq_id:
+            raise ValueError("faq_id is required to delete FAQ points")
+
+        self._client.delete(
+            collection_name=self.collection_name,
+            points_selector=rest.FilterSelector(filter=self._faq_points_filter(faq_id)),
+            wait=True,
+        )
+        logger.info(f"Deleted indexed points for FAQ {faq_id}")
+
+    def upsert_faq_documents(
+        self,
+        faq_id: str,
+        documents: List[Document],
+        embeddings: Embeddings,
+        upsert_batch_size: int = 64,
+    ) -> int:
+        """Incrementally upsert one FAQ's documents into the live collection.
+
+        Point IDs are derived deterministically from the FAQ id and chunk
+        index, so re-upserting the same FAQ overwrites its points. Stale
+        points (from a previous version with more chunks, or from a full
+        rebuild that used content-hash IDs) are removed first.
+
+        Returns:
+            Number of points upserted.
+
+        Raises:
+            ValueError: If faq_id or documents are missing.
+            RuntimeError: If the collection does not exist yet (a full
+                rebuild is required to create it).
+        """
+        if not faq_id:
+            raise ValueError("faq_id is required to upsert FAQ documents")
+        if not documents:
+            raise ValueError("No documents provided for FAQ upsert")
+
+        self.wait_until_ready()
+        if not self.collection_exists():
+            raise RuntimeError(
+                f"Qdrant collection '{self.collection_name}' does not exist; "
+                "a full index rebuild is required before incremental updates"
+            )
+
+        tokenizer = self._load_sparse_tokenizer()
+
+        # Embed before deleting so an embedding failure leaves the previously
+        # indexed points untouched.
+        texts = [d.page_content or "" for d in documents]
+        dense_vectors = embeddings.embed_documents(texts)
+
+        points: List[rest.PointStruct] = []
+        for chunk_index, (doc, dense_vec) in enumerate(
+            zip(documents, dense_vectors, strict=True)
+        ):
+            content = doc.page_content or ""
+            md = dict(doc.metadata) if doc.metadata else {}
+
+            if tokenizer is not None:
+                sparse_idx, sparse_val = tokenizer.vectorize_document_static(content)
+            else:
+                sparse_idx, sparse_val = [], []
+
+            points.append(
+                rest.PointStruct(
+                    id=self._faq_point_id(faq_id, chunk_index),
+                    vector={
+                        "dense": dense_vec,
+                        "sparse": rest.SparseVector(
+                            indices=sparse_idx, values=sparse_val
+                        ),
+                    },
+                    payload={
+                        "content": content,
+                        **md,
+                    },
+                )
+            )
+
+        self.delete_faq_points(faq_id)
+        for upsert_points in self._iter_batches(points, upsert_batch_size):
+            self._client.upsert(
+                collection_name=self.collection_name,
+                points=upsert_points,
+                wait=True,
+            )
+
+        logger.info(f"Incrementally upserted {len(points)} point(s) for FAQ {faq_id}")
+        return len(points)
+
     def _build_doc_key(self, doc: Document) -> str:
         md = doc.metadata or {}
         doc_type = md.get("type", "doc")

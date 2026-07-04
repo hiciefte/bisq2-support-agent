@@ -177,6 +177,7 @@ const parseStoredMessage = (value: unknown): Message | null => {
             : undefined,
         isThankYouMessage:
             typeof value.isThankYouMessage === "boolean" ? value.isThankYouMessage : undefined,
+        isError: value.isError === true ? true : undefined,
         mcp_tools_used: parseMcpTools(value.mcp_tools_used),
         routing_action: typeof value.routing_action === "string" ? value.routing_action : undefined,
         requires_human:
@@ -251,26 +252,50 @@ export const useChatMessages = () => {
 
     const messagesRef = useRef<Message[]>([]);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingSaveRef = useRef<Message[] | null>(null);
 
     useEffect(() => {
         messagesRef.current = messages;
     }, [messages]);
 
-    const debouncedSaveToLocalStorage = useCallback((msgs: Message[]) => {
+    const flushPendingSave = useCallback(() => {
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
         }
-        saveTimeoutRef.current = setTimeout(() => {
-            if (typeof window === "undefined") {
-                return;
-            }
-            try {
-                localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(msgs));
-            } catch {
-                // Ignore quota/storage exceptions to keep chat functional.
-            }
-        }, LOCAL_STORAGE_DEBOUNCE_MS);
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        if (pending === null || typeof window === "undefined") {
+            return;
+        }
+        try {
+            localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(pending));
+        } catch {
+            // Ignore quota/storage exceptions to keep chat functional.
+        }
     }, []);
+
+    const cancelPendingSave = useCallback(() => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+        pendingSaveRef.current = null;
+    }, []);
+
+    const debouncedSaveToLocalStorage = useCallback(
+        (msgs: Message[]) => {
+            pendingSaveRef.current = msgs;
+            if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+            }
+            saveTimeoutRef.current = setTimeout(() => {
+                saveTimeoutRef.current = null;
+                flushPendingSave();
+            }, LOCAL_STORAGE_DEBOUNCE_MS);
+        },
+        [flushPendingSave],
+    );
 
     useEffect(() => {
         if (typeof window === "undefined") {
@@ -292,19 +317,29 @@ export const useChatMessages = () => {
         if (messages.length > 0) {
             debouncedSaveToLocalStorage(messages);
         } else {
+            cancelPendingSave();
             try {
                 localStorage.removeItem(CHAT_STORAGE_KEY);
             } catch {
                 // Ignore storage exceptions to avoid breaking UI interactions.
             }
         }
+    }, [messages, debouncedSaveToLocalStorage, cancelPendingSave, storageHydrated]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        // pagehide covers refresh/navigation (more reliable than beforeunload,
+        // especially on mobile); the cleanup flush covers component unmount.
+        window.addEventListener("pagehide", flushPendingSave);
 
         return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
+            window.removeEventListener("pagehide", flushPendingSave);
+            flushPendingSave();
         };
-    }, [messages, debouncedSaveToLocalStorage, storageHydrated]);
+    }, [flushPendingSave]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -407,7 +442,10 @@ export const useChatMessages = () => {
                     REQUEST_TIMEOUT_MS,
                 );
 
+                // Client-generated error bubbles are UI-only; sending them as
+                // assistant turns would pollute the LLM prompt on the backend.
                 const chatHistory = messageSnapshot
+                    .filter((msg) => !msg.isError)
                     .map((msg) => ({
                         role: msg.role,
                         content: msg.content,
@@ -449,6 +487,7 @@ export const useChatMessages = () => {
                             content: `Error: ${detail}`,
                             role: "assistant",
                             timestamp: new Date(),
+                            isError: true,
                         },
                     ]);
                     return;
@@ -524,6 +563,7 @@ export const useChatMessages = () => {
                         content: cleanupResponse(errorContent),
                         role: "assistant",
                         timestamp: new Date(),
+                        isError: true,
                     },
                 ]);
             } finally {

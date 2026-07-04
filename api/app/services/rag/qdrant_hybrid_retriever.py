@@ -314,7 +314,13 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         k: int = 10,
         filter_dict: Optional[Dict[str, Any]] = None,
     ) -> List[RetrievedDocument]:
-        """Retrieve documents with similarity scores.
+        """Retrieve documents with fused hybrid ranking scores.
+
+        Scores on this path are RELATIVE: dense and sparse scores are min-max
+        normalized within the result set before weighting, which is good for
+        ranking but not calibrated as absolute similarity. Consumers that
+        compare scores against absolute thresholds should use
+        retrieve_semantic_with_scores() instead.
 
         Args:
             query: Search query text
@@ -331,6 +337,48 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
             keyword_weight=self.settings.HYBRID_KEYWORD_WEIGHT,
             filter_dict=filter_dict,
         )
+
+    def retrieve_semantic_with_scores(
+        self,
+        query: str,
+        k: int = 10,
+        filter_dict: Optional[Dict[str, Any]] = None,
+    ) -> List[RetrievedDocument]:
+        """Retrieve documents with absolute semantic similarity scores.
+
+        Unlike retrieve_with_scores(), which fuses dense and sparse results
+        and min-max normalizes scores relative to the result set (so the best
+        hit always scores 1.0), this method runs a dense-only search and
+        returns the raw cosine similarity reported by Qdrant, clamped to
+        [0, 1]. Use this path for absolute-threshold consumers such as FAQ
+        similarity search and duplicate detection, where score calibration
+        matters more than keyword fusion.
+
+        Args:
+            query: Search query text
+            k: Maximum number of documents to retrieve
+            filter_dict: Optional metadata filters
+
+        Returns:
+            List of RetrievedDocument objects with absolute similarity scores
+        """
+        try:
+            qdrant_filter = self._build_filter(filter_dict)
+            query_vector = self._get_query_embedding(query)
+            results = self._query_points(
+                using="dense",
+                query=query_vector,
+                limit=k,
+                query_filter=qdrant_filter,
+                with_payload=True,
+            )
+            documents = self._results_to_documents(results)
+            for doc in documents:
+                doc.score = self._clamp_unit_interval(doc.score)
+            return documents
+        except Exception as e:
+            logger.error(f"Qdrant semantic search failed: {e}", exc_info=True)
+            return []
 
     def retrieve_hybrid(
         self,
@@ -505,6 +553,9 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
     def _normalize_scores(self, scores: Dict[str, float]) -> Dict[str, float]:
         """Normalize scores to [0, 1] range using min-max normalization.
 
+        The output is a RELATIVE ranking signal within the result set, not an
+        absolute similarity: the best hit maps to 1.0 and the worst to 0.0.
+
         Args:
             scores: Dictionary mapping document IDs to scores
 
@@ -518,14 +569,25 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         min_score = min(values)
         max_score = max(values)
 
-        # Avoid division by zero when all scores are the same
+        # Degenerate case (single result or all scores equal): min-max would
+        # fabricate a perfect 1.0 regardless of actual relevance, inflating a
+        # lone low-relevance hit into a certain match. Clamp the raw score
+        # into [0, 1] instead.
         if max_score == min_score:
-            return {doc_id: 1.0 for doc_id in scores}
+            return {
+                doc_id: self._clamp_unit_interval(score)
+                for doc_id, score in scores.items()
+            }
 
         return {
             doc_id: (score - min_score) / (max_score - min_score)
             for doc_id, score in scores.items()
         }
+
+    @staticmethod
+    def _clamp_unit_interval(score: float) -> float:
+        """Clamp a raw score into the [0, 1] interval."""
+        return min(1.0, max(0.0, float(score)))
 
     def _results_to_documents(self, results) -> List[RetrievedDocument]:
         """Convert Qdrant search results to RetrievedDocument objects.

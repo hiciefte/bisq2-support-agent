@@ -280,6 +280,217 @@ class TestReportGeneration:
         assert "q10" not in report  # First that should be excluded
 
 
+class TestVersionDetectionPrecisionRecall:
+    """Per-class precision/recall must be computed, not hardcoded 0.0."""
+
+    @pytest.mark.asyncio
+    async def test_known_confusion_matrix_yields_exact_precision_recall(
+        self, mock_rag_service, mock_version_detector
+    ):
+        # Confusion matrix:
+        #   expected Bisq 1 (3): detected [Bisq 1, Bisq 1, Bisq 2]
+        #   expected Bisq 2 (2): detected [Bisq 2, Bisq 1]
+        # precision(B1) = 2/3, recall(B1) = 2/3
+        # precision(B2) = 1/2, recall(B2) = 1/2
+        # macro precision = macro recall = (2/3 + 1/2) / 2 = 7/12
+        detections = {
+            "b1-a": "Bisq 1",
+            "b1-b": "Bisq 1",
+            "b1-c": "Bisq 2",
+            "b2-a": "Bisq 2",
+            "b2-b": "Bisq 1",
+        }
+
+        async def detect(question, _history):
+            return (detections[question], 0.9, None)
+
+        mock_version_detector.detect_version = detect
+        evaluator = RAGEvaluator(mock_rag_service, mock_version_detector)
+
+        test_data = [
+            {"question": "b1-a", "expected_version": "Bisq 1"},
+            {"question": "b1-b", "expected_version": "Bisq 1"},
+            {"question": "b1-c", "expected_version": "Bisq 1"},
+            {"question": "b2-a", "expected_version": "Bisq 2"},
+            {"question": "b2-b", "expected_version": "Bisq 2"},
+        ]
+
+        results = await evaluator.run_version_detection_tests(test_data)
+
+        assert results.precision == pytest.approx(7 / 12)
+        assert results.recall == pytest.approx(7 / 12)
+
+    @pytest.mark.asyncio
+    async def test_perfect_detection_yields_unit_precision_recall(
+        self, mock_rag_service, mock_version_detector
+    ):
+        mock_version_detector.detect_version = AsyncMock(
+            return_value=("Bisq 2", 0.9, None)
+        )
+        evaluator = RAGEvaluator(mock_rag_service, mock_version_detector)
+
+        test_data = [
+            {"question": "q1", "expected_version": "Bisq 2"},
+            {"question": "q2", "expected_version": "Bisq 2"},
+        ]
+
+        results = await evaluator.run_version_detection_tests(test_data)
+
+        assert results.precision == pytest.approx(1.0)
+        assert results.recall == pytest.approx(1.0)
+
+
+class TestContentBasedGrading:
+    """RAG grading must inspect answer text, not only source presence."""
+
+    @pytest.mark.asyncio
+    async def test_forbidden_keyword_fails_even_with_sources(
+        self, evaluator, mock_rag_service
+    ):
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "In Bisq Easy you burn BSQ in the DAO to trade.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            }
+        )
+
+        test_data = [
+            {
+                "question": "How does Bisq Easy work?",
+                "expected_success": True,
+                "forbidden_keywords": ["BSQ", "DAO"],
+            }
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.failed == 1
+        assert results.passed == 0
+        assert results.failures[0]["forbidden_keywords_found"] == ["BSQ", "DAO"]
+
+    @pytest.mark.asyncio
+    async def test_all_expected_keywords_present_passes(
+        self, evaluator, mock_rag_service
+    ):
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "Bisq Easy uses Reputation instead of security deposits.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            }
+        )
+
+        test_data = [
+            {
+                "question": "How does Bisq Easy work?",
+                "expected_success": True,
+                "expected_keywords": ["reputation", "bisq easy"],
+            }
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.passed == 1
+        assert results.failed == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_expected_keyword_fails(self, evaluator, mock_rag_service):
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "You can trade bitcoin peer to peer.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            }
+        )
+
+        test_data = [
+            {
+                "question": "How does Bisq Easy work?",
+                "expected_success": True,
+                "expected_keywords": ["reputation"],
+            }
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.failed == 1
+        assert results.failures[0]["missing_keywords"] == ["reputation"]
+
+    @pytest.mark.asyncio
+    async def test_legacy_case_without_keywords_passes_and_counts_shallow(
+        self, evaluator
+    ):
+        """Datasets without keyword fields keep has_sources-only grading."""
+        test_data = [{"question": "Test question", "expected_success": True}]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.passed == 1
+        assert results.shallow_tests == 1
+
+    @pytest.mark.asyncio
+    async def test_content_checked_case_not_counted_shallow(
+        self, evaluator, mock_rag_service
+    ):
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "Reputation matters.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            }
+        )
+
+        test_data = [
+            {
+                "question": "Test question",
+                "expected_success": True,
+                "expected_keywords": ["reputation"],
+            }
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.shallow_tests == 0
+
+    @pytest.mark.asyncio
+    async def test_rag_precision_recall_computed_from_graded_outcomes(
+        self, evaluator, mock_rag_service
+    ):
+        # Case 1: expected success, sources + clean answer -> TP
+        # Case 2: expected success, sources but forbidden keyword -> FN
+        # Case 3: expected failure, but sources returned -> FP
+        responses = [
+            {
+                "answer": "Reputation based trading.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            },
+            {
+                "answer": "Use the DAO to vote.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            },
+            {
+                "answer": "Some hallucinated answer.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            },
+        ]
+        mock_rag_service.query = AsyncMock(side_effect=responses)
+
+        test_data = [
+            {"question": "q1", "expected_success": True},
+            {
+                "question": "q2",
+                "expected_success": True,
+                "forbidden_keywords": ["DAO"],
+            },
+            {"question": "q3", "expected_success": False},
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        # precision = TP / (TP + FP) = 1 / 2; recall = TP / (TP + FN) = 1 / 2
+        assert results.precision == pytest.approx(0.5)
+        assert results.recall == pytest.approx(0.5)
+        assert results.passed == 1
+        assert results.failed == 2
+
+
 class TestIntegrationWithTestDataset:
     """Test evaluation with actual test dataset."""
 

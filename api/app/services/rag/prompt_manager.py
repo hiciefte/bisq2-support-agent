@@ -8,9 +8,10 @@ This module handles:
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from app.core.config import Settings
 from app.core.pii_utils import redact_for_logs
@@ -32,6 +33,27 @@ from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
+
+# Separator between prompt sections (soul, policy blocks, context, question).
+PROMPT_SECTION_SEPARATOR = "\n\n---\n\n"
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{(\w+)\}")
+
+
+def _substitute_placeholders(template: str, **kwargs: Any) -> str:
+    """Substitute ``{key}`` placeholders in a single pass over the template.
+
+    Substituted values are never re-scanned for placeholders, so
+    user-controlled input containing literal ``{context}`` or
+    ``{chat_history}`` cannot pull other prompt sections into itself.
+    Placeholders without a matching kwarg are left untouched.
+    """
+    return _PLACEHOLDER_PATTERN.sub(
+        lambda match: (
+            str(kwargs[match.group(1)]) if match.group(1) in kwargs else match.group(0)
+        ),
+        template,
+    )
 
 
 @dataclass
@@ -56,10 +78,7 @@ class SimpleChatPromptTemplate:
         return cls(template)
 
     def format(self, **kwargs: Any) -> str:
-        result = self._template
-        for key, value in kwargs.items():
-            result = result.replace(f"{{{key}}}", str(value))
-        return result
+        return _substitute_placeholders(self._template, **kwargs)
 
 
 class RAGPromptNotInitializedError(RuntimeError):
@@ -91,6 +110,7 @@ class PromptManager:
         self.settings = settings
         self.feedback_service = feedback_service
         self.prompt: Optional[SimpleChatPromptTemplate] = None
+        self._system_template: Optional[str] = None
 
         logger.info("Prompt manager initialized")
 
@@ -181,9 +201,11 @@ class PromptManager:
                 if guidance_items:
                     logger.info("Added prompt guidance: %s", " | ".join(guidance_items))
 
-        # Prepend soul personality layer
+        # Prepend soul personality layer. Everything up to and including the
+        # context section forms the system message; the question stays in a
+        # separate user-level section (see format_prompt_messages).
         soul_text = load_soul()
-        prompt_sections = [
+        system_sections = [
             soul_text,
             build_prompt_priority_block(),
             build_evidence_discipline_block(),
@@ -194,52 +216,156 @@ class PromptManager:
             build_live_data_rendering_block(),
             build_answer_contract_block(),
             build_feedback_guidance_block(guidance_items),
-            "Question: {question}\n\nChat History: {chat_history}\n\nContext: {context}\n\nAnswer:",
+            "Chat History: {chat_history}\n\nContext: {context}",
         ]
-        system_template = "\n\n---\n\n".join(
-            section for section in prompt_sections if section
+        self._system_template = PROMPT_SECTION_SEPARATOR.join(
+            section for section in system_sections if section
+        )
+        full_template = (
+            self._system_template
+            + PROMPT_SECTION_SEPARATOR
+            + "Question: {question}\n\nAnswer:"
         )
 
         # Create the prompt template
-        self.prompt = SimpleChatPromptTemplate.from_template(system_template)
-        logger.info(f"Custom RAG prompt created with {len(system_template)} characters")
+        self.prompt = SimpleChatPromptTemplate.from_template(full_template)
+        logger.info(f"Custom RAG prompt created with {len(full_template)} characters")
 
         return self.prompt
 
-    def create_context_only_prompt(self, question: str, chat_history_str: str) -> str:
-        """Create a prompt for answering from conversation context only.
+    def _truncate_context(self, context: str) -> str:
+        """Truncate context to MAX_CONTEXT_LENGTH, preferring sentence bounds.
 
-        Used when no relevant documents are found but conversation history exists.
+        Shared by the standard RAG chain and the MCP prompt path so both
+        respect the same context budget.
+        """
+        max_length = self.settings.MAX_CONTEXT_LENGTH
+        if len(context) <= max_length:
+            return context
+
+        logger.warning(
+            f"Context too long: {len(context)} chars, truncating to {max_length}"
+        )
+        # Try to truncate at last sentence boundary to avoid cutting mid-sentence
+        truncated = context[:max_length]
+        last_period = truncated.rfind(". ")
+        # Only use sentence boundary if we don't lose more than 20% of content
+        # Explicit check for -1 (not found) to document intent clearly
+        if last_period != -1 and last_period > max_length * 0.8:
+            return truncated[: last_period + 1]
+        return truncated
+
+    def format_prompt_messages(
+        self, question: str, chat_history_str: str, context: str
+    ) -> Tuple[str, str]:
+        """Format the RAG prompt as (system_content, user_content) messages.
+
+        The system message carries the persona, policy blocks, chat history,
+        and retrieved context; the user message carries only the question so
+        untrusted input stays at user trust level.
 
         Args:
             question: The user's question
             chat_history_str: Formatted chat history string
+            context: Formatted document context (truncated if oversized)
 
         Returns:
-            Prompt string for context-only answering
+            Tuple of (system_content, user_content)
         """
-        # Detect protocol from question (Bisq 1 = Multisig v1 protocol)
+        if self.prompt is None or self._system_template is None:
+            self.create_rag_prompt()
+        system_template = self._system_template
+        if system_template is None:  # pragma: no cover - defensive
+            raise RAGPromptNotInitializedError()
+
+        system_content = _substitute_placeholders(
+            system_template,
+            chat_history=chat_history_str,
+            context=self._truncate_context(context),
+        )
+        return system_content, question
+
+    @staticmethod
+    def _is_multisig_context(question: str, detected_version: Optional[str]) -> bool:
+        """Resolve whether the context-only policy should target Bisq 1.
+
+        Prefers the upstream detected version (which may come from chat
+        history); falls back to question-text hints when no version was
+        detected.
+        """
+        if detected_version in ("Bisq 1", "multisig_v1"):
+            return True
+        if detected_version in ("Bisq 2", "bisq_easy"):
+            return False
+
         question_lower = question.lower()
-        is_multisig_query = (
+        return (
             "bisq 1" in question_lower
             or "bisq1" in question_lower
             or "multisig" in question_lower
         )
 
+    def create_context_only_prompt_messages(
+        self,
+        question: str,
+        chat_history_str: str,
+        detected_version: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Create context-only prompt as (system_content, user_content).
+
+        Used when no relevant documents are found but conversation history
+        exists. The system message carries persona, policy, and the previous
+        conversation; the user message carries only the question.
+
+        Args:
+            question: The user's question
+            chat_history_str: Formatted chat history string
+            detected_version: Version detected upstream ("Bisq 1", "Bisq 2",
+                "multisig_v1", "bisq_easy", or None to fall back to
+                question-text detection)
+
+        Returns:
+            Tuple of (system_content, user_content)
+        """
+        is_multisig_query = self._is_multisig_context(question, detected_version)
+
         soul_text = load_soul()
-        context_sections = [
+        system_sections = [
             soul_text,
             build_answer_contract_block(),
             build_context_only_policy_block(is_multisig_query),
             f"Previous Conversation:\n{chat_history_str}",
-            f"Current Question: {question}",
-            "Answer:",
         ]
-        context_only_prompt = "\n\n---\n\n".join(
-            section for section in context_sections if section
+        system_content = PROMPT_SECTION_SEPARATOR.join(
+            section for section in system_sections if section
         )
+        return system_content, question
 
-        return context_only_prompt
+    def create_context_only_prompt(
+        self,
+        question: str,
+        chat_history_str: str,
+        detected_version: Optional[str] = None,
+    ) -> str:
+        """Create a single-string prompt for context-only answering.
+
+        Convenience wrapper around create_context_only_prompt_messages() for
+        callers that need one combined prompt string.
+
+        Args:
+            question: The user's question
+            chat_history_str: Formatted chat history string
+            detected_version: Optional version detected upstream
+
+        Returns:
+            Prompt string for context-only answering
+        """
+        system_content, user_content = self.create_context_only_prompt_messages(
+            question, chat_history_str, detected_version
+        )
+        return PROMPT_SECTION_SEPARATOR.join(
+            [system_content, f"Current Question: {user_content}", "Answer:"]
+        )
 
     def create_rag_chain(
         self,
@@ -262,12 +388,17 @@ class PromptManager:
         def generate_response(
             question: str,
             chat_history: Union[List[Union[Dict[str, str], Any]], None] = None,
+            docs: Optional[List[Document]] = None,
         ) -> str:
             """Generate response using RAG pipeline.
 
             Args:
                 question: User's question
                 chat_history: Optional chat history
+                docs: Optional pre-retrieved documents. When provided, the
+                    chain skips its internal retrieval so the generation
+                    context matches the documents the caller already
+                    retrieved (e.g. version-aware retrieval with scores).
 
             Returns:
                 Generated response string
@@ -294,31 +425,16 @@ class PromptManager:
                 # Format chat history for the prompt
                 chat_history_str = self.format_chat_history(chat_history)
 
-                # Retrieve relevant documents with version priority
-                docs = retrieve_func(preprocessed_question)
+                if docs is None:
+                    # Retrieve relevant documents with version priority
+                    docs = retrieve_func(preprocessed_question)
+                    logger.info(f"Retrieved {len(docs)} relevant documents")
+                else:
+                    logger.info(f"Using {len(docs)} pre-retrieved documents")
 
-                logger.info(f"Retrieved {len(docs)} relevant documents")
-
-                # Format documents for the prompt
+                # Format documents for the prompt (truncated to
+                # MAX_CONTEXT_LENGTH inside format_prompt_messages)
                 context = format_docs_func(docs)
-
-                # Check context length and truncate if necessary to fit in prompt
-                if len(context) > self.settings.MAX_CONTEXT_LENGTH:
-                    logger.warning(
-                        f"Context too long: {len(context)} chars, truncating to {self.settings.MAX_CONTEXT_LENGTH}"
-                    )
-                    # Try to truncate at last sentence boundary to avoid cutting mid-sentence
-                    truncated = context[: self.settings.MAX_CONTEXT_LENGTH]
-                    last_period = truncated.rfind(". ")
-                    # Only use sentence boundary if we don't lose more than 20% of content
-                    # Explicit check for -1 (not found) to document intent clearly
-                    if (
-                        last_period != -1
-                        and last_period > self.settings.MAX_CONTEXT_LENGTH * 0.8
-                    ):
-                        context = truncated[: last_period + 1]
-                    else:
-                        context = truncated
 
                 # Log the complete prompt and context for debugging
                 logger.debug("=== DEBUG: Complete Prompt and Context ===")
@@ -332,22 +448,24 @@ class PromptManager:
                 if self.prompt is None:
                     raise RAGPromptNotInitializedError()
 
-                # Format the prompt
-                formatted_prompt = self.prompt.format(
+                # Split into system (persona, policy, history, context) and
+                # user (question) messages so untrusted input stays at user
+                # trust level.
+                system_content, user_content = self.format_prompt_messages(
                     question=preprocessed_question,
-                    chat_history=chat_history_str,
+                    chat_history_str=chat_history_str,
                     context=context,
                 )
 
                 # Log prompt metadata only (avoid logging full content for PII/compliance)
                 logger.debug(
-                    f"Formatted prompt ready - length: {len(formatted_prompt)} chars, "
-                    f"has context: {bool(context)}"
+                    f"Formatted prompt ready - system: {len(system_content)} chars, "
+                    f"user: {len(user_content)} chars, has context: {bool(context)}"
                 )
 
                 # Generate response (instrumented for monitoring)
                 generation_start = time.time()
-                response_text = llm.invoke(formatted_prompt)
+                response_text = llm.invoke(user_content, system_content=system_content)
                 _ = time.time() - generation_start  # generation_time for future use
 
                 response_content = (
@@ -413,10 +531,12 @@ class PromptManager:
     def format_prompt_for_mcp(
         self, context: str, question: str, chat_history_str: str
     ) -> str:
-        """Format the RAG prompt as a string for MCP tool invocation.
+        """Format the RAG prompt as a single string for MCP tool invocation.
 
-        Creates the prompt template if not already created, then formats it
-        with the provided context, question, and chat history.
+        Delegates to format_prompt_messages() so the MCP path shares the
+        same placeholder handling and context truncation as the standard
+        RAG chain. Prefer format_prompt_messages() for new callers so the
+        question stays in a separate user-level message.
 
         Args:
             context: Formatted document context
@@ -426,15 +546,15 @@ class PromptManager:
         Returns:
             Formatted prompt string ready for LLM invocation
         """
-        # Ensure prompt template exists
-        if self.prompt is None:
-            self.create_rag_prompt()
-
-        # Format and return the prompt string
-        formatted_prompt = self.prompt.format(
+        system_content, user_content = self.format_prompt_messages(
             question=question,
-            chat_history=chat_history_str,
+            chat_history_str=chat_history_str,
             context=context,
+        )
+        formatted_prompt = (
+            system_content
+            + PROMPT_SECTION_SEPARATOR
+            + f"Question: {user_content}\n\nAnswer:"
         )
 
         logger.debug(f"Formatted MCP prompt - length: {len(formatted_prompt)} chars")
