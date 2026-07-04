@@ -3,7 +3,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 from app.channels.escalation_localization import normalize_language_code
@@ -385,7 +385,8 @@ def compute_chat_stats(
 
     Args:
         feedback: Raw feedback rows from FeedbackService.load_feedback()
-        now: Reference time for the 24h window (defaults to datetime.now())
+        now: Reference time for the 24h window (defaults to the current UTC
+            time; naive values are interpreted as UTC)
 
     Returns:
         Stats payload with total_queries, average_response_time and
@@ -397,7 +398,14 @@ def compute_chat_stats(
         "last_24h_average_response_time": _DEFAULT_AVERAGE_RESPONSE_TIME,
     }
 
-    cutoff_time = (now or datetime.now()) - timedelta(hours=24)
+    # FeedbackService writes UTC ISO timestamps, so fromisoformat() yields
+    # AWARE datetimes. Normalize both comparison sides to UTC-aware values;
+    # a naive/aware mix would raise TypeError and silently drop recent
+    # feedback out of the 24h window via the tolerant except below.
+    reference_time = now or datetime.now(timezone.utc)
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    cutoff_time = reference_time - timedelta(hours=24)
 
     total_queries = 0
     total_response_time = 0.0
@@ -416,7 +424,11 @@ def compute_chat_stats(
         timestamp_raw = item.get("timestamp")
         if timestamp_raw:
             try:
-                if datetime.fromisoformat(timestamp_raw) > cutoff_time:
+                parsed = datetime.fromisoformat(timestamp_raw)
+                if parsed.tzinfo is None:
+                    # Legacy naive timestamps are treated as UTC.
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if parsed > cutoff_time:
                     recent_queries += 1
                     recent_response_time += response_time
             except (ValueError, TypeError):

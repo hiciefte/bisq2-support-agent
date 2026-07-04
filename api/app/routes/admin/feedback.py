@@ -128,6 +128,8 @@ def compute_feedback_analytics(
         return {
             "total_feedback": 0,
             "helpful_rate": 0,
+            "helpful_count": 0,
+            "unhelpful_count": 0,
             "source_effectiveness": {},
             "common_issues": {},
             "recent_negative": [],
@@ -190,10 +192,11 @@ def compute_feedback_analytics(
             sorted_issues[: max_unique_issues - 1]
         )  # Leave room for "other"
 
-        # Combine remaining issues as "other"
+        # Combine remaining issues as "other", merging with a mapped "other"
+        # bucket that may already be retained among the top issues.
         other_count = sum(count for _, count in sorted_issues[max_unique_issues - 1 :])
         if other_count > 0:
-            top_issues["other"] = other_count
+            top_issues["other"] = top_issues.get("other", 0) + other_count
 
         common_issues = top_issues
 

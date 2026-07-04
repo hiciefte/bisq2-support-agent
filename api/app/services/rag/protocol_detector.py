@@ -63,6 +63,15 @@ _VERSION_SWITCH_RE = re.compile(
     rf"\bto\s+(?P<target>{_BISQ1_MENTION_PATTERN}|{_BISQ2_MENTION_PATTERN})"
 )
 
+# Negation words directly (within up to two filler words) before the switch
+# verb: "haven't switched from ...", "never moved from ...", "have not yet
+# switched from ...". A negated switch is not evidence for the target version.
+_SWITCH_NEGATION_PREFIX_RE = re.compile(
+    r"\b(?:not|never|didn'?t|haven'?t|hasn'?t|don'?t|doesn'?t|won'?t|can'?t"
+    r"|cannot|couldn'?t|(?:did|have|has|do|does|will|could)\s+not|yet\s+to)"
+    r"\s+(?:\w+\s+){0,2}$"
+)
+
 
 class ProtocolDetector:
     """Detect Bisq protocol from user questions and context.
@@ -516,9 +525,16 @@ class ProtocolDetector:
         return "", str(message).lower()
 
     def _switch_target_version(self, content: str) -> Optional[str]:
-        """Return the target version of a 'switched from X to Y' phrase."""
+        """Return the target version of a 'switched from X to Y' phrase.
+
+        Negated switch phrases ("I haven't switched from Bisq 1 to Bisq 2")
+        return None so they fall back to ordinary mixed-mention handling
+        (ambiguous) instead of locking the target version.
+        """
         match = _VERSION_SWITCH_RE.search(content)
         if not match:
+            return None
+        if _SWITCH_NEGATION_PREFIX_RE.search(content[: match.start()]):
             return None
         target = match.group("target")
         if self._has_bisq1_mention(target):

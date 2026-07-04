@@ -102,6 +102,7 @@ class FeedbackService:
             # Debounce state for feedback-triggered weight recomputes
             self._learning_lock = asyncio.Lock()
             self._last_learning_trigger: Optional[float] = None
+            self._pending_learning_task: Optional[asyncio.Task] = None
 
             # Read-through cache timestamps over persisted learning state
             self._weights_refreshed_at: Optional[float] = None
@@ -383,26 +384,62 @@ class FeedbackService:
         Uses a cooldown window to prevent rapid-fire recalculations when
         multiple feedback events arrive in quick succession. Because the
         recompute is an idempotent function of the 30-day window, events
-        skipped inside the cooldown lose nothing: the next recompute sees
-        their data in the window.
+        skipped inside the cooldown lose nothing: a trailing recompute is
+        scheduled for after the cooldown so their data is always learned,
+        even when no later write arrives.
         """
-
-        def _within_cooldown() -> bool:
-            return (
-                self._last_learning_trigger is not None
-                and time.monotonic() - self._last_learning_trigger
-                < _LEARNING_COOLDOWN_SECONDS
-            )
-
-        if _within_cooldown():
+        if self._within_learning_cooldown():
+            self._schedule_trailing_recompute()
             return
 
         async with self._learning_lock:
             # Double-check under lock
-            if _within_cooldown():
+            if self._within_learning_cooldown():
+                self._schedule_trailing_recompute()
                 return
             await self.apply_feedback_weights_async()
             self._last_learning_trigger = time.monotonic()
+
+    def _within_learning_cooldown(self) -> bool:
+        """Return True while the debounce cooldown window is active."""
+        return (
+            self._last_learning_trigger is not None
+            and time.monotonic() - self._last_learning_trigger
+            < _LEARNING_COOLDOWN_SECONDS
+        )
+
+    def _schedule_trailing_recompute(self) -> None:
+        """Schedule one recompute for after the cooldown window elapses.
+
+        Writes that land inside the cooldown would otherwise never be
+        learned unless another write arrived later. Only one trailing task
+        is kept pending at a time; the recompute is idempotent, so a
+        duplicate run is harmless.
+        """
+        if (
+            self._pending_learning_task is not None
+            and not self._pending_learning_task.done()
+        ):
+            return
+
+        async def _trailing_recompute() -> None:
+            try:
+                remaining = _LEARNING_COOLDOWN_SECONDS
+                if self._last_learning_trigger is not None:
+                    elapsed = time.monotonic() - self._last_learning_trigger
+                    remaining = max(_LEARNING_COOLDOWN_SECONDS - elapsed, 0.0)
+                await asyncio.sleep(remaining)
+                async with self._learning_lock:
+                    await self.apply_feedback_weights_async()
+                    self._last_learning_trigger = time.monotonic()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "Trailing feedback weight recompute failed (non-fatal): %s", e
+                )
+
+        self._pending_learning_task = asyncio.create_task(_trailing_recompute())
 
     def apply_feedback_weights(self, feedback_data=None) -> bool:
         """Update source weights based on feedback data (synchronous version).

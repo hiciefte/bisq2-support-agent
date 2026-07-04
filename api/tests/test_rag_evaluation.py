@@ -415,6 +415,35 @@ class TestContentBasedGrading:
         assert results.failures[0]["missing_keywords"] == ["reputation"]
 
     @pytest.mark.asyncio
+    async def test_expected_failure_with_forbidden_keyword_is_true_negative(
+        self, evaluator, mock_rag_service
+    ):
+        """expected_success=False + forbidden keyword in the answer means the
+        prediction (failure) matches the expectation - the case must PASS.
+        content_ok is already folded into predicted_success and must not be
+        re-applied to the pass condition."""
+        mock_rag_service.query = AsyncMock(
+            return_value={
+                "answer": "You burn BSQ in the DAO to trade on Bisq Easy.",
+                "sources": [{"title": "Doc", "content": "text"}],
+            }
+        )
+
+        test_data = [
+            {
+                "question": "Does Bisq Easy use the DAO?",
+                "expected_success": False,
+                "forbidden_keywords": ["DAO"],
+            }
+        ]
+
+        results = await evaluator.run_rag_tests(test_data)
+
+        assert results.passed == 1
+        assert results.failed == 0
+        assert results.failures == []
+
+    @pytest.mark.asyncio
     async def test_legacy_case_without_keywords_passes_and_counts_shallow(
         self, evaluator
     ):

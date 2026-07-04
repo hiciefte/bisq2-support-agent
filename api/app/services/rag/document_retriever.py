@@ -32,10 +32,13 @@ _COMPARISON_TOKEN_RE = re.compile(
     r"\b(compare|comparison|different|difference|diff|versus|vs|both\s+versions)\b"
 )
 # Explicit version/protocol tokens required for a comparison token to count
-# as a Bisq 1 vs Bisq 2 comparison (instead of e.g. comparing payment methods).
+# as a Bisq 1 vs Bisq 2 comparison (instead of e.g. comparing payment methods
+# or generic app/wallet versions). A bare "version(s)" token is intentionally
+# NOT enough - only Bisq-specific or Bisq-adjacent version phrases qualify.
 _VERSION_CONTEXT_TOKEN_RE = re.compile(
     r"\bbisq\s*1\b|\bbisq1\b|\bbisq\s*2\b|\bbisq2\b|\bbisq\s+easy\b|\bmultisig\b"
-    r"|\bboth\s+versions\b|\bversions?\s+of\s+bisq\b|\bversions?\b"
+    r"|\bboth\s+versions\b|\bversions?\s+of\s+bisq\b"
+    r"|\b(?:the\s+)?(?:two\s+)?bisq\s+versions?\b"
 )
 
 

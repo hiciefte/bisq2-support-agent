@@ -155,6 +155,15 @@ class TestComparisonClassification:
             ("bisq 1 vs bisq 2", True),
             ("What is the difference between Bisq Easy and multisig?", True),
             ("What payment methods are different in Europe?", False),
+            # A bare "version(s)" token must not turn generic comparisons
+            # into a Bisq 1 vs Bisq 2 comparison.
+            (
+                "difference between the old version and new version of the wallet",
+                False,
+            ),
+            ("compare the app versions", False),
+            ("what are the differences between both versions?", True),
+            ("compare the versions of bisq", True),
         ],
     )
     def test_is_bisq_version_comparison_query(self, query, expected):

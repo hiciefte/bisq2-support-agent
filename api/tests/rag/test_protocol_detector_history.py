@@ -125,6 +125,58 @@ class TestHistorySwitchPhrases:
         assert confidence >= 0.7
 
 
+class TestNegatedSwitchPhrases:
+    """Negated switch phrases must not lock the target version.
+
+    "I haven't switched from Bisq 1 to Bisq 2" is not evidence the user is
+    on Bisq 2 - it falls back to an ordinary mixed mention (ambiguous)."""
+
+    def test_havent_switched_is_not_a_switch_signal(self, detector):
+        result = detector._detect_version_in_history_content(
+            "i haven't switched from bisq 1 to bisq 2"
+        )
+        assert result is None
+
+    def test_didnt_migrate_yet_is_not_a_switch_signal(self, detector):
+        result = detector._detect_version_in_history_content(
+            "i didn't migrate from bisq 1 to bisq 2 yet"
+        )
+        assert result is None
+
+    def test_never_moved_is_not_a_switch_signal(self, detector):
+        result = detector._detect_version_in_history_content(
+            "we never moved from bisq 1 to bisq 2"
+        )
+        assert result is None
+
+    def test_not_yet_switched_is_not_a_switch_signal(self, detector):
+        result = detector._detect_version_in_history_content(
+            "i have not yet switched from bisq 1 to bisq 2"
+        )
+        assert result is None
+
+    def test_positive_switch_still_detected(self, detector):
+        """The negation guard must not break affirmative switch phrases."""
+        result = detector._detect_version_in_history_content(
+            "i finally switched from bisq 1 to bisq 2"
+        )
+        assert result == ("Bisq 2", 0.80)
+
+    @pytest.mark.asyncio
+    async def test_detect_version_negated_switch_does_not_lock_bisq2(self, detector):
+        history = [
+            {
+                "role": "user",
+                "content": "I haven't switched from Bisq 1 to Bisq 2 yet",
+            },
+            {"role": "assistant", "content": "Understood."},
+        ]
+        version, confidence, _ = await detector.detect_version(
+            "How do I complete my trade?", history
+        )
+        assert not (version == "Bisq 2" and confidence >= 0.8)
+
+
 class TestHistoryRolePreference:
     """User signals stay preferred over assistant messages (existing behavior)."""
 

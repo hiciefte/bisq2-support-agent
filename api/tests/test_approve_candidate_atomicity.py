@@ -6,7 +6,10 @@ crash between the two writes left a verified FAQ plus a still-pending
 candidate, and re-approval created a duplicate FAQ. These tests cover:
 - rejection of non-pending candidates before any FAQ write
 - guarded approval via approve_pending with compensation on a lost race
-- idempotent recovery that reuses the FAQ created by an interrupted approval
+- idempotent recovery via the candidate's own validated faq_id link
+- an explicit conflict (instead of a silent relink) when an unlinked FAQ
+  merely shares the exact question text, since FAQs carry no candidate
+  provenance and could belong to an unrelated candidate
 """
 
 from __future__ import annotations
@@ -137,13 +140,20 @@ class TestLostRaceCompensation:
 
     @pytest.mark.asyncio
     async def test_recovered_faq_is_not_deleted_on_lost_race(
-        self, service, pending_candidate, mock_faq_service, monkeypatch
+        self, service, pending_candidate, mock_faq_service, monkeypatch, db_path
     ):
-        # A previous interrupted approval already created the FAQ; losing the
-        # race must not delete that pre-existing FAQ.
-        mock_faq_service.get_filtered_faqs.return_value = [
-            SimpleNamespace(id="faq_prev", question=QUESTION, answer=ANSWER)
-        ]
+        # A previous interrupted approval already created and linked the FAQ;
+        # losing the race must not delete that pre-existing FAQ.
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "UPDATE unified_faq_candidates SET faq_id = ? WHERE id = ?",
+            ("faq_prev", pending_candidate.id),
+        )
+        conn.commit()
+        conn.close()
+        mock_faq_service.get_faq_by_id.return_value = SimpleNamespace(
+            id="faq_prev", question=QUESTION, answer=ANSWER
+        )
         monkeypatch.setattr(
             service.repository, "approve_pending", lambda *a, **kw: False
         )
@@ -157,22 +167,43 @@ class TestLostRaceCompensation:
 
 class TestCrashRecoveryIdempotency:
     @pytest.mark.asyncio
-    async def test_reuses_faq_created_by_interrupted_approval(
+    async def test_exact_question_match_raises_conflict_instead_of_silent_relink(
         self, service, pending_candidate, mock_faq_service
     ):
-        # Crash happened after add_faq but before approve_pending: the FAQ
-        # exists in faqs.db with the exact question text.
+        # A FAQ with identical question text but no candidate link may belong
+        # to an UNRELATED candidate (FAQs carry no provenance). Approval must
+        # surface a conflict for explicit admin resolution, not silently
+        # relink and skip duplicate detection.
         mock_faq_service.get_filtered_faqs.return_value = [
             SimpleNamespace(id="faq_prev", question=QUESTION, answer=ANSWER)
         ]
 
-        faq_id = await service.approve_candidate(pending_candidate.id, reviewer="admin")
+        with pytest.raises(CandidateReviewConflictError) as exc_info:
+            await service.approve_candidate(pending_candidate.id, reviewer="admin")
 
-        assert faq_id == "faq_prev"
+        assert exc_info.value.faq_id == "faq_prev"
+        assert "faq_prev" in str(exc_info.value)
         mock_faq_service.add_faq.assert_not_called()
         stored = service.repository.get_by_id(pending_candidate.id)
+        assert stored.review_status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_exact_question_match_with_force_proceeds_to_creation(
+        self, service, pending_candidate, mock_faq_service
+    ):
+        mock_faq_service.get_filtered_faqs.return_value = [
+            SimpleNamespace(id="faq_prev", question=QUESTION, answer=ANSWER)
+        ]
+
+        faq_id = await service.approve_candidate(
+            pending_candidate.id, reviewer="admin", force=True
+        )
+
+        assert faq_id == "faq_new_1"
+        mock_faq_service.add_faq.assert_called_once()
+        stored = service.repository.get_by_id(pending_candidate.id)
         assert stored.review_status == "approved"
-        assert stored.faq_id == "faq_prev"
+        assert stored.faq_id == "faq_new_1"
 
     @pytest.mark.asyncio
     async def test_reuses_candidate_faq_id_link_when_faq_exists(

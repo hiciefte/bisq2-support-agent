@@ -250,7 +250,9 @@ class RAGEvaluator:
                 elif expected_success and not predicted_success:
                     false_negatives += 1
 
-                if predicted_success == expected_success and content_ok:
+                # content_ok is already folded into predicted_success, so a
+                # true negative (expected failure + content violation) passes.
+                if predicted_success == expected_success:
                     passed += 1
                 else:
                     failed += 1

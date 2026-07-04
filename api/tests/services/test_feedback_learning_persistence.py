@@ -9,6 +9,7 @@ Covers the verified review findings:
   reload the full feedback corpus per write.
 """
 
+import asyncio
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -254,3 +255,29 @@ class TestStoreFeedbackDebounce:
         )
 
         assert await service.store_feedback(self._feedback_payload()) is True
+
+    async def test_trailing_feedback_is_learned_after_cooldown(
+        self, isolated_settings, monkeypatch
+    ):
+        """A write inside the cooldown must schedule ONE trailing recompute so
+        trailing feedback is learned even when no later write arrives."""
+        from app.services import feedback_service as feedback_service_module
+
+        monkeypatch.setattr(feedback_service_module, "_LEARNING_COOLDOWN_SECONDS", 0.05)
+        service = FeedbackService(settings=isolated_settings)
+        recompute = AsyncMock(return_value=True)
+        service.apply_feedback_weights_async = recompute
+
+        await service.store_feedback(self._feedback_payload())
+        await service.store_feedback(self._feedback_payload())  # inside cooldown
+        assert recompute.call_count == 1
+
+        trailing_task = service._pending_learning_task
+        assert trailing_task is not None
+
+        # A further write inside the cooldown must not stack a second task.
+        await service.store_feedback(self._feedback_payload())
+        assert service._pending_learning_task is trailing_task
+
+        await asyncio.wait_for(trailing_task, timeout=2.0)
+        assert recompute.call_count == 2

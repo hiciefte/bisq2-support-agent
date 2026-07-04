@@ -214,5 +214,28 @@ describe("useChatMessages", () => {
 
       expect(localStorage.getItem(CHAT_STORAGE_KEY)).toBeNull();
     });
+
+    test("does not resurrect cleared messages when unmounted before effects run", () => {
+      const { result, unmount } = renderHook(() => useChatMessages());
+
+      act(() => {
+        // Fire-and-forget: the mocked fetch never resolves, so only the
+        // synchronous user-message state update lands and schedules the
+        // debounced save.
+        void result.current.sendMessage("Sensitive question");
+      });
+
+      // Debounce has not fired yet; the save is only pending in memory.
+      expect(localStorage.getItem(CHAT_STORAGE_KEY)).toBeNull();
+
+      act(() => {
+        // Clear and unmount in the same act so the unmount cleanup flush
+        // runs before the emptied-messages effect could cancel the save.
+        result.current.clearChatHistory();
+        unmount();
+      });
+
+      expect(localStorage.getItem(CHAT_STORAGE_KEY)).toBeNull();
+    });
   });
 });

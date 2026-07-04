@@ -14,9 +14,14 @@ export interface ReviewFeedbackPanelState {
 
 const ADMIN_SECTION_NAMES = new Set(["Review Notes", "Last Change Summary"]);
 
+/** Reserved section key for content before the first `## ` header (e.g. the `# Title` line). */
+export const PREAMBLE_SECTION_KEY = "__preamble__";
+
+const PREAMBLE_SECTION_LABEL = "Document preamble";
+
 function splitMarkdownSections(markdown: string): Record<string, string> {
   const sections: Record<string, string[]> = {};
-  let currentSection: string | null = null;
+  let currentSection = PREAMBLE_SECTION_KEY;
   const body = stripFrontmatter(markdown).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   for (const line of body.split("\n")) {
     if (line.startsWith("## ")) {
@@ -24,15 +29,21 @@ function splitMarkdownSections(markdown: string): Record<string, string> {
       sections[currentSection] = sections[currentSection] ?? [];
       continue;
     }
-    if (currentSection) {
-      sections[currentSection].push(line);
-    }
+    sections[currentSection] = sections[currentSection] ?? [];
+    sections[currentSection].push(line);
   }
   return Object.fromEntries(
-    Object.entries(sections).map(([section, lines]) => [
-      section,
-      lines.join("\n").trim(),
-    ]),
+    Object.entries(sections)
+      .map(([section, lines]): [string, string] => [section, lines.join("\n").trim()])
+      .filter(
+        ([section, content]) => section !== PREAMBLE_SECTION_KEY || content !== "",
+      ),
+  );
+}
+
+function displaySectionNames(sections: string[]): string[] {
+  return sections.map((section) =>
+    section === PREAMBLE_SECTION_KEY ? PREAMBLE_SECTION_LABEL : section,
   );
 }
 
@@ -124,7 +135,7 @@ export function deriveReviewFeedbackPanelState({
       summary: sectionCountSummary("Draft touches", proposalChangedSections),
       description:
         "This describes what the generated draft would change. It is not saved as learning feedback until you review the page.",
-      visibleSections: proposalChangedSections,
+      visibleSections: displaySectionNames(proposalChangedSections),
       showFeedbackTags: false,
     };
   }
@@ -139,7 +150,7 @@ export function deriveReviewFeedbackPanelState({
         : "No material document edits detected",
     description:
       "We save this signal with your final decision for future LLM Wiki drafts; it is not added to customer-facing RAG.",
-    visibleSections: reviewerChangedSections,
+    visibleSections: displaySectionNames(reviewerChangedSections),
     showFeedbackTags: true,
   };
 }

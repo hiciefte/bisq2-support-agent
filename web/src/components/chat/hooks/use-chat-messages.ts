@@ -574,10 +574,22 @@ export const useChatMessages = () => {
     );
 
     const clearChatHistory = useCallback(() => {
+        // Cancel synchronously and remove the stored history right away: if the
+        // component unmounts before the emptied-messages effect runs, the unmount
+        // cleanup flush would otherwise resurrect the stale buffered messages.
+        cancelPendingSave();
         messagesRef.current = [];
         setMessages([]);
         setInput("");
-    }, []);
+        if (typeof window === "undefined") {
+            return;
+        }
+        try {
+            localStorage.removeItem(CHAT_STORAGE_KEY);
+        } catch {
+            // Ignore storage exceptions to avoid breaking UI interactions.
+        }
+    }, [cancelPendingSave]);
 
     return {
         messages,

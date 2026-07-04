@@ -53,6 +53,8 @@ class TestComputeFeedbackAnalytics:
         assert result == {
             "total_feedback": 0,
             "helpful_rate": 0,
+            "helpful_count": 0,
+            "unhelpful_count": 0,
             "source_effectiveness": {},
             "common_issues": {},
             "recent_negative": [],
@@ -86,6 +88,44 @@ class TestComputeFeedbackAnalytics:
         result = admin_feedback.compute_feedback_analytics(rows, max_unique_issues=10)
         # Unknown free-form issues collapse into the controlled "other" bucket
         assert result["common_issues"] == {"other": 10}
+
+    def test_cap_merges_overflow_into_retained_other_bucket(self):
+        """A mapped "other" among the top issues must not be overwritten by
+        the overflow count - the two buckets have to be summed."""
+
+        def _rows(issue, count):
+            return [
+                {
+                    "message_id": f"{issue}-{i}",
+                    "rating": 0,
+                    "metadata": {"issues": [issue]},
+                }
+                for i in range(count)
+            ]
+
+        rows = (
+            # 5 distinct unknown issues -> mapped "other" bucket with count 5,
+            # the biggest bucket, so it is retained among the top issues.
+            [
+                {
+                    "message_id": f"m{i}",
+                    "rating": 0,
+                    "metadata": {"issues": [f"weird_issue_{i}"]},
+                }
+                for i in range(5)
+            ]
+            + _rows("too_verbose", 3)
+            + _rows("too_technical", 2)
+            + _rows("inaccurate", 1)
+        )
+
+        result = admin_feedback.compute_feedback_analytics(rows, max_unique_issues=3)
+
+        # top 2 kept: other (5) and too_verbose (3); overflow = 2 + 1 = 3
+        # merged into the retained "other" bucket instead of replacing it.
+        assert result["common_issues"] == {"other": 8, "too_verbose": 3}
+        # No feedback counts may be lost by the cap.
+        assert sum(result["common_issues"].values()) == 11
 
     def test_response_shape_keys_are_stable(self):
         """Both /metrics and the admin endpoint rely on these exact keys."""

@@ -1013,8 +1013,10 @@ class UnifiedPipelineService:
 
         Raises:
             ValueError: If candidate not found
-            CandidateReviewConflictError: If the candidate is not pending or
-                another reviewer processed it concurrently
+            CandidateReviewConflictError: If the candidate is not pending,
+                another reviewer processed it concurrently, or an unlinked
+                FAQ with the exact question text already exists (requires
+                explicit admin resolution or force=True)
             DuplicateFAQError: If similar FAQ(s) already exist and force=False
         """
         candidate = self.repository.get_by_id(candidate_id)
@@ -1036,8 +1038,30 @@ class UnifiedPipelineService:
 
         # Idempotent recovery: a previous approval may have crashed after
         # creating the FAQ but before marking the candidate approved. Reuse
-        # that FAQ instead of creating a duplicate.
-        recovered_faq_id = self._find_recoverable_faq_id(candidate, question_to_check)
+        # that FAQ instead of creating a duplicate - but ONLY via the
+        # candidate's own persisted faq_id link, which proves provenance.
+        recovered_faq_id = self._recover_linked_faq_id(candidate)
+
+        # An unlinked FAQ that merely shares the exact question text may
+        # belong to an UNRELATED candidate (FAQs carry no candidate
+        # provenance). Silently relinking would skip duplicate detection and
+        # could attach this candidate to the wrong FAQ, so surface a conflict
+        # for explicit admin resolution. force=True proceeds to the normal
+        # creation path instead.
+        if recovered_faq_id is None and not force:
+            conflicting_faq_id = self._find_exact_question_faq_id(
+                candidate, question_to_check
+            )
+            if conflicting_faq_id is not None:
+                raise CandidateReviewConflictError(
+                    f"Candidate {candidate_id} matches existing FAQ "
+                    f"{conflicting_faq_id} by exact question text; resolve "
+                    f"the existing FAQ or re-approve with force=True to "
+                    f"create a new FAQ",
+                    candidate_id=candidate_id,
+                    review_status=candidate.review_status,
+                    faq_id=conflicting_faq_id,
+                )
 
         # Check for duplicate FAQs before creating (skip if force=True or if
         # we are re-linking the FAQ from an interrupted approval - the
@@ -1140,17 +1164,14 @@ class UnifiedPipelineService:
 
         return faq_id
 
-    def _find_recoverable_faq_id(
-        self, candidate: UnifiedFAQCandidate, question: str
-    ) -> Optional[str]:
-        """Find a FAQ created by a previously interrupted approval.
+    def _recover_linked_faq_id(self, candidate: UnifiedFAQCandidate) -> Optional[str]:
+        """Recover the FAQ created by a previously interrupted approval.
 
-        Checks, in order:
-        1. The candidate's own faq_id link (validated against faqs.db), and
-        2. an exact-question-text match in faqs.db.
-
-        The lookup is best-effort: any failure falls back to normal FAQ
-        creation rather than blocking the approval.
+        Only the candidate's own persisted faq_id link (validated against
+        faqs.db) counts as recovery evidence - it proves the FAQ was created
+        for THIS candidate. Exact-question-text matches are handled
+        separately as review conflicts because FAQs carry no candidate
+        provenance.
 
         Returns:
             The recoverable FAQ id, or None when a new FAQ must be created.
@@ -1163,7 +1184,19 @@ class UnifiedPipelineService:
                 candidate.id,
                 candidate.faq_id,
             )
+        return None
 
+    def _find_exact_question_faq_id(
+        self, candidate: UnifiedFAQCandidate, question: str
+    ) -> Optional[str]:
+        """Find an existing, unlinked FAQ with the exact question text.
+
+        The lookup is best-effort: any failure falls back to normal FAQ
+        creation rather than blocking the approval.
+
+        Returns:
+            The matching FAQ id, or None when no exact match exists.
+        """
         try:
             matches = self.faq_service.get_filtered_faqs(search_text=question)
             for faq in matches:
@@ -1172,7 +1205,7 @@ class UnifiedPipelineService:
         except Exception:
             logger.warning(
                 "Could not check faqs.db for an existing FAQ during approval "
-                "recovery of candidate %s; continuing with FAQ creation",
+                "of candidate %s; continuing with FAQ creation",
                 candidate.id,
                 exc_info=True,
             )
