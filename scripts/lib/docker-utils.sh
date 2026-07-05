@@ -370,6 +370,13 @@ test_chat_endpoint() {
     local url="${1:-http://localhost/api/chat/query}"
     local retries="${2:-5}"
     local delay="${3:-10}"
+    local question="${CHAT_TEST_QUESTION:-In Bisq 2, how do I buy bitcoin with Bisq Easy?}"
+    local required_answer_regex="${CHAT_TEST_REQUIRED_ANSWER_REGEX:-bisq}"
+    local required_concept_regex="${CHAT_TEST_REQUIRED_CONCEPT_REGEX:-(bitcoin|btc)}"
+    local required_domain_regex="${CHAT_TEST_REQUIRED_DOMAIN_REGEX:-(buy|purchase|seller|trade)}"
+    local payload
+    payload=$(jq -nc --arg question "$question" \
+        '{question: $question, chat_history: [], bypass_hooks: ["escalation"]}')
 
     log_info "Testing chat endpoint..."
 
@@ -381,10 +388,7 @@ test_chat_endpoint() {
         # Get both response body and HTTP status code
         response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Content-Type: application/json" \
-            -d '{
-                "question": "What is Bisq?",
-                "chat_history": []
-            }' \
+            -d "$payload" \
             "$url")
 
         # Extract HTTP code (last line) and body (everything else)
@@ -396,13 +400,22 @@ test_chat_endpoint() {
             http_code="000"
         fi
 
-        # Check if response contains expected fields
-        if echo "$response" | jq -e '.answer and .sources and .response_time' > /dev/null 2>&1; then
-            log_success "Chat endpoint test successful"
-            local response_time
-            response_time=$(echo "$response" | jq -r '.response_time')
-            log_success "Response time: ${response_time}"
-            return 0
+        # Check if response contains expected fields and a substantive answer.
+        if echo "$response" | jq -e '.answer and (.answer | type == "string") and (.answer | length > 20) and (.sources | type == "array") and (.sources | length > 0) and .response_time' > /dev/null 2>&1; then
+            local answer_lower
+            answer_lower=$(echo "$response" | jq -r '.answer' | tr '[:upper:]' '[:lower:]')
+
+            if ! [[ "$answer_lower" =~ $required_answer_regex ]] || \
+               ! [[ "$answer_lower" =~ $required_concept_regex ]] || \
+               ! [[ "$answer_lower" =~ $required_domain_regex ]]; then
+                log_warning "Chat endpoint returned schema-valid but content-invalid answer"
+            else
+                log_success "Chat endpoint test successful"
+                local response_time
+                response_time=$(echo "$response" | jq -r '.response_time')
+                log_success "Response time: ${response_time}"
+                return 0
+            fi
         fi
 
         # If we got a non-200 status or invalid response, retry

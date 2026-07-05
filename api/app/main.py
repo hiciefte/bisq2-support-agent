@@ -260,18 +260,6 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Shared ingress context service initialized")
 
-    # Eager load ColBERT reranker if enabled and using Qdrant backend
-    if settings.RETRIEVER_BACKEND == "qdrant" and settings.ENABLE_COLBERT_RERANK:
-        logger.info("Eager loading ColBERT reranker model...")
-        try:
-            if rag_service.colbert_reranker:
-                rag_service.colbert_reranker.load_model()
-                logger.info("ColBERT reranker model loaded successfully")
-            else:
-                logger.warning("ColBERT reranker not initialized, skipping eager load")
-        except Exception as e:
-            logger.warning(f"ColBERT eager loading failed (will load lazily): {e}")
-
     # Assign services to app state
     app.state.feedback_service = feedback_service
     app.state.faq_service = faq_service

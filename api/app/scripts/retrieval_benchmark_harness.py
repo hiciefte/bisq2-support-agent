@@ -636,6 +636,73 @@ def _index_per_question(summary: dict[str, Any]) -> dict[str, dict[str, float]]:
     return out
 
 
+def _metric_mean(
+    summary: dict[str, Any], metric_names: tuple[str, ...]
+) -> tuple[str, float] | None:
+    metrics = summary.get("metrics") or {}
+    for metric_name in metric_names:
+        row = metrics.get(metric_name)
+        if not isinstance(row, dict):
+            continue
+        mean_value = row.get("mean")
+        if _is_number(mean_value):
+            return metric_name, float(mean_value)
+    return None
+
+
+def gate_benchmark_summary(args: argparse.Namespace) -> int:
+    with open(args.summary) as f:
+        summary = json.load(f)
+
+    gates = {
+        "context_recall": (
+            ("recall_at_k", "retrieval_recall_at_k", "context_recall"),
+            args.min_recall_at_k,
+        ),
+        "mrr": (
+            ("mrr", "mean_reciprocal_rank", "context_precision"),
+            args.min_mrr,
+        ),
+        "faithfulness": (("faithfulness",), args.min_faithfulness),
+        "answer_relevancy": (
+            ("answer_relevancy", "answer_relevance"),
+            args.min_answer_relevancy,
+        ),
+    }
+    failures: list[str] = []
+    observed: dict[str, dict[str, float | str]] = {}
+
+    for gate_name, (metric_names, floor) in gates.items():
+        metric = _metric_mean(summary, metric_names)
+        if metric is None:
+            failures.append(
+                f"{gate_name}: none of {', '.join(metric_names)} present in summary"
+            )
+            continue
+        metric_name, value = metric
+        observed[gate_name] = {"metric": metric_name, "value": value, "floor": floor}
+        if value < floor:
+            failures.append(
+                f"{gate_name}: {metric_name}={value:.4f} below floor {floor:.4f}"
+            )
+
+    print("Benchmark gate metrics:")
+    for gate_name, row in observed.items():
+        print(
+            f"  {gate_name}: {row['metric']}={float(row['value']):.4f} "
+            f"(floor {float(row['floor']):.4f})"
+        )
+
+    if failures:
+        print("Benchmark gate failed:")
+        for failure in failures:
+            print(f"  - {failure}")
+        return 1
+
+    print("Benchmark gate passed")
+    return 0
+
+
 def compare_benchmarks(args: argparse.Namespace) -> int:
     with open(args.baseline) as f:
         baseline = json.load(f)
@@ -883,6 +950,15 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--max-slice-drop", type=float, default=0.05)
     compare_parser.add_argument("--max-latency-increase-pct", type=float, default=20.0)
 
+    gate_parser = subparsers.add_parser(
+        "gate", help="Fail when a benchmark summary is below quality floors"
+    )
+    gate_parser.add_argument("--summary", type=str, required=True)
+    gate_parser.add_argument("--min-recall-at-k", type=float, default=0.38)
+    gate_parser.add_argument("--min-mrr", type=float, default=0.60)
+    gate_parser.add_argument("--min-faithfulness", type=float, default=0.60)
+    gate_parser.add_argument("--min-answer-relevancy", type=float, default=0.55)
+
     return parser
 
 
@@ -901,6 +977,8 @@ def main() -> int:
             return create_lock(args)
         if args.command == "compare":
             return compare_benchmarks(args)
+        if args.command == "gate":
+            return gate_benchmark_summary(args)
     except (ValueError, RuntimeError) as e:
         print(f"Error: {e}")
         return 2

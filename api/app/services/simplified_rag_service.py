@@ -472,16 +472,19 @@ class SimplifiedRAGService:
             query, detected_version
         )
 
-    def _format_docs(self, docs: List[Document]) -> str:
+    def _format_docs(
+        self, docs: List[Document], detected_version: Optional[str] = None
+    ) -> str:
         """Delegate to document retriever for document formatting.
 
         Args:
             docs: List of documents to format
+            detected_version: Optional version context for protocol tie-breaks
 
         Returns:
             Formatted string with version context
         """
-        return self.document_retriever.format_documents(docs)
+        return self.document_retriever.format_documents(docs, detected_version)
 
     @staticmethod
     def _normalize_language_code(value: Any) -> Optional[str]:
@@ -626,7 +629,11 @@ class SimplifiedRAGService:
                 self._initialize_retriever()
 
                 # Initialize document retriever for protocol-aware retrieval
-                self.document_retriever = DocumentRetriever(retriever=self.retriever)
+                self.document_retriever = DocumentRetriever(
+                    retriever=self.retriever,
+                    reranker=self.colbert_reranker,
+                    rerank_top_n=self.settings.COLBERT_TOP_N,
+                )
                 logger.info("Document retriever initialized (Qdrant-only)")
 
                 # Initialize language model
@@ -1341,7 +1348,7 @@ class SimplifiedRAGService:
                     # Build prompt with context from retrieved documents,
                     # split into system-level guardrails/context and the
                     # user-level question
-                    context = self._format_docs(docs)
+                    context = self._format_docs(docs, detected_version)
                     chat_history_str = self.prompt_manager.format_chat_history(
                         chat_history
                     )

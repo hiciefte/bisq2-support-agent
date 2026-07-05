@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from app.services.rag.document_retriever import DocumentRetriever
+from app.services.rag.interfaces import RetrievedDocument
 from app.services.rag.prompt_manager import PromptManager
 from langchain_core.documents import Document
 
@@ -573,6 +574,170 @@ class TestDocumentRetrieverVersionPriority:
         assert (first_call.kwargs.get("filter_dict") or {}).get(
             "protocol"
         ) == "multisig_v1"
+
+    def test_bisq1_formatting_keeps_multisig_before_truncation(self, test_settings):
+        """Bisq 1 prompt context should not be pushed behind Bisq Easy weights."""
+        # Arrange: this mirrors the production failure mode where a high-weight
+        # Bisq Easy/LLM wiki chunk sorted ahead of relevant Bisq 1 context.
+        bisq_easy_doc = Document(
+            page_content="Bisq Easy filler " * 200,
+            metadata={
+                "protocol": "bisq_easy",
+                "source_weight": 1.25,
+                "title": "Bisq Easy",
+                "type": "llm_wiki",
+            },
+        )
+        bisq1_doc = Document(
+            page_content="Bisq 1 multisig mediation survives prompt truncation.",
+            metadata={
+                "protocol": "multisig_v1",
+                "source_weight": 1.0,
+                "title": "Bisq 1 Mediation",
+                "type": "wiki",
+            },
+        )
+        retriever = DocumentRetriever(retriever=Mock())
+
+        # Act
+        formatted = retriever.format_documents(
+            [bisq_easy_doc, bisq1_doc], detected_version="Bisq 1"
+        )
+
+        # Assert
+        assert formatted.index("Bisq 1 multisig") < formatted.index("Bisq Easy filler")
+        assert "Bisq 1 multisig" in formatted[:500]
+
+    def test_scored_retrieval_returns_absolute_similarity_scores(self, test_settings):
+        """Displayed scores use absolute semantic similarity, not relative ranks."""
+
+        class FakeRetriever:
+            def retrieve_with_scores(self, _query, k, filter_dict=None):
+                protocol = (filter_dict or {}).get("protocol")
+                if protocol != "bisq_easy":
+                    return []
+                return [
+                    RetrievedDocument(
+                        content="top hybrid document",
+                        metadata={"protocol": "bisq_easy", "title": "A"},
+                        score=1.0,
+                        id="doc-a",
+                    ),
+                    RetrievedDocument(
+                        content="second hybrid document",
+                        metadata={"protocol": "bisq_easy", "title": "B"},
+                        score=0.2,
+                        id="doc-b",
+                    ),
+                ][:k]
+
+            def retrieve_semantic_with_scores(self, _query, k, filter_dict=None):
+                protocol = (filter_dict or {}).get("protocol")
+                if protocol != "bisq_easy":
+                    return []
+                return [
+                    RetrievedDocument(
+                        content="top hybrid document",
+                        metadata={"protocol": "bisq_easy", "title": "A"},
+                        score=0.42,
+                        id="doc-a",
+                    ),
+                    RetrievedDocument(
+                        content="second hybrid document",
+                        metadata={"protocol": "bisq_easy", "title": "B"},
+                        score=0.37,
+                        id="doc-b",
+                    ),
+                ][:k]
+
+            def retrieve(self, _query, k=10, filter_dict=None):
+                return []
+
+            def health_check(self):
+                return True
+
+        retriever = DocumentRetriever(retriever=FakeRetriever())
+
+        docs, scores = retriever.retrieve_with_scores(
+            "How do I start a trade?", detected_version="Bisq 2"
+        )
+
+        assert [doc.metadata["_score_type"] for doc in docs] == [
+            "absolute_cosine",
+            "absolute_cosine",
+        ]
+        assert scores == [0.42, 0.37]
+
+    def test_scored_retrieval_invokes_reranker(self, test_settings):
+        """ColBERT reranking is wired into the final document order."""
+
+        class FakeRetriever:
+            def retrieve_with_scores(self, _query, k, filter_dict=None):
+                protocol = (filter_dict or {}).get("protocol")
+                if protocol != "bisq_easy":
+                    return []
+                return [
+                    RetrievedDocument(
+                        content="less relevant",
+                        metadata={"protocol": "bisq_easy", "title": "A"},
+                        score=0.9,
+                        id="doc-a",
+                    ),
+                    RetrievedDocument(
+                        content="more relevant",
+                        metadata={"protocol": "bisq_easy", "title": "B"},
+                        score=0.8,
+                        id="doc-b",
+                    ),
+                ][:k]
+
+            def retrieve_semantic_with_scores(self, _query, k, filter_dict=None):
+                return self.retrieve_with_scores(_query, k, filter_dict)
+
+            def retrieve(self, _query, k=10, filter_dict=None):
+                return []
+
+            def health_check(self):
+                return True
+
+        class FakeReranker:
+            def __init__(self):
+                self.calls = []
+
+            def rerank(self, query, documents, top_n=5):
+                self.calls.append((query, documents, top_n))
+                return [
+                    RetrievedDocument(
+                        content=documents[1].content,
+                        metadata=documents[1].metadata,
+                        score=3.2,
+                        id=documents[1].id,
+                    )
+                ]
+
+            def is_loaded(self):
+                return True
+
+            def load_model(self):
+                return None
+
+        reranker = FakeReranker()
+        retriever = DocumentRetriever(
+            retriever=FakeRetriever(),
+            reranker=reranker,
+            rerank_top_n=1,
+        )
+
+        docs, scores = retriever.retrieve_with_scores(
+            "How do I start a trade?", detected_version="Bisq 2"
+        )
+
+        assert len(reranker.calls) == 1
+        assert reranker.calls[0][2] == 1
+        assert [doc.page_content for doc in docs] == ["more relevant"]
+        assert docs[0].metadata["_reranked"] is True
+        assert docs[0].metadata["_colbert_score"] == 3.2
+        assert scores == [0.8]
 
 
 class TestEdgeCases:

@@ -15,10 +15,14 @@ Protocol values:
 
 import logging
 import re
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from app.services.rag.bisq_entities import BISQ1_STRONG_KEYWORDS, BISQ2_STRONG_KEYWORDS
-from app.services.rag.interfaces import RetrievedDocument, RetrieverProtocol
+from app.services.rag.interfaces import (
+    RerankerProtocol,
+    RetrievedDocument,
+    RetrieverProtocol,
+)
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -129,13 +133,19 @@ class DocumentRetriever:
     def __init__(
         self,
         retriever: RetrieverProtocol,
+        reranker: RerankerProtocol | None = None,
+        rerank_top_n: int | None = None,
     ):
         """Initialize the document retriever.
 
         Args:
             retriever: Retriever backend (Qdrant-only in the current architecture)
+            reranker: Optional reranker applied after protocol-aware retrieval
+            rerank_top_n: Optional number of docs to keep after reranking
         """
         self.retriever = retriever
+        self.reranker = reranker
+        self.rerank_top_n = rerank_top_n
 
     def _to_langchain_documents(self, docs: List[RetrievedDocument]) -> List[Document]:
         # Preserve backend IDs (e.g. Qdrant point ID) in metadata so dedupe can be
@@ -168,6 +178,52 @@ class DocumentRetriever:
                 seen.add(key)
                 unique_docs.append(d)
         return unique_docs
+
+    @staticmethod
+    def _dedupe_key_from_metadata(metadata: dict[str, Any]) -> tuple[str, str]:
+        retrieved_id = metadata.get("_retrieved_id")
+        if retrieved_id:
+            return ("_retrieved_id", str(retrieved_id))
+        return (
+            str(metadata.get("title", "Unknown")),
+            str(metadata.get("section", "")),
+        )
+
+    @classmethod
+    def _dedupe_key_from_retrieved(cls, document: RetrievedDocument) -> tuple[str, str]:
+        if document.id:
+            return ("_retrieved_id", str(document.id))
+        return cls._dedupe_key_from_metadata(document.metadata)
+
+    @staticmethod
+    def _clamp_unit_interval(score: float) -> float:
+        return max(0.0, min(1.0, float(score)))
+
+    @staticmethod
+    def _numeric_metadata(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _protocol_priority_for_version(
+        detected_version: str | None = None,
+    ) -> dict[str, int]:
+        normalized = str(detected_version or "").strip()
+        if normalized in ("Bisq 1", "multisig_v1"):
+            return {"multisig_v1": 2, "all": 1, "bisq_easy": 0}
+        return {"bisq_easy": 2, "all": 1, "multisig_v1": 0}
+
+    @staticmethod
+    def _tag_retrieval_ranks(docs: List[Document]) -> List[Document]:
+        for rank, doc in enumerate(docs):
+            metadata = dict(doc.metadata or {})
+            metadata.setdefault("_retrieval_rank", rank)
+            doc.metadata = metadata
+        return docs
 
     def retrieve_with_version_priority(
         self, query: str, detected_version: str | None = None
@@ -336,20 +392,24 @@ class DocumentRetriever:
             logger.info(
                 f"Fallback retrieved {len(sorted_docs)} documents, sorted by protocol priority"
             )
-            return sorted_docs
+            return self._tag_retrieval_ranks(sorted_docs)
         else:
             unique_docs = self._dedupe_langchain_docs(all_docs)
 
             logger.info(
                 f"Total documents retrieved: {len(unique_docs)} (deduped from {len(all_docs)})"
             )
-            return unique_docs
+            return self._tag_retrieval_ranks(unique_docs)
 
-    def format_documents(self, docs: List[Document]) -> str:
+    def format_documents(
+        self, docs: List[Document], detected_version: str | None = None
+    ) -> str:
         """Format retrieved documents with protocol-aware processing.
 
         Args:
             docs: List of retrieved documents
+            detected_version: Optional Bisq version used to break ties when
+                              documents do not already carry retrieval ranks
 
         Returns:
             Formatted string with protocol context and source attribution
@@ -357,19 +417,42 @@ class DocumentRetriever:
         if not docs:
             return ""
 
-        # Sort documents by protocol weight and relevance
-        # Use protocol metadata (matches retrieval filter key)
-        # Define protocol priority (higher number = higher priority; matches reverse=True)
-        protocol_priority = {"bisq_easy": 2, "all": 1, "multisig_v1": 0}
+        protocol_priority = self._protocol_priority_for_version(detected_version)
 
-        sorted_docs = sorted(
-            docs,
-            key=lambda x: (
-                x.metadata.get("source_weight", 1.0),
-                protocol_priority.get(x.metadata.get("protocol", "all"), 1),
-            ),
-            reverse=True,
-        )
+        def sort_key(doc: Document) -> tuple[float, float, float, float]:
+            # When retrieval already provided a rank, preserve it. Re-sorting
+            # high-weight Bisq Easy docs ahead of Bisq 1 hits is what caused
+            # Bisq 1 context to be truncated out of the prompt window.
+            retrieval_rank = self._numeric_metadata(doc.metadata.get("_retrieval_rank"))
+            if retrieval_rank is not None:
+                return (0.0, retrieval_rank, 0.0, 0.0)
+
+            retrieval_score = self._numeric_metadata(
+                doc.metadata.get("_retrieval_score")
+            )
+            protocol = str(doc.metadata.get("protocol", "all"))
+            source_weight = self._numeric_metadata(
+                doc.metadata.get("source_weight", 1.0)
+            )
+            if source_weight is None:
+                source_weight = 1.0
+
+            if retrieval_score is not None:
+                return (
+                    1.0,
+                    -retrieval_score,
+                    -float(protocol_priority.get(protocol, 1)),
+                    -source_weight,
+                )
+
+            return (
+                2.0,
+                -float(protocol_priority.get(protocol, 1)),
+                -source_weight,
+                0.0,
+            )
+
+        sorted_docs = sorted(docs, key=sort_key)
 
         formatted_docs = []
         for doc in sorted_docs:
@@ -455,11 +538,86 @@ class DocumentRetriever:
         """
         all_docs_with_scores: List[Tuple[Document, float]] = []
 
-        def _lc_with_retrieved_id(r: RetrievedDocument) -> Document:
+        def _absolute_scores(
+            k: int, filter_dict: dict[str, Any] | None
+        ) -> dict[tuple[str, str], float]:
+            semantic_retrieve = getattr(
+                self.retriever, "retrieve_semantic_with_scores", None
+            )
+            if not callable(semantic_retrieve):
+                return {}
+
+            try:
+                results = semantic_retrieve(query, k=k, filter_dict=filter_dict)
+            except Exception:
+                logger.debug(
+                    "Absolute semantic score lookup failed; falling back to rank scores",
+                    exc_info=True,
+                )
+                return {}
+            if not isinstance(results, list):
+                return {}
+
+            return {
+                self._dedupe_key_from_retrieved(result): self._clamp_unit_interval(
+                    result.score
+                )
+                for result in results
+            }
+
+        def _lc_with_retrieval_metadata(
+            r: RetrievedDocument,
+            *,
+            retrieval_score: float,
+            absolute_score: float | None,
+            retrieval_rank: int,
+        ) -> Document:
             lc = r.to_langchain_document()
-            if r.id and "_retrieved_id" not in lc.metadata:
-                lc.metadata["_retrieved_id"] = r.id
+            metadata = dict(lc.metadata or {})
+            if r.id and "_retrieved_id" not in metadata:
+                metadata["_retrieved_id"] = r.id
+            metadata["_retrieval_score"] = self._clamp_unit_interval(retrieval_score)
+            metadata["_relative_rank_score"] = self._clamp_unit_interval(
+                retrieval_score
+            )
+            metadata["_retrieval_rank"] = retrieval_rank
+            if absolute_score is not None:
+                metadata["_absolute_similarity_score"] = self._clamp_unit_interval(
+                    absolute_score
+                )
+                metadata["_score_type"] = "absolute_cosine"
+            else:
+                metadata["_score_type"] = "relative_rank"
+            lc.metadata = metadata
             return lc
+
+        def _score_for_display(doc: Document, fallback_score: float) -> float:
+            absolute_score = self._numeric_metadata(
+                doc.metadata.get("_absolute_similarity_score")
+            )
+            if absolute_score is not None:
+                return self._clamp_unit_interval(absolute_score)
+            return self._clamp_unit_interval(fallback_score)
+
+        def _append_stage(k: int, filter_dict: dict[str, Any] | None) -> None:
+            results = self.retriever.retrieve_with_scores(
+                query, k=k, filter_dict=filter_dict
+            )
+            absolute_lookup = _absolute_scores(k, filter_dict)
+            for r in results:
+                retrieval_score = self._clamp_unit_interval(float(r.score))
+                absolute_score = absolute_lookup.get(self._dedupe_key_from_retrieved(r))
+                all_docs_with_scores.append(
+                    (
+                        _lc_with_retrieval_metadata(
+                            r,
+                            retrieval_score=retrieval_score,
+                            absolute_score=absolute_score,
+                            retrieval_rank=len(all_docs_with_scores),
+                        ),
+                        retrieval_score,
+                    )
+                )
 
         # Detect version from query and incorporate detected_version unless the query itself
         # signals a comparison. Bisq 1 is actively used and heavily represented in the wiki,
@@ -474,87 +632,37 @@ class DocumentRetriever:
                     "Retrieving with scores for comparison query (bisq_easy + multisig_v1 + all)"
                 )
 
-                bisq_easy_results = self.retriever.retrieve_with_scores(
-                    query, k=5, filter_dict={"protocol": "bisq_easy"}
-                )
-                for r in bisq_easy_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
-
-                multisig_results = self.retriever.retrieve_with_scores(
-                    query, k=5, filter_dict={"protocol": "multisig_v1"}
-                )
-                for r in multisig_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
-
-                all_results = self.retriever.retrieve_with_scores(
-                    query, k=4, filter_dict={"protocol": "all"}
-                )
-                for r in all_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
+                _append_stage(k=5, filter_dict={"protocol": "bisq_easy"})
+                _append_stage(k=5, filter_dict={"protocol": "multisig_v1"})
+                _append_stage(k=4, filter_dict={"protocol": "all"})
 
             elif is_multisig_query:
                 logger.info("Retrieving with scores for Bisq 1 / multisig_v1 query")
 
                 # Stage 1: multisig_v1 content
-                multisig_results = self.retriever.retrieve_with_scores(
-                    query, k=4, filter_dict={"protocol": "multisig_v1"}
-                )
-                for r in multisig_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
+                _append_stage(k=4, filter_dict={"protocol": "multisig_v1"})
 
                 # Stage 2: 'all' content (always). Many Bisq 1 wiki pages are categorized
                 # as 'general' in our processed dump, so we must include them for Bisq 1 queries.
-                all_results = self.retriever.retrieve_with_scores(
-                    query, k=6, filter_dict={"protocol": "all"}
-                )
-                for r in all_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
+                _append_stage(k=6, filter_dict={"protocol": "all"})
             else:
                 logger.info("Retrieving with scores for Bisq Easy query")
 
                 # Stage 1: bisq_easy content
-                bisq_easy_results = self.retriever.retrieve_with_scores(
-                    query, k=6, filter_dict={"protocol": "bisq_easy"}
-                )
-                for r in bisq_easy_results:
-                    all_docs_with_scores.append(
-                        (_lc_with_retrieved_id(r), float(r.score))
-                    )
+                _append_stage(k=6, filter_dict={"protocol": "bisq_easy"})
 
                 # Stage 2: 'all' content
                 if len(all_docs_with_scores) < 4:
-                    all_results = self.retriever.retrieve_with_scores(
-                        query, k=4, filter_dict={"protocol": "all"}
-                    )
-                    for r in all_results:
-                        all_docs_with_scores.append(
-                            (_lc_with_retrieved_id(r), float(r.score))
-                        )
+                    _append_stage(k=4, filter_dict={"protocol": "all"})
 
                 # Stage 3: multisig_v1 fallback
                 if len(all_docs_with_scores) < 3:
-                    multisig_results = self.retriever.retrieve_with_scores(
-                        query, k=2, filter_dict={"protocol": "multisig_v1"}
-                    )
-                    for r in multisig_results:
-                        all_docs_with_scores.append(
-                            (_lc_with_retrieved_id(r), float(r.score))
-                        )
+                    _append_stage(k=2, filter_dict={"protocol": "multisig_v1"})
 
         except Exception as e:
             logger.error(f"Error in score-based retrieval: {e!s}", exc_info=True)
             # Fallback to standard retrieval without scores
-            docs = self.retrieve_with_version_priority(query)
+            docs = self.retrieve_with_version_priority(query, detected_version)
             # Return neutral scores for fallback
             return docs, [0.5] * len(docs)
 
@@ -562,23 +670,66 @@ class DocumentRetriever:
         # Prefer chunk-level identifiers to avoid collapsing multiple chunks per page.
         seen: set[tuple[str, str]] = set()
         unique_docs: List[Document] = []
-        unique_scores: List[float] = []
+        retrieval_scores: List[float] = []
 
         for doc, score in all_docs_with_scores:
-            retrieved_id = doc.metadata.get("_retrieved_id")
-            if retrieved_id:
-                key = ("_retrieved_id", str(retrieved_id))
-            else:
-                key = (
-                    doc.metadata.get("title", "Unknown"),
-                    doc.metadata.get("section", ""),
-                )
+            key = self._dedupe_key_from_metadata(doc.metadata)
             if key not in seen:
                 seen.add(key)
                 unique_docs.append(doc)
-                # Qdrant returns similarity-like scores (higher is better). Keep a safe clamp.
-                similarity = max(0.0, min(1.0, float(score)))
-                unique_scores.append(similarity)
+                retrieval_scores.append(self._clamp_unit_interval(float(score)))
+
+        if self.reranker and unique_docs:
+            try:
+                rerank_top_n = self.rerank_top_n or len(unique_docs)
+                rerank_candidates = [
+                    RetrievedDocument.from_langchain_document(doc, score=score)
+                    for doc, score in zip(unique_docs, retrieval_scores)
+                ]
+                reranked = self.reranker.rerank(
+                    query, rerank_candidates, top_n=rerank_top_n
+                )
+                reranked_docs = []
+                retrieval_score_lookup = {
+                    self._dedupe_key_from_retrieved(candidate): candidate.score
+                    for candidate in rerank_candidates
+                }
+                for reranked_doc in reranked:
+                    lc_doc = reranked_doc.to_langchain_document()
+                    metadata = dict(lc_doc.metadata or {})
+                    if reranked_doc.id and "_retrieved_id" not in metadata:
+                        metadata["_retrieved_id"] = reranked_doc.id
+                    metadata["_reranked"] = True
+                    metadata["_colbert_score"] = float(reranked_doc.score)
+                    lc_doc.metadata = metadata
+                    reranked_docs.append(lc_doc)
+
+                unique_docs = reranked_docs
+                retrieval_scores = []
+                for doc in unique_docs:
+                    fallback_score = self._numeric_metadata(
+                        doc.metadata.get("_retrieval_score")
+                    )
+                    if fallback_score is None:
+                        fallback_score = 0.5
+                    retrieval_scores.append(
+                        self._clamp_unit_interval(
+                            retrieval_score_lookup.get(
+                                self._dedupe_key_from_metadata(doc.metadata),
+                                fallback_score,
+                            )
+                        )
+                    )
+            except Exception:
+                logger.warning(
+                    "Reranking failed; returning protocol-ranked retrieval results",
+                    exc_info=True,
+                )
+
+        unique_scores = [
+            _score_for_display(doc, score)
+            for doc, score in zip(unique_docs, retrieval_scores)
+        ]
 
         logger.info(
             f"Retrieved {len(unique_docs)} docs with scores "

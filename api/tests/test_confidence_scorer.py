@@ -33,7 +33,7 @@ class TestConfidenceScorer:
         sources = [
             Document(
                 page_content="Bisq Easy allows trading up to $600.",
-                metadata={"source_weight": 1.0},
+                metadata={"source_weight": 1.25},
             )
         ]
 
@@ -44,7 +44,7 @@ class TestConfidenceScorer:
         )
 
         # NLI: 0.95 * 0.4 = 0.38
-        # Source: 1.0 * 0.3 = 0.30
+        # Source: 1.25 maps to quality 1.0, so 1.0 * 0.3 = 0.30
         # Completeness: ~0.67 * 0.3 ≈ 0.20 (2/3 entities match)
         assert score > 0.8
         assert score <= 1.0
@@ -95,7 +95,7 @@ class TestConfidenceScorer:
         sources = [
             Document(
                 page_content="Content",
-                metadata={"source_weight": 1.0},
+                metadata={"source_weight": 1.25},
             )
         ]
 
@@ -106,7 +106,7 @@ class TestConfidenceScorer:
         )
 
         # NLI: 0.0 * 0.4 = 0.0
-        # Source: 1.0 * 0.3 = 0.3
+        # Source: 1.25 maps to quality 1.0, so 1.0 * 0.3 = 0.3
         # Completeness: varies
         # Should be around 0.3 + completeness
         assert score >= 0.3
@@ -167,9 +167,9 @@ class TestConfidenceScorer:
         mock_nli_validator.validate_answer_async.return_value = 0.5
 
         sources = [
-            Document(page_content="Content 1", metadata={"source_weight": 1.0}),
-            Document(page_content="Content 2", metadata={"source_weight": 0.5}),
-            Document(page_content="Content 3", metadata={"source_weight": 0.0}),
+            Document(page_content="Content 1", metadata={"source_weight": 1.25}),
+            Document(page_content="Content 2", metadata={"source_weight": 1.0}),
+            Document(page_content="Content 3", metadata={"source_weight": 0.75}),
         ]
 
         score = await confidence_scorer.calculate_confidence(
@@ -178,12 +178,12 @@ class TestConfidenceScorer:
             question="Question?",
         )
 
-        # Average source weight: (1.0 + 0.5 + 0.0) / 3 = 0.5
+        # Normalized source quality: (1.0 + 0.5 + 0.0) / 3 = 0.5
         assert isinstance(score, float)
 
     @pytest.mark.asyncio
     async def test_default_source_weight(self, confidence_scorer, mock_nli_validator):
-        """Missing source_weight defaults to 0.5."""
+        """Missing source_weight defaults to neutral quality."""
         mock_nli_validator.validate_answer_async.return_value = 0.5
 
         sources = [
@@ -199,9 +199,39 @@ class TestConfidenceScorer:
             question="Question?",
         )
 
-        # Should use default 0.5 for source weight
+        # Should use default neutral source weight
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_source_weight_calibration_keeps_confidence_bounded(
+        self, confidence_scorer, mock_nli_validator
+    ):
+        """High source weights cannot push confidence above 1.0."""
+        mock_nli_validator.validate_answer_async.return_value = 1.0
+
+        sources = [
+            Document(
+                page_content="Bisq Easy has a $600 trade limit.",
+                metadata={"source_weight": 1.25},
+            )
+        ]
+
+        score = await confidence_scorer.calculate_confidence(
+            answer="Bisq Easy has a $600 trade limit.",
+            sources=sources,
+            question="What is the Bisq Easy $600 trade limit?",
+        )
+
+        assert 0.0 <= score <= 1.0
+        assert score > 0.9
+
+    def test_source_weight_normalization_bounds(self, confidence_scorer):
+        """The source-weight tuning range maps to an actual 0-1 quality score."""
+        assert confidence_scorer._normalize_source_weight(0.75) == 0.0
+        assert confidence_scorer._normalize_source_weight(1.0) == 0.5
+        assert confidence_scorer._normalize_source_weight(1.25) == 1.0
+        assert confidence_scorer._normalize_source_weight(None) == 0.5
 
     @pytest.mark.asyncio
     async def test_entity_extraction_bisq_terms(self, confidence_scorer):

@@ -119,24 +119,47 @@ class NLIValidator:
 
             self._cache[key] = NLICacheEntry(score=score, timestamp=time.time())
 
-    def _run_inference(self, context: str, answer: str) -> float:
-        """Run NLI inference (internal method for caching to wrap)."""
-        result = self.nli_pipeline(f"{context} [SEP] {answer}", top_k=3)
+    @staticmethod
+    def _build_pair_input(context: str, answer: str) -> dict[str, str]:
+        """Build the text/text_pair input expected by cross-encoder pipelines."""
+        return {"text": context, "text_pair": answer}
 
-        # Handle transformers v5 which can return nested list [[{...}, ...]]
-        if result and isinstance(result[0], list):
+    @staticmethod
+    def _score_from_result(result: Any) -> float:
+        """Convert a HuggingFace NLI result into a calibrated 0-1 score."""
+        # Transformers v5 may return nested lists such as [[{...}, ...]].
+        while (
+            isinstance(result, list)
+            and len(result) == 1
+            and isinstance(result[0], list)
+        ):
             result = result[0]
 
-        # Extract entailment probability
-        scores = {r["label"]: r["score"] for r in result}
-        entailment = scores.get("ENTAILMENT", 0)
-        contradiction = scores.get("CONTRADICTION", 0)
+        if isinstance(result, dict):
+            rows = [result]
+        elif isinstance(result, list):
+            rows = [row for row in result if isinstance(row, dict)]
+        else:
+            rows = []
 
-        # Return normalized score
+        scores = {
+            str(row.get("label", "")).casefold(): float(row.get("score", 0.0))
+            for row in rows
+        }
+        entailment = scores.get("entailment", 0.0)
+        contradiction = scores.get("contradiction", 0.0)
+
         if entailment > contradiction:
             return 0.5 + (entailment * 0.5)
-        else:
-            return 0.5 - (contradiction * 0.5)
+        return 0.5 - (contradiction * 0.5)
+
+    def _run_inference(self, context: str, answer: str) -> float:
+        """Run NLI inference (internal method for caching to wrap)."""
+        result = self.nli_pipeline(
+            self._build_pair_input(context, answer),
+            top_k=3,
+        )
+        return self._score_from_result(result)
 
     def validate_answer(self, answer: str, source_text: str) -> float:
         """
@@ -216,32 +239,19 @@ class NLIValidator:
                 "hit_rate": hit_rate,
             }
 
-    def _batch_inference(self, pairs: list[str]) -> list[float]:
+    def _batch_inference(self, pairs: list[dict[str, str]]) -> list[float]:
         """Run batch NLI inference (internal method for thread offloading)."""
         results = self.nli_pipeline(pairs, top_k=3, batch_size=8)
 
-        # Handle transformers v5 which can return nested list [[[{...}], ...]]
-        # Normalize to flat list of result lists: [[{...}, ...], [{...}, ...], ...]
-        if (
-            results
-            and isinstance(results[0], list)
-            and results[0]
-            and isinstance(results[0][0], list)
-        ):
-            results = [r[0] for r in results]
+        if not isinstance(results, list):
+            return [self._score_from_result(results)]
 
-        scores = []
-        for result in results:
-            score_dict = {r["label"]: r["score"] for r in result}
-            entailment = score_dict.get("ENTAILMENT", 0)
-            contradiction = score_dict.get("CONTRADICTION", 0)
+        # A single-item batch can come back as [{...}, ...] instead of
+        # [[{...}, ...]], so handle that shape before per-pair scoring.
+        if results and all(isinstance(row, dict) for row in results):
+            return [self._score_from_result(results)]
 
-            if entailment > contradiction:
-                scores.append(0.5 + (entailment * 0.5))
-            else:
-                scores.append(0.5 - (contradiction * 0.5))
-
-        return scores
+        return [self._score_from_result(result) for result in results]
 
     async def batch_validate(
         self, contexts: list[str], answers: list[str], cache_results: bool = True
@@ -280,7 +290,7 @@ class NLIValidator:
         # Check cache for each pair, collect uncached indices
         scores: list[Optional[float]] = [None] * len(contexts)
         uncached_indices: list[int] = []
-        uncached_pairs: list[str] = []
+        uncached_pairs: list[dict[str, str]] = []
 
         for i, (context, answer) in enumerate(zip(contexts, answers, strict=True)):
             cached = self._get_from_cache(answer, context)
@@ -288,7 +298,7 @@ class NLIValidator:
                 scores[i] = cached
             else:
                 uncached_indices.append(i)
-                uncached_pairs.append(f"{context} [SEP] {answer}")
+                uncached_pairs.append(self._build_pair_input(context, answer))
 
         # If all cached, return early
         if not uncached_indices:
