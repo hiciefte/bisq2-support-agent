@@ -18,6 +18,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from app.channels.traits import get_channel_traits
 from app.core.config import get_settings
 from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
@@ -57,7 +58,6 @@ from langchain_core.documents import Document
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_GROUP_CHANNELS = {"matrix", "bisq2"}
 _GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
 _DEFINITION_QUESTION_PATTERNS = (
     r"^\s*what\s+is\b",
@@ -114,14 +114,15 @@ def apply_support_answer_style(
     if _is_definition_question(question_text):
         text = _compress_simple_fact_answer(text)
 
-    source = str(detection_source or "").strip().lower()
-    if source not in _GROUP_CHANNELS:
+    traits = get_channel_traits(detection_source)
+    if not traits.group_room:
         return text
 
-    if len(text) <= _GROUP_CHANNEL_MAX_ANSWER_LENGTH:
+    max_answer_length = traits.max_answer_length or _GROUP_CHANNEL_MAX_ANSWER_LENGTH
+    if len(text) <= max_answer_length:
         return text
 
-    limit = _GROUP_CHANNEL_MAX_ANSWER_LENGTH - 3
+    limit = max_answer_length - 3
     clipped = text[:limit]
     preferred_break = max(
         clipped.rfind(". "),

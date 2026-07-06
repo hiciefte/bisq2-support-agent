@@ -15,10 +15,7 @@ from typing import Any, Deque, Dict, List, Literal, Optional, Set, cast
 
 from app.channels.base import ChannelBase
 from app.channels.escalation_localization import render_escalation_notice
-from app.channels.history_builder import (
-    ConversationMessage,
-    build_channel_chat_history,
-)
+from app.channels.history_builder import ConversationMessage, build_channel_chat_history
 from app.channels.models import (
     ChannelCapability,
     ChannelType,
@@ -32,16 +29,14 @@ from app.channels.plugins.support_markdown import (
     compose_support_answer_markdown,
     serialize_sources_for_tracking,
 )
-from app.channels.question_prefilter import (
-    QuestionPrefilter,
-    QuestionPrefilterProtocol,
-)
+from app.channels.question_prefilter import QuestionPrefilter, QuestionPrefilterProtocol
 from app.channels.registry import register_channel
 from app.channels.staff import (
     StaffResolver,
     collect_staff_display_names,
     collect_trusted_staff_ids,
 )
+from app.channels.traits import ChannelTraits
 
 
 @register_channel("bisq2")
@@ -83,6 +78,12 @@ class Bisq2Channel(ChannelBase):
     _MAX_WS_MESSAGE_BUFFER = 5000
     ENABLED_FLAG = "BISQ2_CHANNEL_ENABLED"
     ENABLED_DEFAULT = False
+    CHANNEL_TRAITS = ChannelTraits(
+        group_room=True,
+        supports_staff_grounding=True,
+        supports_chatops=True,
+        max_answer_length=500,
+    )
 
     @classmethod
     def setup_dependencies(cls, runtime: Any, settings: Any) -> None:
@@ -145,6 +146,9 @@ class Bisq2Channel(ChannelBase):
             ChannelCapability.POLL_CONVERSATIONS,
             ChannelCapability.SEND_RESPONSES,
             ChannelCapability.REACTIONS,
+            ChannelCapability.GROUP_ROOM,
+            ChannelCapability.STAFF_GROUNDING,
+            ChannelCapability.CHATOPS,
         }
 
     @property

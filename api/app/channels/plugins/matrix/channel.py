@@ -32,6 +32,7 @@ from app.channels.staff import (
     collect_staff_display_names,
     collect_trusted_staff_ids,
 )
+from app.channels.traits import ChannelTraits
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +66,18 @@ class MatrixChannel(ChannelBase):
     ENABLED_FLAG = "MATRIX_SYNC_ENABLED"
     ENABLED_DEFAULT = False
     REQUIRED_PACKAGES = ("nio",)
+    CHANNEL_TRAITS = ChannelTraits(
+        group_room=True,
+        supports_staff_grounding=True,
+        supports_chatops=True,
+        max_answer_length=500,
+    )
 
     @classmethod
     def setup_dependencies(cls, runtime: Any, settings: Any) -> None:
         """Register Matrix channel dependencies in shared runtime."""
         try:
-            from nio import (
-                AsyncClient,
-                AsyncClientConfig,
-            )
+            from nio import AsyncClient, AsyncClientConfig
         except ImportError:
             return
         try:
@@ -239,6 +243,9 @@ class MatrixChannel(ChannelBase):
             ChannelCapability.RECEIVE_MESSAGES,
             ChannelCapability.SEND_RESPONSES,
             ChannelCapability.REACTIONS,
+            ChannelCapability.GROUP_ROOM,
+            ChannelCapability.STAFF_GROUNDING,
+            ChannelCapability.CHATOPS,
         }
 
     @property

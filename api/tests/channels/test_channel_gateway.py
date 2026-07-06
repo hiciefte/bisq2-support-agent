@@ -70,6 +70,41 @@ class TestChannelGatewayRouting:
         assert call_args is not None
         assert call_args.kwargs.get("chat_history") is not None
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_response_enricher_runs_before_message_build(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Gateway applies shared RAG response enrichment before model conversion."""
+        from app.channels.gateway import ChannelGateway
+
+        def enrich(_incoming, rag_response):
+            enriched = dict(rag_response)
+            enriched["mcp_tools_used"] = [
+                {
+                    "tool": "get_market_prices",
+                    "timestamp": "2026-07-06T10:00:00+00:00",
+                    "result": '{"BTC":"100000"}',
+                }
+            ]
+            return enriched
+
+        gateway = ChannelGateway(
+            rag_service=mock_rag_service,
+            response_enricher=enrich,
+        )
+
+        result = await gateway.process_message(sample_incoming_message)
+
+        assert isinstance(result, OutgoingMessage)
+        assert result.metadata.mcp_tools_used == [
+            {
+                "tool": "get_market_prices",
+                "timestamp": "2026-07-06T10:00:00+00:00",
+                "result": '{"BTC":"100000"}',
+            }
+        ]
+
 
 class TestChannelGatewayHooks:
     """Test hook system."""
@@ -423,6 +458,40 @@ class TestChannelGatewayMetrics:
             sample_incoming_message,
             thread_language_hint=None,
         )
+        call_args = mock_rag_service.query.call_args
+        assert call_args is not None
+        assert call_args.kwargs["language_hint"] == "de"
+        assert call_args.kwargs["language_hint_confidence"] == 0.91
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_route_skips_ingress_service_for_prepared_message(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Prepared channel messages should not be classified twice."""
+        from app.channels.gateway import ChannelGateway
+        from app.channels.models import LocaleContext
+
+        prepared = sample_incoming_message.model_copy(
+            update={
+                "locale_context": LocaleContext(
+                    language_code="de",
+                    confidence=0.91,
+                    source="thread_state_hint",
+                ),
+            }
+        )
+        ingress_service = MagicMock()
+        ingress_service.prepare_incoming = AsyncMock()
+
+        gateway = ChannelGateway(
+            rag_service=mock_rag_service,
+            ingress_context_service=ingress_service,
+        )
+
+        await gateway.process_message(prepared)
+
+        ingress_service.prepare_incoming.assert_not_awaited()
         call_args = mock_rag_service.query.call_args
         assert call_args is not None
         assert call_args.kwargs["language_hint"] == "de"

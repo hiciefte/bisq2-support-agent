@@ -14,10 +14,8 @@ from app.channels.events import (
     thread_lock_key,
     thread_state_key,
 )
-from app.channels.policy import (
-    apply_autosend_policy,
-    is_autosend_enabled,
-)
+from app.channels.models import GatewayError
+from app.channels.policy import apply_autosend_policy, is_autosend_enabled
 
 logger = logging.getLogger(__name__)
 _MISSING = object()
@@ -100,7 +98,9 @@ class InboundMessageOrchestrator:
                 )
 
                 async def _on_release(queued_incoming: Any) -> Any:
-                    response = await self.channel.handle_incoming(queued_incoming)
+                    response = await self._generate_response(queued_incoming)
+                    if response is None:
+                        return None
                     autosend_enabled = is_autosend_enabled(
                         self.autoresponse_policy_service,
                         self.channel_id,
@@ -108,6 +108,8 @@ class InboundMessageOrchestrator:
                     return apply_autosend_policy(response, autosend_enabled)
 
                 async def _on_dispatch(queued_incoming: Any, response: Any) -> bool:
+                    if response is None:
+                        return False
                     return bool(
                         await self.dispatcher.dispatch(queued_incoming, response)
                     )
@@ -125,7 +127,9 @@ class InboundMessageOrchestrator:
                 else:
                     sent = bool(enqueue_result)
             else:
-                response = await self.channel.handle_incoming(incoming)
+                response = await self._generate_response(incoming)
+                if response is None:
+                    return False
                 autosend_enabled = is_autosend_enabled(
                     self.autoresponse_policy_service,
                     self.channel_id,
@@ -143,6 +147,63 @@ class InboundMessageOrchestrator:
             return False
         finally:
             await self._release_lock(lock_key, lock_token)
+
+    async def _generate_response(self, incoming: Any) -> Any | None:
+        gateway = self._resolve_channel_gateway()
+        if gateway is not None:
+            gateway_incoming = self._with_internal_gateway_bypass(incoming)
+            result = gateway.process_message(gateway_incoming)
+            if inspect.isawaitable(result):
+                result = await result
+            if isinstance(result, GatewayError):
+                logger.info(
+                    "Gateway blocked inbound event channel=%s message_id=%s error=%s",
+                    self.channel_id,
+                    getattr(incoming, "message_id", "<unknown>"),
+                    result.error_code,
+                )
+                return None
+            return result
+        return await self.channel.handle_incoming(incoming)
+
+    def _resolve_channel_gateway(self) -> Any | None:
+        runtime = getattr(self.channel, "runtime", None)
+        resolve_optional = (
+            getattr(runtime, "resolve_optional", None) if runtime else None
+        )
+        if not callable(resolve_optional):
+            return None
+        try:
+            gateway = resolve_optional("channel_gateway")
+        except Exception:
+            logger.debug(
+                "Failed resolving channel_gateway for channel=%s",
+                self.channel_id,
+                exc_info=True,
+            )
+            return None
+        if (
+            gateway is None
+            or inspect.getattr_static(gateway, "process_message", _MISSING) is _MISSING
+        ):
+            return None
+        return gateway
+
+    @staticmethod
+    def _with_internal_gateway_bypass(incoming: Any) -> Any:
+        bypass_hooks = list(getattr(incoming, "bypass_hooks", []) or [])
+        if "authentication" not in bypass_hooks:
+            bypass_hooks.append("authentication")
+
+        model_copy = getattr(incoming, "model_copy", None)
+        if callable(model_copy):
+            return model_copy(update={"bypass_hooks": bypass_hooks})
+
+        try:
+            setattr(incoming, "bypass_hooks", bypass_hooks)
+        except Exception:
+            logger.debug("Unable to attach internal gateway bypass", exc_info=True)
+        return incoming
 
     async def _consume_feedback_followup(self, incoming: Any) -> bool:
         runtime = getattr(self.channel, "runtime", None)

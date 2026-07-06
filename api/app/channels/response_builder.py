@@ -57,5 +57,6 @@ def build_metadata(
         translation_applied=rag_response.get("translated"),
         staff_grounding_brief=rag_response.get("staff_grounding_brief"),
         staff_enriched_answer=rag_response.get("staff_enriched_answer"),
+        mcp_tools_used=rag_response.get("mcp_tools_used"),
         hooks_executed=hooks_executed if hooks_executed is not None else [],
     )

@@ -391,6 +391,7 @@ async def lifespan(app: FastAPI):
                 "detector",
                 None,
             ),
+            "channel_gateway": channel_gateway,
             "ingress_context_service": getattr(
                 app.state, "ingress_context_service", None
             ),
@@ -399,6 +400,14 @@ async def lifespan(app: FastAPI):
     bootstrap_result = bootstrapper.bootstrap()
     app.state.channel_runtime = bootstrap_result.runtime
     app.state.channel_registry = bootstrap_result.registry
+    try:
+        from app.channels.response_enricher import ChannelRAGResponseEnricher
+
+        channel_gateway.response_enricher = ChannelRAGResponseEnricher(
+            bootstrap_result.runtime
+        )
+    except Exception:
+        logger.exception("Failed to wire channel response enricher")
     for hook in getattr(channel_gateway, "_post_hooks", []):
         if hasattr(hook, "channel_registry"):
             hook.channel_registry = bootstrap_result.registry

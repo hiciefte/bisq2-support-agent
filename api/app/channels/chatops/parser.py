@@ -10,6 +10,7 @@ from app.channels.chatops.models import (
     ChatOpsCommandName,
     ChatOpsParseResult,
 )
+from app.channels.traits import supported_chatops_channel_ids
 
 _ALL_COMMANDS = tuple(command.value for command in ChatOpsCommandName)
 _IMPLEMENTED_NOW = {
@@ -250,8 +251,11 @@ class ChatOpsParser:
             limit = options["limit"]
             if not limit.isdigit() or int(limit) <= 0:
                 raise ValueError("`limit` must be a positive integer.")
-        if "channel" in options and options["channel"] not in {"matrix", "bisq2"}:
-            raise ValueError("`channel` must be `matrix` or `bisq2`.")
+        if "channel" in options:
+            supported_channels = supported_chatops_channel_ids()
+            if options["channel"] not in supported_channels:
+                allowed = " or ".join(supported_channels)
+                raise ValueError(f"`channel` must be `{allowed}`.")
         return options
 
     def _parse_edit_send(self, raw_args: str) -> tuple[int, str]:

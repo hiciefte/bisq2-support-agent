@@ -11,10 +11,11 @@ from threading import Lock
 from typing import Any, Dict, Iterable, List
 
 from app.channels.registry import get_registered_channel_types
+from app.channels.traits import declared_channel_ids
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_CHANNELS: tuple[str, ...] = ("web", "matrix", "bisq2")
+SUPPORTED_CHANNELS: tuple[str, ...] = declared_channel_ids()
 
 DEFAULT_AUTORESPONSE_ENABLED: Dict[str, bool] = {
     "web": True,

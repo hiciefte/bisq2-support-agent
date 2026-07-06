@@ -40,6 +40,9 @@ class ChannelCapability(str, Enum):
     TEXT_MESSAGES = "text_messages"
     CHAT_HISTORY = "chat_history"
     REACTIONS = "reactions"
+    GROUP_ROOM = "group_room"
+    STAFF_GROUNDING = "staff_grounding"
+    CHATOPS = "chatops"
 
 
 class UserContext(BaseModel):
@@ -253,6 +256,7 @@ class ResponseMetadata(BaseModel):
     translation_applied: Optional[bool] = None
     staff_grounding_brief: Optional[Dict[str, Any]] = None
     staff_enriched_answer: Optional[str] = None
+    mcp_tools_used: Optional[List[Dict[str, Any]]] = None
     hooks_executed: List[str] = Field(default_factory=list)
 
 

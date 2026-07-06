@@ -55,6 +55,7 @@ class ChannelGateway:
         pre_hooks: Optional[List[PreProcessingHook]] = None,
         post_hooks: Optional[List[PostProcessingHook]] = None,
         ingress_context_service: Optional[Any] = None,
+        response_enricher: Optional[Any] = None,
     ):
         """Initialize gateway.
 
@@ -71,6 +72,7 @@ class ChannelGateway:
             post_hooks or [], key=lambda h: h.priority
         )
         self._ingress_context_service = ingress_context_service
+        self.response_enricher = response_enricher
 
     async def process_message(
         self, message: IncomingMessage
@@ -140,6 +142,7 @@ class ChannelGateway:
                         None,
                     ),
                 )
+                rag_response = await self._enrich_response(message, rag_response)
 
             except Exception as e:
                 logger.exception("RAG service error")
@@ -193,6 +196,12 @@ class ChannelGateway:
             )
 
     async def _prepare_message(self, message: IncomingMessage) -> IncomingMessage:
+        if (
+            getattr(message, "locale_context", None) is not None
+            or getattr(message, "classification", None) is not None
+        ):
+            return message
+
         service = self._ingress_context_service
         if (
             service is None
@@ -206,6 +215,19 @@ class ChannelGateway:
         if inspect.isawaitable(prepared):
             prepared = await prepared
         return prepared
+
+    async def _enrich_response(
+        self,
+        message: IncomingMessage,
+        rag_response: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        enricher = self.response_enricher
+        if enricher is None:
+            return rag_response
+        enriched = enricher(message, rag_response)
+        if inspect.isawaitable(enriched):
+            enriched = await enriched
+        return dict(enriched)
 
     def register_pre_hook(self, hook: PreProcessingHook) -> None:
         """Register pre-processing hook.

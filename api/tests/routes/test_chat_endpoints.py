@@ -19,6 +19,7 @@ def _make_outgoing_message(
     message_id: str = "web_test-uuid",
     *,
     original_language: str = "de",
+    mcp_tools_used=None,
 ) -> OutgoingMessage:
     """Create a minimal OutgoingMessage for mocking gateway responses."""
     return OutgoingMessage(
@@ -40,6 +41,8 @@ def _make_outgoing_message(
             rag_strategy="retrieval",
             model_name="test-model",
             original_language=original_language,
+            version_confidence=None,
+            mcp_tools_used=mcp_tools_used,
         ),
     )
 
@@ -103,3 +106,26 @@ class TestChatEndpointMessageId:
         data = response.json()
         # message_id in response should be the INCOMING message_id (not the outgoing)
         assert data["message_id"] == captured_incoming["message_id"]
+
+    def test_query_response_includes_mcp_tools_used(self, test_client):
+        """MCP tool metadata should survive gateway-to-route conversion."""
+        tool_usage = [
+            {
+                "tool": "get_market_prices",
+                "timestamp": "2026-07-06T10:00:00+00:00",
+                "result": '{"BTC":"100000"}',
+            }
+        ]
+        mock_gateway = MagicMock()
+        mock_gateway.process_message = AsyncMock(
+            return_value=_make_outgoing_message(mcp_tools_used=tool_usage)
+        )
+        test_client.app.state.channel_gateway = mock_gateway
+
+        response = test_client.post(
+            "/chat/query",
+            json={"question": "What is the BTC price in Bisq Easy?"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["mcp_tools_used"] == tool_usage
