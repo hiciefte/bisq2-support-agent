@@ -130,6 +130,8 @@ services:
       - MAX_TOKENS=${MAX_TOKENS}
       # Admin and security configuration
       - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-}
+      - REACTOR_IDENTITY_SALT=${REACTOR_IDENTITY_SALT:-}
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
@@ -365,17 +367,30 @@ services:
   grafana:
     image: grafana/grafana:latest
     restart: always
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -z "$$GF_SECURITY_ADMIN_PASSWORD" ]; then
+          echo "GF_SECURITY_ADMIN_PASSWORD must be set" >&2
+          exit 1
+        fi
+        if [ -z "$$GRAFANA_DATASOURCE_API_KEY" ]; then
+          echo "GRAFANA_DATASOURCE_API_KEY must be set" >&2
+          exit 1
+        fi
+        exec /run.sh
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-securepassword}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
-      - ADMIN_API_KEY_FOR_GRAFANA=${ADMIN_API_KEY}
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-}
       # Subpath configuration for nginx reverse proxy at /grafana/
       # Grafana handles subpath (receives /grafana/ prefix, serves from subpath)
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
@@ -383,7 +398,7 @@ services:
       # Extended timeout for large HTML responses with inline JSON (~63KB)
       - GF_SERVER_REQUEST_TIMEOUT=120
     ports:
-      - "${EXPOSE_GRAFANA_PORT:-3001}:3000"
+      - "127.0.0.1:${EXPOSE_GRAFANA_PORT:-3001}:3000"
     depends_on:
       - prometheus
     networks:

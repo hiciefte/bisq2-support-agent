@@ -86,11 +86,14 @@ def test_settings(test_data_dir: str) -> Settings:
         DATA_DIR=test_data_dir,
         OPENAI_API_KEY="test-api-key",
         ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
+        GRAFANA_DATASOURCE_API_KEY="test-grafana-read-key-with-sufficient-length",
+        REACTOR_IDENTITY_SALT="test-reactor-identity-salt",
         ENVIRONMENT="testing",
         COOKIE_SECURE=False,
         # Use minimal model configuration for faster tests
         OPENAI_MODEL="openai:gpt-4o-mini",
         MAX_CHAT_HISTORY_LENGTH=5,
+        MAX_CHAT_HISTORY_MESSAGE_LENGTH=2000,
         MAX_CONTEXT_LENGTH=1000,
     )
 

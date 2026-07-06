@@ -73,8 +73,8 @@ async def get_metrics() -> Response:
 
     This endpoint requires admin authentication via the API key.
     Authentication can be provided through:
-    - Authorization header with Bearer token
-    - api_key query parameter
+    - X-API-KEY header
+    - Signed admin session cookie
     """
     # Import here to avoid circular dependency
     from app.routes.admin.feedback import KNOWN_ISSUE_TYPES, get_feedback_analytics

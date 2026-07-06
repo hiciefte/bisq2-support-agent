@@ -262,6 +262,16 @@ if [ ! -f "$SECRETS_DIR/grafana_admin_password" ]; then
     chmod 600 "$SECRETS_DIR/grafana_admin_password"
 fi
 
+if [ ! -f "$SECRETS_DIR/grafana_datasource_api_key" ]; then
+    openssl rand -base64 32 > "$SECRETS_DIR/grafana_datasource_api_key"
+    chmod 600 "$SECRETS_DIR/grafana_datasource_api_key"
+fi
+
+if [ ! -f "$SECRETS_DIR/reactor_identity_salt" ]; then
+    openssl rand -base64 32 > "$SECRETS_DIR/reactor_identity_salt"
+    chmod 600 "$SECRETS_DIR/reactor_identity_salt"
+fi
+
 # Function to safely update or add a variable to the .env file
 update_env_var() {
     local key="$1"
@@ -305,6 +315,15 @@ fi
 # Update .env file with secrets and dynamic values (only if needed or for specific updates)
 ADMIN_API_KEY=$(cat "$SECRETS_DIR/admin_api_key")
 update_env_var "ADMIN_API_KEY" "$ADMIN_API_KEY"
+
+GRAFANA_ADMIN_PASSWORD=$(cat "$SECRETS_DIR/grafana_admin_password")
+update_env_var "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_ADMIN_PASSWORD"
+
+GRAFANA_DATASOURCE_API_KEY=$(cat "$SECRETS_DIR/grafana_datasource_api_key")
+update_env_var "GRAFANA_DATASOURCE_API_KEY" "$GRAFANA_DATASOURCE_API_KEY"
+
+REACTOR_IDENTITY_SALT=$(cat "$SECRETS_DIR/reactor_identity_salt")
+update_env_var "REACTOR_IDENTITY_SALT" "$REACTOR_IDENTITY_SALT"
 
 # Set Bisq API URL in .env file using the Docker service name
 # This allows containers to reach the Bisq2 API service within the Docker network

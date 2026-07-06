@@ -22,6 +22,22 @@ if [ ! -f docker/.env ]; then
   exit 1
 fi
 
+generate_local_secret() {
+  openssl rand -base64 32
+}
+
+ensure_env_var() {
+  local key="$1"
+  local value="$2"
+  if ! grep -q "^${key}=" docker/.env; then
+    echo "${key}=${value}" >> docker/.env
+  fi
+}
+
+ensure_env_var "GRAFANA_ADMIN_PASSWORD" "$(generate_local_secret)"
+ensure_env_var "GRAFANA_DATASOURCE_API_KEY" "$(generate_local_secret)"
+ensure_env_var "REACTOR_IDENTITY_SALT" "$(generate_local_secret)"
+
 echo "1. Stopping any existing containers..."
 "${COMPOSE_CMD[@]}" down
 

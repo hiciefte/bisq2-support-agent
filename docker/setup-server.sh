@@ -45,7 +45,7 @@ print_message "Once the services are up, you can access them at:"
 print_message "- Web Frontend (via Nginx): http://$server_ip"
 print_message "- API (direct access): http://$server_ip:8000"
 print_message "- Prometheus: http://$server_ip:9090"
-print_message "- Grafana: http://$server_ip:3001 (admin/securepassword)"
+print_message "- Grafana: http://127.0.0.1:3001 (admin user plus generated password)"
 
 # Make this script executable
 chmod +x ./setup-server.sh

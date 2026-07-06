@@ -751,14 +751,8 @@ def custom_openapi() -> Dict[str, Any]:
         "AdminApiKeyAuth": {
             "type": "apiKey",
             "in": "header",
-            "name": "Authorization",
-            "description": "Enter the token with the `Bearer ` prefix, e.g. `Bearer abcdef12345`",
-        },
-        "AdminApiKeyQuery": {
-            "type": "apiKey",
-            "in": "query",
-            "name": "api_key",
-            "description": "API key for admin authentication as a query parameter",
+            "name": "X-API-KEY",
+            "description": "Admin API key header",
         },
     }
 
@@ -769,10 +763,7 @@ def custom_openapi() -> Dict[str, Any]:
         for method, operation in operations.items():
             if method == "parameters" or not isinstance(operation, dict):
                 continue
-            operation["security"] = [
-                {"AdminApiKeyAuth": []},
-                {"AdminApiKeyQuery": []},
-            ]
+            operation["security"] = [{"AdminApiKeyAuth": []}]
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

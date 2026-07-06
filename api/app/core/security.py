@@ -20,6 +20,13 @@ MIN_API_KEY_LENGTH = 24
 # Set up logging
 logger = logging.getLogger(__name__)
 
+_GRAFANA_READ_ONLY_ADMIN_PATHS = frozenset(
+    {
+        "/admin/feedback",
+        "/admin/dashboard/overview",
+    }
+)
+
 # Cryptographically secure random number generator for timing delays
 secure_random = secrets.SystemRandom()
 
@@ -104,6 +111,22 @@ def verify_admin_key(provided_key: str, settings: Settings) -> bool:
         )
 
     return secrets.compare_digest(provided_key, admin_api_key)
+
+
+def _is_grafana_read_request(request: Request) -> bool:
+    """Return True when the request is safe for the Grafana datasource key."""
+    return (
+        request.method.upper() == "GET"
+        and request.url.path in _GRAFANA_READ_ONLY_ADMIN_PATHS
+    )
+
+
+def verify_grafana_datasource_key(provided_key: str, settings: Settings) -> bool:
+    """Verify the dedicated read-only Grafana datasource key."""
+    datasource_key = settings.GRAFANA_DATASOURCE_API_KEY.strip()
+    if not datasource_key:
+        return False
+    return secrets.compare_digest(provided_key, datasource_key)
 
 
 def _b64url(data: bytes) -> str:
@@ -216,18 +239,30 @@ def verify_admin_access(
         set_admin_cookie(response)
         return True
 
-    # Fallback to API key in headers (for backward compatibility)
-    provided_key = (
-        request.headers.get("X-API-KEY")
-        or request.query_params.get("api_key")
-        or (
-            request.headers.get("Authorization", "").replace("Bearer ", "")
-            if request.headers.get("Authorization", "").startswith("Bearer ")
-            else None
-        )
-    )
+    # Fallback to API key in headers. Query-string auth is intentionally not
+    # accepted because it is routinely captured in reverse-proxy access logs.
+    provided_key = request.headers.get("X-API-KEY")
 
     if provided_key:
+        if verify_grafana_datasource_key(provided_key, settings):
+            if not _is_grafana_read_request(request):
+                logger.warning(
+                    "Grafana datasource key rejected for non-read admin path: %s %s",
+                    request.method,
+                    request.url.path,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid admin credentials",
+                )
+            request.state.admin_actor = "grafana_datasource"
+            request.state.admin_auth_method = "grafana_datasource_key"
+            logger.debug(
+                "Admin read access granted via Grafana datasource key from %s",
+                request.client.host if request.client else "unknown",
+            )
+            return True
+
         if verify_admin_key(provided_key, settings):
             if len(provided_key) < MIN_API_KEY_LENGTH:
                 logger.warning(

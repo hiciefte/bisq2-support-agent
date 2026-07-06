@@ -97,6 +97,12 @@ class Settings(BaseSettings):
             "before expiring the follow-up"
         ),
     )
+    REACTOR_IDENTITY_SALT: str = Field(
+        default="",
+        description=(
+            "Stable secret salt used to hash reaction identities across deployments"
+        ),
+    )
     BISQ_CACHE_TTL_PRICES: int = Field(
         default=120,
         ge=10,
@@ -193,6 +199,12 @@ class Settings(BaseSettings):
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
         10  # Maximum number of chat history entries to include
+    )
+    MAX_CHAT_HISTORY_MESSAGE_LENGTH: int = Field(
+        default=2000,
+        ge=100,
+        le=10000,
+        description="Maximum characters from each prior chat-history message",
     )
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
@@ -376,6 +388,9 @@ class Settings(BaseSettings):
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
+    GRAFANA_DATASOURCE_API_KEY: str = (
+        ""  # Read-only key for Grafana Infinity datasource
+    )
     ESCALATION_RATING_TOKEN_SECRET: str = ""
     ESCALATION_RATING_TOKEN_TTL_SECONDS: int = 3600
 

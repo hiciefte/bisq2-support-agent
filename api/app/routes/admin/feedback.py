@@ -236,8 +236,8 @@ async def get_feedback_analytics() -> Dict[str, Any]:
 
     This endpoint requires admin authentication via the API key.
     Authentication can be provided through:
-    - Authorization header with Bearer token
-    - api_key query parameter
+    - X-API-KEY header
+    - Signed admin session cookie
 
     Results are memoized for a short TTL and computed in a worker thread so
     frequent callers (the /metrics endpoint is scraped every 15s) never block

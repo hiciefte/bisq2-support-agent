@@ -4,28 +4,30 @@ This document explains how to secure the monitoring services (Grafana and Promet
 
 ## Grafana Security
 
-Grafana has been configured with basic authentication. The default credentials are set in the `docker/.env` file:
+Grafana has been configured with basic authentication. Production deployments
+must set generated credentials in `docker/.env`:
 
 ```
 GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=securepassword
+GRAFANA_ADMIN_PASSWORD=<generated-secret>
+GRAFANA_DATASOURCE_API_KEY=<generated-read-only-datasource-key>
 ```
 
 ### Important Security Notes for Grafana:
 
-1. **Change Default Credentials**: Always change the default credentials in the `docker/.env` file before deploying to production.
+1. **Use Generated Credentials**: `scripts/deploy.sh` generates the Grafana admin password and dedicated read-only datasource key. Do not commit or reuse local development values.
 
-2. **Access Control**: After logging in, you can set up additional users with different permission levels:
+2. **Restrict Network Access**: The direct Grafana port is bound to `127.0.0.1`; public access through `/grafana/` is limited by nginx IP allow/deny rules.
+
+3. **Access Control**: After logging in, you can set up additional users with different permission levels:
    - Go to Configuration > Users
    - Add new users with appropriate roles (Admin, Editor, Viewer)
 
-3. **Organization Management**: You can create separate organizations for different teams:
+4. **Organization Management**: You can create separate organizations for different teams:
    - Go to Configuration > Organizations
    - Create new organizations and manage users within each
 
-4. **API Keys**: For automated access, use API keys instead of user credentials:
-   - Go to Configuration > API Keys
-   - Create keys with appropriate permissions and expiration dates
+5. **API Keys**: Grafana's provisioned Admin API datasource must use `GRAFANA_DATASOURCE_API_KEY`, not the master `ADMIN_API_KEY`.
 
 ## Prometheus Security
 

@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -14,6 +15,31 @@ from fastapi import APIRouter, Request, status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_FEEDBACK_EXPLANATION_RATE_LIMIT = 5
+_FEEDBACK_EXPLANATION_RATE_WINDOW_SECONDS = 300.0
+_feedback_explanation_attempts: dict[str, list[float]] = {}
+
+
+def reset_feedback_explanation_rate_limiter() -> None:
+    """Clear feedback explanation rate-limit state for tests."""
+    _feedback_explanation_attempts.clear()
+
+
+def _allow_feedback_explanation(user_id: str) -> bool:
+    now = time.monotonic()
+    cutoff = now - _FEEDBACK_EXPLANATION_RATE_WINDOW_SECONDS
+    recent = [
+        timestamp
+        for timestamp in _feedback_explanation_attempts.get(user_id, [])
+        if timestamp >= cutoff
+    ]
+    if len(recent) >= _FEEDBACK_EXPLANATION_RATE_LIMIT:
+        _feedback_explanation_attempts[user_id] = recent
+        return False
+    recent.append(now)
+    _feedback_explanation_attempts[user_id] = recent
+    return True
 
 
 @router.post("/feedback/react")
@@ -118,20 +144,52 @@ async def submit_feedback_explanation(
     """
     try:
         feedback_service = get_feedback_service(request)
+        user_id, _ = derive_web_user_context(request)
+
+        if not _allow_feedback_explanation(user_id):
+            raise BaseAppException(
+                detail="Too many feedback explanation attempts",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                error_code="FEEDBACK_EXPLANATION_RATE_LIMITED",
+            )
 
         # Extract required fields
-        message_id = explanation_data.get("message_id")
-        explanation = explanation_data.get("explanation")
+        message_id = str(explanation_data.get("message_id") or "").strip()
+        explanation = str(explanation_data.get("explanation") or "").strip()
 
-        if message_id is None or not explanation:
+        if not message_id or not explanation:
             raise BaseAppException(
                 detail="Missing required fields: message_id and explanation are required",
                 status_code=status.HTTP_400_BAD_REQUEST,
                 error_code="MISSING_REQUIRED_FIELDS",
             )
 
+        processor = getattr(request.app.state, "reaction_processor", None)
+        if processor is None or not hasattr(processor, "hash_reactor_identity"):
+            raise BaseAppException(
+                detail="Reaction processor not available",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                error_code="REACTION_PROCESSOR_UNAVAILABLE",
+            )
+
+        reactor_hash = processor.hash_reactor_identity("web", user_id)
+        active_rating = feedback_service.repository.get_active_reaction_rating(
+            "web", message_id, reactor_hash
+        )
+        if active_rating != int(ReactionRating.NEGATIVE):
+            raise BaseAppException(
+                detail="Feedback entry not found or update failed",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="FEEDBACK_NOT_FOUND",
+            )
+
         # Extract any specific issues mentioned by the user
-        user_provided_issues = explanation_data.get("issues", [])
+        raw_issues = explanation_data.get("issues", [])
+        user_provided_issues = [
+            str(issue).strip()
+            for issue in raw_issues
+            if isinstance(issue, str) and str(issue).strip()
+        ][:20]
 
         # Analyze explanation text for common issues ONLY if no specific issues provided by user
         detected_issues_from_text = []
