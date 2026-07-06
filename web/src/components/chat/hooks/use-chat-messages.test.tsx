@@ -130,6 +130,93 @@ describe("useChatMessages", () => {
         { role: "user", content: "new question" },
       ]);
     });
+
+    test("clearChatHistory aborts active request and ignores late responses", async () => {
+      let resolveQuery: (response: Response) => void = () => {};
+      let querySignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/chat/query")) {
+          querySignal = init?.signal as AbortSignal | undefined;
+          return new Promise<Response>((resolve) => {
+            resolveQuery = resolve;
+          });
+        }
+        if (url.includes("/chat/stats")) {
+          return jsonResponse({});
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const { result } = renderHook(() => useChatMessages());
+      let request: Promise<void> = Promise.resolve();
+
+      act(() => {
+        request = result.current.sendMessage("question before clear");
+      });
+
+      expect(result.current.messages).toHaveLength(1);
+
+      act(() => {
+        result.current.clearChatHistory();
+      });
+
+      expect(querySignal?.aborted).toBe(true);
+
+      await act(async () => {
+        resolveQuery(jsonResponse({ answer: "Late answer" }));
+        await request;
+      });
+
+      expect(result.current.messages).toEqual([]);
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    test("cancelCurrentRequest aborts active request and ignores late responses", async () => {
+      let resolveQuery: (response: Response) => void = () => {};
+      let querySignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/chat/query")) {
+          querySignal = init?.signal as AbortSignal | undefined;
+          return new Promise<Response>((resolve) => {
+            resolveQuery = resolve;
+          });
+        }
+        if (url.includes("/chat/stats")) {
+          return jsonResponse({});
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const { result } = renderHook(() => useChatMessages());
+      let request: Promise<void> = Promise.resolve();
+
+      act(() => {
+        request = result.current.sendMessage("question before cancel");
+      });
+
+      act(() => {
+        result.current.cancelCurrentRequest();
+      });
+
+      expect(querySignal?.aborted).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "question before cancel",
+        "Request canceled.",
+      ]);
+
+      await act(async () => {
+        resolveQuery(jsonResponse({ answer: "Late answer" }));
+        await request;
+      });
+
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "question before cancel",
+        "Request canceled.",
+      ]);
+    });
   });
 
   describe("localStorage persistence", () => {
@@ -236,6 +323,61 @@ describe("useChatMessages", () => {
       });
 
       expect(localStorage.getItem(CHAT_STORAGE_KEY)).toBeNull();
+    });
+
+    test("merges messages from another tab by message id", () => {
+      const { result } = renderHook(() => useChatMessages());
+
+      const localMessage: Message = {
+        id: "local-message",
+        content: "Local answer",
+        role: "assistant",
+        timestamp: new Date("2026-07-01T10:00:00.000Z"),
+      };
+      const remoteMessage = {
+        id: "remote-message",
+        content: "Remote answer",
+        role: "assistant",
+        timestamp: "2026-07-01T10:01:00.000Z",
+      };
+
+      act(() => {
+        result.current.setMessages([localMessage]);
+      });
+
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: CHAT_STORAGE_KEY,
+            newValue: JSON.stringify([remoteMessage]),
+          }),
+        );
+      });
+
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "local-message",
+        "remote-message",
+      ]);
+    });
+
+    test("ignores storage removals from another tab", () => {
+      const { result } = renderHook(() => useChatMessages());
+
+      act(() => {
+        result.current.setMessages([makeMessage("Still visible")]);
+      });
+
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: CHAT_STORAGE_KEY,
+            newValue: null,
+          }),
+        );
+      });
+
+      expect(result.current.messages).toHaveLength(1);
+      expect(result.current.messages[0].content).toBe("Still visible");
     });
   });
 });

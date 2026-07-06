@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "@/lib/config";
 
-type PollingStatus = "idle" | "polling" | "resolved";
+type PollingStatus = "idle" | "polling" | "resolved" | "stale";
 type PollingResolution = "responded" | "closed" | null;
 
 interface EscalationPollResult {
@@ -52,6 +52,7 @@ export function useEscalationPolling(
   const [userLanguage, setUserLanguage] = useState<string | null>(null);
 
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const staleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollingActiveRef = useRef<boolean>(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -67,6 +68,10 @@ export function useEscalationPolling(
 
   const cleanup = useCallback(() => {
     cleanupPolling();
+    if (staleTimeoutRef.current) {
+      clearTimeout(staleTimeoutRef.current);
+      staleTimeoutRef.current = null;
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -103,6 +108,7 @@ export function useEscalationPolling(
 
     const elapsed = Date.now() - startTimeRef.current;
     if (elapsed > POLL_TIMEOUT) {
+      setStatus("stale");
       cleanup();
       return;
     }
@@ -199,6 +205,11 @@ export function useEscalationPolling(
     resetResolvedState();
     startTimeRef.current = Date.now();
     pollCountRef.current = 0;
+    staleTimeoutRef.current = setTimeout(() => {
+      if (!active) return;
+      setStatus("stale");
+      cleanup();
+    }, POLL_TIMEOUT);
     startEventStream();
 
     const handleVisibilityChange = () => {

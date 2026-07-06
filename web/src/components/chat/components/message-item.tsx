@@ -53,6 +53,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
     const showLiveBadgeInMetadata = hasLiveData && !hasInlineLiveData
 
     const isEscalated = message.requires_human === true
+    const isEscalationStale = message.escalation_polling_status === "stale"
     const hasMetadata = isAssistant && !isEscalated && (hasSources || hasConfidence || showLiveBadgeInMetadata || canRate)
 
     return (
@@ -131,7 +132,12 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                 {/* Escalation indicators */}
                 {isAssistant && message.requires_human && !message.staff_response && message.escalation_resolution !== "closed" && (
                     <HumanReviewBadge
-                        label={message.ui_labels?.support_team_notified}
+                        stale={isEscalationStale}
+                        label={
+                            isEscalationStale
+                                ? undefined
+                                : message.ui_labels?.support_team_notified
+                        }
                     />
                 )}
                 {isAssistant && message.escalation_resolution === "closed" && (

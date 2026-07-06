@@ -61,6 +61,7 @@ describe("useEscalationPolling", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
     delete (window as Window & { EventSource?: typeof EventSource }).EventSource;
   });
@@ -113,5 +114,18 @@ describe("useEscalationPolling", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       `/api/escalations/${MESSAGE_ID}/response`,
     );
+  });
+
+  test("marks polling stale after the timeout window", () => {
+    jest.useFakeTimers();
+
+    render(<Harness />);
+
+    act(() => {
+      jest.advanceTimersByTime(30 * 60_000);
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("stale");
+    expect(MockEventSource.instances[0].close).toHaveBeenCalledTimes(1);
   });
 });
