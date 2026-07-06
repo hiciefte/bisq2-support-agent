@@ -18,17 +18,38 @@ logger = logging.getLogger(__name__)
 
 _FEEDBACK_EXPLANATION_RATE_LIMIT = 5
 _FEEDBACK_EXPLANATION_RATE_WINDOW_SECONDS = 300.0
+_FEEDBACK_EXPLANATION_SWEEP_INTERVAL_SECONDS = 60.0
 _feedback_explanation_attempts: dict[str, list[float]] = {}
+_feedback_explanation_last_sweep = 0.0
 
 
 def reset_feedback_explanation_rate_limiter() -> None:
     """Clear feedback explanation rate-limit state for tests."""
+    global _feedback_explanation_last_sweep
     _feedback_explanation_attempts.clear()
+    _feedback_explanation_last_sweep = 0.0
+
+
+def _sweep_feedback_explanation_attempts(cutoff: float) -> None:
+    for stored_user_id, timestamps in list(_feedback_explanation_attempts.items()):
+        recent = [timestamp for timestamp in timestamps if timestamp >= cutoff]
+        if recent:
+            _feedback_explanation_attempts[stored_user_id] = recent
+        else:
+            _feedback_explanation_attempts.pop(stored_user_id, None)
 
 
 def _allow_feedback_explanation(user_id: str) -> bool:
+    global _feedback_explanation_last_sweep
     now = time.monotonic()
     cutoff = now - _FEEDBACK_EXPLANATION_RATE_WINDOW_SECONDS
+    if (
+        now - _feedback_explanation_last_sweep
+        >= _FEEDBACK_EXPLANATION_SWEEP_INTERVAL_SECONDS
+    ):
+        _sweep_feedback_explanation_attempts(cutoff)
+        _feedback_explanation_last_sweep = now
+
     recent = [
         timestamp
         for timestamp in _feedback_explanation_attempts.get(user_id, [])

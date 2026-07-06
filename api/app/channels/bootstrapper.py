@@ -256,9 +256,7 @@ class ChannelBootstrapper:
 
     def _register_reaction_services(self, runtime: ChannelRuntime) -> None:
         """Register SentMessageTracker and ReactionProcessor in runtime."""
-        from app.channels.config import ReactionConfig
         from app.channels.reactions import ReactionProcessor, SentMessageTracker
-        from pydantic import SecretStr
 
         tracker = SentMessageTracker()
         runtime.register("sent_message_tracker", tracker)
@@ -275,7 +273,11 @@ class ChannelBootstrapper:
                 )
 
         salt = str(getattr(self.settings, "REACTOR_IDENTITY_SALT", "") or "").strip()
-        environment = str(getattr(self.settings, "ENVIRONMENT", "development")).lower()
+        environment = (
+            str(getattr(self.settings, "ENVIRONMENT", "development")).strip().lower()
+        )
+        if environment == "prod":
+            environment = "production"
         if not salt:
             message = (
                 "REACTOR_IDENTITY_SALT must be set when reaction services are "
@@ -286,11 +288,6 @@ class ChannelBootstrapper:
                 raise RuntimeError(message)
             logger.warning("%s; using empty salt in %s", message, environment)
 
-        reaction_config = ReactionConfig(
-            enabled=bool(salt),
-            reactor_identity_salt=SecretStr(salt),
-        )
-        salt = reaction_config.reactor_identity_salt.get_secret_value()
         processor = ReactionProcessor(
             tracker=tracker,
             feedback_service=runtime.feedback_service,

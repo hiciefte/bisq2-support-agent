@@ -1,5 +1,6 @@
 """Security tests for POST /feedback/explanation."""
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,9 +27,9 @@ def _install_feedback_dependencies(test_client: TestClient, test_settings):
         feedback_service=feedback_service,
         reactor_identity_salt=test_settings.REACTOR_IDENTITY_SALT,
     )
-    app_state = getattr(test_client.app, "state")
-    setattr(app_state, "feedback_service", feedback_service)
-    setattr(app_state, "reaction_processor", processor)
+    app_state = cast(Any, test_client.app).state
+    app_state.feedback_service = feedback_service
+    app_state.reaction_processor = processor
     return feedback_service, processor
 
 
@@ -103,3 +104,16 @@ def test_feedback_explanation_is_rate_limited(
 
     assert first.status_code == 200
     assert second.status_code == 429
+
+
+def test_feedback_explanation_rate_limiter_sweeps_stale_users(monkeypatch) -> None:
+    times = iter([1000.0, 1401.0])
+    monkeypatch.setattr(feedback_routes.time, "monotonic", lambda: next(times))
+
+    assert feedback_routes._allow_feedback_explanation("old-user") is True
+    assert "old-user" in feedback_routes._feedback_explanation_attempts
+
+    assert feedback_routes._allow_feedback_explanation("new-user") is True
+
+    assert "old-user" not in feedback_routes._feedback_explanation_attempts
+    assert "new-user" in feedback_routes._feedback_explanation_attempts

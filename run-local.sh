@@ -31,6 +31,18 @@ ensure_env_var() {
   local value="$2"
   if ! grep -q "^${key}=" docker/.env; then
     echo "${key}=${value}" >> docker/.env
+  elif grep -q "^${key}=[[:space:]]*$" docker/.env; then
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v key="${key}" -v value="${value}" '
+      $0 ~ "^" key "=[[:space:]]*$" && !updated {
+        print key "=" value
+        updated = 1
+        next
+      }
+      { print }
+    ' docker/.env > "${tmp_file}"
+    mv "${tmp_file}" docker/.env
   fi
 }
 

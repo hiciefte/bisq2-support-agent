@@ -1105,6 +1105,12 @@ class Settings(BaseSettings):
 
         return v.strip()
 
+    @field_validator("REACTOR_IDENTITY_SALT")
+    @classmethod
+    def normalize_reactor_identity_salt(cls, v: str) -> str:
+        """Normalize REACTOR_IDENTITY_SALT whitespace."""
+        return v.strip()
+
     @field_validator("MATRIX_HOMESERVER_URL")
     @classmethod
     def validate_matrix_homeserver_url(cls, v: str) -> str:
@@ -1164,6 +1170,15 @@ class Settings(BaseSettings):
                 "MATRIX_ALERT_PASSWORD is required when MATRIX_ALERT_ROOM is set."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_reactor_identity_salt_settings(self) -> "Settings":
+        environment = str(self.ENVIRONMENT or "").strip().lower()
+        if environment == "prod":
+            environment = "production"
+        if environment == "production" and not self.REACTOR_IDENTITY_SALT.strip():
+            raise ValueError("REACTOR_IDENTITY_SALT required in production")
         return self
 
     @model_validator(mode="after")
