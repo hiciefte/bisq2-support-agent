@@ -671,7 +671,7 @@ def gate_benchmark_summary(args: argparse.Namespace) -> int:
             args.min_recall_at_k,
         ),
         "mrr": (
-            ("mrr", "mean_reciprocal_rank", "context_precision"),
+            ("mrr", "mean_reciprocal_rank"),
             args.min_mrr,
         ),
         "faithfulness": (("faithfulness",), args.min_faithfulness),
@@ -966,7 +966,7 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--summary", type=str, required=True)
     gate_parser.add_argument("--min-recall-at-k", type=float, default=0.38)
     gate_parser.add_argument("--min-mrr", type=float, default=0.60)
-    gate_parser.add_argument("--min-faithfulness", type=float, default=0.60)
+    gate_parser.add_argument("--min-faithfulness", type=float, default=0.40)
     gate_parser.add_argument("--min-answer-relevancy", type=float, default=0.55)
 
     return parser

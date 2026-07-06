@@ -14,6 +14,7 @@ COPY api/requirements.in api/requirements.txt /app/
 
 ARG TORCH_CPU_VERSION=2.10.0+cpu
 ARG PIP_DEFAULT_TIMEOUT=1000
+ENV PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
 
 # Install pinned CPU-only PyTorch from the CPU index.
 # Use PyPI as fallback for transitive deps that may not be mirrored on the torch index.
@@ -41,15 +42,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set up work directory
 WORKDIR /app
 
+ARG TORCH_CPU_VERSION=2.10.0+cpu
+ARG PIP_DEFAULT_TIMEOUT=1000
+ENV PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT}
+
 # Install pip-tools for requirements management
 RUN pip install --no-cache-dir pip-tools==7.5.1
 
 # Copy dependency files
 COPY api/requirements.in /app/api/
 COPY api/requirements.txt /app/api/
-
-ARG TORCH_CPU_VERSION=2.10.0+cpu
-ARG PIP_DEFAULT_TIMEOUT=1000
 
 # Install pinned CPU-only PyTorch from the CPU index.
 # Use PyPI as fallback for transitive deps that may not be mirrored on the torch index.

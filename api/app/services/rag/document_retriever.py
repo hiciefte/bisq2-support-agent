@@ -539,7 +539,7 @@ class DocumentRetriever:
         all_docs_with_scores: List[Tuple[Document, float]] = []
 
         def _absolute_scores(
-            k: int, filter_dict: dict[str, Any] | None
+            k: int, filter_dict: dict[str, Any] | None = None
         ) -> dict[tuple[str, str], float]:
             semantic_retrieve = getattr(
                 self.retriever, "retrieve_semantic_with_scores", None
@@ -603,16 +603,14 @@ class DocumentRetriever:
             results = self.retriever.retrieve_with_scores(
                 query, k=k, filter_dict=filter_dict
             )
-            absolute_lookup = _absolute_scores(k, filter_dict)
             for r in results:
                 retrieval_score = self._clamp_unit_interval(float(r.score))
-                absolute_score = absolute_lookup.get(self._dedupe_key_from_retrieved(r))
                 all_docs_with_scores.append(
                     (
                         _lc_with_retrieval_metadata(
                             r,
                             retrieval_score=retrieval_score,
-                            absolute_score=absolute_score,
+                            absolute_score=None,
                             retrieval_rank=len(all_docs_with_scores),
                         ),
                         retrieval_score,
@@ -679,17 +677,36 @@ class DocumentRetriever:
                 unique_docs.append(doc)
                 retrieval_scores.append(self._clamp_unit_interval(float(score)))
 
+        if unique_docs:
+            absolute_lookup = _absolute_scores(k=max(len(unique_docs), 10))
+            for doc in unique_docs:
+                absolute_score = absolute_lookup.get(
+                    self._dedupe_key_from_metadata(doc.metadata)
+                )
+                if absolute_score is None:
+                    continue
+                metadata = dict(doc.metadata or {})
+                metadata["_absolute_similarity_score"] = self._clamp_unit_interval(
+                    absolute_score
+                )
+                metadata["_score_type"] = "absolute_cosine"
+                doc.metadata = metadata
+
         if self.reranker and unique_docs:
             try:
-                rerank_top_n = self.rerank_top_n or len(unique_docs)
+                rerank_top_n = (
+                    self.rerank_top_n
+                    if self.rerank_top_n is not None
+                    else len(unique_docs)
+                )
                 rerank_candidates = [
                     RetrievedDocument.from_langchain_document(doc, score=score)
-                    for doc, score in zip(unique_docs, retrieval_scores)
+                    for doc, score in zip(unique_docs, retrieval_scores, strict=True)
                 ]
                 reranked = self.reranker.rerank(
                     query, rerank_candidates, top_n=rerank_top_n
                 )
-                reranked_docs = []
+                reranked_docs: List[Document] = []
                 retrieval_score_lookup = {
                     self._dedupe_key_from_retrieved(candidate): candidate.score
                     for candidate in rerank_candidates
@@ -701,6 +718,7 @@ class DocumentRetriever:
                         metadata["_retrieved_id"] = reranked_doc.id
                     metadata["_reranked"] = True
                     metadata["_colbert_score"] = float(reranked_doc.score)
+                    metadata["_retrieval_rank"] = len(reranked_docs)
                     lc_doc.metadata = metadata
                     reranked_docs.append(lc_doc)
 
@@ -728,7 +746,7 @@ class DocumentRetriever:
 
         unique_scores = [
             _score_for_display(doc, score)
-            for doc, score in zip(unique_docs, retrieval_scores)
+            for doc, score in zip(unique_docs, retrieval_scores, strict=True)
         ]
 
         logger.info(

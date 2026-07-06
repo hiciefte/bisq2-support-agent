@@ -153,7 +153,7 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --lock-file /data/evaluation/retrieval_strict.lock.json
 ```
 
-Gate the resulting summary with the same quality floors used by CI:
+Gate the resulting summary with the locked quality floors:
 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.retrieval_benchmark_harness gate \

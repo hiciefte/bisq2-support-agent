@@ -612,6 +612,9 @@ class TestDocumentRetrieverVersionPriority:
         """Displayed scores use absolute semantic similarity, not relative ranks."""
 
         class FakeRetriever:
+            def __init__(self):
+                self.semantic_calls = []
+
             def retrieve_with_scores(self, _query, k, filter_dict=None):
                 protocol = (filter_dict or {}).get("protocol")
                 if protocol != "bisq_easy":
@@ -632,9 +635,7 @@ class TestDocumentRetrieverVersionPriority:
                 ][:k]
 
             def retrieve_semantic_with_scores(self, _query, k, filter_dict=None):
-                protocol = (filter_dict or {}).get("protocol")
-                if protocol != "bisq_easy":
-                    return []
+                self.semantic_calls.append((k, filter_dict))
                 return [
                     RetrievedDocument(
                         content="top hybrid document",
@@ -656,12 +657,14 @@ class TestDocumentRetrieverVersionPriority:
             def health_check(self):
                 return True
 
-        retriever = DocumentRetriever(retriever=FakeRetriever())
+        fake_retriever = FakeRetriever()
+        retriever = DocumentRetriever(retriever=fake_retriever)
 
         docs, scores = retriever.retrieve_with_scores(
             "How do I start a trade?", detected_version="Bisq 2"
         )
 
+        assert fake_retriever.semantic_calls == [(10, None)]
         assert [doc.metadata["_score_type"] for doc in docs] == [
             "absolute_cosine",
             "absolute_cosine",
@@ -738,6 +741,72 @@ class TestDocumentRetrieverVersionPriority:
         assert docs[0].metadata["_reranked"] is True
         assert docs[0].metadata["_colbert_score"] == 3.2
         assert scores == [0.8]
+
+    def test_reranked_order_reaches_formatted_context(self, test_settings):
+        """Formatted context should preserve post-rerank order."""
+
+        class FakeRetriever:
+            def retrieve_with_scores(self, _query, k, filter_dict=None):
+                protocol = (filter_dict or {}).get("protocol")
+                if protocol != "bisq_easy":
+                    return []
+                return [
+                    RetrievedDocument(
+                        content="less relevant context",
+                        metadata={"protocol": "bisq_easy", "title": "A"},
+                        score=0.9,
+                        id="doc-a",
+                    ),
+                    RetrievedDocument(
+                        content="more relevant context",
+                        metadata={"protocol": "bisq_easy", "title": "B"},
+                        score=0.8,
+                        id="doc-b",
+                    ),
+                ][:k]
+
+            def retrieve_semantic_with_scores(self, _query, k, filter_dict=None):
+                return self.retrieve_with_scores(_query, k, {"protocol": "bisq_easy"})
+
+            def retrieve(self, _query, k=10, filter_dict=None):
+                return []
+
+            def health_check(self):
+                return True
+
+        class ReverseReranker:
+            def rerank(self, _query, documents, top_n=5):
+                return [
+                    RetrievedDocument(
+                        content=doc.content,
+                        metadata=doc.metadata,
+                        score=float(len(documents) - idx),
+                        id=doc.id,
+                    )
+                    for idx, doc in enumerate(reversed(documents[:top_n]))
+                ]
+
+            def is_loaded(self):
+                return True
+
+            def load_model(self):
+                return None
+
+        retriever = DocumentRetriever(
+            retriever=FakeRetriever(),
+            reranker=ReverseReranker(),
+            rerank_top_n=2,
+        )
+
+        docs, _scores = retriever.retrieve_with_scores(
+            "How do I start a trade?", detected_version="Bisq 2"
+        )
+        formatted = retriever.format_documents(docs, detected_version="Bisq 2")
+
+        assert [doc.metadata["_retrieval_rank"] for doc in docs] == [0, 1]
+        assert formatted.index("more relevant context") < formatted.index(
+            "less relevant context"
+        )
 
 
 class TestEdgeCases:
