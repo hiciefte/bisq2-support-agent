@@ -14,7 +14,7 @@ interface MessageListProps {
     formattedAvgTime: string
     scrollAreaRef: React.RefObject<HTMLDivElement | null>
     loadingRef: React.RefObject<HTMLDivElement | null>
-    onRating?: (messageId: string, rating: number) => void
+    onRating?: (messageId: string, rating: number) => boolean | void | Promise<boolean | void>
     onStaffRate?: (messageId: string, rating: number, rateToken?: string) => void
 }
 

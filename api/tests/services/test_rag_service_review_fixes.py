@@ -97,6 +97,132 @@ class TestChainUsesPreRetrievedDocs:
     """A2: no version-blind duplicate retrieval in the answer path."""
 
     @pytest.mark.asyncio
+    async def test_setup_applies_learned_source_weights_before_loading(
+        self, test_settings
+    ):
+        """F5: rebuilt document payloads should carry learned source weights."""
+        events: list[str] = []
+        feedback_service = MagicMock()
+        feedback_service.get_source_weights.return_value = {
+            "wiki": 0.8,
+            "faq": 1.15,
+            "llm_wiki": 1.05,
+        }
+        wiki_service = MagicMock()
+        wiki_service.update_source_weights.side_effect = lambda weights: events.append(
+            f"wiki:update:{weights['wiki']}"
+        )
+        wiki_service.load_wiki_data.side_effect = lambda: events.append(
+            "wiki:load"
+        ) or [
+            Document(
+                page_content="wiki",
+                metadata={"type": "wiki", "source_weight": 0.8},
+            )
+        ]
+        faq_service = MagicMock()
+        faq_service.update_source_weights.side_effect = lambda weights: events.append(
+            f"faq:update:{weights['faq']}"
+        )
+        faq_service.load_faq_data.side_effect = lambda: events.append("faq:load") or [
+            Document(
+                page_content="faq",
+                metadata={"type": "faq", "source_weight": 1.15},
+            )
+        ]
+
+        svc = SimplifiedRAGService(
+            settings=test_settings,
+            feedback_service=feedback_service,
+            wiki_service=wiki_service,
+            faq_service=faq_service,
+        )
+        llm_loader = MagicMock()
+        llm_loader.update_source_weights.side_effect = lambda weights: events.append(
+            f"llm:update:{weights['llm_wiki']}"
+        )
+        llm_loader.load_documents.side_effect = lambda _path: events.append(
+            "llm:load"
+        ) or [
+            Document(
+                page_content="llm",
+                metadata={"type": "llm_wiki", "source_weight": 1.05},
+            )
+        ]
+        svc.llm_wiki_loader = llm_loader
+        svc.document_processor.split_documents = MagicMock(
+            side_effect=lambda docs: docs
+        )
+        svc.initialize_embeddings = MagicMock()
+        svc.initialize_embeddings.side_effect = lambda: setattr(
+            svc, "embeddings", MagicMock()
+        )
+        svc.index_manager.rebuild_index = MagicMock(return_value={"status": "ok"})
+        svc._initialize_retriever = MagicMock()
+        svc._initialize_retriever.side_effect = lambda: setattr(
+            svc, "retriever", MagicMock()
+        )
+        svc.initialize_llm = MagicMock()
+        svc.initialize_llm.side_effect = lambda: setattr(svc, "llm", MagicMock())
+
+        events.clear()
+        assert await svc.setup() is True
+
+        assert events.index("wiki:update:0.8") < events.index("wiki:load")
+        assert events.index("faq:update:1.15") < events.index("faq:load")
+        assert events.index("llm:update:1.05") < events.index("llm:load")
+
+    def test_query_time_source_weights_reorder_retrieved_docs(self, test_settings):
+        """F5: learned weight changes affect retrieval output without rebuild."""
+        feedback_service = MagicMock()
+        feedback_service.get_source_weights.return_value = {"wiki": 0.5, "faq": 2.0}
+        svc = SimplifiedRAGService(
+            settings=test_settings,
+            feedback_service=feedback_service,
+        )
+        docs = [
+            Document(page_content="wiki", metadata={"type": "wiki"}),
+            Document(page_content="faq", metadata={"type": "faq"}),
+        ]
+
+        weighted_docs, weighted_scores = svc._apply_runtime_source_weights(
+            docs, [0.9, 0.5]
+        )
+
+        assert [doc.metadata["type"] for doc in weighted_docs] == ["faq", "wiki"]
+        assert weighted_scores == [0.5, 0.9]
+        assert weighted_docs[0].metadata["source_weight"] == 2.0
+
+    def test_query_time_source_weights_preserve_protocol_buckets(self, test_settings):
+        """F5: source weights cannot undo protocol-aware retrieval buckets."""
+        feedback_service = MagicMock()
+        feedback_service.get_source_weights.return_value = {"wiki": 0.5, "faq": 2.0}
+        svc = SimplifiedRAGService(
+            settings=test_settings,
+            feedback_service=feedback_service,
+        )
+        docs = [
+            Document(
+                page_content="wiki",
+                metadata={"type": "wiki", "protocol": "bisq_easy"},
+            ),
+            Document(
+                page_content="faq",
+                metadata={"type": "faq", "protocol": "multisig_v1"},
+            ),
+        ]
+
+        weighted_docs, weighted_scores = svc._apply_runtime_source_weights(
+            docs, [0.9, 0.5]
+        )
+
+        assert [doc.metadata["protocol"] for doc in weighted_docs] == [
+            "bisq_easy",
+            "multisig_v1",
+        ]
+        assert weighted_scores == [0.9, 0.5]
+
+    @pytest.mark.asyncio
     async def test_query_offloads_retrieval_and_generation(self, service, monkeypatch):
         """F8: sync retriever and LLM chain calls must not block the event loop."""
         offloaded = []

@@ -226,6 +226,10 @@ class SimplifiedRAGService:
 
         # Initialize lock for rebuild serialization to prevent concurrent rebuilds
         self._setup_lock = asyncio.Lock()
+        self._embeddings_init_lock = asyncio.Lock()
+        self._faq_index_locks: dict[str, asyncio.Lock] = {}
+        self._faq_index_lock_refs: dict[str, int] = {}
+        self._faq_index_locks_guard = asyncio.Lock()
 
         # Initialize confidence scoring components
         self.nli_validator = NLIValidator()
@@ -259,6 +263,7 @@ class SimplifiedRAGService:
                 "wiki": 1.1,  # Slightly increased weight for wiki content
                 "llm_wiki": 1.25,  # Human-reviewed compiled support knowledge
             }
+        self._apply_source_weights_to_loaders()
 
         # Register with FAQ service for FAQ updates (manual rebuild mode)
         if self.faq_service:
@@ -266,6 +271,77 @@ class SimplifiedRAGService:
             logger.info("Registered FAQ service update callback (manual rebuild mode)")
 
         logger.info("Simplified RAG service initialized")
+
+    def _apply_source_weights_to_loaders(self) -> None:
+        """Apply current source weights to all document loaders."""
+        if self.wiki_service:
+            self.wiki_service.update_source_weights(self.source_weights)
+        if self.faq_service:
+            self.faq_service.update_source_weights(self.source_weights)
+        self.llm_wiki_loader.update_source_weights(self.source_weights)
+
+    def _refresh_source_weights(self) -> None:
+        """Refresh learned weights from feedback."""
+        if self.feedback_service:
+            try:
+                self.source_weights = self.feedback_service.get_source_weights()
+            except Exception:
+                logger.exception("Failed to refresh source weights from feedback")
+
+    def _refresh_source_weights_for_rebuild(self) -> None:
+        """Refresh learned weights and push them into document loaders."""
+        self._refresh_source_weights()
+        self._apply_source_weights_to_loaders()
+
+    def _source_type_for_document(self, doc: Document) -> str:
+        source_type = doc.metadata.get("type")
+        if source_type:
+            return str(source_type)
+        source_value = str(doc.metadata.get("source", ""))
+        if "faq" in source_value:
+            return "faq"
+        if "llm_wiki" in source_value:
+            return "llm_wiki"
+        return "wiki"
+
+    def _apply_runtime_source_weights(
+        self, docs: List[Document], doc_scores: List[float]
+    ) -> tuple[List[Document], List[float]]:
+        """Apply current learned source weights to retrieved documents.
+
+        The vector index stores source weights in payload metadata from the
+        last rebuild. Refreshing here lets feedback-driven weight changes
+        affect prompt ordering, confidence scoring, and routing immediately.
+        """
+        if not docs:
+            return docs, doc_scores
+
+        self._refresh_source_weights()
+        buckets: list[list[tuple[float, int, Document, float]]] = []
+        current_protocol: str | None = None
+        for index, doc in enumerate(docs):
+            source_type = self._source_type_for_document(doc)
+            source_weight = float(self.source_weights.get(source_type, 1.0))
+            doc.metadata["source_weight"] = source_weight
+            score = doc_scores[index] if index < len(doc_scores) else 0.0
+            weighted_score = float(score) * source_weight
+            doc.metadata["_source_weighted_score"] = weighted_score
+            protocol = str(doc.metadata.get("protocol", "all"))
+            if not buckets or protocol != current_protocol:
+                buckets.append([])
+                current_protocol = protocol
+            buckets[-1].append((weighted_score, index, doc, score))
+
+        reordered_docs: list[Document] = []
+        reordered_scores: list[float] = []
+        for bucket in buckets:
+            for _, _, doc, score in sorted(
+                bucket, key=lambda item: (-item[0], item[1])
+            ):
+                doc.metadata["_retrieval_rank"] = len(reordered_docs)
+                reordered_docs.append(doc)
+                reordered_scores.append(score)
+        return reordered_docs, reordered_scores
 
     def _handle_faq_update(
         self,
@@ -320,6 +396,37 @@ class SimplifiedRAGService:
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
+    async def _ensure_embeddings_initialized(self) -> None:
+        """Initialize embeddings once across concurrent incremental workers."""
+        if self.embeddings is not None:
+            return
+        async with self._embeddings_init_lock:
+            if self.embeddings is None:
+                await asyncio.to_thread(self.initialize_embeddings)
+
+    async def _acquire_faq_index_lock(self, faq_id: str) -> asyncio.Lock:
+        async with self._faq_index_locks_guard:
+            lock = self._faq_index_locks.get(faq_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._faq_index_locks[faq_id] = lock
+            self._faq_index_lock_refs[faq_id] = (
+                self._faq_index_lock_refs.get(faq_id, 0) + 1
+            )
+        await lock.acquire()
+        return lock
+
+    async def _release_faq_index_lock(self, faq_id: str, lock: asyncio.Lock) -> None:
+        lock.release()
+        async with self._faq_index_locks_guard:
+            ref_count = self._faq_index_lock_refs.get(faq_id, 1) - 1
+            if ref_count <= 0:
+                if self._faq_index_locks.get(faq_id) is lock:
+                    self._faq_index_locks.pop(faq_id, None)
+                self._faq_index_lock_refs.pop(faq_id, None)
+            else:
+                self._faq_index_lock_refs[faq_id] = ref_count
+
     def _can_apply_incremental_faq_update(self, operation: str, faq_id: str) -> bool:
         """Return True when a change can be applied point-by-point.
 
@@ -359,8 +466,15 @@ class SimplifiedRAGService:
         thread. Any failure falls back to mark_change so the change is not
         lost and surfaces in the manual-rebuild status.
         """
+        lock: asyncio.Lock | None = None
         try:
-            await asyncio.to_thread(self._sync_faq_in_index, faq_id)
+            lock = await self._acquire_faq_index_lock(faq_id)
+            try:
+                if operation != "delete":
+                    await self._ensure_embeddings_initialized()
+                await asyncio.to_thread(self._sync_faq_in_index, faq_id)
+            finally:
+                await self._release_faq_index_lock(faq_id, lock)
             logger.info(f"Applied incremental index update: {operation} on {faq_id}")
         except Exception:
             logger.exception(
@@ -389,7 +503,7 @@ class SimplifiedRAGService:
 
         splits = self.document_processor.split_documents(faq_docs)
         if self.embeddings is None:
-            self.initialize_embeddings()
+            raise RuntimeError("Embeddings must be initialized before FAQ index sync")
         self.index_manager.upsert_faq_documents(
             faq_id=faq_id,
             documents=splits,
@@ -560,6 +674,7 @@ class SimplifiedRAGService:
 
                 # Load documents
                 logger.info("Loading documents...")
+                self._refresh_source_weights_for_rebuild()
 
                 # Load wiki data from WikiService
                 wiki_docs = []
@@ -593,22 +708,6 @@ class SimplifiedRAGService:
                 if not all_docs:
                     logger.warning("No documents loaded. Check your data paths.")
                     return False
-
-                # Apply feedback-based improvements if we have a feedback service
-                if self.feedback_service:
-                    logger.info("Applying feedback-based improvements...")
-                    # Update source weights from feedback service
-                    self.source_weights = self.feedback_service.get_source_weights()
-                    logger.info(
-                        f"Updated source weights from feedback service: {self.source_weights}"
-                    )
-
-                    # Update service weights
-                    if self.wiki_service:
-                        self.wiki_service.update_source_weights(self.source_weights)
-                    if self.faq_service:
-                        self.faq_service.update_source_weights(self.source_weights)
-                    self.llm_wiki_loader.update_source_weights(self.source_weights)
 
                 # Split documents using document processor
                 splits = self.document_processor.split_documents(all_docs)
@@ -1243,6 +1342,7 @@ class SimplifiedRAGService:
             logger.info(
                 f"Retrieved {len(docs)} relevant documents (for version: {detected_version})"
             )
+            docs, doc_scores = self._apply_runtime_source_weights(docs, doc_scores)
 
             # Safety: if the user explicitly asks about Bisq 1 but retrieval doesn't return
             # any Bisq 1-specific documents, avoid answering with Bisq Easy (Bisq 2) content.

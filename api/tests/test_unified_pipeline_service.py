@@ -2469,6 +2469,76 @@ class TestPipelinePostApprovalCorrections:
         # Should return None - no FAQ to flag (thread not closed)
         assert correction_result is None
 
+    @pytest.mark.asyncio
+    async def test_resolve_correction_update_uses_real_faq_update(
+        self, temp_db_path, mock_settings, mock_rag_service
+    ):
+        """Update correction should modify a real SQLite FAQ and trigger indexing."""
+        from app.services.faq_service import FAQService
+
+        faq_db_path = temp_db_path.parent / "faqs.db"
+        faq_settings = MagicMock()
+        faq_settings.DATA_DIR = str(temp_db_path.parent)
+        faq_settings.FAQ_DB_PATH = str(faq_db_path)
+
+        FAQService._instance = None
+        try:
+            faq_service = FAQService(faq_settings)
+            update_events = []
+            faq_service.register_update_callback(
+                lambda rebuild, operation, faq_id, metadata: update_events.append(
+                    (rebuild, operation, faq_id, metadata)
+                )
+            )
+            service = UnifiedPipelineService(
+                settings=mock_settings,
+                rag_service=mock_rag_service,
+                faq_service=faq_service,
+                db_path=str(temp_db_path),
+            )
+
+            result = await service.process_matrix_answer(
+                event_id="$ans_real_update",
+                staff_answer="Original FAQ answer.",
+                reply_to_event_id="$q_real_update",
+                question_text="Question with real FAQ update?",
+                staff_sender="@staff:matrix.org",
+            )
+            await service.approve_candidate(
+                candidate_id=result.candidate_id,
+                reviewer="admin",
+            )
+
+            thread = service.repository.find_thread_by_message("$q_real_update")
+            assert thread is not None
+            assert thread.faq_id is not None
+
+            await service.process_post_approval_correction(
+                event_id="$correction_real_update",
+                correction_content="Use this corrected answer.",
+                reply_to_event_id="$q_real_update",
+                staff_sender="@staff:matrix.org",
+            )
+
+            updated_thread = service.repository.get_thread(thread.id)
+            assert updated_thread is not None
+            await service.resolve_flagged_faq(
+                thread_id=updated_thread.id,
+                action="update",
+                reviewer="admin",
+                new_answer="Use this corrected answer.",
+            )
+
+            updated_faq = faq_service.get_faq_by_id(thread.faq_id)
+            assert updated_faq is not None
+            assert updated_faq.answer == "Use this corrected answer."
+            assert any(
+                operation == "update" and faq_id == thread.faq_id
+                for _, operation, faq_id, _ in update_events
+            )
+        finally:
+            FAQService._instance = None
+
 
 # =============================================================================
 # Tests for Threshold Constants (TDD: Task #2)
@@ -2595,6 +2665,28 @@ class TestLearningEngineStatePersistence:
 
         # Verify save_learning_state was called
         assert mock_repo.save_learning_state.called
+
+    def test_auto_save_after_each_review_with_repository(self):
+        """LearningEngine should persist review history before threshold updates."""
+        from unittest.mock import MagicMock
+
+        from app.services.rag.learning_engine import LearningEngine
+
+        mock_repo = MagicMock()
+        mock_repo.get_learning_state.return_value = None
+        engine = LearningEngine(repository=mock_repo)
+        engine.min_samples_for_update = 99999
+
+        engine.record_review(
+            question_id="q_single",
+            confidence=0.85,
+            admin_action="approved",
+            routing_action="SPOT_CHECK",
+        )
+
+        mock_repo.save_learning_state.assert_called_once()
+        kwargs = mock_repo.save_learning_state.call_args.kwargs
+        assert kwargs["review_history"][0]["question_id"] == "q_single"
 
     def test_loads_state_on_init_with_repository(self):
         """LearningEngine should load state from repository on init."""
