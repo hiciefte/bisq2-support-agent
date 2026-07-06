@@ -9,7 +9,7 @@ datasources:
     access: proxy
     url: http://api:8000/admin/feedback
     jsonData:
-      authenticationMethod: 'bearerToken'
-      httpHeaderName1: 'Authorization'
+      authenticationMethod: 'apiKey'
+      httpHeaderName1: 'X-API-KEY'
     secureJsonData:
-      httpHeaderValue1: 'Bearer ${ADMIN_API_KEY_FOR_GRAFANA}'
+      httpHeaderValue1: '${GRAFANA_DATASOURCE_API_KEY}'

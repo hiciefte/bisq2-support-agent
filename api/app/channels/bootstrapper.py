@@ -272,7 +272,22 @@ class ChannelBootstrapper:
                     "Could not initialize FeedbackService for reaction processor"
                 )
 
-        salt = getattr(self.settings, "REACTOR_IDENTITY_SALT", "")
+        salt = str(getattr(self.settings, "REACTOR_IDENTITY_SALT", "") or "").strip()
+        environment = (
+            str(getattr(self.settings, "ENVIRONMENT", "development")).strip().lower()
+        )
+        if environment == "prod":
+            environment = "production"
+        if not salt:
+            message = (
+                "REACTOR_IDENTITY_SALT must be set when reaction services are "
+                "enabled so reactor identities remain privacy-safe and stable "
+                "across deployments"
+            )
+            if environment == "production":
+                raise RuntimeError(message)
+            logger.warning("%s; using empty salt in %s", message, environment)
+
         processor = ReactionProcessor(
             tracker=tracker,
             feedback_service=runtime.feedback_service,

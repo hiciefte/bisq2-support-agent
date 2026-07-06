@@ -67,6 +67,37 @@ class TestRetrieverBackendSettings:
                 Settings()
 
 
+class TestProductionSecretSettings:
+    """Production-only secret validation."""
+
+    def test_reactor_identity_salt_required_for_prod_alias(self):
+        from app.core.config import Settings
+
+        with pytest.raises(ValueError, match="REACTOR_IDENTITY_SALT"):
+            Settings(
+                _env_file=None,
+                ENVIRONMENT="prod",
+                CORS_ORIGINS=["https://example.com"],
+                ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
+                TRUST_MONITOR_ACTOR_KEY_SECRET="test-trust-monitor-secret",
+                REACTOR_IDENTITY_SALT="",
+            )
+
+    def test_reactor_identity_salt_is_trimmed(self):
+        from app.core.config import Settings
+
+        settings = Settings(
+            _env_file=None,
+            ENVIRONMENT="production",
+            CORS_ORIGINS=["https://example.com"],
+            ADMIN_API_KEY="test-admin-key-with-sufficient-length-24chars",
+            TRUST_MONITOR_ACTOR_KEY_SECRET="test-trust-monitor-secret",
+            REACTOR_IDENTITY_SALT=" test-reactor-salt ",
+        )
+
+        assert settings.REACTOR_IDENTITY_SALT == "test-reactor-salt"
+
+
 class TestRAGServiceBackendSettings:
     """Sanity checks for backend-related test fixtures."""
 

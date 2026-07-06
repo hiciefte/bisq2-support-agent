@@ -43,16 +43,6 @@ validate_metrics_environment() {
     return 0
 }
 
-# URL-encode a string for safe use in query parameters
-# Args:
-#   $1: string to encode
-# Returns:
-#   URL-encoded string on stdout
-url_encode() {
-    local string="$1"
-    printf %s "$string" | jq -sRr @uri
-}
-
 # Report FAQ extraction metrics
 report_faq_extraction_metrics() {
     # Validate environment before proceeding
@@ -78,10 +68,8 @@ report_faq_extraction_metrics() {
             duration: (if $dur != "" then ($dur | tonumber) else null end)
         }')
 
-    local encoded_key
-    encoded_key=$(url_encode "$ADMIN_API_KEY")
-
-    curl -s -X POST "$METRICS_ENDPOINT/faq-extraction?api_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/faq-extraction" \
+        -H "X-API-Key: ${ADMIN_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report FAQ extraction metrics" >&2
@@ -109,10 +97,8 @@ report_wiki_update_metrics() {
             duration: (if $dur != "" then ($dur | tonumber) else null end)
         }')
 
-    local encoded_key
-    encoded_key=$(url_encode "$ADMIN_API_KEY")
-
-    curl -s -X POST "$METRICS_ENDPOINT/wiki-update?api_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/wiki-update" \
+        -H "X-API-Key: ${ADMIN_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report wiki update metrics" >&2
@@ -140,10 +126,8 @@ report_feedback_processing_metrics() {
             duration: (if $dur != "" then ($dur | tonumber) else null end)
         }')
 
-    local encoded_key
-    encoded_key=$(url_encode "$ADMIN_API_KEY")
-
-    curl -s -X POST "$METRICS_ENDPOINT/feedback-processing?api_key=${encoded_key}" \
+    curl -s -X POST "$METRICS_ENDPOINT/feedback-processing" \
+        -H "X-API-Key: ${ADMIN_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         || echo "Warning: Failed to report feedback processing metrics" >&2

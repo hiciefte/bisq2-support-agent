@@ -32,6 +32,8 @@ services:
       - ../api/data:/data
     environment:
       - ENVIRONMENT=development
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-local_grafana_datasource_key_change_me}
+      - REACTOR_IDENTITY_SALT=${REACTOR_IDENTITY_SALT:-local_reactor_identity_salt_change_me}
       # Hard-lock local stack to host-run Bisq2 harness API to prevent accidental remote usage.
       - BISQ_API_URL=http://host.docker.internal:8090
       - BISQ_API_LOCAL_ONLY=${BISQ_API_LOCAL_ONLY:-true}
@@ -73,6 +75,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s
+
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-local_grafana_password_change_me}
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-local_grafana_datasource_key_change_me}
 
   web:
     build:

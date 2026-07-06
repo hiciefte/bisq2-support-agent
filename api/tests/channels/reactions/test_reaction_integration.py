@@ -715,3 +715,21 @@ class TestBootstrapperReactionWiring:
         assert isinstance(tracker, SentMessageTracker)
         assert isinstance(processor, ReactionProcessor)
         assert processor.tracker is tracker
+
+    @pytest.mark.parametrize("environment", ["production", "prod"])
+    def test_production_bootstrap_requires_reactor_identity_salt(self, environment):
+        """Production reaction services fail fast without a stable hash salt."""
+        from app.channels.bootstrapper import ChannelBootstrapper
+
+        settings = MagicMock()
+        settings.CHANNEL_PLUGINS = []
+        settings.WEB_CHANNEL_ENABLED = False
+        settings.MATRIX_SYNC_ENABLED = False
+        settings.BISQ2_CHANNEL_ENABLED = False
+        settings.ENVIRONMENT = environment
+        settings.REACTOR_IDENTITY_SALT = ""
+
+        bs = ChannelBootstrapper(settings=settings, rag_service=MagicMock())
+
+        with pytest.raises(RuntimeError, match="REACTOR_IDENTITY_SALT"):
+            bs.bootstrap()

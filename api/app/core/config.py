@@ -97,6 +97,12 @@ class Settings(BaseSettings):
             "before expiring the follow-up"
         ),
     )
+    REACTOR_IDENTITY_SALT: str = Field(
+        default="",
+        description=(
+            "Stable secret salt used to hash reaction identities across deployments"
+        ),
+    )
     BISQ_CACHE_TTL_PRICES: int = Field(
         default=120,
         ge=10,
@@ -193,6 +199,12 @@ class Settings(BaseSettings):
     # RAG settings
     MAX_CHAT_HISTORY_LENGTH: int = (
         10  # Maximum number of chat history entries to include
+    )
+    MAX_CHAT_HISTORY_MESSAGE_LENGTH: int = Field(
+        default=2000,
+        ge=100,
+        le=10000,
+        description="Maximum characters from each prior chat-history message",
     )
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
@@ -376,6 +388,9 @@ class Settings(BaseSettings):
     # Admin settings
     MAX_UNIQUE_ISSUES: int = 15  # Maximum number of unique issues to track in analytics
     ADMIN_API_KEY: str = ""  # Required in production, empty allowed for testing/mypy
+    GRAFANA_DATASOURCE_API_KEY: str = (
+        ""  # Read-only key for Grafana Infinity datasource
+    )
     ESCALATION_RATING_TOKEN_SECRET: str = ""
     ESCALATION_RATING_TOKEN_TTL_SECONDS: int = 3600
 
@@ -1090,6 +1105,12 @@ class Settings(BaseSettings):
 
         return v.strip()
 
+    @field_validator("REACTOR_IDENTITY_SALT")
+    @classmethod
+    def normalize_reactor_identity_salt(cls, v: str) -> str:
+        """Normalize REACTOR_IDENTITY_SALT whitespace."""
+        return v.strip()
+
     @field_validator("MATRIX_HOMESERVER_URL")
     @classmethod
     def validate_matrix_homeserver_url(cls, v: str) -> str:
@@ -1149,6 +1170,15 @@ class Settings(BaseSettings):
                 "MATRIX_ALERT_PASSWORD is required when MATRIX_ALERT_ROOM is set."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_reactor_identity_salt_settings(self) -> "Settings":
+        environment = str(self.ENVIRONMENT or "").strip().lower()
+        if environment == "prod":
+            environment = "production"
+        if environment == "production" and not self.REACTOR_IDENTITY_SALT.strip():
+            raise ValueError("REACTOR_IDENTITY_SALT required in production")
         return self
 
     @model_validator(mode="after")

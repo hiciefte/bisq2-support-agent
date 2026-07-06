@@ -113,24 +113,28 @@ class TestPromptMessageSplit:
             chat_history_str="Human: hi",
             context="Some docs about trading",
         )
-        assert user_content == "How do I trade?"
+        assert "Question: How do I trade?" in user_content
         assert "How do I trade?" not in system_content
-        # Guardrails, chat history, and context all live in the system message
+        # Guardrails and the untrusted-data boundary live in the system message.
         assert "ANSWER CONTRACT" in system_content
-        assert "Human: hi" in system_content
-        assert "Some docs about trading" in system_content
+        assert "UNTRUSTED DATA BOUNDARY" in system_content
+        # Chat history and retrieved context stay at user trust level.
+        assert "Human: hi" in user_content
+        assert "Some docs about trading" in user_content
+        assert "Human: hi" not in system_content
+        assert "Some docs about trading" not in system_content
 
     def test_format_prompt_messages_truncates_context(
         self, prompt_manager, test_settings
     ):
         oversized = "y" * (test_settings.MAX_CONTEXT_LENGTH + 500)
-        system_content, _ = prompt_manager.format_prompt_messages(
+        _, user_content = prompt_manager.format_prompt_messages(
             question="q?",
             chat_history_str="",
             context=oversized,
         )
         longest_run = max(
-            (len(run) for run in re.findall(r"y+", system_content)), default=0
+            (len(run) for run in re.findall(r"y+", user_content)), default=0
         )
         assert longest_run <= test_settings.MAX_CONTEXT_LENGTH
 
@@ -142,10 +146,28 @@ class TestPromptMessageSplit:
                 detected_version="Bisq 2",
             )
         )
-        assert user_content == "What did I ask before?"
+        assert "Question: What did I ask before?" in user_content
         assert "What did I ask before?" not in system_content
         assert "CONTEXT-ONLY FALLBACK" in system_content
-        assert "Human: What is Bisq Easy?" in system_content
+        assert "UNTRUSTED DATA BOUNDARY" in system_content
+        assert "Human: What is Bisq Easy?" in user_content
+        assert "Human: What is Bisq Easy?" not in system_content
+
+    def test_chat_history_messages_are_bounded(self, prompt_manager, test_settings):
+        test_settings.MAX_CHAT_HISTORY_LENGTH = 2
+        test_settings.MAX_CHAT_HISTORY_MESSAGE_LENGTH = 12
+        formatted = prompt_manager.format_chat_history(
+            [
+                {"role": "user", "content": "old message"},
+                {"role": "assistant", "content": "older answer"},
+                {"role": "user", "content": "x" * 40},
+            ]
+        )
+
+        assert "old message" not in formatted
+        assert "older answer" in formatted
+        assert "x" * 40 not in formatted
+        assert "[truncated]" in formatted
 
 
 class TestRagChainPreRetrievedDocs:
