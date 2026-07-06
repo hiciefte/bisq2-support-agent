@@ -8,7 +8,9 @@ from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, cas
 
 from app.channels.escalation_localization import normalize_language_code
 from app.channels.gateway import ChannelGateway
-from app.channels.models import ChannelType
+from app.channels.models import (
+    ChannelType,
+)
 from app.channels.models import ChatMessage as ChannelChatMessage
 from app.channels.models import (
     GatewayError,
