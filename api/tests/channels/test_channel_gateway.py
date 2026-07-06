@@ -105,6 +105,86 @@ class TestChannelGatewayRouting:
             }
         ]
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_message_yields_tokens_before_final(
+        self, sample_incoming_message, mock_rag_service, mock_post_hook
+    ):
+        """Streaming route passes through tokens and still runs post-hooks."""
+        from app.channels.gateway import ChannelGateway
+
+        async def stream_query(*args, **kwargs):
+            yield {"event": "token", "data": "Test "}
+            yield {"event": "token", "data": "answer"}
+            yield {
+                "event": "final",
+                "data": {
+                    "answer": "Final answer",
+                    "sources": [],
+                    "response_time": 0.5,
+                },
+            }
+
+        async def post_hook_execute(_incoming, outgoing):
+            outgoing.answer = "Post-hook final answer"
+            return None
+
+        mock_rag_service.stream_query = stream_query
+        mock_post_hook.execute = AsyncMock(side_effect=post_hook_execute)
+
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+        gateway.register_post_hook(mock_post_hook)
+
+        events = [
+            event async for event in gateway.stream_message(sample_incoming_message)
+        ]
+
+        assert [event["event"] for event in events] == ["token", "token", "final"]
+        assert events[0]["data"] == "Test "
+        assert events[1]["data"] == "answer"
+        final = events[2]["data"]
+        assert isinstance(final, OutgoingMessage)
+        assert final.answer == "Post-hook final answer"
+        assert final.metadata.hooks_executed == ["test_post_hook"]
+        mock_post_hook.execute.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_message_suppresses_tokens_for_review_routing(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Review-routed responses do not expose draft tokens."""
+        from app.channels.gateway import ChannelGateway
+
+        async def stream_query(*args, **kwargs):
+            yield {"event": "token", "data": "Unreviewed "}
+            yield {"event": "token", "data": "draft"}
+            yield {
+                "event": "final",
+                "data": {
+                    "answer": "Escalation notice",
+                    "sources": [],
+                    "response_time": 0.5,
+                    "routing_action": "needs_human",
+                    "requires_human": True,
+                },
+            }
+
+        mock_rag_service.stream_query = stream_query
+
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+
+        events = [
+            event async for event in gateway.stream_message(sample_incoming_message)
+        ]
+
+        assert [event["event"] for event in events] == ["final"]
+        final = events[0]["data"]
+        assert isinstance(final, OutgoingMessage)
+        assert final.answer == "Escalation notice"
+        assert final.requires_human is True
+        assert final.metadata.routing_action == "needs_human"
+
 
 class TestChannelGatewayHooks:
     """Test hook system."""

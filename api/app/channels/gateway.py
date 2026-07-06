@@ -7,7 +7,7 @@ import inspect
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from app.channels.hooks import PostProcessingHook, PreProcessingHook
 from app.channels.models import (
@@ -16,8 +16,12 @@ from app.channels.models import (
     IncomingMessage,
     OutgoingMessage,
 )
-from app.channels.rag_query import query_with_channel_context
+from app.channels.rag_query import (
+    query_with_channel_context,
+    stream_query_with_channel_context,
+)
 from app.channels.response_builder import build_metadata, build_sources
+from app.channels.response_dispatcher import ChannelResponseDispatcher
 from app.channels.runtime import RAGServiceProtocol
 from app.channels.security import ErrorFactory
 
@@ -194,6 +198,141 @@ class ChannelGateway:
                 details={"reason": "internal_gateway_error"},
                 recoverable=True,
             )
+
+    async def stream_message(
+        self, message: IncomingMessage
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Process a message and stream token events before final output."""
+        start_time = time.time()
+        hooks_executed: List[str] = []
+
+        if message is None:
+            yield {
+                "event": "error",
+                "data": ErrorFactory.invalid_message("Message cannot be None"),
+            }
+            return
+
+        try:
+            message = await self._prepare_message(message)
+
+            for hook in self._pre_hooks:
+                if hook.should_skip(message):
+                    logger.debug(f"Skipping pre-hook '{hook.name}' (in bypass list)")
+                    continue
+
+                try:
+                    result = await hook.execute(message)
+                    hooks_executed.append(hook.name)
+                    if result is not None:
+                        logger.info(
+                            f"Pre-hook '{hook.name}' blocked streaming: {result.error_code}"
+                        )
+                        yield {"event": "error", "data": result}
+                        return
+                except Exception:
+                    logger.exception(f"Pre-hook '{hook.name}' raised exception")
+
+            try:
+                chat_history = None
+                if message.chat_history:
+                    chat_history = [
+                        {"role": msg.role, "content": msg.content}
+                        for msg in message.chat_history
+                    ]
+
+                rag_response: Dict[str, Any] | None = None
+                pending_tokens: List[Dict[str, Any]] = []
+                async for event in stream_query_with_channel_context(
+                    rag_service=self.rag_service,
+                    question=message.question,
+                    chat_history=chat_history,
+                    detection_source=message.channel.value,
+                    language_hint=getattr(
+                        getattr(message, "locale_context", None),
+                        "language_code",
+                        None,
+                    ),
+                    language_hint_confidence=getattr(
+                        getattr(message, "locale_context", None),
+                        "confidence",
+                        None,
+                    ),
+                ):
+                    event_name = event.get("event")
+                    if event_name == "token":
+                        pending_tokens.append(event)
+                    elif event_name == "final":
+                        raw_data = event.get("data")
+                        rag_response = raw_data if isinstance(raw_data, dict) else {}
+                    elif event_name == "error":
+                        raise RuntimeError(str(event.get("data") or "stream error"))
+
+                if rag_response is None:
+                    raise RuntimeError("Streaming RAG query ended without final data")
+                rag_response = await self._enrich_response(message, rag_response)
+            except Exception as e:
+                logger.exception("Streaming RAG service error")
+                yield {"event": "error", "data": ErrorFactory.rag_service_error(str(e))}
+                return
+
+            processing_time = (time.time() - start_time) * 1000
+            outgoing = self._build_outgoing_message(
+                incoming=message,
+                rag_response=rag_response,
+                processing_time_ms=processing_time,
+                hooks_executed=hooks_executed.copy(),
+            )
+
+            for post_hook in self._post_hooks:
+                if post_hook.should_skip(message):
+                    logger.debug(
+                        f"Skipping post-hook '{post_hook.name}' (in bypass list)"
+                    )
+                    continue
+
+                try:
+                    result = await post_hook.execute(message, outgoing)
+                    hooks_executed.append(post_hook.name)
+                    outgoing.metadata.hooks_executed.append(post_hook.name)
+                    if result is not None:
+                        logger.info(
+                            f"Post-hook '{post_hook.name}' blocked streaming response: {result.error_code}"
+                        )
+                        yield {"event": "error", "data": result}
+                        return
+                except Exception:
+                    logger.exception(f"Post-hook '{post_hook.name}' raised exception")
+
+            outgoing.metadata.processing_time_ms = (time.time() - start_time) * 1000
+            if ChannelResponseDispatcher.should_autosend_response(outgoing):
+                for event in pending_tokens:
+                    yield event
+            elif pending_tokens:
+                logger.info(
+                    "Suppressing streamed draft tokens for review-routed response",
+                    extra={
+                        "message_id": message.message_id,
+                        "routing_action": getattr(
+                            outgoing.metadata,
+                            "routing_action",
+                            None,
+                        ),
+                    },
+                )
+            yield {"event": "final", "data": outgoing}
+
+        except Exception as e:
+            logger.exception(f"Gateway streaming error: {e}")
+            yield {
+                "event": "error",
+                "data": GatewayError(
+                    error_code=ErrorCode.INTERNAL_ERROR,
+                    error_message="Internal streaming error",
+                    details={"reason": "internal_gateway_error"},
+                    recoverable=True,
+                ),
+            }
 
     async def _prepare_message(self, message: IncomingMessage) -> IncomingMessage:
         if (

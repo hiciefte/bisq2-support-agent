@@ -8,6 +8,7 @@ This module provides:
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -339,6 +340,45 @@ class AISuiteLLMWrapper:
         except Exception as e:
             logger.exception(f"LLM invocation failed: {e}")
             raise RuntimeError(f"Failed to invoke LLM: {e}") from e
+
+    def stream(
+        self,
+        prompt: str,
+        system_content: str | None = None,
+    ) -> Iterator[str]:
+        """Stream LLM text chunks without tools.
+
+        Args:
+            prompt: User-level prompt text (the question)
+            system_content: Optional system-level content
+
+        Yields:
+            Text deltas from the provider as they arrive.
+
+        Raises:
+            RuntimeError: If LLM streaming fails before completion
+        """
+        messages = _build_messages(prompt, system_content)
+
+        try:
+            response_stream = self.client.chat.completions.create(
+                model=self.model_id,
+                messages=messages,
+                stream=True,
+                **_completion_params(self.model_id, self.temperature, self.max_tokens),
+            )
+
+            for chunk in response_stream:
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                content = getattr(delta, "content", None)
+                if isinstance(content, str) and content:
+                    yield content
+        except Exception as e:
+            logger.exception(f"LLM streaming failed: {e}")
+            raise RuntimeError(f"Failed to stream LLM response: {e}") from e
 
     def invoke_with_tools(
         self,

@@ -16,7 +16,7 @@ from app.services.rag.document_retriever import (
     _classify_query_protocol,
     is_bisq_version_comparison_query,
 )
-from app.services.rag.llm_provider import LLMResponse
+from app.services.rag.llm_provider import LLMResponse, ToolCallResult
 from app.services.simplified_rag_service import SimplifiedRAGService
 from langchain_core.documents import Document
 
@@ -262,6 +262,57 @@ class TestChainUsesPreRetrievedDocs:
         assert "DOC_BETA" in invoked
         source_titles = {source["title"] for source in response["sources"]}
         assert source_titles == {"Trading", "Reputation"}
+
+    @pytest.mark.asyncio
+    async def test_stream_query_bypasses_mcp_for_non_live_questions(self, service):
+        """F30: MCP-enabled deployments should still stream ordinary RAG answers."""
+        service.mcp_enabled = True
+        service.llm.stream.return_value = iter(["Streamed ", "answer"])
+        service.llm.invoke_with_tools = MagicMock(
+            return_value=ToolCallResult(content="Buffered answer")
+        )
+
+        events = [
+            event
+            async for event in service.stream_query(
+                "What is Bisq Easy?",
+                chat_history=[],
+            )
+        ]
+
+        assert [event["event"] for event in events] == ["token", "token", "final"]
+        assert events[0]["data"] == "Streamed "
+        assert events[1]["data"] == "answer"
+        assert events[2]["data"]["answer"]
+        service.llm.invoke_with_tools.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stream_query_keeps_mcp_for_live_data_questions(self, service):
+        """Live-data questions still use the buffered tool-enabled invocation."""
+        service.mcp_enabled = True
+        service.llm.stream = MagicMock(return_value=iter(["unexpected"]))
+        service.llm.invoke_with_tools = MagicMock(
+            return_value=ToolCallResult(
+                content="BTC price is unavailable.",
+                tool_calls_made=[
+                    {"tool": "get_market_prices", "result": '{"BTC":null}'}
+                ],
+            )
+        )
+
+        events = [
+            event
+            async for event in service.stream_query(
+                "What is the BTC price right now?",
+                chat_history=[],
+            )
+        ]
+
+        assert [event["event"] for event in events] == ["final"]
+        assert events[0]["data"]["answer"]
+        assert events[0]["data"]["mcp_tools_used"][0]["tool"] == "get_market_prices"
+        service.llm.stream.assert_not_called()
+        service.llm.invoke_with_tools.assert_called_once()
 
 
 class TestContextOnlyFallbackVersion:
