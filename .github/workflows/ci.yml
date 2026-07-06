@@ -129,6 +129,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: openai:gpt-4o-mini
       OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      MAX_TOKENS: "4096"
+      COOKIE_SECURE: "false"
       RETRIEVER_BACKEND: qdrant
       ENABLE_COLBERT_RERANK: "false"
 
