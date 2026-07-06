@@ -115,6 +115,14 @@ def _gateway_error_to_status(error: GatewayError) -> int:
     return error_status_map.get(error.error_code, 500)
 
 
+def _format_mcp_tools_used(
+    tools_used: Optional[List[Dict[str, Any]]],
+) -> Optional[List[McpToolUsage]]:
+    if not tools_used:
+        return None
+    return [McpToolUsage.model_validate(tool) for tool in tools_used]
+
+
 def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
     """Normalize incoming chat roles to supported channel model roles."""
     if role in ("user", "assistant", "system"):
@@ -292,7 +300,9 @@ async def query(
             ),
             user_language=user_language,
             ui_labels=get_chat_ui_labels(user_language),
-            mcp_tools_used=None,
+            mcp_tools_used=(
+                _format_mcp_tools_used(metadata.mcp_tools_used) if metadata else None
+            ),
         )
 
         # Log response size and validate JSON serializability

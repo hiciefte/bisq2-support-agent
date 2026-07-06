@@ -24,3 +24,20 @@ class TestBuildMetadataRoutingReason:
         }
         meta = build_metadata(rag_response, processing_time_ms=100.0)
         assert meta.routing_reason is None
+
+    def test_mcp_tools_used_passed_through(self):
+        rag_response = {
+            "rag_strategy": "retrieval",
+            "model_name": "gpt-4",
+            "mcp_tools_used": [
+                {
+                    "tool": "get_market_prices",
+                    "timestamp": "2026-07-06T10:00:00+00:00",
+                    "result": '{"BTC":"100000"}',
+                }
+            ],
+        }
+
+        meta = build_metadata(rag_response, processing_time_ms=100.0)
+
+        assert meta.mcp_tools_used == rag_response["mcp_tools_used"]

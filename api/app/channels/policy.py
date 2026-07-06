@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app.channels.constants import REVIEW_QUEUE_ACTIONS
+from app.channels.traits import channel_is_group_room
 from app.services.channel_autoresponse_policy_service import (
     DEFAULT_ACKNOWLEDGMENT_MESSAGE_TEMPLATE,
     DEFAULT_ACKNOWLEDGMENT_MODE,
@@ -278,7 +279,7 @@ def get_escalation_user_notice_mode(
     normalized = str(channel_id or "").strip().lower()
     default = str(DEFAULT_ESCALATION_USER_NOTICE_MODE.get(normalized, "message"))
     invalid_value_fallback = (
-        "public_reply" if normalized in {"matrix", "bisq2"} else default
+        "public_reply" if channel_is_group_room(normalized) else default
     )
     if policy_service is None:
         return default

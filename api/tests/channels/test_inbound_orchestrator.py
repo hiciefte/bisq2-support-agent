@@ -6,6 +6,7 @@ from app.channels.arbitration.coordinator import ArbitrationCoordinator
 from app.channels.coordination import InMemoryCoordinationStore
 from app.channels.events import thread_lock_key
 from app.channels.inbound_orchestrator import InboundMessageOrchestrator
+from app.channels.models import ChannelType, IncomingMessage, UserContext
 
 
 @pytest.mark.unit
@@ -374,3 +375,66 @@ async def test_orchestrator_sends_acknowledgment_reaction_before_arbitration_enq
 
     assert processed is False
     channel.send_reaction.assert_awaited_once_with("!room:server", "$evt2", "👀")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_routes_matrix_reply_through_gateway_post_hooks():
+    """Matrix/Bisq2 channel traffic must use gateway post-hooks, not only web."""
+    from app.channels.gateway import ChannelGateway
+    from app.channels.middleware.pii_filter import PIIFilterHook
+
+    rag_service = MagicMock()
+    rag_service.query = AsyncMock(
+        return_value={
+            "answer": "Ask alice@example.com for help.",
+            "sources": [],
+            "response_time": 0.1,
+        }
+    )
+    gateway = ChannelGateway(rag_service=rag_service)
+    gateway.register_post_hook(PIIFilterHook(mode="redact"))
+
+    def resolve_optional(name: str):
+        if name == "channel_gateway":
+            return gateway
+        return None
+
+    runtime = MagicMock()
+    runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
+
+    channel = MagicMock()
+    channel.channel_id = "matrix"
+    channel.runtime = runtime
+    channel.handle_incoming = AsyncMock()
+
+    dispatched = {}
+
+    async def dispatch(_incoming, response):
+        dispatched["response"] = response
+        return True
+
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(side_effect=dispatch)
+
+    incoming = IncomingMessage(
+        message_id="$evt-redact",
+        channel=ChannelType.MATRIX,
+        question="Need help",
+        user=UserContext(user_id="@user:server"),
+        channel_metadata={"room_id": "!room:server"},
+    )
+
+    orchestrator = InboundMessageOrchestrator(
+        channel=channel,
+        channel_id="matrix",
+        dispatcher=dispatcher,
+        autoresponse_policy_service=None,
+        coordination_store=InMemoryCoordinationStore(),
+    )
+
+    processed = await orchestrator.process_incoming(incoming)
+
+    assert processed is True
+    channel.handle_incoming.assert_not_awaited()
+    assert dispatched["response"].answer == "Ask [REDACTED] for help."
