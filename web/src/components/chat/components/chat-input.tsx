@@ -4,7 +4,7 @@
 
 import { useRef } from "react"
 import Link from "next/link"
-import { Loader2, Send } from "lucide-react"
+import { CircleStop, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -24,6 +24,7 @@ interface ChatInputProps {
     onInputChange: (value: string) => void
     onSubmit: (e: React.FormEvent<HTMLFormElement>) => void
     onQuestionClick: (question: string) => void
+    onCancelRequest: () => void
     onClearHistory: () => void
 }
 
@@ -34,6 +35,7 @@ export const ChatInput = ({
     onInputChange,
     onSubmit,
     onQuestionClick,
+    onCancelRequest,
     onClearHistory
 }: ChatInputProps) => {
     const inputRef = useRef<HTMLInputElement>(null)
@@ -69,16 +71,20 @@ export const ChatInput = ({
                         disabled={isLoading}
                     />
                     <Button
-                        type="submit"
+                        type={isLoading ? "button" : "submit"}
                         size="icon"
-                        disabled={isLoading || !input.trim()}
+                        disabled={!isLoading && !input.trim()}
+                        onClick={isLoading ? onCancelRequest : undefined}
+                        aria-label={isLoading ? "Stop generating response" : "Send message"}
                         className={cn(
                             "absolute right-2 bottom-2 transition-colors",
-                            input.trim() ? "bg-[#25B135] hover:bg-[#25B135]/90" : "bg-transparent hover:bg-transparent"
+                            isLoading || input.trim()
+                                ? "bg-[#25B135] hover:bg-[#25B135]/90"
+                                : "bg-transparent hover:bg-transparent"
                         )}
                     >
                         {isLoading ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            <CircleStop className="h-4 w-4 text-white" />
                         ) : (
                             <Send className={cn(
                                 "h-4 w-4",

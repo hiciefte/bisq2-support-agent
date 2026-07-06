@@ -14,7 +14,7 @@ import type {
 
 const MAX_CHAT_HISTORY_LENGTH = 8;
 const CHAT_STORAGE_KEY = "bisq_chat_messages";
-const REQUEST_TIMEOUT_MS = 600_000;
+const REQUEST_TIMEOUT_MS = 90_000;
 const LOCAL_STORAGE_DEBOUNCE_MS = 1_000;
 const GLOBAL_STATS_FALLBACK_SECONDS = 12;
 
@@ -191,6 +191,8 @@ const parseStoredMessage = (value: unknown): Message | null => {
             value.escalation_resolution === "closed"
                 ? value.escalation_resolution
                 : undefined,
+        escalation_polling_status:
+            value.escalation_polling_status === "stale" ? "stale" : undefined,
         escalation_resolved_at:
             typeof value.escalation_resolved_at === "string"
                 ? value.escalation_resolved_at
@@ -240,6 +242,34 @@ const parseStoredMessages = (rawValue: string | null): Message[] => {
     }
 };
 
+const messageTime = (message: Message): number => {
+    const rawTimestamp = message.timestamp;
+    const time =
+        rawTimestamp instanceof Date
+            ? rawTimestamp.getTime()
+            : Date.parse(String(rawTimestamp));
+    return Number.isNaN(time) ? 0 : time;
+};
+
+const mergeMessagesById = (current: Message[], incoming: Message[]): Message[] => {
+    const byId = new Map<string, Message>();
+    for (const message of current) {
+        byId.set(message.id, message);
+    }
+    for (const message of incoming) {
+        const existing = byId.get(message.id);
+        byId.set(message.id, existing ? { ...existing, ...message } : message);
+    }
+    return Array.from(byId.values()).sort((left, right) => {
+        const delta = messageTime(left) - messageTime(right);
+        return delta !== 0 ? delta : left.id.localeCompare(right.id);
+    });
+};
+
+const messagesAreEqual = (left: Message[], right: Message[]): boolean =>
+    left.length === right.length &&
+    left.every((message, index) => JSON.stringify(message) === JSON.stringify(right[index]));
+
 export const useChatMessages = () => {
     // Start empty to keep server/client first render consistent, then hydrate from storage on mount.
     const [messages, setMessages] = useState<Message[]>([]);
@@ -253,6 +283,11 @@ export const useChatMessages = () => {
     const messagesRef = useRef<Message[]>([]);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingSaveRef = useRef<Message[] | null>(null);
+    const activeRequestRef = useRef<{
+        controller: AbortController;
+        generation: number;
+    } | null>(null);
+    const requestGenerationRef = useRef(0);
 
     useEffect(() => {
         messagesRef.current = messages;
@@ -307,6 +342,31 @@ export const useChatMessages = () => {
         } finally {
             setStorageHydrated(true);
         }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        const handleStorage = (event: StorageEvent) => {
+            if (event.key !== CHAT_STORAGE_KEY || event.newValue === null) {
+                return;
+            }
+            const incoming = parseStoredMessages(event.newValue);
+            if (incoming.length === 0) {
+                return;
+            }
+            setMessages((current) => {
+                const merged = mergeMessagesById(current, incoming);
+                return messagesAreEqual(current, merged) ? current : merged;
+            });
+        };
+
+        window.addEventListener("storage", handleStorage);
+        return () => {
+            window.removeEventListener("storage", handleStorage);
+        };
     }, []);
 
     useEffect(() => {
@@ -435,8 +495,18 @@ export const useChatMessages = () => {
             setInput("");
             setIsLoading(true);
 
+            const requestGeneration = requestGenerationRef.current + 1;
+            requestGenerationRef.current = requestGeneration;
+            const controller = new AbortController();
+            activeRequestRef.current = {
+                controller,
+                generation: requestGeneration,
+            };
+
+            const isCurrentRequest = () =>
+                requestGenerationRef.current === requestGeneration;
+
             try {
-                const controller = new AbortController();
                 const timeoutId = setTimeout(
                     () => controller.abort(),
                     REQUEST_TIMEOUT_MS,
@@ -469,6 +539,10 @@ export const useChatMessages = () => {
                     clearTimeout(timeoutId);
                 }
 
+                if (!isCurrentRequest()) {
+                    return;
+                }
+
                 if (!response.ok) {
                     let detail = `Server returned ${response.status}. Please try again.`;
                     try {
@@ -478,6 +552,10 @@ export const useChatMessages = () => {
                         }
                     } catch {
                         // Keep default detail when error body cannot be parsed.
+                    }
+
+                    if (!isCurrentRequest()) {
+                        return;
                     }
 
                     setMessages((prev) => [
@@ -494,6 +572,10 @@ export const useChatMessages = () => {
                 }
 
                 const data: unknown = await response.json();
+                if (!isCurrentRequest()) {
+                    return;
+                }
+
                 const payload = isJsonRecord(data) ? data : {};
                 const answer = typeof payload.answer === "string" ? payload.answer : "";
 
@@ -544,6 +626,9 @@ export const useChatMessages = () => {
 
                 setMessages((prev) => [...prev, assistantMessage]);
             } catch (error: unknown) {
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 let errorContent = "An error occurred while processing your request.";
 
                 if (
@@ -567,16 +652,54 @@ export const useChatMessages = () => {
                     },
                 ]);
             } finally {
-                setIsLoading(false);
+                if (activeRequestRef.current?.generation === requestGeneration) {
+                    activeRequestRef.current = null;
+                }
+                if (isCurrentRequest()) {
+                    setIsLoading(false);
+                }
             }
         },
         [isLoading],
     );
 
+    const cancelCurrentRequest = useCallback(() => {
+        const activeRequest = activeRequestRef.current;
+        if (!activeRequest) {
+            return;
+        }
+        requestGenerationRef.current += 1;
+        activeRequest.controller.abort();
+        activeRequestRef.current = null;
+        setIsLoading(false);
+        setMessages((prev) => {
+            const cancellationMessage: Message = {
+                id: generateUUID(),
+                content: "Request canceled.",
+                role: "assistant",
+                timestamp: new Date(),
+                isError: true,
+            };
+            const nextMessages = [
+                ...prev,
+                cancellationMessage,
+            ];
+            messagesRef.current = nextMessages;
+            return nextMessages;
+        });
+    }, []);
+
     const clearChatHistory = useCallback(() => {
         // Cancel synchronously and remove the stored history right away: if the
         // component unmounts before the emptied-messages effect runs, the unmount
         // cleanup flush would otherwise resurrect the stale buffered messages.
+        const activeRequest = activeRequestRef.current;
+        if (activeRequest) {
+            requestGenerationRef.current += 1;
+            activeRequest.controller.abort();
+            activeRequestRef.current = null;
+            setIsLoading(false);
+        }
         cancelPendingSave();
         messagesRef.current = [];
         setMessages([]);
@@ -600,6 +723,7 @@ export const useChatMessages = () => {
         loadingMessage,
         avgResponseTime,
         sendMessage,
+        cancelCurrentRequest,
         clearChatHistory,
     };
 };

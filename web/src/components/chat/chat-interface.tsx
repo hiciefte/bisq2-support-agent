@@ -6,6 +6,7 @@
  */
 
 import { FormEvent, useCallback, useEffect, useMemo } from "react"
+import type { Dispatch, SetStateAction } from "react"
 import { API_BASE_URL } from "@/lib/config"
 import { PrivacyWarningModal } from "@/components/privacy/privacy-warning-modal"
 import { MessageList } from "./components/message-list"
@@ -16,61 +17,45 @@ import { useChatMessages } from "./hooks/use-chat-messages"
 import { useChatScroll } from "./hooks/use-chat-scroll"
 import { useFeedback } from "./hooks/use-feedback"
 import { useEscalationPolling } from "./hooks/use-escalation-polling"
+import type { Message } from "./types/chat.types"
 
 // Convert seconds to a human-readable format
 const formatResponseTime = (seconds: number): string => {
     return seconds < 60 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`
 }
 
-const ChatInterface = () => {
-    // Chat messages and API communication
-    const {
-        messages,
-        setMessages,
-        input,
-        setInput,
-        isLoading,
-        loadingMessage,
-        avgResponseTime,
-        sendMessage,
-        clearChatHistory
-    } = useChatMessages()
+interface PendingEscalation {
+    messageId: string
+    localMessageId: string
+}
 
-    // Auto-scroll behavior
-    const { scrollAreaRef, loadingRef } = useChatScroll(messages, isLoading)
+interface EscalationResolutionWatcherProps {
+    pending: PendingEscalation
+    setMessages: Dispatch<SetStateAction<Message[]>>
+}
 
-    // Feedback management
-    const {
-        feedbackDialog,
-        setFeedbackDialog,
-        feedbackText,
-        setFeedbackText,
-        selectedIssues,
-        setSelectedIssues,
-        handleRating,
-        submitFeedbackExplanation
-    } = useFeedback({ messages, setMessages })
+function EscalationResolutionWatcher({
+    pending,
+    setMessages,
+}: EscalationResolutionWatcherProps) {
+    const escalationPoll = useEscalationPolling(pending.messageId, true)
 
-    // Find the most recent escalated message that hasn't received a staff response yet
-    const pendingEscalation = useMemo(() => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const msg = messages[i]
-            if (msg.requires_human && msg.escalation_message_id && !msg.staff_response) {
-                return { messageId: msg.escalation_message_id, msgId: msg.id }
-            }
-        }
-        return null
-    }, [messages])
-
-    // Poll for escalation resolution
-    const escalationPoll = useEscalationPolling(
-        pendingEscalation?.messageId ?? null,
-        !!pendingEscalation
-    )
-
-    // When polling resolves, update the message with the staff response
     useEffect(() => {
-        if (escalationPoll.status !== "resolved" || !pendingEscalation) return
+        if (escalationPoll.status === "stale") {
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.id === pending.localMessageId
+                        ? {
+                              ...msg,
+                              escalation_polling_status: "stale",
+                          }
+                        : msg
+                )
+            )
+            return
+        }
+
+        if (escalationPoll.status !== "resolved") return
 
         // Staff responded: attach staff response and mark escalation as resolved.
         // Prefer presence of staff answer over resolution flag to handle
@@ -78,9 +63,10 @@ const ChatInterface = () => {
         if (escalationPoll.staffAnswer) {
             setMessages(prev =>
                 prev.map(msg =>
-                    msg.id === pendingEscalation.msgId
+                    msg.id === pending.localMessageId
                         ? {
                               ...msg,
+                              escalation_polling_status: undefined,
                               escalation_resolution: "responded",
                               escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
                               escalation_user_language: escalationPoll.userLanguage ?? msg.escalation_user_language,
@@ -102,10 +88,11 @@ const ChatInterface = () => {
         if (escalationPoll.resolution === "closed") {
             setMessages(prev =>
                 prev.map(msg =>
-                    msg.id === pendingEscalation.msgId
+                    msg.id === pending.localMessageId
                         ? {
                               ...msg,
                               requires_human: false,
+                              escalation_polling_status: undefined,
                               escalation_resolution: "closed",
                               escalation_resolved_at: escalationPoll.respondedAt || new Date().toISOString(),
                               escalation_user_language: escalationPoll.userLanguage ?? msg.escalation_user_language,
@@ -122,9 +109,59 @@ const ChatInterface = () => {
         escalationPoll.staffAnswerRating,
         escalationPoll.rateToken,
         escalationPoll.userLanguage,
-        pendingEscalation,
+        pending.localMessageId,
         setMessages,
     ])
+
+    return null
+}
+
+const ChatInterface = () => {
+    // Chat messages and API communication
+    const {
+        messages,
+        setMessages,
+        input,
+        setInput,
+        isLoading,
+        loadingMessage,
+        avgResponseTime,
+        sendMessage,
+        cancelCurrentRequest,
+        clearChatHistory
+    } = useChatMessages()
+
+    // Auto-scroll behavior
+    const { scrollAreaRef, loadingRef } = useChatScroll(messages, isLoading)
+
+    // Feedback management
+    const {
+        feedbackDialog,
+        setFeedbackDialog,
+        feedbackText,
+        setFeedbackText,
+        selectedIssues,
+        setSelectedIssues,
+        handleRating,
+        submitFeedbackExplanation
+    } = useFeedback({ messages, setMessages })
+
+    // Poll every escalated message that has not received a terminal staff state.
+    const pendingEscalations = useMemo(() => {
+        return messages
+            .filter(
+                (msg) =>
+                    msg.requires_human &&
+                    msg.escalation_message_id &&
+                    !msg.staff_response &&
+                    msg.escalation_resolution !== "closed" &&
+                    msg.escalation_polling_status !== "stale"
+            )
+            .map((msg) => ({
+                messageId: msg.escalation_message_id!,
+                localMessageId: msg.id,
+            }))
+    }, [messages])
 
     // Handle staff answer rating
     const handleStaffRating = useCallback(
@@ -194,6 +231,13 @@ const ChatInterface = () => {
 
     return (
         <ChatProvider onSendQuestion={handleQuestionClick} onSetInput={handleSetInput}>
+            {pendingEscalations.map((pending) => (
+                <EscalationResolutionWatcher
+                    key={`${pending.messageId}:${pending.localMessageId}`}
+                    pending={pending}
+                    setMessages={setMessages}
+                />
+            ))}
             <PrivacyWarningModal />
             <div className="flex flex-col h-full overflow-hidden">
                 <div role="log" aria-live="polite" aria-label="Chat conversation" className="flex-1 min-h-0 flex flex-col">
@@ -226,6 +270,7 @@ const ChatInterface = () => {
                     onInputChange={setInput}
                     onSubmit={handleSubmit}
                     onQuestionClick={handleQuestionClick}
+                    onCancelRequest={cancelCurrentRequest}
                     onClearHistory={clearChatHistory}
                 />
             </div>
