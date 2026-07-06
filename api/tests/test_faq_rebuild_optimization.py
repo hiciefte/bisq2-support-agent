@@ -227,10 +227,13 @@ def test_bulk_delete_only_verified_triggers_rebuild(faq_service_with_mock_callba
     # Delete them all
     success, failed = faq_service.bulk_delete_faqs(verified_faq_ids)[:2]
 
-    # Verify deletions succeeded and rebuild was triggered once
+    # Verify deletions succeeded and one incremental delete fired per FAQ
     assert success == len(verified_faq_ids)
     assert failed == 0
-    mock_callback.assert_called_once()
+    assert mock_callback.call_count == len(verified_faq_ids)
+    callback_ids = [call.args[2] for call in mock_callback.call_args_list]
+    assert callback_ids == verified_faq_ids
+    assert all(call.args[1] == "delete" for call in mock_callback.call_args_list)
 
 
 @pytest.mark.unit
@@ -252,21 +255,25 @@ def test_bulk_delete_only_unverified_skips_rebuild(faq_service_with_mock_callbac
 
 
 @pytest.mark.unit
-def test_bulk_delete_mixed_triggers_rebuild_once(faq_service_with_mock_callback):
-    """Test that bulk deleting mixed FAQs triggers rebuild only once."""
+def test_bulk_delete_mixed_triggers_incremental_deletes(faq_service_with_mock_callback):
+    """Test that bulk deleting mixed FAQs only updates verified FAQ ids."""
     faq_service, mock_callback = faq_service_with_mock_callback
 
     # Get all FAQs (both verified and unverified)
     all_faqs = faq_service.get_all_faqs()
     all_faq_ids = [faq.id for faq in all_faqs]
+    verified_faq_ids = [faq.id for faq in all_faqs if faq.verified]
 
     # Delete them all
     success, failed = faq_service.bulk_delete_faqs(all_faq_ids)[:2]
 
-    # Verify deletions succeeded and rebuild was triggered exactly once
+    # Verify deletions succeeded and only verified IDs triggered index deletes
     assert success == len(all_faq_ids)
     assert failed == 0
-    mock_callback.assert_called_once()
+    assert mock_callback.call_count == len(verified_faq_ids)
+    callback_ids = [call.args[2] for call in mock_callback.call_args_list]
+    assert callback_ids == verified_faq_ids
+    assert all(call.args[1] == "delete" for call in mock_callback.call_args_list)
 
 
 @pytest.mark.unit
@@ -321,10 +328,13 @@ def test_bulk_verify_triggers_rebuild_for_promotions(faq_service_with_mock_callb
     # Verify them all
     success, failed = faq_service.bulk_verify_faqs(unverified_faq_ids)[:2]
 
-    # Verify operation succeeded and rebuild was triggered once
+    # Verify operation succeeded and one incremental update fired per promoted FAQ
     assert success == len(unverified_faq_ids)
     assert failed == 0
-    mock_callback.assert_called_once()
+    assert mock_callback.call_count == len(unverified_faq_ids)
+    callback_ids = [call.args[2] for call in mock_callback.call_args_list]
+    assert callback_ids == unverified_faq_ids
+    assert all(call.args[1] == "update" for call in mock_callback.call_args_list)
 
 
 @pytest.mark.unit

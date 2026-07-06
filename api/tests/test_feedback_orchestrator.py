@@ -1,5 +1,6 @@
 """Tests for feedback orchestrator behavior."""
 
+from typing import Any
 from unittest.mock import MagicMock
 
 from app.services.escalation.feedback_orchestrator import (
@@ -8,8 +9,8 @@ from app.services.escalation.feedback_orchestrator import (
 )
 
 
-def _make_signal(**overrides) -> StaffRatingSignal:
-    data = {
+def _make_signal(**overrides: Any) -> StaffRatingSignal:
+    data: dict[str, Any] = {
         "message_id": "msg-1",
         "escalation_id": 1,
         "rater_id": "user-1",
@@ -58,3 +59,16 @@ def test_trusted_unhelpful_maps_to_admin_action_rejected() -> None:
 
     kwargs = learning_engine.record_review.call_args.kwargs
     assert kwargs["admin_action"] == "rejected"
+
+
+def test_quadrant_weight_passed_as_single_review_weight() -> None:
+    learning_engine = MagicMock()
+    weight_manager = MagicMock()
+    orchestrator = FeedbackOrchestrator(learning_engine, weight_manager)
+
+    orchestrator.record_user_rating(_make_signal(edit_distance=0.5, user_rating=0))
+
+    learning_engine.record_review.assert_called_once()
+    kwargs = learning_engine.record_review.call_args.kwargs
+    assert kwargs["metadata"]["quadrant"] == "D"
+    assert kwargs["weight"] == FeedbackOrchestrator.QUADRANT_WEIGHTS["D"]

@@ -419,7 +419,7 @@ class FAQService:
 
         success_count = 0
         failed_ids = []
-        deleted_verified_count = 0
+        deleted_verified_ids: list[str] = []
 
         for faq_id in faq_ids:
             try:
@@ -431,24 +431,30 @@ class FAQService:
                 if result:
                     success_count += 1
                     if was_verified:
-                        deleted_verified_count += 1
+                        deleted_verified_ids.append(faq_id)
                 else:
                     failed_ids.append(faq_id)
             except Exception:
                 logger.exception("Failed to delete FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
-        # Mark for rebuild if at least one verified FAQ was deleted
-        if deleted_verified_count > 0:
+        # Apply one incremental index update per verified FAQ that was deleted.
+        if deleted_verified_ids:
             logger.info(
-                f"Marking {deleted_verified_count} verified FAQ(s) for rebuild after bulk deletion"
+                "Triggering incremental index deletes for %d verified FAQ(s)",
+                len(deleted_verified_ids),
             )
-            self._trigger_update(
-                rebuild=False,
-                operation="bulk_delete",
-                faq_id=f"{deleted_verified_count}_faqs",
-                metadata={"count": deleted_verified_count, "total": len(faq_ids)},
-            )
+            for deleted_faq_id in deleted_verified_ids:
+                self._trigger_update(
+                    rebuild=False,
+                    operation="delete",
+                    faq_id=deleted_faq_id,
+                    metadata={
+                        "bulk_operation": "bulk_delete",
+                        "count": len(deleted_verified_ids),
+                        "total": len(faq_ids),
+                    },
+                )
         elif success_count > 0:
             logger.debug(
                 f"Skipping vector store rebuild: deleted {success_count} unverified FAQ(s)"
@@ -472,7 +478,7 @@ class FAQService:
         """
         success_count = 0
         failed_ids = []
-        promotion_count = 0  # Track FAQs that changed from unverified to verified
+        promoted_ids: list[str] = []
 
         # Cache FAQs once to avoid O(n²) file I/O
         faqs_by_id = {faq.id: faq for faq in self.repository.get_all_faqs()}
@@ -506,24 +512,30 @@ class FAQService:
                     faqs_by_id[result.id] = result
                     # Increment promotion count if FAQ was unverified and is now verified
                     if was_unverified and result.verified:
-                        promotion_count += 1
+                        promoted_ids.append(result.id)
                 else:
                     failed_ids.append(faq_id)
             except Exception:
                 logger.exception("Failed to verify FAQ %s", faq_id)
                 failed_ids.append(faq_id)
 
-        # Trigger vector store rebuild if any FAQs were promoted from unverified to verified
-        if promotion_count > 0:
+        # Apply one incremental index update per FAQ promoted into the verified corpus.
+        if promoted_ids:
             logger.info(
-                f"Triggering vector store rebuild after verifying {promotion_count} FAQ(s)"
+                "Triggering incremental index updates for %d verified FAQ(s)",
+                len(promoted_ids),
             )
-            self._trigger_update(
-                rebuild=False,
-                operation="bulk_verify",
-                faq_id=f"{promotion_count}_faqs",
-                metadata={"count": promotion_count, "total": len(faq_ids)},
-            )
+            for promoted_faq_id in promoted_ids:
+                self._trigger_update(
+                    rebuild=False,
+                    operation="update",
+                    faq_id=promoted_faq_id,
+                    metadata={
+                        "bulk_operation": "bulk_verify",
+                        "count": len(promoted_ids),
+                        "total": len(faq_ids),
+                    },
+                )
 
         failed_count = len(failed_ids)
         return success_count, failed_count, failed_ids

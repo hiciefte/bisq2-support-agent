@@ -64,7 +64,7 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
     const [feedbackText, setFeedbackText] = useState("")
     const [selectedIssues, setSelectedIssues] = useState<string[]>([])
 
-    const handleRating = async (messageId: string, rating: number) => {
+    const handleRating = async (messageId: string, rating: number): Promise<boolean> => {
         const messageIndex = messages.findIndex((msg) => msg.id === messageId)
         const ratedMessage = messages[messageIndex]
         const questionMessage = messages
@@ -72,7 +72,7 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             .reverse()
             .find((msg) => msg.role === "user")
 
-        if (!ratedMessage || !questionMessage) return
+        if (!ratedMessage || !questionMessage) return false
 
         // Simplified payload: tracker already has question, answer, sources, user_id
         const reactionPayload = {
@@ -80,20 +80,12 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             rating,
         }
 
-        // Always update UI optimistically
         const updateMessageRating = () => {
             setMessages((prev) =>
                 prev.map((msg) =>
                     msg.id === messageId ? {...msg, rating} : msg
                 )
             )
-        }
-
-        // Save to localStorage for offline fallback
-        const saveLocally = () => {
-            const storedRatings = JSON.parse(localStorage.getItem("messageRatings") || "{}")
-            storedRatings[messageId] = reactionPayload
-            localStorage.setItem("messageRatings", JSON.stringify(storedRatings))
         }
 
         try {
@@ -104,24 +96,26 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
             const timeoutId = setTimeout(() => controller.abort(), 10000)
 
             try {
-                const response = await fetch(`${apiUrl}/feedback/react`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(reactionPayload),
-                    signal: controller.signal
-                })
-
-                clearTimeout(timeoutId)
-
-                updateMessageRating()
-                saveLocally()
+                let response: Response
+                try {
+                    response = await fetch(`${apiUrl}/feedback/react`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify(reactionPayload),
+                        signal: controller.signal
+                    })
+                } finally {
+                    clearTimeout(timeoutId)
+                }
 
                 if (!response.ok) {
                     console.error(`Failed to submit feedback: Server returned ${response.status}`)
-                    return
+                    return false
                 }
+
+                updateMessageRating()
 
                 try {
                     const responseData: FeedbackResponse = await response.json()
@@ -153,21 +147,20 @@ export const useFeedback = ({ messages, setMessages }: UseFeedbackProps) => {
                 } catch (parseError) {
                     console.error("Error parsing feedback response:", parseError)
                 }
+                return true
             } catch (error: unknown) {
                 let errorMessage = "Failed to submit feedback"
 
                 if (error instanceof DOMException && error.name === "AbortError") {
-                    errorMessage = "The feedback request timed out. Your rating has been saved locally."
+                    errorMessage = "The feedback request timed out."
                 }
 
                 console.error(`Error submitting feedback: ${errorMessage}`, error)
-                updateMessageRating()
-                saveLocally()
+                return false
             }
         } catch (error: unknown) {
             console.error("Error submitting feedback:", error)
-            updateMessageRating()
-            saveLocally()
+            return false
         }
     }
 

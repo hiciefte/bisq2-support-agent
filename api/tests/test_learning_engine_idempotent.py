@@ -72,3 +72,28 @@ def test_generated_answer_rating_actions_are_normalized() -> None:
 
     assert engine._review_history[0]["admin_action"] == "approved"
     assert engine._review_history[1]["admin_action"] == "rejected"
+
+
+def test_record_review_stores_weight_for_threshold_learning() -> None:
+    engine = LearningEngine()
+    engine.min_samples_for_update = 99999
+
+    engine.record_review(
+        question_id="weighted-rating",
+        confidence=0.42,
+        admin_action="rejected",
+        routing_action="queue_high",
+        metadata={"source": "user_rating"},
+        weight=5.0,
+    )
+
+    assert engine._review_history[0]["weight"] == 5.0
+
+
+def test_weighted_percentile_uses_review_weights() -> None:
+    engine = LearningEngine()
+
+    assert engine._weighted_percentile([0.2, 0.9], 75, [10.0, 1.0]) == 0.2
+    assert engine._weighted_percentile(
+        [0.2, 0.4, 0.8], 75
+    ) == engine._weighted_percentile([0.2, 0.4, 0.8], 75, [1.0, 1.0, 1.0])

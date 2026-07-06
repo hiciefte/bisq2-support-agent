@@ -94,23 +94,22 @@ class FeedbackOrchestrator:
                 1.0 - 0.5 * signal.edit_distance
             )
         question_id = f"user_rating_{signal.message_id}_{signal.rater_id}"
-        count = max(1, round(weight))
-        for _ in range(count):
-            self.learning_engine.record_review(
-                question_id=question_id,
-                confidence=effective_conf,
-                admin_action=signal.learning_action,
-                routing_action=signal.routing_action,
-                metadata={
-                    "source": "user_rating",
-                    "idempotent": True,
-                    "channel": signal.channel,
-                    "quadrant": signal.quadrant,
-                    "edit_distance": signal.edit_distance,
-                    "original_confidence": signal.confidence_score,
-                    "user_rating": signal.user_rating,
-                },
-            )
+        self.learning_engine.record_review(
+            question_id=question_id,
+            confidence=effective_conf,
+            admin_action=signal.learning_action,
+            routing_action=signal.routing_action,
+            weight=weight,
+            metadata={
+                "source": "user_rating",
+                "idempotent": True,
+                "channel": signal.channel,
+                "quadrant": signal.quadrant,
+                "edit_distance": signal.edit_distance,
+                "original_confidence": signal.confidence_score,
+                "user_rating": signal.user_rating,
+            },
+        )
 
     def _feed_source_weight_learning(self, signal: StaffRatingSignal) -> None:
         delta = self.SOURCE_WEIGHT_DELTAS[signal.quadrant]

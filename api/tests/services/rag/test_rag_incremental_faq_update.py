@@ -10,6 +10,9 @@ fall back to mark_change when the incremental path cannot run or fails.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -47,7 +50,7 @@ def faq_service() -> MagicMock:
 def rag_service(test_settings, faq_service) -> SimplifiedRAGService:
     service = SimplifiedRAGService(settings=test_settings, faq_service=faq_service)
     service.index_manager = MagicMock()
-    service.embeddings = MagicMock()
+    cast(Any, service).embeddings = MagicMock()
     return service
 
 
@@ -130,6 +133,61 @@ class TestIncrementalFAQUpdate:
         assert rag_service.state_manager.needs_rebuild() is True
         pending = rag_service.state_manager.get_status()["pending_changes"]
         assert [change["item_id"] for change in pending] == ["faq-1"]
+
+    @pytest.mark.asyncio
+    async def test_same_faq_incremental_updates_are_serialized(self, rag_service):
+        active = 0
+        max_active = 0
+        calls = 0
+        guard = threading.Lock()
+
+        def slow_sync(faq_id: str) -> None:
+            nonlocal active, max_active, calls
+            with guard:
+                active += 1
+                calls += 1
+                max_active = max(max_active, active)
+            time.sleep(0.02)
+            with guard:
+                active -= 1
+
+        rag_service._sync_faq_in_index = slow_sync
+
+        rag_service._handle_faq_update(False, "update", "faq-1", None)
+        rag_service._handle_faq_update(False, "delete", "faq-1", None)
+        await _drain_background_tasks(rag_service)
+
+        assert calls == 2
+        assert max_active == 1
+
+    @pytest.mark.asyncio
+    async def test_embeddings_initialization_is_serialized(self, rag_service):
+        init_calls = 0
+        init_active = 0
+        max_init_active = 0
+        guard = threading.Lock()
+        cast(Any, rag_service).embeddings = None
+
+        def initialize_embeddings() -> None:
+            nonlocal init_calls, init_active, max_init_active
+            with guard:
+                init_calls += 1
+                init_active += 1
+                max_init_active = max(max_init_active, init_active)
+            time.sleep(0.02)
+            cast(Any, rag_service).embeddings = MagicMock()
+            with guard:
+                init_active -= 1
+
+        rag_service.initialize_embeddings = initialize_embeddings
+        rag_service._sync_faq_in_index = lambda _faq_id: None
+
+        rag_service._handle_faq_update(False, "update", "faq-1", None)
+        rag_service._handle_faq_update(False, "update", "faq-2", None)
+        await _drain_background_tasks(rag_service)
+
+        assert init_calls == 1
+        assert max_init_active == 1
 
     @pytest.mark.asyncio
     async def test_bulk_operations_fall_back_to_mark_change(self, rag_service):

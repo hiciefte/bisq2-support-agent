@@ -21,7 +21,7 @@ import type { Message } from "../types/chat.types"
 
 interface MessageItemProps {
     message: Message
-    onRating?: (messageId: string, rating: number) => void
+    onRating?: (messageId: string, rating: number) => boolean | void | Promise<boolean | void>
     onStaffRate?: (messageId: string, rating: number, rateToken?: string) => void
 }
 
@@ -33,7 +33,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
     const isClarificationQuestion = message.routing_action === "needs_clarification"
     const hasConfidence = typeof message.confidence === "number" && !isClarificationQuestion
     const hasLiveData = message.mcp_tools_used && message.mcp_tools_used.length > 0
-    const canRate = message.id && !message.isThankYouMessage && !message.staff_response && !message.escalation_resolution && onRating
+    const canRate = message.id && !message.isThankYouMessage && !message.isError && !message.staff_response && !message.escalation_resolution && onRating
 
     // Format timestamp for LiveDataBadge
     const formattedTimestamp = message.timestamp instanceof Date
@@ -120,6 +120,7 @@ export const MessageItem = memo(function MessageItem({ message, onRating, onStaf
                             <Rating
                                 className="self-end sm:self-auto flex-shrink-0"
                                 onRate={(rating) => onRating(message.id!, rating)}
+                                initialRating={message.rating}
                                 promptText={message.ui_labels?.helpful_prompt}
                                 thankYouText={message.ui_labels?.helpful_thank_you}
                             />

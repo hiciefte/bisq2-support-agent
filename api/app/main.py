@@ -267,9 +267,12 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = rag_service
     app.state.wiki_service = wiki_service
 
-    # Create LearningEngine early so it can be wired to EscalationService
-    # State will be loaded later when unified_db_path is available
-    learning_engine = LearningEngine()
+    # Create the unified training repository and LearningEngine early so
+    # trusted reviews persist as they are recorded, not only on shutdown.
+    unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
+    unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
+    app.state.unified_repository = unified_repo
+    learning_engine = LearningEngine(repository=unified_repo)
     app.state.learning_engine = learning_engine
 
     # Embeddings are a startup requirement because AnswerComparisonEngine depends on them.
@@ -606,14 +609,14 @@ async def lifespan(app: FastAPI):
     # unified_training.db is the single source of truth for candidate review,
     # calibration, and learning state. Legacy candidate DB files are not used.
     logger.info("Initializing UnifiedPipelineService...")
-    unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
     unified_pipeline_service = UnifiedPipelineService(
         settings=settings,
         rag_service=rag_service,
         faq_service=faq_service,
-        db_path=unified_db_path,
+        repository=unified_repo,
         comparison_engine=comparison_engine,
         aisuite_client=ai_client,
+        learning_engine=learning_engine,
     )
     app.state.unified_pipeline_service = unified_pipeline_service
     logger.info("UnifiedPipelineService initialized")
@@ -633,7 +636,6 @@ async def lifespan(app: FastAPI):
 
     # Load LearningEngine persisted state from unified training database
     logger.info("Loading LearningEngine state...")
-    unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
     learning_engine.load_state(unified_repo)
     logger.info(
         f"LearningEngine state loaded with thresholds: {learning_engine.get_current_thresholds()}"
@@ -658,8 +660,7 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "learning_engine") and app.state.learning_engine:
         try:
             logger.info("Saving LearningEngine state...")
-            unified_db_path = os.path.join(settings.DATA_DIR, "unified_training.db")
-            unified_repo = UnifiedFAQCandidateRepository(unified_db_path)
+            unified_repo = app.state.unified_repository
             if app.state.learning_engine.save_state(unified_repo):
                 logger.info("LearningEngine state saved successfully")
             else:

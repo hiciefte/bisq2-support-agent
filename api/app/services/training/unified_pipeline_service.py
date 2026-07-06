@@ -1499,8 +1499,22 @@ class UnifiedPipelineService:
         if action == "update":
             if not new_answer:
                 raise ValueError("new_answer is required for update action")
-            # Update the FAQ answer
-            self.faq_service.update_faq_answer(thread.faq_id, new_answer)
+            existing_faq = self.faq_service.get_faq_by_id(thread.faq_id)
+            if existing_faq is None:
+                raise ValueError(f"FAQ {thread.faq_id} not found")
+
+            faq_item = FAQItem(
+                **existing_faq.model_dump(exclude={"id"}, exclude_none=False)
+            ).model_copy(
+                update={
+                    "answer": new_answer,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+                deep=False,
+            )
+            updated_faq = self.faq_service.update_faq(thread.faq_id, faq_item)
+            if updated_faq is None:
+                raise ValueError(f"FAQ {thread.faq_id} update failed")
             logger.info(f"FAQ {thread.faq_id} updated with new answer by {reviewer}")
         elif action == "confirm":
             # Keep existing answer - just log confirmation

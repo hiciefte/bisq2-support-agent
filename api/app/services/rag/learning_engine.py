@@ -114,6 +114,7 @@ class LearningEngine:
         admin_action: str,
         routing_action: str,
         metadata: Optional[Dict[str, Any]] = None,
+        weight: float = 1.0,
     ) -> None:
         """
         Record an admin review for learning.
@@ -124,9 +125,16 @@ class LearningEngine:
             admin_action: 'approved', 'edited', or 'rejected'
             routing_action: 'auto_send', 'queue_high', or 'queue_low'
             metadata: Optional additional metadata
+            weight: Relative review weight used for threshold percentiles
         """
         metadata_dict: Dict[str, Any] = metadata or {}
         normalized_action = self._normalize_admin_action(admin_action)
+        try:
+            review_weight = float(weight)
+        except (TypeError, ValueError):
+            review_weight = 1.0
+        if review_weight <= 0:
+            review_weight = 1.0
 
         review_record = {
             "question_id": question_id,
@@ -134,6 +142,7 @@ class LearningEngine:
             "admin_action": normalized_action,
             "routing_action": routing_action,
             "metadata": metadata_dict,
+            "weight": review_weight,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -158,6 +167,8 @@ class LearningEngine:
             confidence,
         )
 
+        self._auto_persist()
+
         # Check if we should update thresholds
         if len(self._review_history) >= self.min_samples_for_update:
             # Update every 10 new samples, or immediately on idempotent replacement
@@ -174,30 +185,39 @@ class LearningEngine:
             return
 
         # Analyze patterns
-        approved_confidences = [
-            r["confidence"]
-            for r in self._review_history
-            if r["admin_action"] == "approved"
+        approved_reviews = [
+            r for r in self._review_history if r["admin_action"] == "approved"
         ]
-        edited_confidences = [
-            r["confidence"]
-            for r in self._review_history
-            if r["admin_action"] == "edited"
+        edited_reviews = [
+            r for r in self._review_history if r["admin_action"] == "edited"
         ]
-        rejected_confidences = [
-            r["confidence"]
-            for r in self._review_history
-            if r["admin_action"] == "rejected"
+        rejected_reviews = [
+            r for r in self._review_history if r["admin_action"] == "rejected"
         ]
+        approved_confidences = [r["confidence"] for r in approved_reviews]
+        edited_confidences = [r["confidence"] for r in edited_reviews]
+        rejected_confidences = [r["confidence"] for r in rejected_reviews]
+        approved_weights = [float(r.get("weight", 1.0)) for r in approved_reviews]
+        edited_weights = [float(r.get("weight", 1.0)) for r in edited_reviews]
+        rejected_weights = [float(r.get("weight", 1.0)) for r in rejected_reviews]
 
         # Calculate optimal thresholds
         new_auto_send = self._calculate_auto_send_threshold(
-            approved_confidences, edited_confidences, rejected_confidences
+            approved_confidences,
+            edited_confidences,
+            rejected_confidences,
+            approved_weights=approved_weights,
         )
         new_queue_high = self._calculate_queue_threshold(
-            approved_confidences, edited_confidences, rejected_confidences
+            approved_confidences,
+            edited_confidences,
+            rejected_confidences,
+            approved_weights=approved_weights,
+            edited_weights=edited_weights,
         )
-        new_reject = self._calculate_reject_threshold(rejected_confidences)
+        new_reject = self._calculate_reject_threshold(
+            rejected_confidences, rejected_weights=rejected_weights
+        )
 
         # Apply gradual updates using learning rate
         if new_auto_send is not None:
@@ -250,6 +270,7 @@ class LearningEngine:
         approved: List[float],
         edited: List[float],
         rejected: List[float],
+        approved_weights: Optional[List[float]] = None,
     ) -> Optional[float]:
         """
         Calculate optimal auto-send threshold.
@@ -260,11 +281,9 @@ class LearningEngine:
             return None
 
         # Find the confidence percentile where 95% of approved (unedited) were good
-        approved_array = np.array(approved)
-
         # Calculate 5th percentile of approved responses
         # This means 95% of approved responses had confidence above this
-        threshold = float(np.percentile(approved_array, 5))
+        threshold = self._weighted_percentile(approved, 5, approved_weights)
 
         # Ensure threshold is reasonable (between 0.8 and 0.99)
         threshold = max(0.80, min(0.99, threshold))
@@ -276,6 +295,8 @@ class LearningEngine:
         approved: List[float],
         edited: List[float],
         rejected: List[float],
+        approved_weights: Optional[List[float]] = None,
+        edited_weights: Optional[List[float]] = None,
     ) -> Optional[float]:
         """
         Calculate optimal queue threshold.
@@ -286,19 +307,24 @@ class LearningEngine:
         all_positive = approved + edited
         if not all_positive:
             return None
-
-        positive_array = np.array(all_positive)
+        positive_weights: Optional[List[float]] = None
+        if approved_weights is not None or edited_weights is not None:
+            positive_weights = (approved_weights or [1.0] * len(approved)) + (
+                edited_weights or [1.0] * len(edited)
+            )
 
         # Find the 25th percentile of positive outcomes
         # Responses above this are likely acceptable (maybe with minor edits)
-        threshold = float(np.percentile(positive_array, 25))
+        threshold = self._weighted_percentile(all_positive, 25, positive_weights)
 
         # Ensure threshold is reasonable (between 0.5 and 0.9)
         threshold = max(0.50, min(0.90, threshold))
 
         return threshold
 
-    def _calculate_reject_threshold(self, rejected: List[float]) -> Optional[float]:
+    def _calculate_reject_threshold(
+        self, rejected: List[float], rejected_weights: Optional[List[float]] = None
+    ) -> Optional[float]:
         """
         Calculate optimal reject threshold.
 
@@ -307,16 +333,40 @@ class LearningEngine:
         if not rejected or len(rejected) < 5:
             return None
 
-        rejected_array = np.array(rejected)
-
         # Find the 75th percentile of rejected responses
         # Responses below this are likely to be rejected
-        threshold = float(np.percentile(rejected_array, 75))
+        threshold = self._weighted_percentile(rejected, 75, rejected_weights)
 
         # Ensure threshold is reasonable (between 0.3 and 0.7)
         threshold = max(0.30, min(0.70, threshold))
 
         return threshold
+
+    @staticmethod
+    def _weighted_percentile(
+        values: List[float], percentile: float, weights: Optional[List[float]] = None
+    ) -> float:
+        if not values:
+            raise ValueError("values must not be empty")
+        pairs = []
+        effective_weights = weights if weights is not None else [1.0] * len(values)
+        for value, weight in zip(values, effective_weights, strict=False):
+            try:
+                numeric_weight = float(weight)
+            except (TypeError, ValueError):
+                numeric_weight = 1.0
+            pairs.append((float(value), max(0.0, numeric_weight)))
+
+        if len(pairs) != len(values) or sum(weight for _, weight in pairs) <= 0:
+            pairs = [(float(value), 1.0) for value in values]
+
+        target = (percentile / 100.0) * sum(weight for _, weight in pairs)
+        cumulative = 0.0
+        for value, weight in sorted(pairs, key=lambda pair: pair[0]):
+            cumulative += weight
+            if cumulative >= target:
+                return value
+        return sorted(pairs, key=lambda pair: pair[0])[-1][0]
 
     def get_current_thresholds(self) -> Dict[str, float]:
         """Get current threshold values."""
