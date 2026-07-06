@@ -33,7 +33,7 @@ from app.services.rag.document_retriever import (
     is_bisq_version_comparison_query,
 )
 from app.services.rag.index_state_manager import IndexStateManager
-from app.services.rag.llm_provider import LLMProvider, _needs_live_data
+from app.services.rag.llm_provider import LLMProvider, needs_live_data
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
@@ -1171,6 +1171,9 @@ class SimplifiedRAGService:
                     language_hint_confidence=language_hint_confidence,
                     token_callback=enqueue_token,
                 )
+                if result.get("error"):
+                    await queue.put({"event": "error", "data": str(result["error"])})
+                    return
                 await queue.put({"event": "final", "data": result})
             except Exception as exc:
                 logger.exception("Streaming RAG query failed")
@@ -1528,7 +1531,7 @@ class SimplifiedRAGService:
             mcp_tools_used: list[dict[str, str]] | None = None
             mcp_invocation_succeeded = False
             use_mcp_invocation = self.mcp_enabled and (
-                token_callback is None or _needs_live_data(preprocessed_question)
+                token_callback is None or needs_live_data(preprocessed_question)
             )
             if self.mcp_enabled and not use_mcp_invocation:
                 logger.info(

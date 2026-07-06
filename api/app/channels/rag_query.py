@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator, Optional
 
+_OPTIONAL_CONTEXT_KWARGS = (
+    "language_hint_confidence",
+    "language_hint",
+    "detection_source",
+)
+
 
 def _build_query_kwargs(
     question: str,
@@ -31,28 +37,43 @@ async def _call_query_with_supported_kwargs(
     query_func: Any,
     query_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
-    try:
-        return await query_func(**query_kwargs)
-    except TypeError as exc:
-        removed = False
-        if "language_hint_confidence" in query_kwargs and (
-            "unexpected keyword argument 'language_hint_confidence'" in str(exc)
-        ):
-            query_kwargs.pop("language_hint_confidence", None)
+    supported_kwargs = dict(query_kwargs)
+    while True:
+        try:
+            return await query_func(**supported_kwargs)
+        except TypeError as exc:
+            if not _remove_unsupported_context_kwargs(supported_kwargs, exc):
+                raise
+
+
+def _remove_unsupported_context_kwargs(
+    query_kwargs: dict[str, Any],
+    exc: TypeError,
+) -> bool:
+    message = str(exc)
+    removed = False
+    for key in _OPTIONAL_CONTEXT_KWARGS:
+        if key in query_kwargs and f"unexpected keyword argument '{key}'" in message:
+            query_kwargs.pop(key, None)
             removed = True
-        if "language_hint" in query_kwargs and (
-            "unexpected keyword argument 'language_hint'" in str(exc)
-        ):
-            query_kwargs.pop("language_hint", None)
-            removed = True
-        if "detection_source" in query_kwargs and (
-            "unexpected keyword argument 'detection_source'" in str(exc)
-        ):
-            query_kwargs.pop("detection_source", None)
-            removed = True
-        if not removed:
-            raise
-        return await query_func(**query_kwargs)
+    return removed
+
+
+async def _stream_query_with_supported_kwargs(
+    stream_query: Any,
+    query_kwargs: dict[str, Any],
+) -> AsyncIterator[dict[str, Any]]:
+    supported_kwargs = dict(query_kwargs)
+    while True:
+        emitted = False
+        try:
+            async for event in stream_query(**supported_kwargs):
+                emitted = True
+                yield event
+            return
+        except TypeError as exc:
+            if emitted or not _remove_unsupported_context_kwargs(supported_kwargs, exc):
+                raise
 
 
 async def query_with_channel_context(
@@ -104,27 +125,5 @@ async def stream_query_with_channel_context(
         yield {"event": "final", "data": result}
         return
 
-    try:
-        async for event in stream_query(**query_kwargs):
-            yield event
-    except TypeError as exc:
-        removed = False
-        if "language_hint_confidence" in query_kwargs and (
-            "unexpected keyword argument 'language_hint_confidence'" in str(exc)
-        ):
-            query_kwargs.pop("language_hint_confidence", None)
-            removed = True
-        if "language_hint" in query_kwargs and (
-            "unexpected keyword argument 'language_hint'" in str(exc)
-        ):
-            query_kwargs.pop("language_hint", None)
-            removed = True
-        if "detection_source" in query_kwargs and (
-            "unexpected keyword argument 'detection_source'" in str(exc)
-        ):
-            query_kwargs.pop("detection_source", None)
-            removed = True
-        if not removed:
-            raise
-        async for event in stream_query(**query_kwargs):
-            yield event
+    async for event in _stream_query_with_supported_kwargs(stream_query, query_kwargs):
+        yield event

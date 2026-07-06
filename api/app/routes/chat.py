@@ -317,58 +317,15 @@ async def query(
                 },
             )
 
-        # Convert OutgoingMessage to QueryResponse format (backward compatibility)
-        formatted_sources = [
-            Source(
-                title=source.title,
-                type=source.category or "wiki",
-                content=source.content or "",
-                protocol=source.protocol or "all",
-                url=source.url,
-                section=source.section,
-                similarity_score=source.relevance_score,
-            )
-            for source in result.sources
-        ]
-
         metadata = result.metadata
-        user_language = normalize_language_code(
-            metadata.original_language if metadata else None
-        )
-
-        response_data = QueryResponse(
-            answer=result.answer,
-            sources=formatted_sources,
-            response_time=(
-                (metadata.processing_time_ms / 1000.0)
-                if metadata and metadata.processing_time_ms is not None
-                else 0.0
-            ),
-            message_id=incoming.message_id,
-            # Phase 1 metadata from gateway metadata
-            confidence=metadata.confidence_score if metadata else None,
-            routing_action=metadata.routing_action if metadata else None,
-            detected_version=metadata.detected_version if metadata else None,
-            version_confidence=metadata.version_confidence if metadata else None,
-            forwarded_to_human=result.requires_human,
-            requires_human=result.requires_human,
-            escalation_message_id=(
-                incoming.message_id if result.requires_human else None
-            ),
-            user_language=user_language,
-            ui_labels=get_chat_ui_labels(user_language),
-            mcp_tools_used=(
-                _format_mcp_tools_used(metadata.mcp_tools_used) if metadata else None
-            ),
-        )
+        response_dict = _query_response_from_outgoing(result, incoming.message_id)
 
         # Log response size and validate JSON serializability
-        response_dict = response_data.model_dump()
         try:
             response_json = json.dumps(response_dict)
             logger.info(
                 f"Response prepared: answer_length={len(result.answer)}, "
-                f"sources_count={len(formatted_sources)}, "
+                f"sources_count={len(result.sources)}, "
                 f"total_size={len(response_json)} bytes"
             )
         except (TypeError, ValueError) as e:
@@ -493,16 +450,16 @@ async def query_stream(
                     return
 
                 event_name = event.get("event")
-                data = event.get("data")
+                event_data = event.get("data")
                 if event_name == "token":
-                    token = data if isinstance(data, str) else ""
+                    token = event_data if isinstance(event_data, str) else ""
                     if token:
                         yield _format_sse_event("token", {"content": token})
                 elif event_name == "final":
-                    if not isinstance(data, OutgoingMessage):
+                    if not isinstance(event_data, OutgoingMessage):
                         raise RuntimeError("Streaming gateway final event was invalid")
                     response_dict = _query_response_from_outgoing(
-                        data,
+                        event_data,
                         incoming.message_id,
                     )
 
@@ -518,7 +475,7 @@ async def query_stream(
                                 external_message_id=incoming.message_id,
                                 internal_message_id=incoming.message_id,
                                 question=query_request.question,
-                                answer=data.answer,
+                                answer=event_data.answer,
                                 user_id=user_id,
                                 sources=[
                                     {
@@ -526,23 +483,23 @@ async def query_stream(
                                         "content": s.content or "",
                                         "url": s.url,
                                     }
-                                    for s in data.sources
+                                    for s in event_data.sources
                                 ],
                                 confidence_score=(
-                                    data.metadata.confidence_score
-                                    if data.metadata
+                                    event_data.metadata.confidence_score
+                                    if event_data.metadata
                                     else None
                                 ),
                                 routing_action=(
-                                    data.metadata.routing_action
-                                    if data.metadata
+                                    event_data.metadata.routing_action
+                                    if event_data.metadata
                                     else None
                                 ),
-                                requires_human=data.requires_human,
+                                requires_human=event_data.requires_human,
                                 delivery_target=incoming.message_id,
                                 user_language=(
-                                    data.metadata.original_language
-                                    if data.metadata
+                                    event_data.metadata.original_language
+                                    if event_data.metadata
                                     else None
                                 ),
                             )
@@ -555,14 +512,16 @@ async def query_stream(
                     yield _format_sse_event("final", response_dict)
                     return
                 elif event_name == "error":
-                    if isinstance(data, GatewayError):
-                        QUERY_ERRORS.labels(error_type=data.error_code.value).inc()
+                    if isinstance(event_data, GatewayError):
+                        QUERY_ERRORS.labels(
+                            error_type=event_data.error_code.value
+                        ).inc()
                         yield _format_sse_event(
                             "error",
                             {
-                                "detail": data.error_message,
-                                "error_code": data.error_code.value,
-                                "details": data.details,
+                                "detail": event_data.error_message,
+                                "error_code": event_data.error_code.value,
+                                "details": event_data.details,
                             },
                         )
                     else:

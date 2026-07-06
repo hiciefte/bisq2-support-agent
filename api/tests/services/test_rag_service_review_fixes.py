@@ -314,6 +314,31 @@ class TestChainUsesPreRetrievedDocs:
         service.llm.stream.assert_not_called()
         service.llm.invoke_with_tools.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_stream_query_emits_error_after_partial_generation_failure(
+        self, service
+    ):
+        """Streaming failures after partial output surface an error event."""
+        service.mcp_enabled = False
+
+        def failing_stream(*args, **kwargs):
+            yield "Partial "
+            raise RuntimeError("stream failed")
+
+        service.llm.stream.side_effect = failing_stream
+
+        events = [
+            event
+            async for event in service.stream_query(
+                "What is Bisq Easy?",
+                chat_history=[],
+            )
+        ]
+
+        assert [event["event"] for event in events] == ["token", "error"]
+        assert events[0]["data"] == "Partial "
+        assert "stream failed" in events[1]["data"]
+
 
 class TestContextOnlyFallbackVersion:
     """A3: detected version must survive into the context-only prompt."""

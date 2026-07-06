@@ -338,6 +338,47 @@ describe("useChatMessages", () => {
       expect(assistantMessage.escalation_message_id).toBe("web_escalated-message");
       expect(assistantMessage.escalation_user_language).toBe("de");
     });
+
+    test("replaces a streamed draft with an error event message", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Partial draft" }),
+          streamEvent("error", { detail: "backend failed" }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("stream fails");
+      });
+
+      expect(result.current.messages).toHaveLength(2);
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.content).toContain("backend failed");
+      expect(assistantMessage.isError).toBe(true);
+    });
+
+    test("replaces a streamed draft when the stream ends without final", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Partial draft" }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("stream ends early");
+      });
+
+      expect(result.current.messages).toHaveLength(2);
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.content).toContain(
+        "Response stream ended before the final event",
+      );
+      expect(assistantMessage.isError).toBe(true);
+    });
   });
 
   describe("localStorage persistence", () => {

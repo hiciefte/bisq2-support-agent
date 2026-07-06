@@ -185,6 +185,31 @@ class TestChannelGatewayRouting:
         assert final.requires_human is True
         assert final.metadata.routing_action == "needs_human"
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_message_rejects_malformed_final_payload(
+        self, sample_incoming_message, mock_rag_service
+    ):
+        """Malformed RAG final stream data is surfaced as a gateway error."""
+        from app.channels.gateway import ChannelGateway
+
+        async def stream_query(*args, **kwargs):
+            yield {"event": "token", "data": "Partial draft"}
+            yield {"event": "final", "data": "not a dict"}
+
+        mock_rag_service.stream_query = stream_query
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+
+        events = [
+            event async for event in gateway.stream_message(sample_incoming_message)
+        ]
+
+        assert [event["event"] for event in events] == ["error"]
+        error = events[0]["data"]
+        assert isinstance(error, GatewayError)
+        assert error.error_code == ErrorCode.RAG_SERVICE_ERROR
+        assert error.error_message == "Failed to generate response"
+
 
 class TestChannelGatewayHooks:
     """Test hook system."""

@@ -264,7 +264,11 @@ class ChannelGateway:
                         pending_tokens.append(event)
                     elif event_name == "final":
                         raw_data = event.get("data")
-                        rag_response = raw_data if isinstance(raw_data, dict) else {}
+                        if not isinstance(raw_data, dict):
+                            raise RuntimeError(
+                                "Streaming RAG query returned malformed final data"
+                            )
+                        rag_response = raw_data
                     elif event_name == "error":
                         raise RuntimeError(str(event.get("data") or "stream error"))
 

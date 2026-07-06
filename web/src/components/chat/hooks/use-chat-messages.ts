@@ -589,13 +589,26 @@ export const useChatMessages = () => {
             const isCurrentRequest = () =>
                 requestGenerationRef.current === requestGeneration;
             let replaceStreamDraftWithError: ((content: string) => void) | null = null;
+            let requestTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-            try {
-                const timeoutId = setTimeout(
+            const resetRequestTimeout = () => {
+                if (requestTimeoutId) {
+                    clearTimeout(requestTimeoutId);
+                }
+                requestTimeoutId = setTimeout(
                     () => controller.abort(),
                     REQUEST_TIMEOUT_MS,
                 );
+            };
 
+            const clearRequestTimeout = () => {
+                if (requestTimeoutId) {
+                    clearTimeout(requestTimeoutId);
+                    requestTimeoutId = null;
+                }
+            };
+
+            try {
                 // Client-generated error bubbles are UI-only; sending them as
                 // assistant turns would pollute the LLM prompt on the backend.
                 const chatHistory = messageSnapshot
@@ -613,6 +626,7 @@ export const useChatMessages = () => {
                 let receivedFinal = false;
 
                 const upsertDraftMessage = (content: string) => {
+                    hasDraftMessage = true;
                     setMessages((prev) => {
                         const draftMessage: Message = {
                             id: draftMessageId,
@@ -639,12 +653,12 @@ export const useChatMessages = () => {
                                           : message,
                                   );
                         messagesRef.current = nextMessages;
-                        hasDraftMessage = true;
                         return nextMessages;
                     });
                 };
 
                 const replaceDraftMessage = (message: Message) => {
+                    hasDraftMessage = true;
                     setMessages((prev) => {
                         const draftIndex = prev.findIndex(
                             (candidate) => candidate.id === draftMessageId,
@@ -656,7 +670,6 @@ export const useChatMessages = () => {
                                       index === draftIndex ? message : candidate,
                                   );
                         messagesRef.current = nextMessages;
-                        hasDraftMessage = true;
                         return nextMessages;
                     });
                 };
@@ -720,6 +733,7 @@ export const useChatMessages = () => {
                 };
 
                 try {
+                    resetRequestTimeout();
                     const response = await fetch(`${API_BASE_URL}/chat/query/stream`, {
                         method: "POST",
                         headers: {
@@ -770,6 +784,7 @@ export const useChatMessages = () => {
                         if (done) {
                             break;
                         }
+                        resetRequestTimeout();
                         streamBuffer += decoder.decode(value, { stream: true });
                         const events = streamBuffer.split(/\r?\n\r?\n/);
                         streamBuffer = events.pop() ?? "";
@@ -791,7 +806,7 @@ export const useChatMessages = () => {
                         throw new Error("Response stream ended before the final event.");
                     }
                 } finally {
-                    clearTimeout(timeoutId);
+                    clearRequestTimeout();
                 }
             } catch (error: unknown) {
                 if (!isCurrentRequest()) {
