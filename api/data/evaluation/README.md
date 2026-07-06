@@ -153,6 +153,17 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --lock-file /data/evaluation/retrieval_strict.lock.json
 ```
 
+Gate the resulting summary with the locked quality floors:
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -m app.scripts.retrieval_benchmark_harness gate \
+    --summary /data/evaluation/benchmarks/qdrant_strict.summary.json \
+    --min-recall-at-k 0.38 \
+    --min-mrr 0.60 \
+    --min-faithfulness 0.40 \
+    --min-answer-relevancy 0.55
+```
+
 `run --lock-file` enforces:
 - sample file SHA256
 - KB manifest SHA256 (if configured)

@@ -63,6 +63,47 @@ class TestNLIValidator:
         assert score >= 0.0
 
     @pytest.mark.asyncio
+    async def test_lowercase_labels_do_not_collapse_to_neutral(
+        self, validator, mock_pipeline
+    ):
+        """Model labels are normalized case-insensitively."""
+        mock_pipeline.return_value = [
+            {"label": "entailment", "score": 0.91},
+            {"label": "neutral", "score": 0.05},
+            {"label": "contradiction", "score": 0.04},
+        ]
+
+        score = await validator.validate_answer_async(
+            "Bisq is a decentralized bitcoin exchange.",
+            "Bisq is decentralized.",
+        )
+
+        assert score > 0.9
+        call_arg = mock_pipeline.call_args.args[0]
+        assert call_arg == {
+            "text": "Bisq is a decentralized bitcoin exchange.",
+            "text_pair": "Bisq is decentralized.",
+        }
+
+    @pytest.mark.asyncio
+    async def test_lowercase_contradiction_scores_below_neutral(
+        self, validator, mock_pipeline
+    ):
+        """Contradicting answers with lowercase labels produce low scores."""
+        mock_pipeline.return_value = [
+            {"label": "contradiction", "score": 0.88},
+            {"label": "neutral", "score": 0.08},
+            {"label": "entailment", "score": 0.04},
+        ]
+
+        score = await validator.validate_answer_async(
+            "Bisq Easy does not use security deposits.",
+            "Bisq Easy requires security deposits.",
+        )
+
+        assert score < 0.1
+
+    @pytest.mark.asyncio
     async def test_neutral_returns_middle_score(self, validator, mock_pipeline):
         """Neutral responses return ~0.5 score."""
         mock_pipeline.return_value = [
@@ -124,6 +165,12 @@ class TestNLIValidator:
         assert scores[0] > 0.7
         # Second should be low (contradiction)
         assert scores[1] < 0.3
+        batch_arg = mock_pipeline.call_args.args[0]
+        assert batch_arg == [
+            {"text": "ctx1", "text_pair": "ans1"},
+            {"text": "ctx2", "text_pair": "ans2"},
+            {"text": "ctx3", "text_pair": "ans3"},
+        ]
 
     @pytest.mark.asyncio
     async def test_handles_missing_labels(self, validator, mock_pipeline):

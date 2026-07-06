@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -42,6 +43,37 @@ DEFAULT_SAMPLES_PATH = (
 DEFAULT_OUTPUT_PATH = "api/data/evaluation/new_scores.json"
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 DEFAULT_BYPASS_HOOKS = ["escalation"]
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+_METRIC_STOPWORDS = {
+    "about",
+    "after",
+    "also",
+    "and",
+    "are",
+    "because",
+    "before",
+    "but",
+    "can",
+    "does",
+    "for",
+    "from",
+    "has",
+    "have",
+    "how",
+    "into",
+    "not",
+    "that",
+    "the",
+    "then",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "with",
+    "you",
+    "your",
+}
 
 
 async def query_rag_system(
@@ -390,6 +422,9 @@ def compute_simple_metrics(
             max_overlap = max(max_overlap, overlap)
         context_scores.append(max_overlap)
 
+    retrieval_metrics, _per_sample_retrieval = compute_retrieval_rank_metrics(
+        ground_truths, contexts
+    )
     return {
         "context_precision": (
             sum(context_scores) / len(context_scores) if context_scores else 0.0
@@ -397,12 +432,74 @@ def compute_simple_metrics(
         "context_recall": (
             sum(context_scores) / len(context_scores) if context_scores else 0.0
         ),
+        **retrieval_metrics,
         "faithfulness": 0.5,
         "answer_relevancy": (
             sum(answer_scores) / len(answer_scores) if answer_scores else 0.0
         ),
         "_fallback_metrics": True,
     }
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_RE.findall(text.lower())
+        if token not in _METRIC_STOPWORDS
+    }
+
+
+def _context_matches_ground_truth(context: str, ground_truth_tokens: set[str]) -> bool:
+    if not context or not ground_truth_tokens:
+        return False
+    context_tokens = _content_tokens(context)
+    if not context_tokens:
+        return False
+    overlap_count = len(context_tokens & ground_truth_tokens)
+    overlap_ratio = overlap_count / len(ground_truth_tokens)
+    return overlap_count >= 4 or overlap_ratio >= 0.20
+
+
+def compute_retrieval_rank_metrics(
+    ground_truths: list[str], contexts: list[list[str]]
+) -> tuple[dict[str, float], list[dict[str, float | None]]]:
+    """Compute rank-sensitive retrieval metrics from API context order.
+
+    The golden set does not label source IDs, so relevance is judged by content
+    overlap with the ground-truth answer. This is intentionally simple and
+    deterministic; RAGAS still handles semantic answer quality.
+    """
+    per_sample: list[dict[str, float | None]] = []
+    recall_scores: list[float] = []
+    reciprocal_ranks: list[float] = []
+
+    for ground_truth, ctx_list in zip(ground_truths, contexts, strict=True):
+        ground_truth_tokens = _content_tokens(ground_truth)
+        first_relevant_rank: int | None = None
+        for rank, context in enumerate(ctx_list, start=1):
+            if _context_matches_ground_truth(str(context), ground_truth_tokens):
+                first_relevant_rank = rank
+                break
+
+        recall_at_k = 1.0 if first_relevant_rank is not None else 0.0
+        mrr = 1.0 / first_relevant_rank if first_relevant_rank is not None else 0.0
+        recall_scores.append(recall_at_k)
+        reciprocal_ranks.append(mrr)
+        per_sample.append({"recall_at_k": recall_at_k, "mrr": mrr})
+
+    return (
+        {
+            "recall_at_k": (
+                sum(recall_scores) / len(recall_scores) if recall_scores else 0.0
+            ),
+            "mrr": (
+                sum(reciprocal_ranks) / len(reciprocal_ranks)
+                if reciprocal_ranks
+                else 0.0
+            ),
+        },
+        per_sample,
+    )
 
 
 def _load_evaluation_samples(samples_path: str) -> list[dict[str, Any]]:
@@ -624,9 +721,17 @@ async def run_evaluation(
             ragas_batch_size=ragas_batch_size,
         )
 
+    retrieval_metrics, retrieval_per_sample_metrics = compute_retrieval_rank_metrics(
+        ground_truths, contexts
+    )
+    metrics.update(retrieval_metrics)
+
     # Attach per-sample scores (when available) so we can pinpoint regressions.
     for i, r in enumerate(individual_results):
-        r["ragas"] = per_sample_metrics[i] if i < len(per_sample_metrics) else {}
+        ragas_scores = per_sample_metrics[i] if i < len(per_sample_metrics) else {}
+        if i < len(retrieval_per_sample_metrics):
+            ragas_scores.update(retrieval_per_sample_metrics[i])
+        r["ragas"] = ragas_scores
 
     # Compute average response time
     response_times = [
@@ -739,8 +844,16 @@ async def run_evaluation_from_existing(
             ragas_batch_size=ragas_batch_size,
         )
 
+    retrieval_metrics, retrieval_per_sample_metrics = compute_retrieval_rank_metrics(
+        ground_truths, contexts
+    )
+    metrics.update(retrieval_metrics)
+
     for i, r in enumerate(individual_results):
-        r["ragas"] = per_sample_metrics[i] if i < len(per_sample_metrics) else {}
+        ragas_scores = per_sample_metrics[i] if i < len(per_sample_metrics) else {}
+        if i < len(retrieval_per_sample_metrics):
+            ragas_scores.update(retrieval_per_sample_metrics[i])
+        r["ragas"] = ragas_scores
 
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

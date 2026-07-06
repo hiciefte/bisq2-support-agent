@@ -9,6 +9,10 @@ from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
+MIN_SOURCE_WEIGHT = 0.75
+MAX_SOURCE_WEIGHT = 1.25
+DEFAULT_SOURCE_WEIGHT = 1.0
+
 
 class ConfidenceScorer:
     """Calculate confidence scores for RAG responses."""
@@ -50,7 +54,10 @@ class ConfidenceScorer:
         nli_score = await self.nli.validate_answer_async(combined_context, answer)
 
         # 2. Source Quality Score (30%)
-        source_scores = [doc.metadata.get("source_weight", 0.5) for doc in sources]
+        source_scores = [
+            self._normalize_source_weight(doc.metadata.get("source_weight"))
+            for doc in sources
+        ]
         avg_source_quality = sum(source_scores) / len(source_scores)
 
         # 3. Answer Completeness Score (30%)
@@ -66,7 +73,25 @@ class ConfidenceScorer:
             f"Total={confidence:.2f}"
         )
 
-        return confidence
+        return max(0.0, min(1.0, confidence))
+
+    @staticmethod
+    def _normalize_source_weight(raw_weight: object) -> float:
+        """Map source weights from the 0.75-1.25 tuning range to quality 0-1."""
+        try:
+            if raw_weight is None:
+                weight = DEFAULT_SOURCE_WEIGHT
+            elif isinstance(raw_weight, (int, float, str)):
+                weight = float(raw_weight)
+            else:
+                weight = DEFAULT_SOURCE_WEIGHT
+        except (TypeError, ValueError):
+            weight = DEFAULT_SOURCE_WEIGHT
+
+        normalized = (weight - MIN_SOURCE_WEIGHT) / (
+            MAX_SOURCE_WEIGHT - MIN_SOURCE_WEIGHT
+        )
+        return max(0.0, min(1.0, normalized))
 
     def _calculate_completeness(self, question: str, answer: str) -> float:
         """
