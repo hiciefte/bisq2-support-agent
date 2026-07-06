@@ -8,7 +8,7 @@ This test suite covers:
 """
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.core.config import Settings
@@ -188,6 +188,34 @@ class TestConfigurableTrendCalculations:
 
 class TestDashboardOverviewWithPeriods:
     """Test dashboard overview endpoint with different periods."""
+
+    @pytest.mark.asyncio
+    async def test_faq_creation_stats_use_source_count_aggregate(
+        self, dashboard_service, monkeypatch
+    ):
+        """F35: dashboard FAQ counts must not load every FAQ row."""
+        get_all_faqs = MagicMock(
+            side_effect=AssertionError("dashboard must not load all FAQs")
+        )
+        source_counts = MagicMock(
+            return_value={"Feedback": 3, "Manual": 2, "Matrix Support": 1}
+        )
+        monkeypatch.setattr(dashboard_service.faq_service, "get_all_faqs", get_all_faqs)
+        monkeypatch.setattr(
+            dashboard_service.faq_service,
+            "get_faq_source_counts",
+            source_counts,
+        )
+
+        stats = await dashboard_service._get_faq_creation_stats()
+
+        assert stats == {
+            "total_faqs": 6,
+            "total_created_from_feedback": 3,
+            "total_manual": 2,
+        }
+        source_counts.assert_called_once_with()
+        get_all_faqs.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_dashboard_overview_default_7d(self, dashboard_service):

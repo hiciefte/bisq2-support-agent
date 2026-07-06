@@ -163,8 +163,8 @@ class DashboardService:
         """Get feedback items that would benefit from FAQ creation."""
         try:
             # Use the same logic as the feedback service to ensure consistency
-            feedback_items = (
-                self.feedback_service.get_negative_feedback_for_faq_creation()
+            feedback_items = await asyncio.to_thread(
+                self.feedback_service.get_negative_feedback_for_faq_creation
             )
 
             # Convert to dictionary format expected by the dashboard
@@ -216,14 +216,16 @@ class DashboardService:
     async def _get_faq_creation_stats(self) -> Dict[str, int]:
         """Get FAQ creation statistics."""
         try:
-            all_faqs = self.faq_service.get_all_faqs()
+            source_counts = await asyncio.to_thread(
+                self.faq_service.get_faq_source_counts
+            )
+            total_faqs = sum(source_counts.values())
+            total_created_from_feedback = source_counts.get("Feedback", 0)
 
             return {
-                "total_faqs": len(all_faqs),
-                "total_created_from_feedback": len(
-                    [f for f in all_faqs if f.source == "Feedback"]
-                ),
-                "total_manual": len([f for f in all_faqs if f.source == "Manual"]),
+                "total_faqs": total_faqs,
+                "total_created_from_feedback": total_created_from_feedback,
+                "total_manual": source_counts.get("Manual", 0),
             }
         except Exception as e:
             logger.error(f"Failed to get FAQ creation stats: {e}", exc_info=True)

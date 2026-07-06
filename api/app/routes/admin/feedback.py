@@ -314,7 +314,10 @@ async def get_feedback_list(
     )
 
     try:
-        result = feedback_service.get_feedback_with_filters(filters)
+        result = await asyncio.to_thread(
+            feedback_service.get_feedback_with_filters,
+            filters,
+        )
         return result
     except Exception as e:
         logger.error(f"Failed to fetch feedback list: {e}", exc_info=True)

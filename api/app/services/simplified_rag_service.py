@@ -1234,8 +1234,10 @@ class SimplifiedRAGService:
 
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval
-            docs, doc_scores = self.document_retriever.retrieve_with_scores(
-                preprocessed_question, detected_version
+            docs, doc_scores = await asyncio.to_thread(
+                self.document_retriever.retrieve_with_scores,
+                preprocessed_question,
+                detected_version,
             )
 
             logger.info(
@@ -1364,7 +1366,8 @@ class SimplifiedRAGService:
                     # Invoke LLM with MCP tools via AISuite native HTTP transport
                     # The LLM autonomously decides when to call tools
                     # (no tools parameter - MCP config is baked into the wrapper)
-                    tool_result = self.llm.invoke_with_tools(
+                    tool_result = await asyncio.to_thread(
+                        self.llm.invoke_with_tools,
                         prompt=user_content,
                         max_turns=5,
                         system_content=system_content,
@@ -1415,8 +1418,11 @@ class SimplifiedRAGService:
                 # Pass the already-retrieved, version-aware documents so the
                 # chain does not re-retrieve with a version-blind default and
                 # the generation context matches the reported sources.
-                response_text = self.rag_chain(
-                    preprocessed_question, chat_history, docs=docs
+                response_text = await asyncio.to_thread(
+                    self.rag_chain,
+                    preprocessed_question,
+                    chat_history,
+                    docs=docs,
                 )
 
             # Calculate response time

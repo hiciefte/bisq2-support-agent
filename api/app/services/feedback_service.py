@@ -550,11 +550,26 @@ class FeedbackService:
         Returns:
             FeedbackListResponse with filtered feedback items
         """
-        all_feedback = self.load_feedback()
+        offset = (filters.page - 1) * filters.page_size
+        page_rows, total_count = self.repository.get_feedback_page(
+            limit=filters.page_size,
+            offset=offset,
+            rating=filters.rating,
+            date_from=filters.date_from,
+            date_to=filters.date_to,
+            channel=filters.channel,
+            feedback_method=filters.feedback_method,
+            issues=filters.issues,
+            source_types=filters.source_types,
+            search_text=filters.search_text,
+            needs_faq=filters.needs_faq,
+            processed=filters.processed,
+            sort_by=filters.sort_by,
+        )
 
-        # Convert dict items to FeedbackItem objects
+        # Convert current page rows to FeedbackItem objects
         feedback_items = []
-        for item in all_feedback:
+        for item in page_rows:
             try:
                 if not self._is_valid_feedback_item(item):
                     continue
@@ -565,24 +580,12 @@ class FeedbackService:
                 logger.warning(f"Error parsing feedback item: {e}")
                 continue
 
-        # Apply filters using filters module
-        filtered_items = self.filters.apply_filters(feedback_items, filters)
-
-        # Apply sorting using filters module
-        sorted_items = self.filters.apply_sorting(filtered_items, filters.sort_by)
-
-        # Apply pagination
-        total_count = len(sorted_items)
         total_pages = (
             math.ceil(total_count / filters.page_size) if total_count > 0 else 0
         )
 
-        start_idx = (filters.page - 1) * filters.page_size
-        end_idx = start_idx + filters.page_size
-        paginated_items = sorted_items[start_idx:end_idx]
-
         return FeedbackListResponse(
-            feedback_items=paginated_items,
+            feedback_items=feedback_items,
             total_count=total_count,
             page=filters.page,
             page_size=filters.page_size,

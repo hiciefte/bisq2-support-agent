@@ -10,6 +10,7 @@ especially for queries with specific technical terms or exact matches.
 """
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,13 @@ from qdrant_client.http import models as rest
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PreparedQuery:
+    dense_vector: Optional[List[float]] = None
+    sparse_indices: Optional[List[int]] = None
+    sparse_values: Optional[List[float]] = None
 
 
 class QdrantHybridRetriever(HybridRetrieverProtocol):
@@ -193,6 +201,24 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         """
         return self._embeddings.embed_query(query)
 
+    def _prepare_query(
+        self,
+        query: str,
+        *,
+        dense: bool,
+        sparse: bool,
+    ) -> _PreparedQuery:
+        dense_vector = self._get_query_embedding(query) if dense else None
+        sparse_indices: Optional[List[int]] = None
+        sparse_values: Optional[List[float]] = None
+        if sparse:
+            sparse_indices, sparse_values = self._bm25_tokenizer.tokenize_query(query)
+        return _PreparedQuery(
+            dense_vector=dense_vector,
+            sparse_indices=sparse_indices,
+            sparse_values=sparse_values,
+        )
+
     def _build_filter(
         self, filter_dict: Optional[Dict[str, Any]] = None
     ) -> Optional[rest.Filter]:
@@ -364,10 +390,10 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         """
         try:
             qdrant_filter = self._build_filter(filter_dict)
-            query_vector = self._get_query_embedding(query)
+            prepared_query = self._prepare_query(query, dense=True, sparse=False)
             results = self._query_points(
                 using="dense",
-                query=query_vector,
+                query=prepared_query.dense_vector,
                 limit=k,
                 query_filter=qdrant_filter,
                 with_payload=True,
@@ -409,10 +435,10 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
 
             # Pure semantic search (no BM25)
             if keyword_weight == 0:
-                query_vector = self._get_query_embedding(query)
+                prepared_query = self._prepare_query(query, dense=True, sparse=False)
                 results = self._query_points(
                     using="dense",
-                    query=query_vector,
+                    query=prepared_query.dense_vector,
                     limit=k,
                     query_filter=qdrant_filter,
                     with_payload=True,
@@ -421,12 +447,12 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
 
             # Pure keyword/BM25 search (no semantic)
             if semantic_weight == 0:
-                sparse_indices = self._tokenize_query(query)
-                sparse_values = self._get_bm25_weights(query)
+                prepared_query = self._prepare_query(query, dense=False, sparse=True)
                 results = self._query_points(
                     using="sparse",
                     query=rest.SparseVector(
-                        indices=sparse_indices, values=sparse_values
+                        indices=prepared_query.sparse_indices or [],
+                        values=prepared_query.sparse_values or [],
                     ),
                     limit=k,
                     query_filter=qdrant_filter,
@@ -435,8 +461,9 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
                 return self._results_to_documents(results)
 
             # True weighted hybrid search
+            prepared_query = self._prepare_query(query, dense=True, sparse=True)
             return self._weighted_hybrid_search(
-                query=query,
+                prepared_query=prepared_query,
                 k=k,
                 semantic_weight=semantic_weight,
                 keyword_weight=keyword_weight,
@@ -449,7 +476,7 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
 
     def _weighted_hybrid_search(
         self,
-        query: str,
+        prepared_query: _PreparedQuery,
         k: int,
         semantic_weight: float,
         keyword_weight: float,
@@ -473,15 +500,10 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         # Fetch more candidates than needed for better coverage
         fetch_limit = k * 3
 
-        # Get query vectors
-        query_vector = self._get_query_embedding(query)
-        sparse_indices = self._tokenize_query(query)
-        sparse_values = self._get_bm25_weights(query)
-
         # Run dense search
         dense_results = self._query_points(
             using="dense",
-            query=query_vector,
+            query=prepared_query.dense_vector,
             limit=fetch_limit,
             query_filter=qdrant_filter,
             with_payload=True,
@@ -490,7 +512,10 @@ class QdrantHybridRetriever(HybridRetrieverProtocol):
         # Run sparse search
         sparse_results = self._query_points(
             using="sparse",
-            query=rest.SparseVector(indices=sparse_indices, values=sparse_values),
+            query=rest.SparseVector(
+                indices=prepared_query.sparse_indices or [],
+                values=prepared_query.sparse_values or [],
+            ),
             limit=fetch_limit,
             query_filter=qdrant_filter,
             with_payload=True,
