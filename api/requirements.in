@@ -21,6 +21,10 @@ qdrant-client>=1.12.0
 # RAGAS evaluation framework
 ragas>=0.1.21
 datasets>=2.21.0
+# RAGAS 0.4.x imports langchain_community.chat_models.vertexai during metric
+# setup. langchain-community 0.4.2 removed that module and breaks the CI
+# quality gate before RAGAS can score the locked golden set.
+langchain-community<0.4.2
 
 # NLI and ML models (for confidence scoring via DeBERTa)
 # NOTE: torch is installed separately as pinned CPU-only in Dockerfile/CI

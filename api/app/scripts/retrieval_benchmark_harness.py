@@ -394,6 +394,10 @@ def _aggregate_runs(
 ) -> dict[str, Any]:
     metric_runs: dict[str, list[float]] = defaultdict(list)
     response_time_runs: list[float] = []
+    fallback_metrics_used = any(
+        bool((result.get("metrics") or {}).get("_fallback_metrics"))
+        for result in run_results
+    )
 
     # question -> metric -> values across repeats
     per_question_values: dict[str, dict[str, list[float]]] = defaultdict(
@@ -502,6 +506,7 @@ def _aggregate_runs(
         "samples_count": samples_count,
         "repeats": len(run_results),
         "run_outputs": run_output_paths,
+        "fallback_metrics_used": fallback_metrics_used,
         "metrics": metrics_summary,
         "avg_response_time": {
             "mean": _safe_mean(response_time_runs),
@@ -654,6 +659,12 @@ def gate_benchmark_summary(args: argparse.Namespace) -> int:
     with open(args.summary) as f:
         summary = json.load(f)
 
+    failures: list[str] = []
+    if summary.get("fallback_metrics_used"):
+        failures.append(
+            "ragas: fallback metrics were used; install/fix RAGAS before gating"
+        )
+
     gates = {
         "context_recall": (
             ("recall_at_k", "retrieval_recall_at_k", "context_recall"),
@@ -669,7 +680,6 @@ def gate_benchmark_summary(args: argparse.Namespace) -> int:
             args.min_answer_relevancy,
         ),
     }
-    failures: list[str] = []
     observed: dict[str, dict[str, float | str]] = {}
 
     for gate_name, (metric_names, floor) in gates.items():
