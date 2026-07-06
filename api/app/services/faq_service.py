@@ -174,6 +174,10 @@ class FAQService:
         """Get all FAQs with their stable IDs."""
         return self.repository.get_all_faqs()
 
+    def get_faq_source_counts(self) -> Dict[str, int]:
+        """Get FAQ counts grouped by source without loading every FAQ."""
+        return self.repository.get_source_counts()
+
     def get_faq_by_id(self, faq_id: str) -> Optional[FAQIdentifiedItem]:
         """Get a single FAQ by its stable ID.
 

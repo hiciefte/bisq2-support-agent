@@ -7,6 +7,7 @@
   tokens must not trigger Bisq 1 vs Bisq 2 comparison handling.
 """
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -45,7 +46,7 @@ def _make_docs():
 
 def _llm_invocation_text(llm) -> str:
     """Concatenate everything the mocked LLM saw across invoke() calls."""
-    parts = []
+    parts: list[str] = []
     for call in llm.invoke.call_args_list:
         parts.extend(str(a) for a in call.args)
         parts.extend(str(v) for v in call.kwargs.values())
@@ -94,6 +95,24 @@ def service(test_settings):
 
 class TestChainUsesPreRetrievedDocs:
     """A2: no version-blind duplicate retrieval in the answer path."""
+
+    @pytest.mark.asyncio
+    async def test_query_offloads_retrieval_and_generation(self, service, monkeypatch):
+        """F8: sync retriever and LLM chain calls must not block the event loop."""
+        offloaded = []
+        retrieve_func = service.document_retriever.retrieve_with_scores
+        rag_chain_func = service.rag_chain
+
+        async def fake_to_thread(func, /, *args, **kwargs):
+            offloaded.append(func)
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+        await service.query("How does reputation work in Bisq 2?", chat_history=[])
+
+        assert any(func is retrieve_func for func in offloaded)
+        assert any(func is rag_chain_func for func in offloaded)
 
     @pytest.mark.asyncio
     async def test_retriever_called_once_and_chain_does_not_re_retrieve(self, service):

@@ -145,6 +145,33 @@ class TestQdrantHybridRetriever:
         # Score may be normalized from the weighted combination
         assert docs[0].score >= 0.0
 
+    def test_weighted_hybrid_prepares_query_once(
+        self, mock_settings, mock_qdrant_client, mock_embeddings
+    ):
+        """F14: dense embedding and BM25 tokenization are each done once."""
+        dense_result = MagicMock()
+        dense_result.id = "dense-doc"
+        dense_result.score = 0.9
+        dense_result.payload = {"content": "Dense hit"}
+        sparse_result = MagicMock()
+        sparse_result.id = "sparse-doc"
+        sparse_result.score = 0.8
+        sparse_result.payload = {"content": "Sparse hit"}
+        mock_qdrant_client.search.side_effect = [[dense_result], [sparse_result]]
+
+        tokenizer = MagicMock()
+        tokenizer.tokenize_query.return_value = ([1, 2], [0.4, 0.2])
+
+        retriever = QdrantHybridRetriever(
+            mock_settings,
+            bm25_tokenizer=tokenizer,
+        )
+
+        retriever.retrieve_with_scores("test query", k=5)
+
+        mock_embeddings.embed_query.assert_called_once_with("test query")
+        tokenizer.tokenize_query.assert_called_once_with("test query")
+
     def test_retrieve_handles_empty_results(
         self, mock_settings, mock_qdrant_client, mock_embeddings
     ):

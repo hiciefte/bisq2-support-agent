@@ -9,7 +9,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.db.database import get_database
 
@@ -297,86 +297,254 @@ class FeedbackRepository:
 
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            feedback_ids = [row["id"] for row in rows]
+            return self._hydrate_feedback_rows(cursor, rows)
 
-            # Batch-fetch metadata and issues for all feedback entries
-            metadata_map: Dict[int, Dict[str, Any]] = defaultdict(dict)
-            issues_map: Dict[int, List[str]] = defaultdict(list)
+    def get_feedback_page(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        rating: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        channel: Optional[str] = None,
+        feedback_method: Optional[str] = None,
+        issues: Optional[List[str]] = None,
+        source_types: Optional[List[str]] = None,
+        search_text: Optional[str] = None,
+        needs_faq: Optional[bool] = None,
+        processed: Optional[bool] = None,
+        sort_by: Optional[str] = "newest",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get one filtered feedback page and total count using SQL."""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-            if feedback_ids:
-                placeholders = ",".join("?" for _ in feedback_ids)
+            where_clauses: List[str] = []
+            params: List[Any] = []
 
-                # Fetch metadata
-                cursor.execute(
-                    f"""
-                    SELECT feedback_id, key, value
-                    FROM feedback_metadata
-                    WHERE feedback_id IN ({placeholders})
-                    """,
-                    feedback_ids,
+            if channel:
+                where_clauses.append("channel = ?")
+                params.append(channel)
+
+            if feedback_method:
+                where_clauses.append("feedback_method = ?")
+                params.append(feedback_method)
+
+            if rating == "positive":
+                where_clauses.append("rating = 1")
+            elif rating == "negative":
+                where_clauses.append("rating = 0")
+
+            if date_from:
+                where_clauses.append("timestamp >= ?")
+                params.append(date_from)
+
+            if date_to:
+                where_clauses.append("timestamp <= ?")
+                params.append(date_to)
+
+            if issues:
+                placeholders = ",".join("?" for _ in issues)
+                where_clauses.append(
+                    "EXISTS ("
+                    "SELECT 1 FROM feedback_issues fi "
+                    "WHERE fi.feedback_id = feedback.id "
+                    f"AND fi.issue_type IN ({placeholders})"
+                    ")"
                 )
-                for meta_row in cursor.fetchall():
-                    value = meta_row["value"]
-                    try:
-                        value = json.loads(value)
-                    except (TypeError, json.JSONDecodeError):
-                        pass
-                    metadata_map[meta_row["feedback_id"]][meta_row["key"]] = value
+                params.extend(issues)
 
-                # Fetch issues
-                cursor.execute(
-                    f"""
-                    SELECT feedback_id, issue_type
-                    FROM feedback_issues
-                    WHERE feedback_id IN ({placeholders})
-                    """,
-                    feedback_ids,
+            if source_types:
+                source_clauses: List[str] = []
+                for source_type in source_types:
+                    if source_type == "unknown":
+                        source_clauses.append(
+                            "("
+                            "(sources IS NULL OR sources = '[]') AND "
+                            "(sources_used IS NULL OR sources_used = '[]')"
+                            ")"
+                        )
+                        continue
+                    source_clauses.append(
+                        "("
+                        "sources LIKE ? OR sources LIKE ? OR "
+                        "sources_used LIKE ? OR sources_used LIKE ?"
+                        ")"
+                    )
+                    params.extend(
+                        [
+                            f'%"type": "{source_type}"%',
+                            f'%"type":"{source_type}"%',
+                            f'%"type": "{source_type}"%',
+                            f'%"type":"{source_type}"%',
+                        ]
+                    )
+                if source_clauses:
+                    where_clauses.append("(" + " OR ".join(source_clauses) + ")")
+
+            if search_text:
+                pattern = f"%{search_text.lower()}%"
+                where_clauses.append(
+                    "("
+                    "LOWER(question) LIKE ? OR "
+                    "LOWER(answer) LIKE ? OR "
+                    "LOWER(COALESCE(explanation, '')) LIKE ? OR "
+                    "EXISTS ("
+                    "SELECT 1 FROM feedback_metadata fm "
+                    "WHERE fm.feedback_id = feedback.id "
+                    "AND fm.key = 'explanation' "
+                    "AND LOWER(fm.value) LIKE ?"
+                    ")"
+                    ")"
                 )
-                for issue_row in cursor.fetchall():
-                    issues_map[issue_row["feedback_id"]].append(issue_row["issue_type"])
+                params.extend([pattern, pattern, pattern, pattern])
 
-            feedback_list = []
-            for row in rows:
-                feedback = dict(row)
-                feedback_id = feedback["id"]
-
-                # Get conversation history count (not full content for performance)
-                cursor.execute(
-                    "SELECT COUNT(*) as count FROM conversation_messages WHERE feedback_id = ?",
-                    (feedback_id,),
+            if needs_faq:
+                no_source_patterns = [
+                    "%i don't have%",
+                    "%no information%",
+                    "%not found in%",
+                    "%no source%",
+                    "%cannot find%",
+                    "%don't have enough information%",
+                    "%insufficient information%",
+                    "%no specific%",
+                    "%not available in the%",
+                ]
+                where_clauses.append(
+                    "("
+                    "rating = 0 AND ("
+                    "COALESCE(explanation, '') <> '' OR "
+                    "EXISTS ("
+                    "SELECT 1 FROM feedback_metadata fm "
+                    "WHERE fm.feedback_id = feedback.id "
+                    "AND fm.key = 'explanation' "
+                    "AND COALESCE(fm.value, '') <> ''"
+                    ") OR "
+                    + " OR ".join("LOWER(answer) LIKE ?" for _ in no_source_patterns)
+                    + ")"
+                    ")"
                 )
-                feedback["conversation_message_count"] = cursor.fetchone()["count"]
+                params.extend(no_source_patterns)
 
-                # Attach metadata and issues
-                metadata = metadata_map.get(feedback_id, {}).copy()
+            if processed is not None:
+                where_clauses.append("processed = ?")
+                params.append(1 if processed else 0)
 
-                # Add explanation from feedback table to metadata for FeedbackItem compatibility
-                # The FeedbackItem model expects explanation in metadata.explanation
-                if row["explanation"]:
-                    metadata["explanation"] = row["explanation"]
+            where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+            order_sql = {
+                "newest": "timestamp DESC",
+                "oldest": "timestamp ASC",
+                "rating_desc": "rating DESC",
+                "rating_asc": "rating ASC",
+            }.get(sort_by or "newest", "timestamp DESC")
 
-                if issues_map[feedback_id]:
-                    metadata["issues"] = issues_map[feedback_id]
+            count_params = list(params)
+            cursor.execute(
+                f"SELECT COUNT(*) AS count FROM feedback {where_sql}", params
+            )
+            count_row = cursor.fetchone()
+            total_count = int(count_row["count"] if count_row else 0)
 
-                if metadata:
-                    feedback["metadata"] = metadata
+            query = (
+                "SELECT id, message_id, question, answer, rating, explanation, "
+                "sources, sources_used, timestamp, processed, processed_at, faq_id, "
+                "channel, feedback_method, external_message_id, "
+                "reactor_identity_hash, reaction_emoji "
+                f"FROM feedback {where_sql} "
+                f"ORDER BY {order_sql} "
+                "LIMIT ? OFFSET ?"
+            )
+            page_params = count_params + [limit, offset]
+            cursor.execute(query, page_params)
+            rows = cursor.fetchall()
+            return self._hydrate_feedback_rows(cursor, rows), total_count
 
-                # Deserialize sources from JSON strings
-                if feedback.get("sources"):
-                    try:
-                        feedback["sources"] = json.loads(feedback["sources"])
-                    except (json.JSONDecodeError, TypeError):
-                        feedback["sources"] = None
+    def _hydrate_feedback_rows(
+        self, cursor: Any, rows: List[Any]
+    ) -> List[Dict[str, Any]]:
+        """Attach related metadata, issues, and counts to feedback rows."""
+        feedback_ids = [row["id"] for row in rows]
 
-                if feedback.get("sources_used"):
-                    try:
-                        feedback["sources_used"] = json.loads(feedback["sources_used"])
-                    except (json.JSONDecodeError, TypeError):
-                        feedback["sources_used"] = None
+        metadata_map: Dict[int, Dict[str, Any]] = defaultdict(dict)
+        issues_map: Dict[int, List[str]] = defaultdict(list)
+        message_count_map: Dict[int, int] = defaultdict(int)
 
-                feedback_list.append(feedback)
+        if feedback_ids:
+            placeholders = ",".join("?" for _ in feedback_ids)
 
-            return feedback_list
+            cursor.execute(
+                f"""
+                SELECT feedback_id, key, value
+                FROM feedback_metadata
+                WHERE feedback_id IN ({placeholders})
+                """,
+                feedback_ids,
+            )
+            for meta_row in cursor.fetchall():
+                value = meta_row["value"]
+                try:
+                    value = json.loads(value)
+                except (TypeError, json.JSONDecodeError):
+                    pass
+                metadata_map[meta_row["feedback_id"]][meta_row["key"]] = value
+
+            cursor.execute(
+                f"""
+                SELECT feedback_id, issue_type
+                FROM feedback_issues
+                WHERE feedback_id IN ({placeholders})
+                """,
+                feedback_ids,
+            )
+            for issue_row in cursor.fetchall():
+                issues_map[issue_row["feedback_id"]].append(issue_row["issue_type"])
+
+            cursor.execute(
+                f"""
+                SELECT feedback_id, COUNT(*) AS count
+                FROM conversation_messages
+                WHERE feedback_id IN ({placeholders})
+                GROUP BY feedback_id
+                """,
+                feedback_ids,
+            )
+            for count_row in cursor.fetchall():
+                message_count_map[count_row["feedback_id"]] = int(count_row["count"])
+
+        feedback_list = []
+        for row in rows:
+            feedback = dict(row)
+            feedback_id = feedback["id"]
+            feedback["conversation_message_count"] = message_count_map[feedback_id]
+
+            metadata = metadata_map.get(feedback_id, {}).copy()
+
+            if row["explanation"]:
+                metadata["explanation"] = row["explanation"]
+
+            if issues_map[feedback_id]:
+                metadata["issues"] = issues_map[feedback_id]
+
+            if metadata:
+                feedback["metadata"] = metadata
+
+            if feedback.get("sources"):
+                try:
+                    feedback["sources"] = json.loads(feedback["sources"])
+                except (json.JSONDecodeError, TypeError):
+                    feedback["sources"] = None
+
+            if feedback.get("sources_used"):
+                try:
+                    feedback["sources_used"] = json.loads(feedback["sources_used"])
+                except (json.JSONDecodeError, TypeError):
+                    feedback["sources_used"] = None
+
+            feedback_list.append(feedback)
+
+        return feedback_list
 
     def get_feedback_count(self, rating: Optional[int] = None) -> int:
         """

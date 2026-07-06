@@ -773,6 +773,20 @@ class FAQRepositorySQLite:
 
         return all_faqs
 
+    def get_source_counts(self) -> Dict[str, int]:
+        """Return FAQ counts grouped by source without materializing rows."""
+        with self._read_lock:
+            try:
+                cursor = self._reader_conn.execute("""
+                    SELECT COALESCE(source, 'Manual') AS source, COUNT(*) AS count
+                    FROM faqs
+                    GROUP BY COALESCE(source, 'Manual')
+                    """)
+                return {str(row["source"]): int(row["count"]) for row in cursor}
+            except sqlite3.Error as e:
+                logger.warning("Failed to get FAQ source counts: %s", e)
+                return {}
+
     def get_faq_by_id(self, faq_id: Union[int, str]) -> Optional[FAQIdentifiedItem]:
         """
         Get a single FAQ by its ID.

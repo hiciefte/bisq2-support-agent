@@ -12,8 +12,10 @@ and has async methods that require pytest-asyncio.
 """
 
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
+from app.models.feedback import FeedbackFilterRequest
 from app.services.feedback_service import FeedbackService
 
 
@@ -179,8 +181,6 @@ class TestFeedbackFiltering:
     @pytest.mark.asyncio
     async def test_filter_by_rating(self, test_settings):
         """Test filtering feedback by rating."""
-        from app.models.feedback import FeedbackFilterRequest
-
         service = FeedbackService(settings=test_settings)
 
         # Add positive and negative feedback with unique IDs
@@ -217,6 +217,64 @@ class TestFeedbackFiltering:
 
         # All should be negative
         assert all(fb.is_negative for fb in negative_response.feedback_items)
+
+    @pytest.mark.asyncio
+    async def test_get_feedback_with_filters_uses_sql_page(
+        self, test_settings, monkeypatch
+    ):
+        """F15: admin list filtering should not load and parse the full corpus."""
+        service = FeedbackService(settings=test_settings)
+        marker = f"phase4-{uuid.uuid4()}"
+        matching_id = f"{marker}-matching"
+
+        await service.store_feedback(
+            {
+                "message_id": matching_id,
+                "question": f"{marker} unique question",
+                "answer": "I don't have enough information in the sources.",
+                "rating": 0,
+                "explanation": "Needs a new FAQ",
+                "metadata": {"issues": ["missing_information"]},
+                "sources": [{"type": "wiki", "title": "Source"}],
+                "channel": marker,
+                "feedback_method": "reaction",
+            }
+        )
+        await service.store_feedback(
+            {
+                "message_id": f"{marker}-other",
+                "question": f"{marker} other question",
+                "answer": "Helpful answer",
+                "rating": 1,
+                "metadata": {"issues": ["positive_feedback"]},
+                "sources": [{"type": "faq", "title": "Other"}],
+                "channel": marker,
+                "feedback_method": "reaction",
+            }
+        )
+
+        load_feedback = MagicMock(
+            side_effect=AssertionError("full feedback corpus must not be loaded")
+        )
+        monkeypatch.setattr(service, "load_feedback", load_feedback)
+
+        response = service.get_feedback_with_filters(
+            FeedbackFilterRequest(
+                channel=marker,
+                feedback_method="reaction",
+                rating="negative",
+                issues=["missing_information"],
+                source_types=["wiki"],
+                search_text=marker,
+                needs_faq=True,
+                page=1,
+                page_size=10,
+            )
+        )
+
+        assert response.total_count == 1
+        assert [item.message_id for item in response.feedback_items] == [matching_id]
+        load_feedback.assert_not_called()
 
 
 class TestFeedbackIssueDetection:
