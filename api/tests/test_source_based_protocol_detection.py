@@ -439,6 +439,23 @@ class TestExpandedEntityKeywords:
         assert result == "multisig_v1"
         assert confidence >= 0.7
 
+    def test_data_directory_is_version_neutral_for_bisq2_source(self, detector):
+        result, confidence = detector.detect_protocol_with_source_default(
+            "Where is my data directory?",
+            source="bisq2",
+            return_confidence=True,
+        )
+        assert result == "bisq_easy"
+        assert confidence < 0.9
+
+    def test_data_directory_without_source_does_not_force_bisq1(self, detector):
+        result, confidence = detector.detect_protocol_with_source_default(
+            "Where is my data dir?",
+            return_confidence=True,
+        )
+        assert result is None
+        assert confidence == 0.0
+
     def test_v2_strong_confidence(self, detector):
         result, confidence = detector.detect_protocol_with_source_default(
             "bisq easy reputation system", source="wiki", return_confidence=True

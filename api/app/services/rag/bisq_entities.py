@@ -17,8 +17,6 @@ BISQ1_ENTITY_MAP: dict[str, str] = {
     "version 1": "Bisq 1",
     # Technical terms (Bisq 1 only)
     "spv resync": "SPV resync (Bisq 1)",
-    "data directory": "Bisq 1 data directory",
-    "data dir": "Bisq 1 data directory",
     "signed account": "signed account (Bisq 1)",
     "account signing": "account signing (Bisq 1)",
     "account age witness": "account age witness (Bisq 1)",
