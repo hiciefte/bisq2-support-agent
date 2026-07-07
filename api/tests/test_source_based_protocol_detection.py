@@ -451,7 +451,6 @@ class TestExpandedEntityKeywords:
     def test_data_directory_without_source_does_not_force_bisq1(self, detector):
         result, confidence = detector.detect_protocol_with_source_default(
             "Where is my data dir?",
-            source="wiki",
             return_confidence=True,
         )
         assert result is None
