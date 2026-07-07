@@ -143,8 +143,6 @@ See [Code Evidence Schema](code-evidence-schema.md).
 
 | Setting | Value / Default | Notes |
 |---|---|---|
-| `RETRIEVER_BACKEND` | app default: `qdrant` | Qdrant-only backend |
-| `RETRIEVER_BACKEND` in Docker Compose | default: `qdrant` | Effective runtime default in local/prod compose runs |
 | `HYBRID_SEMANTIC_WEIGHT` | `0.6` | Dense score contribution |
 | `HYBRID_KEYWORD_WEIGHT` | `0.4` | Sparse/BM25 score contribution |
 | `ENABLE_QUERY_REWRITE` | `True` | Pre-retrieval query rewriting |

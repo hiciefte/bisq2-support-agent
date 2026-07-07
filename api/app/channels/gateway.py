@@ -396,6 +396,12 @@ class ChannelGateway:
         self._post_hooks.sort(key=lambda h: h.priority)
         logger.info(f"Registered post-hook '{hook.name}' with priority {hook.priority}")
 
+    def set_channel_registry(self, registry: Any) -> None:
+        """Inject the active channel registry into registry-aware hooks."""
+        for hook in [*self._pre_hooks, *self._post_hooks]:
+            if hasattr(hook, "channel_registry"):
+                hook.channel_registry = registry
+
     def get_hook_info(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get information about registered hooks.
 

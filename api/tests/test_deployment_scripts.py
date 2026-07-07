@@ -91,25 +91,10 @@ def test_source_env_file_exports_variables_to_child_process(tmp_path: Path) -> N
     assert result.returncode == 0, result.stderr
 
 
-def test_validate_runtime_configuration_rejects_invalid_retriever_backend() -> None:
-    result = run_bash(
-        f"""
-        source "{COMMON_SH}"
-        export RETRIEVER_BACKEND=hybrid
-        validate_runtime_configuration
-        """,
-        cwd=REPO_ROOT,
-    )
-
-    assert result.returncode != 0
-    assert "Unsupported RETRIEVER_BACKEND='hybrid'" in result.stdout
-
-
 def test_validate_runtime_configuration_requires_trust_monitor_secret() -> None:
     result = run_bash(
         f"""
         source "{COMMON_SH}"
-        export RETRIEVER_BACKEND=qdrant
         export TRUST_MONITOR_ENABLED=true
         unset TRUST_MONITOR_ACTOR_KEY_SECRET
         validate_runtime_configuration
@@ -246,7 +231,6 @@ def test_restart_service_with_deps_starts_qdrant_for_api(tmp_path: Path) -> None
         f"""
         export PATH="{fakebin}:$PATH"
         source "{DOCKER_UTILS_SH}"
-        export RETRIEVER_BACKEND=qdrant
         restart_service_with_deps api "{tmp_path}" "docker-compose.yml"
         """,
         cwd=REPO_ROOT,
@@ -301,7 +285,6 @@ def test_refresh_runtime_services_includes_qdrant(tmp_path: Path) -> None:
         f"""
         export PATH="{fakebin}:$PATH"
         source "{DOCKER_UTILS_SH}"
-        export RETRIEVER_BACKEND=qdrant
         refresh_runtime_services "{tmp_path}" "docker-compose.yml"
         """,
         cwd=REPO_ROOT,

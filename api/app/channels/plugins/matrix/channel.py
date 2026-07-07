@@ -14,7 +14,9 @@ from app.channels.models import (
     ChannelCapability,
     ChannelType,
     OutgoingMessage,
+    ResponseMetadata,
     SendResult,
+    UserContext,
 )
 from app.channels.plugins.matrix.room_filter import (
     normalize_room_ids,
@@ -323,6 +325,8 @@ class MatrixChannel(ChannelBase):
                 self._logger.info("Matrix trust monitor handler started")
             except Exception as e:
                 self._logger.warning(f"Failed to start trust monitor handler: {e}")
+        await self._wire_trust_monitor_alerts()
+        await self._start_proactive_scanner()
 
         # Wire reaction handler if registered
         reaction_handler = self.runtime.resolve_optional("matrix_reaction_handler")
@@ -357,6 +361,13 @@ class MatrixChannel(ChannelBase):
         Disconnects from homeserver gracefully via ConnectionManager.
         """
         self._logger.info("Stopping Matrix channel")
+
+        proactive_scanner = self.runtime.resolve_optional("proactive_scanner")
+        if proactive_scanner is not None:
+            try:
+                await proactive_scanner.stop()
+            except Exception as e:
+                self._logger.warning(f"Failed to stop proactive scanner: {e}")
 
         # Get ConnectionManager from runtime
         conn_manager = self.runtime.resolve_optional("matrix_connection_manager")
@@ -393,6 +404,113 @@ class MatrixChannel(ChannelBase):
 
         self._is_connected = False
         self._logger.info("Matrix channel stopped")
+
+    async def _wire_trust_monitor_alerts(self) -> None:
+        """Send trust-monitor publisher alerts through the Matrix channel."""
+        trust_monitor_service = self.runtime.resolve_optional("trust_monitor_service")
+        if trust_monitor_service is None:
+            return
+        publisher = getattr(trust_monitor_service, "publisher", None)
+        if publisher is None or not hasattr(publisher, "matrix_notifier"):
+            return
+
+        settings = getattr(self.runtime, "settings", None)
+        policy_service = self.runtime.resolve_optional("trust_monitor_policy_service")
+
+        async def _notify_staff_room(finding: Any) -> None:
+            from app.channels.trust_monitor.alert_formatting import (
+                format_trust_alert_for_matrix,
+            )
+
+            policy_target = ""
+            if policy_service is not None:
+                policy_target = str(
+                    getattr(
+                        policy_service.get_policy(),
+                        "matrix_staff_room_id",
+                        "",
+                    )
+                    or ""
+                ).strip()
+            target = (
+                policy_target
+                or str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
+            )
+            if not target:
+                return
+            message = OutgoingMessage(
+                message_id=f"trust-{finding.id}",
+                in_reply_to="",
+                channel=ChannelType.MATRIX,
+                answer=format_trust_alert_for_matrix(finding),
+                user=UserContext(
+                    user_id="trust-monitor",
+                    session_id=None,
+                    channel_user_id="trust-monitor",
+                    auth_token=None,
+                ),
+                metadata=ResponseMetadata(
+                    processing_time_ms=0.0,
+                    rag_strategy="trust_monitor",
+                    model_name="trust-monitor",
+                    confidence_score=None,
+                    version_confidence=None,
+                ),
+            )
+            await self.send_message(target, message)
+
+        publisher.matrix_notifier = _notify_staff_room
+
+    async def _start_proactive_scanner(self) -> None:
+        """Start Matrix-specific proactive trust-monitor scans."""
+        trust_monitor_service = self.runtime.resolve_optional("trust_monitor_service")
+        matrix_client = self.runtime.resolve_optional("matrix_client")
+        settings = getattr(self.runtime, "settings", None)
+        if (
+            trust_monitor_service is None
+            or matrix_client is None
+            or settings is None
+            or not getattr(matrix_client, "access_token", None)
+        ):
+            self._logger.info(
+                "Proactive scanner not started (Matrix client unavailable)"
+            )
+            return
+
+        if self.runtime.resolve_optional("proactive_scanner") is not None:
+            return
+
+        from app.channels.trust_monitor.proactive_persistence import (
+            persist_proactive_finding,
+        )
+        from app.channels.trust_monitor.proactive_scanner import (
+            ProactiveImpersonationScanner,
+        )
+
+        sync_rooms = resolve_allowed_sync_rooms(settings)
+
+        def _handle_proactive_finding(result: Any) -> None:
+            persist_proactive_finding(
+                trust_monitor_service=trust_monitor_service,
+                sync_rooms=sync_rooms,
+                result=result,
+                logger=self._logger,
+            )
+
+        scanner = ProactiveImpersonationScanner(
+            homeserver_url=settings.MATRIX_HOMESERVER_URL,
+            access_token=matrix_client.access_token,
+            staff_resolver=trust_monitor_service.staff_resolver,
+            trusted_staff_ids=set(
+                collect_trusted_staff_ids(settings, channel_id="matrix")
+            ),
+            monitored_room_ids=set(sync_rooms),
+            matrix_client=matrix_client,
+            on_finding=_handle_proactive_finding,
+        )
+        await scanner.start()
+        self.runtime.register("proactive_scanner", scanner, allow_override=True)
+        self._logger.info("Proactive impersonation scanner started")
 
     async def send_message(self, target: str, message: OutgoingMessage) -> SendResult:
         """Send response to Matrix room.

@@ -53,6 +53,20 @@ def test_gate_fails_when_answer_quality_regresses(tmp_path):
     assert gate_benchmark_summary(args) == 1
 
 
+def test_gate_fails_when_answer_relevancy_regresses(tmp_path):
+    summary_path = _write_summary(
+        tmp_path,
+        {
+            "context_recall": {"mean": 0.50},
+            "mrr": {"mean": 0.70},
+            "faithfulness": {"mean": 0.62},
+            "answer_relevancy": {"mean": 0.30},
+        },
+    )
+
+    assert gate_benchmark_summary(_gate_args(summary_path)) == 1
+
+
 def test_gate_fails_when_ragas_falls_back_to_simple_metrics(tmp_path):
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(

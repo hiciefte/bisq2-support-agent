@@ -50,12 +50,12 @@ class TestGatewayDependency:
 
 
 class TestChannelLifecycle:
-    """Test channel lifecycle context manager."""
+    """Test channel gateway factory."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_lifecycle_initializes_gateway(self):
-        """channel_lifespan initializes gateway on app.state."""
+        """create_channel_gateway initializes a gateway."""
         from app.channels.lifecycle import create_channel_gateway
 
         mock_rag_service = MagicMock()
@@ -67,7 +67,7 @@ class TestChannelLifecycle:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_lifecycle_registers_default_hooks(self):
-        """channel_lifespan registers default middleware hooks."""
+        """create_channel_gateway registers default middleware hooks."""
         from app.channels.lifecycle import create_channel_gateway
 
         mock_rag_service = MagicMock()

@@ -290,7 +290,7 @@ class ProtocolDetector:
             return "multisig_v1"
         return None
 
-    def _protocol_to_version(self, protocol: Optional[str]) -> Optional[str]:
+    def protocol_to_version(self, protocol: Optional[str]) -> Optional[str]:
         """Convert protocol enum to version string.
 
         Args:

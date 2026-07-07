@@ -36,7 +36,6 @@ _EXPORT_MAP = {
     ),
     "DocumentProcessor": ("app.services.rag.document_processor", "DocumentProcessor"),
     "DocumentRetriever": ("app.services.rag.document_retriever", "DocumentRetriever"),
-    "EvaluationResult": ("app.services.rag.evaluation", "EvaluationResult"),
     "HybridRetrieverProtocol": (
         "app.services.rag.interfaces",
         "HybridRetrieverProtocol",
@@ -53,7 +52,6 @@ _EXPORT_MAP = {
     "NLIValidator": ("app.services.rag.nli_validator", "NLIValidator"),
     "PromptManager": ("app.services.rag.prompt_manager", "PromptManager"),
     "ProtocolDetector": ("app.services.rag.protocol_detector", "ProtocolDetector"),
-    "RAGEvaluator": ("app.services.rag.evaluation", "RAGEvaluator"),
     "RerankerProtocol": ("app.services.rag.interfaces", "RerankerProtocol"),
     "ResilientRetrieverProtocol": (
         "app.services.rag.interfaces",

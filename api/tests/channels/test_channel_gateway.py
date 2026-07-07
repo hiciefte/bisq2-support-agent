@@ -215,6 +215,31 @@ class TestChannelGatewayHooks:
     """Test hook system."""
 
     @pytest.mark.unit
+    def test_set_channel_registry_updates_registry_aware_hooks(self, mock_rag_service):
+        """Gateway can inject the active registry without private hook access."""
+        from app.channels.gateway import ChannelGateway
+        from app.channels.hooks import BasePostProcessingHook
+
+        class RegistryAwareHook(BasePostProcessingHook):
+            def __init__(self) -> None:
+                super().__init__(name="registry_aware")
+                self.channel_registry = None
+
+            async def execute(
+                self, incoming: IncomingMessage, outgoing: OutgoingMessage
+            ) -> Optional[GatewayError]:
+                return None
+
+        registry = object()
+        hook = RegistryAwareHook()
+        gateway = ChannelGateway(rag_service=mock_rag_service)
+        gateway.register_post_hook(hook)
+
+        gateway.set_channel_registry(registry)
+
+        assert hook.channel_registry is registry
+
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_pre_hook_called_before_rag(
         self, sample_incoming_message, mock_rag_service, mock_pre_hook

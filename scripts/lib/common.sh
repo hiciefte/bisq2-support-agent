@@ -268,8 +268,7 @@ is_env_enabled() {
 }
 
 uses_qdrant_runtime() {
-    local backend="${RETRIEVER_BACKEND:-qdrant}"
-    [ "$backend" = "qdrant" ]
+    true
 }
 
 validate_runtime_configuration() {
@@ -292,18 +291,6 @@ validate_runtime_configuration() {
             eval "echo \"\${${var}:-${default}}\""
         fi
     }
-
-    local backend
-    backend=$(_env_val RETRIEVER_BACKEND qdrant)
-
-    case "$backend" in
-        qdrant)
-            ;;
-        *)
-            log_error "Unsupported RETRIEVER_BACKEND='$backend'. Supported values: qdrant"
-            return 1
-            ;;
-    esac
 
     if is_env_enabled "$(_env_val TRUST_MONITOR_ENABLED false)" && [ -z "$(_env_val TRUST_MONITOR_ACTOR_KEY_SECRET)" ]; then
         log_error "TRUST_MONITOR_ACTOR_KEY_SECRET is required when TRUST_MONITOR_ENABLED=true"

@@ -230,7 +230,6 @@ fi
 run_test "validate_runtime_configuration reads from env file"
 
 cat > "$TMPDIR/runtime_ok.env" <<'EOF'
-RETRIEVER_BACKEND=qdrant
 TRUST_MONITOR_ENABLED=true
 TRUST_MONITOR_ACTOR_KEY_SECRET=some-secret
 MATRIX_CHATOPS_ENABLED=true
@@ -266,7 +265,7 @@ fi
 run_test "validate_runtime_configuration backward compat (no file arg)"
 
 # Clear relevant env vars
-unset TRUST_MONITOR_ENABLED MATRIX_CHATOPS_ENABLED BISQ2_CHATOPS_ENABLED RETRIEVER_BACKEND 2>/dev/null || true
+unset TRUST_MONITOR_ENABLED MATRIX_CHATOPS_ENABLED BISQ2_CHATOPS_ENABLED 2>/dev/null || true
 
 output=$(validate_runtime_configuration 2>&1) && rc=$? || rc=$?
 if [ $rc -eq 0 ]; then

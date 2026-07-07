@@ -228,10 +228,6 @@ Use a dark deploy first, then enable operator-facing features in phases.
 * **`BISQ2_CHATOPS_CHANNEL_IDS`**
   * Description: Comma-separated Bisq2 channel IDs where ChatOps commands are accepted.
   * Required: Yes (when `BISQ2_CHATOPS_ENABLED=true`)
-*   **`RETRIEVER_BACKEND`**
-    *   Description: Retrieval backend selector. The application is Qdrant-only and expects `qdrant`.
-    *   Default in app settings: `qdrant`
-    *   Default in Docker Compose runtime: `qdrant`
 *   **`HYBRID_SEMANTIC_WEIGHT`**
     *   Description: Dense vector weight in hybrid retrieval.
     *   Default: `0.6`

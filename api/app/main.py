@@ -412,9 +412,7 @@ async def lifespan(app: FastAPI):
         )
     except Exception:
         logger.exception("Failed to wire channel response enricher")
-    for hook in getattr(channel_gateway, "_post_hooks", []):
-        if hasattr(hook, "channel_registry"):
-            hook.channel_registry = bootstrap_result.registry
+    channel_gateway.set_channel_registry(bootstrap_result.registry)
     if bootstrap_result.errors:
         for channel_id, error in bootstrap_result.errors:
             logger.exception("Failed to bootstrap channel '%s': %s", channel_id, error)
@@ -443,52 +441,6 @@ async def lifespan(app: FastAPI):
     app.state.staff_grounding_brief_service = bootstrap_result.runtime.resolve_optional(
         "staff_grounding_brief_service"
     )
-
-    trust_monitor_service = getattr(app.state, "trust_monitor_service", None)
-    if trust_monitor_service is not None:
-        publisher = getattr(trust_monitor_service, "publisher", None)
-        matrix_channel = bootstrap_result.registry.get("matrix")
-        if (
-            publisher is not None
-            and matrix_channel is not None
-            and hasattr(publisher, "matrix_notifier")
-        ):
-
-            async def _notify_staff_room(finding):
-                from app.channels.models import (
-                    ChannelType,
-                    OutgoingMessage,
-                    ResponseMetadata,
-                    UserContext,
-                )
-                from app.channels.trust_monitor.alert_formatting import (
-                    format_trust_alert_for_matrix,
-                )
-
-                target = app.state.trust_monitor_policy_service.get_policy().matrix_staff_room_id or getattr(
-                    settings, "MATRIX_STAFF_ROOM", ""
-                )
-                if not target:
-                    return
-                message = OutgoingMessage(
-                    message_id=f"trust-{finding.id}",
-                    in_reply_to="",  # empty disables m.in_reply_to (no event to reply to)
-                    channel=ChannelType.MATRIX,
-                    answer=format_trust_alert_for_matrix(finding),
-                    user=UserContext(
-                        user_id="trust-monitor",
-                        session_id=None,
-                        channel_user_id="trust-monitor",
-                    ),
-                    metadata=ResponseMetadata(
-                        processing_time_ms=0.0,
-                        rag_strategy="trust_monitor",
-                        model_name="trust-monitor",
-                    ),
-                )
-                await matrix_channel.send_message(target, message)
-
-            publisher.matrix_notifier = _notify_staff_room
 
     # Wire escalation response delivery directly to active channel registry.
     escalation_service = getattr(app.state, "escalation_service", None)
@@ -528,57 +480,9 @@ async def lifespan(app: FastAPI):
     # Backward-compatible app.state aliases consumed by existing routes/tests.
     app.state.bisq2_live_chat_service = app.state.channel_polling_services.get("bisq2")
     app.state.matrix_channel = bootstrap_result.registry.get("matrix")
-
-    # Start proactive impersonation scanner (user directory + public room scans)
-    app.state.proactive_scanner = None
-    trust_monitor_service = getattr(app.state, "trust_monitor_service", None)
-    matrix_channel = bootstrap_result.registry.get("matrix")
-    if trust_monitor_service is not None and matrix_channel is not None:
-        matrix_runtime = getattr(matrix_channel, "runtime", None)
-        matrix_client = (
-            matrix_runtime.resolve_optional("matrix_client")
-            if matrix_runtime is not None
-            else None
-        )
-        if matrix_client is not None and getattr(matrix_client, "access_token", None):
-            from app.channels.plugins.matrix.room_filter import (
-                resolve_allowed_sync_rooms,
-            )
-            from app.channels.trust_monitor.proactive_scanner import (
-                ProactiveImpersonationScanner,
-            )
-
-            sync_rooms = resolve_allowed_sync_rooms(settings)
-
-            from app.channels.trust_monitor.proactive_persistence import (
-                persist_proactive_finding,
-            )
-
-            def _handle_proactive_finding(result):
-                """Persist finding via trust monitor store and publish alert."""
-                persist_proactive_finding(
-                    trust_monitor_service=trust_monitor_service,
-                    sync_rooms=sync_rooms,
-                    result=result,
-                    logger=logger,
-                )
-
-            scanner = ProactiveImpersonationScanner(
-                homeserver_url=settings.MATRIX_HOMESERVER_URL,
-                access_token=matrix_client.access_token,
-                staff_resolver=trust_monitor_service.staff_resolver,
-                trusted_staff_ids=set(
-                    collect_trusted_staff_ids(settings, channel_id="matrix")
-                ),
-                monitored_room_ids=set(sync_rooms),
-                matrix_client=matrix_client,
-                on_finding=_handle_proactive_finding,
-            )
-            await scanner.start()
-            app.state.proactive_scanner = scanner
-            logger.info("Proactive impersonation scanner started")
-        else:
-            logger.info("Proactive scanner not started (Matrix client not connected)")
+    app.state.proactive_scanner = bootstrap_result.runtime.resolve_optional(
+        "proactive_scanner"
+    )
 
     # Initialize Tor metrics
     logger.info("Initializing Tor metrics...")
@@ -669,11 +573,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             # P5: Log error but don't crash shutdown
             logger.error(f"Failed to save LearningEngine state during shutdown: {e}")
-
-    # Stop proactive impersonation scanner
-    scanner = getattr(app.state, "proactive_scanner", None)
-    if scanner is not None:
-        await scanner.stop()
 
     # Stop Tor monitoring service
     if hasattr(app.state, "tor_monitoring_service"):
