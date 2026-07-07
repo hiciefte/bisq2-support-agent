@@ -175,6 +175,26 @@ class TestAISuiteLLMWrapperContract:
             output_cost_per_token=0.002,
         )
 
+    def test_usage_to_dict_tolerates_partial_usage_fields(self):
+        """Usage accounting should tolerate partial provider usage payloads."""
+        from app.services.rag.llm_provider import _usage_to_dict
+
+        assert _usage_to_dict({"prompt_tokens": None, "completion_tokens": 3}) == {
+            "prompt_tokens": 0,
+            "completion_tokens": 3,
+            "total_tokens": 3,
+        }
+        usage = SimpleNamespace(
+            prompt_tokens=None,
+            completion_tokens=4,
+            total_tokens=None,
+        )
+        assert _usage_to_dict(usage) == {
+            "prompt_tokens": 0,
+            "completion_tokens": 4,
+            "total_tokens": 4,
+        }
+
     def test_invoke_with_tools_returns_tool_call_result(
         self, mock_ai_client, mock_response
     ):

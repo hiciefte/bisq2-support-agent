@@ -281,25 +281,26 @@ def _needs_live_data(query: str) -> bool:
 def _usage_to_dict(usage: Any) -> dict[str, int] | None:
     if usage is None:
         return None
-    prompt_tokens = (
-        usage.get("prompt_tokens", 0)
-        if isinstance(usage, dict)
-        else getattr(usage, "prompt_tokens", 0)
-    )
-    completion_tokens = (
-        usage.get("completion_tokens", 0)
-        if isinstance(usage, dict)
-        else getattr(usage, "completion_tokens", 0)
-    )
-    total_tokens = (
-        usage.get("total_tokens", prompt_tokens + completion_tokens)
-        if isinstance(usage, dict)
-        else getattr(usage, "total_tokens", prompt_tokens + completion_tokens)
+
+    def usage_value(key: str) -> Any:
+        return usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+
+    def token_count(value: Any, default: int = 0) -> int:
+        try:
+            return int(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    prompt_tokens = token_count(usage_value("prompt_tokens"))
+    completion_tokens = token_count(usage_value("completion_tokens"))
+    total_tokens = token_count(
+        usage_value("total_tokens"),
+        default=prompt_tokens + completion_tokens,
     )
     usage_dict = {
-        "prompt_tokens": int(prompt_tokens or 0),
-        "completion_tokens": int(completion_tokens or 0),
-        "total_tokens": int(total_tokens or 0),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
     }
     if usage_dict["total_tokens"] <= 0:
         return None

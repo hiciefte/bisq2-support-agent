@@ -46,6 +46,13 @@ QUERY_ERRORS = Counter(
 )
 
 
+def _record_query_metrics(start_time: float) -> None:
+    total_time = time.time() - start_time
+    QUERY_TOTAL.inc()
+    QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
+    CURRENT_RESPONSE_TIME.set(total_time)
+
+
 class ChatMessageRequest(BaseModel):
     role: str
     content: str
@@ -374,11 +381,7 @@ async def query(
             status_code=500, content={"detail": "Internal server error"}
         )
     finally:
-        # Record metrics to Prometheus - always executed regardless of success/failure
-        total_time = time.time() - start_time
-        QUERY_TOTAL.inc()
-        QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
-        CURRENT_RESPONSE_TIME.set(total_time)
+        _record_query_metrics(start_time)
 
 
 @router.api_route("/query/stream", methods=["POST"])
@@ -393,6 +396,7 @@ async def query_stream(
     if gateway is None:
         logger.error("Channel gateway not initialized")
         QUERY_ERRORS.labels(error_type="service_unavailable").inc()
+        _record_query_metrics(start_time)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Channel gateway not initialized",
@@ -404,6 +408,7 @@ async def query_stream(
         query_request = QueryRequest.model_validate(data)
     except Exception as e:
         QUERY_ERRORS.labels(error_type="validation").inc()
+        _record_query_metrics(start_time)
         raise ValidationError(detail=str(e)) from e
 
     bypass_hooks: list[str] = []
@@ -536,10 +541,7 @@ async def query_stream(
             QUERY_ERRORS.labels(error_type="internal_error").inc()
             yield _format_sse_event("error", {"detail": "Internal server error"})
         finally:
-            total_time = time.time() - start_time
-            QUERY_TOTAL.inc()
-            QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
-            CURRENT_RESPONSE_TIME.set(total_time)
+            _record_query_metrics(start_time)
 
     return StreamingResponse(
         event_stream(),

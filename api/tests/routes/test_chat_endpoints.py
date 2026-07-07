@@ -148,6 +148,24 @@ def _parse_sse_events(body: str):
     return events
 
 
+def _install_metric_spies(monkeypatch):
+    from app.routes import chat as chat_routes
+
+    query_total = MagicMock()
+    histogram = MagicMock()
+    gauge = MagicMock()
+    error_counter = MagicMock()
+    error_labels = MagicMock()
+    error_counter.labels.return_value = error_labels
+
+    monkeypatch.setattr(chat_routes, "QUERY_TOTAL", query_total)
+    monkeypatch.setattr(chat_routes, "QUERY_RESPONSE_TIME_HISTOGRAM", histogram)
+    monkeypatch.setattr(chat_routes, "CURRENT_RESPONSE_TIME", gauge)
+    monkeypatch.setattr(chat_routes, "QUERY_ERRORS", error_counter)
+
+    return query_total, histogram, gauge, error_counter, error_labels
+
+
 class TestChatStreamEndpoint:
     """Tests for /chat/query/stream SSE responses."""
 
@@ -186,3 +204,55 @@ class TestChatStreamEndpoint:
         assert final_data["answer"] == "Test answer about Bisq."
         assert final_data["user_language"] == "de"
         assert final_data["ui_labels"]["staff_response_label"]
+
+    def test_stream_missing_gateway_records_query_metrics(
+        self, test_client, monkeypatch
+    ):
+        """Pre-stream service errors should still increment query metrics."""
+        (
+            query_total,
+            histogram,
+            gauge,
+            error_counter,
+            error_labels,
+        ) = _install_metric_spies(monkeypatch)
+        monkeypatch.setattr(
+            test_client.app.state,
+            "channel_gateway",
+            None,
+            raising=False,
+        )
+
+        response = test_client.post(
+            "/chat/query/stream",
+            json={"question": "How do I use Bisq?"},
+        )
+
+        assert response.status_code == 503
+        query_total.inc.assert_called_once()
+        histogram.observe.assert_called_once()
+        gauge.set.assert_called_once()
+        error_counter.labels.assert_called_once_with(error_type="service_unavailable")
+        error_labels.inc.assert_called_once()
+
+    def test_stream_validation_error_records_query_metrics(
+        self, test_client, monkeypatch
+    ):
+        """Pre-stream validation errors should still increment query metrics."""
+        (
+            query_total,
+            histogram,
+            gauge,
+            error_counter,
+            error_labels,
+        ) = _install_metric_spies(monkeypatch)
+        test_client.app.state.channel_gateway = MagicMock()
+
+        response = test_client.post("/chat/query/stream", json={})
+
+        assert response.status_code == 422
+        query_total.inc.assert_called_once()
+        histogram.observe.assert_called_once()
+        gauge.set.assert_called_once()
+        error_counter.labels.assert_called_once_with(error_type="validation")
+        error_labels.inc.assert_called_once()
