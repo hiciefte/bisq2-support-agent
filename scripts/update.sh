@@ -344,6 +344,9 @@ apply_updates() {
         if ! test_chat_endpoint; then
             rollback_update "Chat endpoint test failed"
         fi
+        if ! test_live_data_chat_endpoint; then
+            rollback_update "MCP live-data smoke test failed"
+        fi
 
         log_success "Full rebuild completed successfully!"
     else
@@ -388,6 +391,9 @@ apply_updates() {
             if ! test_chat_endpoint; then
                 rollback_update "Chat functionality test failed after API rebuild"
             fi
+            if ! test_live_data_chat_endpoint; then
+                rollback_update "MCP live-data smoke test failed after API rebuild"
+            fi
 
             log_success "API service rebuilt and verified successfully!"
         elif [ "$API_RESTART_NEEDED" = "true" ]; then
@@ -422,6 +428,9 @@ apply_updates() {
             # Test chat functionality after API restart
             if ! test_chat_endpoint; then
                 rollback_update "Chat functionality test failed after API restart"
+            fi
+            if ! test_live_data_chat_endpoint; then
+                rollback_update "MCP live-data smoke test failed after API restart"
             fi
 
             log_success "API service restarted and verified successfully!"
