@@ -479,11 +479,13 @@ test_live_data_chat_endpoint() {
     log_info "Testing MCP live-data chat endpoint..."
 
     local attempt=1
-    while [ $attempt -le $retries ]; do
+    while [ "$attempt" -le "$retries" ]; do
         local response
         local http_code
 
         response=$(curl -s -w "\n%{http_code}" -X POST \
+            --connect-timeout 10 \
+            --max-time 30 \
             -H "Content-Type: application/json" \
             -d "$payload" \
             "$url")
