@@ -218,6 +218,29 @@ class TestMatrixChannelLifecycle:
         assert channel.is_connected is False
 
     @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stop_unregisters_stopped_proactive_scanner(self):
+        """Stopped proactive scanner is removed so a restart can create a fresh one."""
+
+        proactive_scanner = MagicMock()
+        proactive_scanner.stop = AsyncMock()
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                proactive_scanner if name == "proactive_scanner" else None
+            )
+        )
+
+        channel = MatrixChannel(runtime)
+        channel._is_connected = True
+
+        await channel.stop()
+
+        proactive_scanner.stop.assert_awaited_once()
+        runtime.unregister.assert_called_once_with("proactive_scanner")
+        assert channel.is_connected is False
+
+    @pytest.mark.unit
     def test_health_check_returns_healthy_when_connected(self):
         """Health check returns healthy when connected."""
 

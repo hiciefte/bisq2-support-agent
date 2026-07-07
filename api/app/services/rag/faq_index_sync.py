@@ -23,17 +23,29 @@ class FAQIndexSyncManager:
         """Handle FAQ updates with incremental indexing or full rebuild."""
         if rebuild:
             logger.info("Immediate index rebuild requested by FAQ update")
-            task = asyncio.create_task(self.service.setup(force_rebuild=True))
-            self.service._background_tasks.add(task)
+            rebuild_coro = self.service.setup(force_rebuild=True)
+            try:
+                task = asyncio.create_task(rebuild_coro)
+            except RuntimeError:
+                rebuild_coro.close()
+                logger.warning(
+                    "No running event loop for FAQ-triggered rebuild "
+                    "(%s on %s); marking change for rebuild",
+                    operation,
+                    faq_id,
+                )
+                self.mark_change(operation, faq_id, metadata)
+            else:
+                self.service._background_tasks.add(task)
 
-            def _on_done(done_task: asyncio.Task[Any]) -> None:
-                self.service._background_tasks.discard(done_task)
-                try:
-                    done_task.result()
-                except Exception:
-                    logger.exception("FAQ-triggered rebuild task failed")
+                def _on_done(done_task: asyncio.Task[Any]) -> None:
+                    self.service._background_tasks.discard(done_task)
+                    try:
+                        done_task.result()
+                    except Exception:
+                        logger.exception("FAQ-triggered rebuild task failed")
 
-            task.add_done_callback(_on_done)
+                task.add_done_callback(_on_done)
             return
 
         if not self.can_apply_incremental_update(operation, faq_id):

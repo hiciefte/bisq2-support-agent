@@ -184,6 +184,11 @@ class ChannelRuntime:
         self._services[name] = ServiceEntry(factory=factory, singleton=singleton)
         logger.debug(f"Registered service factory '{name}' (singleton={singleton})")
 
+    def unregister(self, name: str) -> None:
+        """Remove a service registration if present."""
+        self._services.pop(name, None)
+        logger.debug(f"Unregistered service '{name}'")
+
     def resolve(self, name: str) -> Any:
         """Resolve a registered service.
 

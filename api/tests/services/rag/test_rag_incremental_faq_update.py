@@ -214,3 +214,13 @@ class TestIncrementalFAQUpdate:
 
         rag_service.setup.assert_awaited_once_with(force_rebuild=True)
         rag_service.index_manager.upsert_faq_documents.assert_not_called()
+
+    def test_force_rebuild_without_event_loop_marks_change(self, rag_service):
+        rag_service.setup = AsyncMock()
+
+        rag_service._handle_faq_update(True, "add", "faq-1", {"question": "How"})
+
+        rag_service.setup.assert_called_once_with(force_rebuild=True)
+        assert rag_service.setup.await_count == 0
+        assert rag_service._background_tasks == set()
+        assert rag_service.state_manager.needs_rebuild() is True

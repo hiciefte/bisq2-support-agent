@@ -368,6 +368,8 @@ class MatrixChannel(ChannelBase):
                 await proactive_scanner.stop()
             except Exception as e:
                 self._logger.warning(f"Failed to stop proactive scanner: {e}")
+            else:
+                self.runtime.unregister("proactive_scanner")
 
         # Get ConnectionManager from runtime
         conn_manager = self.runtime.resolve_optional("matrix_connection_manager")

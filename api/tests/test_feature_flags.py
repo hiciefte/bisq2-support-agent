@@ -78,25 +78,24 @@ class TestProductionSecretSettings:
 
 
 class TestRAGServiceBackendSettings:
-    """Sanity checks for backend-related test fixtures."""
+    """Sanity checks for backend-related settings."""
 
-    @pytest.fixture
-    def mock_settings_qdrant(self):
-        settings = MagicMock()
-        settings.QDRANT_HOST = "localhost"
-        settings.QDRANT_PORT = 6333
-        settings.QDRANT_COLLECTION = "test_collection"
-        settings.ENABLE_COLBERT_RERANK = True
-        settings.COLBERT_MODEL = "colbert-ir/colbertv2.0"
-        settings.COLBERT_TOP_N = 5
-        settings.HYBRID_SEMANTIC_WEIGHT = 0.6
-        settings.HYBRID_KEYWORD_WEIGHT = 0.4
-        settings.DATA_DIR = "/data"
-        settings.OPENAI_API_KEY = "test-key"
-        return settings
+    def test_qdrant_settings_load_from_environment(self):
+        from app.core.config import Settings
 
-    def test_qdrant_settings_present(self, mock_settings_qdrant):
-        assert mock_settings_qdrant.QDRANT_HOST == "localhost"
+        with patch.dict(
+            "os.environ",
+            {
+                "QDRANT_HOST": "localhost",
+                "QDRANT_PORT": "6334",
+                "QDRANT_COLLECTION": "test_collection",
+            },
+        ):
+            settings = Settings(_env_file=None)
+
+        assert settings.QDRANT_HOST == "localhost"
+        assert settings.QDRANT_PORT == 6334
+        assert settings.QDRANT_COLLECTION == "test_collection"
 
 
 class TestColBERTFeatureFlag:
