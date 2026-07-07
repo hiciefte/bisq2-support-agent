@@ -84,6 +84,29 @@ class TestChannelRuntimeRegistration:
         resolved = runtime.resolve("test_service")
         assert resolved.name == "service2"
 
+    @pytest.mark.unit
+    def test_unregister_removes_service(self):
+        """Unregister removes the service from optional resolution."""
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = ChannelRuntime(settings=MagicMock())
+        runtime.register("test_service", MagicMock())
+
+        runtime.unregister("test_service")
+
+        assert runtime.resolve_optional("test_service") is None
+
+    @pytest.mark.unit
+    def test_unregister_missing_service_is_noop(self):
+        """Unregister tolerates services that are already absent."""
+        from app.channels.runtime import ChannelRuntime
+
+        runtime = ChannelRuntime(settings=MagicMock())
+
+        runtime.unregister("missing_service")
+
+        assert runtime.resolve_optional("missing_service") is None
+
 
 class TestChannelRuntimeResolution:
     """Test service resolution."""

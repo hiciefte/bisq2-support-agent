@@ -43,7 +43,7 @@ from app.channels.hooks import (
     PostProcessingHook,
     PreProcessingHook,
 )
-from app.channels.lifecycle import channel_lifespan, create_channel_gateway
+from app.channels.lifecycle import create_channel_gateway
 from app.channels.models import (
     ChannelCapability,
     ChannelType,
@@ -155,7 +155,6 @@ __all__ = [
     "TokenBucket",
     "UserContext",
     "WebChannelConfig",
-    "channel_lifespan",
     "create_channel_gateway",
     "get_gateway",
     "get_registered_channel_types",

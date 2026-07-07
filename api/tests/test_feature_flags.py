@@ -12,22 +12,8 @@ if "ragatouille" not in sys.modules:
     sys.modules["ragatouille"] = _mock_ragatouille
 
 
-class TestRetrieverBackendSettings:
-    """Test suite for RETRIEVER_BACKEND configuration."""
-
-    def test_default_backend_is_qdrant(self):
-        from app.core.config import Settings
-
-        settings = Settings()
-        assert settings.RETRIEVER_BACKEND == "qdrant"
-
-    def test_valid_backend_values(self):
-        for backend in ["qdrant"]:
-            with patch.dict("os.environ", {"RETRIEVER_BACKEND": backend}):
-                from app.core.config import Settings
-
-                settings = Settings()
-                assert settings.RETRIEVER_BACKEND == backend
+class TestQdrantSettings:
+    """Test suite for Qdrant retrieval configuration."""
 
     def test_qdrant_settings_defaults(self):
         from app.core.config import Settings
@@ -58,13 +44,6 @@ class TestRetrieverBackendSettings:
         settings = Settings()
         total = settings.HYBRID_SEMANTIC_WEIGHT + settings.HYBRID_KEYWORD_WEIGHT
         assert abs(total - 1.0) < 0.01
-
-    def test_invalid_retriever_backend_rejected(self):
-        with patch.dict("os.environ", {"RETRIEVER_BACKEND": "invalid_backend"}):
-            from app.core.config import Settings
-
-            with pytest.raises(ValueError, match="must be one of"):
-                Settings()
 
 
 class TestProductionSecretSettings:
@@ -99,26 +78,24 @@ class TestProductionSecretSettings:
 
 
 class TestRAGServiceBackendSettings:
-    """Sanity checks for backend-related test fixtures."""
+    """Sanity checks for backend-related settings."""
 
-    @pytest.fixture
-    def mock_settings_qdrant(self):
-        settings = MagicMock()
-        settings.RETRIEVER_BACKEND = "qdrant"
-        settings.QDRANT_HOST = "localhost"
-        settings.QDRANT_PORT = 6333
-        settings.QDRANT_COLLECTION = "test_collection"
-        settings.ENABLE_COLBERT_RERANK = True
-        settings.COLBERT_MODEL = "colbert-ir/colbertv2.0"
-        settings.COLBERT_TOP_N = 5
-        settings.HYBRID_SEMANTIC_WEIGHT = 0.6
-        settings.HYBRID_KEYWORD_WEIGHT = 0.4
-        settings.DATA_DIR = "/data"
-        settings.OPENAI_API_KEY = "test-key"
-        return settings
+    def test_qdrant_settings_load_from_environment(self):
+        from app.core.config import Settings
 
-    def test_qdrant_backend_selected(self, mock_settings_qdrant):
-        assert mock_settings_qdrant.RETRIEVER_BACKEND == "qdrant"
+        with patch.dict(
+            "os.environ",
+            {
+                "QDRANT_HOST": "localhost",
+                "QDRANT_PORT": "6334",
+                "QDRANT_COLLECTION": "test_collection",
+            },
+        ):
+            settings = Settings(_env_file=None)
+
+        assert settings.QDRANT_HOST == "localhost"
+        assert settings.QDRANT_PORT == 6334
+        assert settings.QDRANT_COLLECTION == "test_collection"
 
 
 class TestColBERTFeatureFlag:

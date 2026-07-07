@@ -77,6 +77,7 @@ class ChannelGateway:
         )
         self._ingress_context_service = ingress_context_service
         self.response_enricher = response_enricher
+        self._channel_registry: Optional[Any] = None
 
     async def process_message(
         self, message: IncomingMessage
@@ -382,6 +383,7 @@ class ChannelGateway:
         """
         self._pre_hooks.append(hook)
         self._pre_hooks.sort(key=lambda h: h.priority)
+        self._apply_channel_registry(hook)
         logger.info(f"Registered pre-hook '{hook.name}' with priority {hook.priority}")
 
     def register_post_hook(self, hook: PostProcessingHook) -> None:
@@ -394,7 +396,18 @@ class ChannelGateway:
         """
         self._post_hooks.append(hook)
         self._post_hooks.sort(key=lambda h: h.priority)
+        self._apply_channel_registry(hook)
         logger.info(f"Registered post-hook '{hook.name}' with priority {hook.priority}")
+
+    def set_channel_registry(self, registry: Any) -> None:
+        """Inject the active channel registry into registry-aware hooks."""
+        self._channel_registry = registry
+        for hook in [*self._pre_hooks, *self._post_hooks]:
+            self._apply_channel_registry(hook)
+
+    def _apply_channel_registry(self, hook: Any) -> None:
+        if self._channel_registry is not None and hasattr(hook, "channel_registry"):
+            hook.channel_registry = self._channel_registry
 
     def get_hook_info(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get information about registered hooks.

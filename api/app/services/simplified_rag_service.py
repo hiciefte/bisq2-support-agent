@@ -31,16 +31,22 @@ from app.services.rag.document_retriever import (
     DocumentRetriever,
     is_bisq_version_comparison_query,
 )
+from app.services.rag.faq_index_sync import FAQIndexSyncManager
 from app.services.rag.index_state_manager import IndexStateManager
+from app.services.rag.language_pipeline import QueryLanguageHandler
 from app.services.rag.llm_provider import LLMProvider, needs_live_data
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
+from app.services.rag.mcp_reconciliation import (
+    extract_last_tool_result,
+    reconcile_live_data_fallbacks,
+    strip_bracket_wrapper,
+)
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
 from app.services.rag.protocol_detector import ProtocolDetector
 from app.services.rag.qdrant_index_manager import QdrantIndexManager
 from app.services.rag.routing_reason_generator import RoutingReasonGenerator
 from app.services.translation import TranslationService
-from app.services.translation.language_detector import SUPPORTED_LANGUAGES
 from app.utils.instrumentation import (
     RAG_REQUEST_RATE,
     instrument_stage,
@@ -178,6 +184,7 @@ class SimplifiedRAGService:
         self.llm_wiki_loader = LLMWikiLoader()
         self.bisq_mcp_service = bisq_mcp_service
         self.translation_service = translation_service
+        self.language_handler = QueryLanguageHandler(translation_service)
 
         # MCP is now handled via HTTP transport in LLM provider
         # The LLM wrapper connects to MCP server at mcp_url
@@ -229,6 +236,7 @@ class SimplifiedRAGService:
         self._faq_index_locks: dict[str, asyncio.Lock] = {}
         self._faq_index_lock_refs: dict[str, int] = {}
         self._faq_index_locks_guard = asyncio.Lock()
+        self.faq_index_sync = FAQIndexSyncManager(self)
 
         # Initialize confidence scoring components
         self.nli_validator = NLIValidator()
@@ -347,95 +355,22 @@ class SimplifiedRAGService:
         faq_id: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Handle FAQ updates with incremental indexing or full rebuild.
-
-        Args:
-            rebuild: If True, rebuild immediately (legacy behavior).
-                    If False, apply the change incrementally to the live
-                    Qdrant index; falls back to marking the change for a
-                    manual rebuild when the incremental path cannot run.
-            operation: Type of change (add, update, delete, bulk_*)
-            faq_id: ID of changed FAQ
-            metadata: Additional context about the change
-        """
-        if rebuild:
-            logger.info("Immediate index rebuild requested by FAQ update")
-            task = asyncio.create_task(self.setup(force_rebuild=True))
-            self._background_tasks.add(task)
-
-            def _on_done(done_task: asyncio.Task[Any]) -> None:
-                self._background_tasks.discard(done_task)
-                try:
-                    done_task.result()
-                except Exception:
-                    logger.exception("FAQ-triggered rebuild task failed")
-
-            task.add_done_callback(_on_done)
-            return
-
-        if not self._can_apply_incremental_faq_update(operation, faq_id):
-            self._mark_faq_change(operation, faq_id, metadata)
-            return
-
-        update_coro = self._apply_incremental_faq_update(operation, faq_id, metadata)
-        try:
-            task = asyncio.create_task(update_coro)
-        except RuntimeError:
-            # No running event loop (e.g. sync call path) - fall back to
-            # recording the change for a manual rebuild.
-            update_coro.close()
-            logger.warning(
-                f"No running event loop for incremental index update "
-                f"({operation} on {faq_id}); marking change for rebuild"
-            )
-            self._mark_faq_change(operation, faq_id, metadata)
-        else:
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+        """Handle FAQ updates with incremental indexing or full rebuild."""
+        self.faq_index_sync.handle_update(rebuild, operation, faq_id, metadata)
 
     async def _ensure_embeddings_initialized(self) -> None:
         """Initialize embeddings once across concurrent incremental workers."""
-        if self.embeddings is not None:
-            return
-        async with self._embeddings_init_lock:
-            if self.embeddings is None:
-                await asyncio.to_thread(self.initialize_embeddings)
+        await self.faq_index_sync.ensure_embeddings_initialized()
 
     async def _acquire_faq_index_lock(self, faq_id: str) -> asyncio.Lock:
-        async with self._faq_index_locks_guard:
-            lock = self._faq_index_locks.get(faq_id)
-            if lock is None:
-                lock = asyncio.Lock()
-                self._faq_index_locks[faq_id] = lock
-            self._faq_index_lock_refs[faq_id] = (
-                self._faq_index_lock_refs.get(faq_id, 0) + 1
-            )
-        await lock.acquire()
-        return lock
+        return await self.faq_index_sync.acquire_lock(faq_id)
 
     async def _release_faq_index_lock(self, faq_id: str, lock: asyncio.Lock) -> None:
-        lock.release()
-        async with self._faq_index_locks_guard:
-            ref_count = self._faq_index_lock_refs.get(faq_id, 1) - 1
-            if ref_count <= 0:
-                if self._faq_index_locks.get(faq_id) is lock:
-                    self._faq_index_locks.pop(faq_id, None)
-                self._faq_index_lock_refs.pop(faq_id, None)
-            else:
-                self._faq_index_lock_refs[faq_id] = ref_count
+        await self.faq_index_sync.release_lock(faq_id, lock)
 
     def _can_apply_incremental_faq_update(self, operation: str, faq_id: str) -> bool:
-        """Return True when a change can be applied point-by-point.
-
-        Bulk operations report aggregate pseudo-IDs (e.g. "3_faqs"), so they
-        cannot be resolved to individual FAQ documents and still require a
-        full rebuild.
-        """
-        return (
-            operation in ("add", "update", "delete")
-            and bool(faq_id)
-            and self.faq_service is not None
-        )
+        """Return True when a change can be applied point-by-point."""
+        return self.faq_index_sync.can_apply_incremental_update(operation, faq_id)
 
     def _mark_faq_change(
         self,
@@ -444,12 +379,7 @@ class SimplifiedRAGService:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Record a FAQ change that requires a manual index rebuild."""
-        logger.debug(f"Marking FAQ change for rebuild: {operation} on {faq_id}")
-        self.state_manager.mark_change(
-            operation=operation or "unknown",
-            item_id=faq_id or "unknown",
-            metadata=metadata,
-        )
+        self.faq_index_sync.mark_change(operation, faq_id, metadata)
 
     async def _apply_incremental_faq_update(
         self,
@@ -457,55 +387,12 @@ class SimplifiedRAGService:
         faq_id: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Apply a single FAQ change to the live Qdrant index off-loop.
-
-        Embedding and Qdrant I/O are blocking, so the work runs in a worker
-        thread. Any failure falls back to mark_change so the change is not
-        lost and surfaces in the manual-rebuild status.
-        """
-        lock: asyncio.Lock | None = None
-        try:
-            lock = await self._acquire_faq_index_lock(faq_id)
-            try:
-                if operation != "delete":
-                    await self._ensure_embeddings_initialized()
-                await asyncio.to_thread(self._sync_faq_in_index, faq_id)
-            finally:
-                await self._release_faq_index_lock(faq_id, lock)
-            logger.info(f"Applied incremental index update: {operation} on {faq_id}")
-        except Exception:
-            logger.exception(
-                f"Incremental index update failed for FAQ {faq_id} "
-                f"({operation}); marking change for manual rebuild"
-            )
-            self._mark_faq_change(operation, faq_id, metadata)
+        """Apply a single FAQ change to the live Qdrant index off-loop."""
+        await self.faq_index_sync.apply_incremental_update(operation, faq_id, metadata)
 
     def _sync_faq_in_index(self, faq_id: str) -> None:
-        """Blocking worker: reconcile one FAQ's points in the Qdrant index.
-
-        Reuses the FAQ RAG loader and document processor so incremental
-        points are built exactly like full-rebuild points. When the FAQ is
-        no longer part of the verified corpus (deleted or unverified), its
-        points are removed instead.
-        """
-        faq_docs = [
-            doc
-            for doc in self.faq_service.load_faq_data()
-            if (doc.metadata or {}).get("id") == faq_id
-        ]
-
-        if not faq_docs:
-            self.index_manager.delete_faq_points(faq_id)
-            return
-
-        splits = self.document_processor.split_documents(faq_docs)
-        if self.embeddings is None:
-            raise RuntimeError("Embeddings must be initialized before FAQ index sync")
-        self.index_manager.upsert_faq_documents(
-            faq_id=faq_id,
-            documents=splits,
-            embeddings=self.embeddings,
-        )
+        """Blocking worker: reconcile one FAQ's points in the Qdrant index."""
+        self.faq_index_sync.sync_faq_in_index(faq_id)
 
     async def _handle_source_update(self, source_name: str) -> None:
         """Handle runtime updates to source files (FAQ or wiki).
@@ -598,64 +485,19 @@ class SimplifiedRAGService:
         """
         return self.document_retriever.format_documents(docs, detected_version)
 
+    def _sync_language_handler(self) -> None:
+        """Keep delegated language handling aligned with mutable service wiring."""
+        self.language_handler.translation_service = self.translation_service
+
     @staticmethod
     def _normalize_language_code(value: Any) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip().lower()
-        if not normalized:
-            return None
-        if "-" in normalized:
-            normalized = normalized.split("-", 1)[0]
-        if normalized in SUPPORTED_LANGUAGES and normalized != "und":
-            return normalized
-        return None
+        return QueryLanguageHandler.normalize_language_code(value)
 
     def _extract_prior_language_from_history(
         self, chat_history: list[Any]
     ) -> Optional[str]:
-        for item in reversed(chat_history):
-            candidates: list[Any] = []
-            if isinstance(item, dict):
-                candidates.extend(
-                    [
-                        item.get("original_language"),
-                        item.get("user_language"),
-                        item.get("language"),
-                    ]
-                )
-                metadata = item.get("metadata")
-                if isinstance(metadata, dict):
-                    candidates.extend(
-                        [
-                            metadata.get("original_language"),
-                            metadata.get("user_language"),
-                            metadata.get("language"),
-                        ]
-                    )
-            else:
-                candidates.extend(
-                    [
-                        getattr(item, "original_language", None),
-                        getattr(item, "user_language", None),
-                        getattr(item, "language", None),
-                    ]
-                )
-                metadata = getattr(item, "metadata", None)
-                if isinstance(metadata, dict):
-                    candidates.extend(
-                        [
-                            metadata.get("original_language"),
-                            metadata.get("user_language"),
-                            metadata.get("language"),
-                        ]
-                    )
-
-            for candidate in candidates:
-                normalized = self._normalize_language_code(candidate)
-                if normalized is not None:
-                    return normalized
-        return None
+        self._sync_language_handler()
+        return self.language_handler.extract_prior_language_from_history(chat_history)
 
     async def setup(self, force_rebuild: bool = False):
         """Set up the complete system.
@@ -912,16 +754,7 @@ class SimplifiedRAGService:
     @staticmethod
     def _is_short_ambiguous_follow_up(question: str) -> bool:
         """Return True for short follow-ups where language detection is often ambiguous."""
-        text = str(question or "").strip()
-        if not text:
-            return False
-        if len(text) > 18:
-            return False
-        # Restrict to compact alpha phrases (e.g. "Bisq easy", "ja", "ok danke").
-        tokens = re.findall(r"[A-Za-zÀ-ÿ]+", text)
-        if not tokens or len(tokens) > 3:
-            return False
-        return bool(re.fullmatch(r"[A-Za-zÀ-ÿ0-9\s\-_./]+", text))
+        return QueryLanguageHandler.is_short_ambiguous_follow_up(question)
 
     @staticmethod
     def _extract_last_tool_result(
@@ -929,22 +762,11 @@ class SimplifiedRAGService:
         tool_name: str,
     ) -> str:
         """Return the most recent non-empty result for a given tool name."""
-        if not tool_calls:
-            return ""
-        for call in reversed(tool_calls):
-            if str(call.get("tool", "") or "").strip() != tool_name:
-                continue
-            result = str(call.get("result", "") or "").strip()
-            if result:
-                return result
-        return ""
+        return extract_last_tool_result(tool_calls, tool_name)
 
     @staticmethod
     def _strip_bracket_wrapper(text: str) -> str:
-        value = str(text or "").strip()
-        if value.startswith("[") and value.endswith("]") and len(value) >= 2:
-            return value[1:-1].strip()
-        return value
+        return strip_bracket_wrapper(text)
 
     def _reconcile_live_data_fallbacks(
         self,
@@ -952,72 +774,7 @@ class SimplifiedRAGService:
         tool_calls: Optional[List[Dict[str, Any]]],
     ) -> str:
         """Prevent contradiction: successful/no-offer tool results vs fetch-failure text."""
-        text = str(response_text or "").strip()
-        if not text:
-            return text
-
-        def _strip_offer_unavailable_phrases(value: str) -> str:
-            value = re.sub(
-                r"(?i)i'm unable to fetch live offer data at the moment\.\s*",
-                "",
-                value,
-                count=1,
-            )
-            value = re.sub(
-                (
-                    r"(?i)please try again later or check directly in the bisq 2 application"
-                    r"(?: for current offers to buy btc with (?:euro|euros|eur))?\.\s*"
-                ),
-                "",
-                value,
-                count=1,
-            )
-            return value
-
-        def _strip_price_unavailable_phrases(value: str) -> str:
-            value = re.sub(
-                r"(?i)i'm unable to fetch current market prices right now\.\s*",
-                "",
-                value,
-                count=1,
-            )
-            value = re.sub(
-                (
-                    r"(?i)please try again later or check directly in the bisq 2 application"
-                    r"(?: for current prices)?\.\s*"
-                ),
-                "",
-                value,
-                count=1,
-            )
-            return value
-
-        offer_result = self._extract_last_tool_result(tool_calls, "get_offerbook")
-        if offer_result:
-            normalized_offer = self._strip_bracket_wrapper(offer_result)
-            if normalized_offer.lower().startswith("no offers currently available"):
-                stripped = _strip_offer_unavailable_phrases(text).strip()
-                if stripped:
-                    text = stripped
-                else:
-                    text = f"{normalized_offer}."
-            elif offer_result.startswith("[LIVE OFFERBOOK]"):
-                text = _strip_offer_unavailable_phrases(text).strip()
-
-        price_result = self._extract_last_tool_result(tool_calls, "get_market_prices")
-        if price_result:
-            normalized_price = self._strip_bracket_wrapper(price_result)
-            if normalized_price.lower().startswith("no price data available"):
-                stripped = _strip_price_unavailable_phrases(text).strip()
-                if stripped:
-                    text = stripped
-                else:
-                    text = f"{normalized_price}."
-            elif price_result.startswith("[LIVE MARKET PRICES]"):
-                text = _strip_price_unavailable_phrases(text).strip()
-
-        text = re.sub(r"\s{2,}", " ", text).strip()
-        return text
+        return reconcile_live_data_fallbacks(response_text, tool_calls)
 
     @staticmethod
     def _normalize_chat_entry(entry: Any) -> Optional[Dict[str, str]]:
@@ -1067,45 +824,10 @@ class SimplifiedRAGService:
         self, chat_history: List[Dict[str, str]]
     ) -> Optional[str]:
         """Infer a non-English language hint from recent user turns."""
-        if not self.translation_service:
-            return None
-        detector = getattr(self.translation_service, "detector", None)
-        detect_with_metadata = (
-            getattr(detector, "detect_with_metadata", None) if detector else None
+        self._sync_language_handler()
+        return await self.language_handler.infer_language_hint_from_chat_history(
+            chat_history
         )
-        if not callable(detect_with_metadata):
-            return None
-
-        inspected = 0
-        for raw_entry in reversed(chat_history[-8:]):
-            role = str(raw_entry.get("role", "") or "").strip().lower()
-            if role != "user":
-                continue
-            content = str(raw_entry.get("content", "") or "").strip()
-            if len(content) < 6:
-                continue
-
-            inspected += 1
-            if inspected > 3:
-                break
-
-            try:
-                details = await detect_with_metadata(content)
-            except Exception:
-                logger.debug(
-                    "Language hint detection failed for history turn",
-                    exc_info=True,
-                )
-                continue
-
-            language_code = (
-                str(getattr(details, "language_code", "") or "").strip().lower()
-            )
-            confidence = float(getattr(details, "confidence", 0.0) or 0.0)
-            if language_code and language_code != "en" and confidence >= 0.80:
-                return language_code
-
-        return None
 
     def _generate_streamed_rag_response(
         self,
@@ -1240,71 +962,17 @@ class SimplifiedRAGService:
             # Log the question with privacy protection
             logger.info(f"Processing question: {redact_for_logs(question)}")
 
-            # Preserve both user-localized input and canonical English question.
-            localized_question = question.strip()
-            preprocessed_question = localized_question
-
-            # Handle multilingual translation if service is available
-            original_language = "en"
-            was_translated = False
-            if self.translation_service:
-                try:
-                    prior_language = self._extract_prior_language_from_history(
-                        chat_history
-                    )
-                    source_lang_hint: str | None = None
-                    normalized_language_hint = str(language_hint or "").strip().lower()
-                    if normalized_language_hint and normalized_language_hint != "en":
-                        source_lang_hint = normalized_language_hint
-                    elif chat_history and self._is_short_ambiguous_follow_up(
-                        preprocessed_question
-                    ):
-                        source_lang_hint = (
-                            await self._infer_language_hint_from_chat_history(
-                                chat_history
-                            )
-                        )
-                    translation_result = await self.translation_service.translate_query(
-                        preprocessed_question,
-                        source_lang=source_lang_hint,
-                        prior_language=prior_language,
-                    )
-                    original_language = translation_result.get("source_lang", "en")
-                    was_translated = not translation_result.get("skipped", True)
-                    detection_backend = (
-                        str(translation_result.get("detection_backend", "") or "")
-                        .strip()
-                        .lower()
-                    )
-                    if (
-                        original_language == "en"
-                        and not was_translated
-                        and detection_backend == "english_heuristic"
-                    ):
-                        history_lang_hint = normalized_language_hint or None
-                        if history_lang_hint in {"", "en"}:
-                            history_lang_hint = None
-                        if history_lang_hint is None and chat_history:
-                            history_lang_hint = (
-                                await self._infer_language_hint_from_chat_history(
-                                    chat_history
-                                )
-                            )
-                        if history_lang_hint and history_lang_hint != "en":
-                            original_language = history_lang_hint
-                            logger.info(
-                                "Overriding english_heuristic language with chat history hint: %s",
-                                history_lang_hint,
-                            )
-                    if was_translated:
-                        preprocessed_question = translation_result["translated_text"]
-                        logger.info(
-                            f"Translated query from {original_language} to English"
-                        )
-                except Exception as e:
-                    logger.warning(f"Translation failed, using original: {e}")
-                    # Continue with original question on translation failure
-            canonical_question_en = preprocessed_question
+            self._sync_language_handler()
+            language_state = await self.language_handler.prepare_question(
+                question,
+                chat_history,
+                language_hint,
+            )
+            localized_question = language_state.localized_question
+            preprocessed_question = language_state.preprocessed_question
+            canonical_question_en = language_state.canonical_question_en
+            original_language = language_state.original_language
+            was_translated = language_state.was_translated
 
             # --- Query Rewrite (feature-flagged) ---
             rewrite_metadata = {"rewritten": False}
@@ -1363,28 +1031,13 @@ class SimplifiedRAGService:
                             version_confidence,
                         )
                     else:
-                        final_clarification = clarifying_question
-                        if self.translation_service and original_language != "en":
-                            try:
-                                clarification_translation = (
-                                    await self.translation_service.translate_response(
-                                        clarifying_question,
-                                        target_lang=original_language,
-                                    )
-                                )
-                                if not clarification_translation.get("error"):
-                                    final_clarification = clarification_translation[
-                                        "translated_text"
-                                    ]
-                                    logger.info(
-                                        "Translated clarification to %s",
-                                        original_language,
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    "Clarification translation failed, using English: %s",
-                                    e,
-                                )
+                        final_clarification = (
+                            await self.language_handler.translate_text_for_user(
+                                clarifying_question,
+                                original_language,
+                                label="clarification",
+                            )
+                        )
 
                         logger.info(
                             f"Requesting clarification from user: {clarifying_question[:50]}..."
@@ -1757,18 +1410,11 @@ class SimplifiedRAGService:
                 and was_translated
                 and original_language != "en"
             ):
-                try:
-                    response_translation = (
-                        await self.translation_service.translate_response(
-                            response_text, target_lang=original_language
-                        )
-                    )
-                    if not response_translation.get("error"):
-                        final_response = response_translation["translated_text"]
-                        logger.info(f"Translated response to {original_language}")
-                except Exception as e:
-                    logger.warning(f"Response translation failed, using English: {e}")
-                    # Continue with English response on translation failure
+                final_response = await self.language_handler.translate_text_for_user(
+                    response_text,
+                    original_language,
+                    label="response",
+                )
 
             # Stabilize version comparison questions for downstream consumers (including E2E).
             # This is content-neutral: we only add a heading if the model didn't include

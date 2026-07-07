@@ -235,23 +235,23 @@ class TestProtocolConversion:
 
     def test_protocol_to_version_bisq_easy(self, detector):
         """bisq_easy protocol should convert to Bisq 2 version string."""
-        assert detector._protocol_to_version("bisq_easy") == "Bisq 2"
+        assert detector.protocol_to_version("bisq_easy") == "Bisq 2"
 
     def test_protocol_to_version_multisig(self, detector):
         """multisig_v1 protocol should convert to Bisq 1 version string."""
-        assert detector._protocol_to_version("multisig_v1") == "Bisq 1"
+        assert detector.protocol_to_version("multisig_v1") == "Bisq 1"
 
     def test_protocol_to_version_musig(self, detector):
         """musig protocol should convert to Bisq 2 version string."""
-        assert detector._protocol_to_version("musig") == "Bisq 2"
+        assert detector.protocol_to_version("musig") == "Bisq 2"
 
     def test_protocol_to_version_none(self, detector):
         """None protocol should convert to None version string."""
-        assert detector._protocol_to_version(None) is None
+        assert detector.protocol_to_version(None) is None
 
     def test_protocol_to_version_all(self, detector):
         """all protocol should convert to None (applies to both)."""
-        assert detector._protocol_to_version("all") is None
+        assert detector.protocol_to_version("all") is None
 
 
 class TestProtocolDisplayName:

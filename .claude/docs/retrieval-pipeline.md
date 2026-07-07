@@ -162,14 +162,15 @@ Where:
 |-----------|-------|----------|
 | Model | `text-embedding-3-small` | `config.py:91` |
 | Dimensions | 1536 | Standard for OpenAI embeddings |
-| Distance Metric | Cosine similarity | ChromaDB default |
+| Distance Metric | Cosine similarity | Qdrant collection configuration |
 
-### ChromaDB Settings
+### Qdrant Settings
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `k` | 8 | Balance diversity and relevance |
-| `score_threshold` | 0.3 | ~73° angle; filters obvious non-matches |
+| `QDRANT_HOST` | `qdrant` | Docker service name |
+| `QDRANT_PORT` | `6333` | HTTP API port |
+| `QDRANT_COLLECTION` | `bisq_docs` | Shared document collection |
 
 ### Similarity Score Interpretation
 
@@ -233,11 +234,9 @@ normalized[id] = (score - min_score) / (max_score - min_score)
 | `QUERY_REWRITE_MODEL` | `openai:gpt-4o-mini` | config.py:135 | LLM model for rewrite Track 2 |
 | `QUERY_REWRITE_TIMEOUT_SECONDS` | `2.0` | config.py:136 | LLM rewrite timeout |
 | `QUERY_REWRITE_MAX_HISTORY_TURNS` | `4` | config.py:137 | Max chat history context |
-| `RETRIEVER_BACKEND` | `"chromadb"` | config.py:119 | Default; lower ops overhead than Qdrant |
-| `ChromaDB k` | 8 | simplified_rag_service.py:522 | Diversity before deduplication |
-| `score_threshold` | 0.3 | simplified_rag_service.py:523 | Filter obvious mismatches |
-| `HYBRID_SEMANTIC_WEIGHT` | 0.7 | config.py:133 | Primary: semantic meaning |
-| `HYBRID_KEYWORD_WEIGHT` | 0.3 | config.py:134 | Secondary: exact terms |
+| `QDRANT_COLLECTION` | `bisq_docs` | config.py | Qdrant document collection |
+| `HYBRID_SEMANTIC_WEIGHT` | 0.6 | config.py | Dense score contribution |
+| `HYBRID_KEYWORD_WEIGHT` | 0.4 | config.py | Sparse/BM25 score contribution |
 | `BM25_K1` | 1.5 | bm25_tokenizer.py:175 | Standard term saturation |
 | `BM25_B` | 0.75 | bm25_tokenizer.py:176 | Standard length normalization |
 | `COLBERT_TOP_N` | 5 | config.py:129 | Final reranked count |
@@ -261,36 +260,18 @@ normalized[id] = (score - min_score) / (max_score - min_score)
 - **< 3 docs for Stage 3**: 3 documents is hard minimum for reasonable answer generation
 - **k=8 base**: More candidates for subsequent deduplication and filtering
 
-## 6. Backend Options
+## 6. Backend
 
-### ChromaDB (Default)
-
-```yaml
-RETRIEVER_BACKEND: "chromadb"
-```
-
-- **Pros**: Simple setup, good for single-node deployments
-- **Cons**: No native hybrid search (dense only)
-
-### Qdrant (Optional)
+Qdrant is the only supported retrieval backend.
 
 ```yaml
-RETRIEVER_BACKEND: "qdrant"
 QDRANT_HOST: "qdrant"
 QDRANT_PORT: 6333
 QDRANT_COLLECTION: "bisq_docs"
 ```
 
-- **Pros**: Native hybrid search, better scalability
-- **Cons**: Additional infrastructure
-
-### Hybrid Mode
-
-```yaml
-RETRIEVER_BACKEND: "hybrid"
-```
-
-Uses Qdrant for hybrid search with ChromaDB fallback.
+The application always uses Qdrant hybrid search. There is no runtime backend
+selector or ChromaDB fallback path.
 
 ## 7. Deduplication
 

@@ -228,10 +228,6 @@ class Settings(BaseSettings):
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
-    # Retrieval Backend Configuration
-    # Qdrant is the only supported backend.
-    RETRIEVER_BACKEND: str = "qdrant"
-
     # Qdrant Vector Database Settings
     QDRANT_HOST: str = "qdrant"  # Docker service name
     QDRANT_PORT: int = 6333
@@ -263,29 +259,6 @@ class Settings(BaseSettings):
         le=1.0,
         description="Weight for sparse/BM25 vectors in hybrid search",
     )
-
-    @field_validator("RETRIEVER_BACKEND")
-    @classmethod
-    def validate_retriever_backend(cls, v: str) -> str:
-        """Validate RETRIEVER_BACKEND is a supported value.
-
-        Fails fast on typos to prevent runtime errors in the retrieval selector.
-
-        Args:
-            v: Retriever backend value
-
-        Returns:
-            Validated retriever backend value
-
-        Raises:
-            ValueError: If backend is not supported
-        """
-        allowed = {"qdrant"}
-        if v not in allowed:
-            raise ValueError(
-                f"RETRIEVER_BACKEND must be one of {', '.join(sorted(allowed))}, got '{v}'"
-            )
-        return v
 
     @model_validator(mode="after")
     def validate_hybrid_weights_sum(self) -> "Settings":

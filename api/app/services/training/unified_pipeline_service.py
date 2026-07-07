@@ -110,6 +110,15 @@ class ProcessingResult:
 
 
 @dataclass
+class GeneratedCandidateAnswer:
+    """RAG answer fields stored with a candidate."""
+
+    answer: str
+    sources_json: Optional[str]
+    confidence: Optional[float]
+
+
+@dataclass
 class PostApprovalCorrectionResult:
     """Result of processing a post-approval correction.
 
@@ -295,6 +304,23 @@ class UnifiedPipelineService:
 
         return None
 
+    async def _generate_candidate_answer(
+        self, question: str, protocol: Optional[str]
+    ) -> GeneratedCandidateAnswer:
+        """Generate a RAG answer and normalize candidate metadata."""
+        override_version = self.protocol_detector.protocol_to_version(protocol)
+        rag_response = await self.rag_service.query(
+            question,
+            chat_history=[],
+            override_version=override_version,
+        )
+        sources = rag_response.get("sources", [])
+        return GeneratedCandidateAnswer(
+            answer=rag_response.get("answer", ""),
+            sources_json=json.dumps(sources) if sources else None,
+            confidence=rag_response.get("confidence"),
+        )
+
     async def process_matrix_answer(
         self,
         event_id: str,
@@ -392,26 +418,13 @@ class UnifiedPipelineService:
             question_text, staff_answer, source="matrix"
         )
 
-        # Convert protocol to version string for RAG service (backwards compat)
-        override_version = self.protocol_detector._protocol_to_version(
-            detected_protocol
+        generated = await self._generate_candidate_answer(
+            question_text, detected_protocol
         )
-
-        # Generate RAG answer with detected version (if available)
-        # NOTE: SimplifiedRAGService.query() returns {"answer": ..., "sources": ...}
-        # The key is "answer", not "response"
-        rag_response = await self.rag_service.query(
-            question_text, chat_history=[], override_version=override_version
-        )
-        generated_answer = rag_response.get("answer", "")
-        sources = rag_response.get("sources", [])
-        sources_json = json.dumps(sources) if sources else None
-        # Extract RAG's own confidence (distinct from comparison final_score)
-        generation_confidence = rag_response.get("confidence")
 
         # Calculate comparison scores
         comparison = await self._compare_answers(
-            source_event_id, question_text, staff_answer, generated_answer
+            source_event_id, question_text, staff_answer, generated.answer
         )
 
         # Determine routing
@@ -426,7 +439,7 @@ class UnifiedPipelineService:
             source_timestamp=source_timestamp,
             question_text=question_text,
             staff_answer=staff_answer,
-            generated_answer=generated_answer,
+            generated_answer=generated.answer,
             staff_sender=staff_sender,
             embedding_similarity=comparison.embedding_similarity,
             factual_alignment=comparison.factual_alignment,
@@ -438,8 +451,8 @@ class UnifiedPipelineService:
             routing=routing,
             is_calibration_sample=is_calibration,
             protocol=detected_protocol,
-            generated_answer_sources=sources_json,
-            generation_confidence=generation_confidence,
+            generated_answer_sources=generated.sources_json,
+            generation_confidence=generated.confidence,
         )
 
         # Link thread to candidate (Cycle 12)
@@ -791,24 +804,13 @@ class UnifiedPipelineService:
             question_text, staff_answer, source="bisq2"
         )
 
-        # Convert protocol to version string for RAG service (backwards compat)
-        override_version = self.protocol_detector._protocol_to_version(
-            detected_protocol
+        generated = await self._generate_candidate_answer(
+            question_text, detected_protocol
         )
-
-        # Generate RAG answer with detected version (if available)
-        rag_response = await self.rag_service.query(
-            question_text, chat_history=[], override_version=override_version
-        )
-        generated_answer = rag_response.get("answer", "")
-        sources = rag_response.get("sources", [])
-        sources_json = json.dumps(sources) if sources else None
-        # Extract RAG's own confidence (distinct from comparison final_score)
-        generation_confidence = rag_response.get("confidence")
 
         # Calculate comparison scores
         comparison = await self._compare_answers(
-            source_event_id, question_text, staff_answer, generated_answer
+            source_event_id, question_text, staff_answer, generated.answer
         )
 
         # Determine routing
@@ -823,7 +825,7 @@ class UnifiedPipelineService:
             source_timestamp=source_timestamp,
             question_text=question_text,
             staff_answer=staff_answer,
-            generated_answer=generated_answer,
+            generated_answer=generated.answer,
             staff_sender=staff_sender,
             embedding_similarity=comparison.embedding_similarity,
             factual_alignment=comparison.factual_alignment,
@@ -835,8 +837,8 @@ class UnifiedPipelineService:
             routing=routing,
             is_calibration_sample=is_calibration,
             protocol=detected_protocol,
-            generated_answer_sources=sources_json,
-            generation_confidence=generation_confidence,
+            generated_answer_sources=generated.sources_json,
+            generation_confidence=generated.confidence,
         )
 
         # Link thread to candidate (Cycle 12)
@@ -1623,20 +1625,12 @@ class UnifiedPipelineService:
         regenerated_sources_json: Optional[str] = None
         regenerated_confidence: Optional[float] = None
         if self.rag_service is not None and question_changed:
-            bisq_version = self.protocol_detector._protocol_to_version(
-                candidate.protocol
+            generated = await self._generate_candidate_answer(
+                effective_question, candidate.protocol
             )
-            rag_response = await self.rag_service.query(
-                effective_question,
-                chat_history=[],
-                override_version=bisq_version,
-            )
-            regenerated_answer = rag_response.get("answer", "")
-            regenerated_sources = rag_response.get("sources", [])
-            regenerated_sources_json = (
-                json.dumps(regenerated_sources) if regenerated_sources else None
-            )
-            regenerated_confidence = rag_response.get("confidence")
+            regenerated_answer = generated.answer
+            regenerated_sources_json = generated.sources_json
+            regenerated_confidence = generated.confidence
 
         generated_for_compare = (
             regenerated_answer
@@ -1721,31 +1715,20 @@ class UnifiedPipelineService:
         if require_pending and candidate.review_status != "pending":
             return None
 
-        # Convert protocol to version string for RAG filtering
-        # (all/None => no filter).
-        bisq_version = self.protocol_detector._protocol_to_version(protocol)
         effective_question = (
             candidate.edited_question_text or candidate.question_text
         ).strip() or candidate.question_text
         effective_staff_answer = candidate.edited_staff_answer or candidate.staff_answer
 
         # Generate new RAG answer with protocol-specific filtering
-        rag_response = await self.rag_service.query(
-            effective_question,
-            chat_history=[],
-            override_version=bisq_version,
-        )
-        generated_answer = rag_response.get("answer", "")
-        sources = rag_response.get("sources", [])
-        sources_json = json.dumps(sources) if sources else None
-        generation_confidence = rag_response.get("confidence")
+        generated = await self._generate_candidate_answer(effective_question, protocol)
 
         # Recalculate comparison scores
         comparison = await self._compare_answers(
             candidate.source_event_id,
             effective_question,
             effective_staff_answer,
-            generated_answer,
+            generated.answer,
         )
 
         # Determine new routing based on updated score
@@ -1757,7 +1740,7 @@ class UnifiedPipelineService:
         return self.repository.update_candidate(
             candidate_id=candidate_id,
             protocol=protocol,
-            generated_answer=generated_answer,
+            generated_answer=generated.answer,
             embedding_similarity=comparison.embedding_similarity,
             factual_alignment=comparison.factual_alignment,
             contradiction_score=comparison.contradiction_score,
@@ -1766,8 +1749,8 @@ class UnifiedPipelineService:
             final_score=comparison.final_score,
             llm_reasoning=comparison.llm_reasoning,
             routing=routing,
-            generated_answer_sources=sources_json,
-            generation_confidence=generation_confidence,
+            generated_answer_sources=generated.sources_json,
+            generation_confidence=generated.confidence,
             require_pending=require_pending,
         )
 
@@ -1962,24 +1945,13 @@ class UnifiedPipelineService:
             question_text, staff_answer, source=cast(Optional[Source], source)
         )
 
-        # Convert protocol to version string for RAG service (backwards compat)
-        override_version = self.protocol_detector._protocol_to_version(
-            detected_protocol
+        generated = await self._generate_candidate_answer(
+            question_text, detected_protocol
         )
-
-        # Generate RAG answer with detected version (if available)
-        rag_response = await self.rag_service.query(
-            question_text, chat_history=[], override_version=override_version
-        )
-        generated_answer = rag_response.get("answer", "")
-        sources = rag_response.get("sources", [])
-        sources_json = json.dumps(sources) if sources else None
-        # Extract RAG's own confidence (distinct from comparison final_score)
-        generation_confidence = rag_response.get("confidence")
 
         # Calculate comparison scores
         comparison = await self._compare_answers(
-            source_event_id, question_text, staff_answer, generated_answer
+            source_event_id, question_text, staff_answer, generated.answer
         )
 
         # Determine routing
@@ -1995,7 +1967,7 @@ class UnifiedPipelineService:
             source_timestamp=source_timestamp,
             question_text=question_text,
             staff_answer=staff_answer,
-            generated_answer=generated_answer,
+            generated_answer=generated.answer,
             staff_sender=staff_sender,  # Now passed from LLM extraction
             embedding_similarity=comparison.embedding_similarity,
             factual_alignment=comparison.factual_alignment,
@@ -2008,10 +1980,10 @@ class UnifiedPipelineService:
             is_calibration_sample=is_calibration,
             category=category,
             protocol=detected_protocol,
-            generated_answer_sources=sources_json,
+            generated_answer_sources=generated.sources_json,
             original_user_question=original_user_question,
             original_staff_answer=original_staff_answer,
-            generation_confidence=generation_confidence,
+            generation_confidence=generated.confidence,
         )
 
         # Update calibration count and metrics if calibration sample
