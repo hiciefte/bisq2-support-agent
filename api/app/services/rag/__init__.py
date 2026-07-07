@@ -34,11 +34,6 @@ _EXPORT_MAP = {
         "app.services.rag.code_evidence_evaluation",
         "CodeEvidenceRetrievalEvaluator",
     ),
-    "ConversationState": ("app.services.rag.conversation_state", "ConversationState"),
-    "ConversationStateManager": (
-        "app.services.rag.conversation_state",
-        "ConversationStateManager",
-    ),
     "DocumentProcessor": ("app.services.rag.document_processor", "DocumentProcessor"),
     "DocumentRetriever": ("app.services.rag.document_retriever", "DocumentRetriever"),
     "EvaluationResult": ("app.services.rag.evaluation", "EvaluationResult"),

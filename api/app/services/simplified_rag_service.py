@@ -26,7 +26,6 @@ from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.confidence_scorer import ConfidenceScorer
-from app.services.rag.conversation_state import ConversationStateManager
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import (
     DocumentRetriever,
@@ -249,8 +248,6 @@ class SimplifiedRAGService:
 
         # Initialize Phase 1 components
         self.version_detector = ProtocolDetector()
-
-        self.conversation_state_manager = ConversationStateManager()
 
         # Initialize source weights
         # If feedback_service is provided, use its weights, otherwise use defaults
@@ -1407,16 +1404,6 @@ class SimplifiedRAGService:
                             "original_language": original_language,
                             "translated": was_translated,
                         }
-
-            # Update conversation state
-            conv_id = self.conversation_state_manager.generate_conversation_id(
-                chat_history
-            )
-            self.conversation_state_manager.update_state(
-                conv_id,
-                detected_version=detected_version,
-                version_confidence=version_confidence,
-            )
 
             # Get relevant documents with version priority and similarity scores
             # Pass detected_version to ensure correct version-specific retrieval

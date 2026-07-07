@@ -1,4 +1,4 @@
-"""Tests for VersionDetector service - Unknown Version Enhancement.
+"""Tests for ProtocolDetector's legacy version API.
 
 CRITICAL: This test file has been updated to test the 3-tuple return type:
 - Old signature: (version, confidence)
@@ -8,12 +8,12 @@ All tests now verify the third return value (clarifying_question).
 """
 
 import pytest
-from app.services.rag.version_detector import VersionDetector
+from app.services.rag.protocol_detector import ProtocolDetector
 
 
 @pytest.fixture
 def detector():
-    return VersionDetector()
+    return ProtocolDetector()
 
 
 class TestReturnTypeSignature:
@@ -378,7 +378,7 @@ class TestNoneChatHistory:
         """
         # This should NOT raise TypeError: 'NoneType' object is not subscriptable
         version, confidence, clarifying_question = await detector.detect_version(
-            "How do I buy Bitcoin?", None  # type: ignore - intentionally passing None
+            "How do I buy Bitcoin?", None
         )
 
         # Behavior should be same as empty list - return Unknown with clarification
@@ -390,7 +390,7 @@ class TestNoneChatHistory:
     async def test_none_chat_history_with_explicit_version(self, detector):
         """Verify explicit version in question works even with None chat_history."""
         version, confidence, _ = await detector.detect_version(
-            "How do I vote in Bisq 1 DAO?", None  # type: ignore
+            "How do I vote in Bisq 1 DAO?", None
         )
 
         assert version == "Bisq 1"
