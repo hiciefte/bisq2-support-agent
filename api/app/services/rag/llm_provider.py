@@ -8,12 +8,15 @@ This module provides:
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import aisuite as ai  # type: ignore[import-untyped]
 import httpx
+from app.core.config import get_settings
 from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider
+from app.utils.instrumentation import track_tokens_and_cost
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -257,7 +260,7 @@ def _detect_currency(query: str) -> str | None:
     return None
 
 
-def _needs_live_data(query: str) -> bool:
+def needs_live_data(query: str) -> bool:
     """Detect if query might benefit from live Bisq 2 data.
 
     Args:
@@ -268,6 +271,53 @@ def _needs_live_data(query: str) -> bool:
     """
     query_lower = query.lower()
     return any(keyword in query_lower for keyword in LIVE_DATA_KEYWORDS)
+
+
+def _needs_live_data(query: str) -> bool:
+    """Backward-compatible alias for older imports."""
+    return needs_live_data(query)
+
+
+def _usage_to_dict(usage: Any) -> dict[str, int] | None:
+    if usage is None:
+        return None
+
+    def usage_value(key: str) -> Any:
+        return usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+
+    def token_count(value: Any, default: int = 0) -> int:
+        try:
+            return int(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    prompt_tokens = token_count(usage_value("prompt_tokens"))
+    completion_tokens = token_count(usage_value("completion_tokens"))
+    total_tokens = token_count(
+        usage_value("total_tokens"),
+        default=prompt_tokens + completion_tokens,
+    )
+    usage_dict = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    if usage_dict["total_tokens"] <= 0:
+        return None
+    return usage_dict
+
+
+def _track_usage(usage: dict[str, int]) -> None:
+    try:
+        settings = get_settings()
+        track_tokens_and_cost(
+            input_tokens=usage["prompt_tokens"],
+            output_tokens=usage["completion_tokens"],
+            input_cost_per_token=settings.OPENAI_INPUT_COST_PER_TOKEN,
+            output_cost_per_token=settings.OPENAI_OUTPUT_COST_PER_TOKEN,
+        )
+    except Exception:
+        logger.warning("Failed to track streamed LLM token usage", exc_info=True)
 
 
 class AISuiteLLMWrapper:
@@ -339,6 +389,54 @@ class AISuiteLLMWrapper:
         except Exception as e:
             logger.exception(f"LLM invocation failed: {e}")
             raise RuntimeError(f"Failed to invoke LLM: {e}") from e
+
+    def stream(
+        self,
+        prompt: str,
+        system_content: str | None = None,
+    ) -> Iterator[str]:
+        """Stream LLM text chunks without tools.
+
+        Args:
+            prompt: User-level prompt text (the question)
+            system_content: Optional system-level content
+
+        Yields:
+            Text deltas from the provider as they arrive.
+
+        Raises:
+            RuntimeError: If LLM streaming fails before completion
+        """
+        messages = _build_messages(prompt, system_content)
+
+        try:
+            stream_kwargs = {
+                "model": self.model_id,
+                "messages": messages,
+                "stream": True,
+                **_completion_params(self.model_id, self.temperature, self.max_tokens),
+            }
+            if self.model_id.startswith("openai:"):
+                stream_kwargs["stream_options"] = {"include_usage": True}
+            response_stream = self.client.chat.completions.create(**stream_kwargs)
+
+            usage: dict[str, int] | None = None
+            for chunk in response_stream:
+                chunk_usage = _usage_to_dict(getattr(chunk, "usage", None))
+                if chunk_usage is not None:
+                    usage = chunk_usage
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                content = getattr(delta, "content", None)
+                if isinstance(content, str) and content:
+                    yield content
+            if usage is not None:
+                _track_usage(usage)
+        except Exception as e:
+            logger.exception(f"LLM streaming failed: {e}")
+            raise RuntimeError(f"Failed to stream LLM response: {e}") from e
 
     def invoke_with_tools(
         self,

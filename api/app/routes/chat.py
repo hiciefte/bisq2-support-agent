@@ -4,20 +4,27 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, cast
 
 from app.channels.escalation_localization import normalize_language_code
 from app.channels.gateway import ChannelGateway
-from app.channels.models import ChannelType
+from app.channels.models import (
+    ChannelType,
+)
 from app.channels.models import ChatMessage as ChannelChatMessage
-from app.channels.models import GatewayError, IncomingMessage, UserContext
+from app.channels.models import (
+    GatewayError,
+    IncomingMessage,
+    OutgoingMessage,
+    UserContext,
+)
 from app.channels.plugins.web.identity import derive_web_user_context
 from app.channels.translations import get_chat_ui_labels
 from app.core.config import Settings, get_settings
 from app.core.exceptions import BaseAppException, ValidationError
 from app.services.feedback_service import FeedbackService
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel
 
@@ -37,6 +44,13 @@ CURRENT_RESPONSE_TIME = Gauge(
 QUERY_ERRORS = Counter(
     "bisq_query_errors_total", "Total number of query errors", ["error_type"]
 )
+
+
+def _record_query_metrics(start_time: float) -> None:
+    total_time = time.time() - start_time
+    QUERY_TOTAL.inc()
+    QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
+    CURRENT_RESPONSE_TIME.set(total_time)
 
 
 class ChatMessageRequest(BaseModel):
@@ -129,6 +143,56 @@ def _normalize_chat_role(role: str) -> Literal["user", "assistant", "system"]:
         return cast(Literal["user", "assistant", "system"], role)
     logger.warning("Unknown chat role '%s' normalized to 'assistant'", role)
     return "assistant"
+
+
+def _format_sse_event(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _query_response_from_outgoing(
+    result: OutgoingMessage,
+    incoming_message_id: str,
+) -> Dict[str, Any]:
+    formatted_sources = [
+        Source(
+            title=source.title,
+            type=source.category or "wiki",
+            content=source.content or "",
+            protocol=source.protocol or "all",
+            url=source.url,
+            section=source.section,
+            similarity_score=source.relevance_score,
+        )
+        for source in result.sources
+    ]
+
+    metadata = result.metadata
+    user_language = normalize_language_code(
+        metadata.original_language if metadata else None
+    )
+
+    return QueryResponse(
+        answer=result.answer,
+        sources=formatted_sources,
+        response_time=(
+            (metadata.processing_time_ms / 1000.0)
+            if metadata and metadata.processing_time_ms is not None
+            else 0.0
+        ),
+        message_id=incoming_message_id,
+        confidence=metadata.confidence_score if metadata else None,
+        routing_action=metadata.routing_action if metadata else None,
+        detected_version=metadata.detected_version if metadata else None,
+        version_confidence=metadata.version_confidence if metadata else None,
+        forwarded_to_human=result.requires_human,
+        requires_human=result.requires_human,
+        escalation_message_id=incoming_message_id if result.requires_human else None,
+        user_language=user_language,
+        ui_labels=get_chat_ui_labels(user_language),
+        mcp_tools_used=(
+            _format_mcp_tools_used(metadata.mcp_tools_used) if metadata else None
+        ),
+    ).model_dump()
 
 
 @router.api_route("/query", methods=["POST"])
@@ -260,58 +324,15 @@ async def query(
                 },
             )
 
-        # Convert OutgoingMessage to QueryResponse format (backward compatibility)
-        formatted_sources = [
-            Source(
-                title=source.title,
-                type=source.category or "wiki",
-                content=source.content or "",
-                protocol=source.protocol or "all",
-                url=source.url,
-                section=source.section,
-                similarity_score=source.relevance_score,
-            )
-            for source in result.sources
-        ]
-
         metadata = result.metadata
-        user_language = normalize_language_code(
-            metadata.original_language if metadata else None
-        )
-
-        response_data = QueryResponse(
-            answer=result.answer,
-            sources=formatted_sources,
-            response_time=(
-                (metadata.processing_time_ms / 1000.0)
-                if metadata and metadata.processing_time_ms is not None
-                else 0.0
-            ),
-            message_id=incoming.message_id,
-            # Phase 1 metadata from gateway metadata
-            confidence=metadata.confidence_score if metadata else None,
-            routing_action=metadata.routing_action if metadata else None,
-            detected_version=metadata.detected_version if metadata else None,
-            version_confidence=metadata.version_confidence if metadata else None,
-            forwarded_to_human=result.requires_human,
-            requires_human=result.requires_human,
-            escalation_message_id=(
-                incoming.message_id if result.requires_human else None
-            ),
-            user_language=user_language,
-            ui_labels=get_chat_ui_labels(user_language),
-            mcp_tools_used=(
-                _format_mcp_tools_used(metadata.mcp_tools_used) if metadata else None
-            ),
-        )
+        response_dict = _query_response_from_outgoing(result, incoming.message_id)
 
         # Log response size and validate JSON serializability
-        response_dict = response_data.model_dump()
         try:
             response_json = json.dumps(response_dict)
             logger.info(
                 f"Response prepared: answer_length={len(result.answer)}, "
-                f"sources_count={len(formatted_sources)}, "
+                f"sources_count={len(result.sources)}, "
                 f"total_size={len(response_json)} bytes"
             )
         except (TypeError, ValueError) as e:
@@ -360,11 +381,177 @@ async def query(
             status_code=500, content={"detail": "Internal server error"}
         )
     finally:
-        # Record metrics to Prometheus - always executed regardless of success/failure
-        total_time = time.time() - start_time
-        QUERY_TOTAL.inc()
-        QUERY_RESPONSE_TIME_HISTOGRAM.observe(total_time)
-        CURRENT_RESPONSE_TIME.set(total_time)
+        _record_query_metrics(start_time)
+
+
+@router.api_route("/query/stream", methods=["POST"])
+async def query_stream(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Process a web chat query and stream answer tokens via SSE."""
+    start_time = time.time()
+
+    gateway = getattr(request.app.state, "channel_gateway", None)
+    if gateway is None:
+        logger.error("Channel gateway not initialized")
+        QUERY_ERRORS.labels(error_type="service_unavailable").inc()
+        _record_query_metrics(start_time)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Channel gateway not initialized",
+        )
+    gateway = cast(ChannelGateway, gateway)
+
+    try:
+        data = await request.json()
+        query_request = QueryRequest.model_validate(data)
+    except Exception as e:
+        QUERY_ERRORS.labels(error_type="validation").inc()
+        _record_query_metrics(start_time)
+        raise ValidationError(detail=str(e)) from e
+
+    bypass_hooks: list[str] = []
+    if isinstance(data, dict) and isinstance(data.get("bypass_hooks"), list):
+        bypass_hooks = [
+            str(x)
+            for x in data.get("bypass_hooks", [])
+            if isinstance(x, str) and x.strip()
+        ][:10]
+    if settings.ENVIRONMENT.lower() == "production":
+        bypass_hooks = []
+
+    chat_history = None
+    if query_request.chat_history:
+        chat_history = [
+            ChannelChatMessage(
+                role=_normalize_chat_role(msg.role),
+                content=msg.content,
+            )
+            for msg in query_request.chat_history
+        ]
+
+    user_id, session_id = derive_web_user_context(request)
+    incoming = IncomingMessage(
+        message_id=f"web_{uuid.uuid4()}",
+        channel=ChannelType.WEB,
+        question=query_request.question,
+        chat_history=chat_history,
+        user=UserContext(
+            user_id=user_id,
+            session_id=session_id,
+            channel_user_id=None,
+            auth_token=None,
+        ),
+        bypass_hooks=bypass_hooks,
+        channel_signature=None,
+        channel_metadata={},
+    )
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            async for event in gateway.stream_message(incoming):
+                if await request.is_disconnected():
+                    return
+
+                event_name = event.get("event")
+                event_data = event.get("data")
+                if event_name == "token":
+                    token = event_data if isinstance(event_data, str) else ""
+                    if token:
+                        yield _format_sse_event("token", {"content": token})
+                elif event_name == "final":
+                    if not isinstance(event_data, OutgoingMessage):
+                        raise RuntimeError("Streaming gateway final event was invalid")
+                    response_dict = _query_response_from_outgoing(
+                        event_data,
+                        incoming.message_id,
+                    )
+
+                    try:
+                        tracker = getattr(
+                            request.app.state,
+                            "sent_message_tracker",
+                            None,
+                        )
+                        if tracker:
+                            tracker.track(
+                                channel_id="web",
+                                external_message_id=incoming.message_id,
+                                internal_message_id=incoming.message_id,
+                                question=query_request.question,
+                                answer=event_data.answer,
+                                user_id=user_id,
+                                sources=[
+                                    {
+                                        "title": s.title,
+                                        "content": s.content or "",
+                                        "url": s.url,
+                                    }
+                                    for s in event_data.sources
+                                ],
+                                confidence_score=(
+                                    event_data.metadata.confidence_score
+                                    if event_data.metadata
+                                    else None
+                                ),
+                                routing_action=(
+                                    event_data.metadata.routing_action
+                                    if event_data.metadata
+                                    else None
+                                ),
+                                requires_human=event_data.requires_human,
+                                delivery_target=incoming.message_id,
+                                user_language=(
+                                    event_data.metadata.original_language
+                                    if event_data.metadata
+                                    else None
+                                ),
+                            )
+                    except Exception:
+                        logger.warning(
+                            "Failed to track streamed web message for reactions",
+                            exc_info=True,
+                        )
+
+                    yield _format_sse_event("final", response_dict)
+                    return
+                elif event_name == "error":
+                    if isinstance(event_data, GatewayError):
+                        QUERY_ERRORS.labels(
+                            error_type=event_data.error_code.value
+                        ).inc()
+                        yield _format_sse_event(
+                            "error",
+                            {
+                                "detail": event_data.error_message,
+                                "error_code": event_data.error_code.value,
+                                "details": event_data.details,
+                            },
+                        )
+                    else:
+                        QUERY_ERRORS.labels(error_type="internal_error").inc()
+                        yield _format_sse_event(
+                            "error",
+                            {"detail": "Internal server error"},
+                        )
+                    return
+        except Exception:
+            logger.exception("Unexpected error processing /query/stream")
+            QUERY_ERRORS.labels(error_type="internal_error").inc()
+            yield _format_sse_event("error", {"detail": "Internal server error"})
+        finally:
+            _record_query_metrics(start_time)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # Memoization for /stats: FeedbackService caches raw rows for 300s, but the

@@ -4,6 +4,7 @@ These tests define the expected behavior of the new LLM provider
 that uses AISuite native MCP support and OpenAI embeddings.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -89,6 +90,110 @@ class TestAISuiteLLMWrapperContract:
         assert call_kwargs["max_tokens"] == 500
         assert call_kwargs["messages"][0]["role"] == "user"
         assert call_kwargs["messages"][0]["content"] == "Test prompt"
+
+    def test_stream_yields_content_chunks(self, mock_ai_client):
+        """stream must request streaming completions and yield text deltas."""
+        first_chunk = MagicMock()
+        first_chunk.choices = [MagicMock()]
+        first_chunk.choices[0].delta.content = "Test "
+        second_chunk = MagicMock()
+        second_chunk.choices = [MagicMock()]
+        second_chunk.choices[0].delta.content = "response"
+        empty_chunk = MagicMock()
+        empty_chunk.choices = []
+        mock_ai_client.chat.completions.create.return_value = [
+            first_chunk,
+            empty_chunk,
+            second_chunk,
+        ]
+
+        from app.services.rag.llm_provider import AISuiteLLMWrapper
+
+        wrapper = AISuiteLLMWrapper(
+            client=mock_ai_client,
+            model="openai:gpt-4o-mini",
+            max_tokens=500,
+            temperature=0.5,
+        )
+
+        result = list(wrapper.stream("Test prompt", system_content="System prompt"))
+
+        assert result == ["Test ", "response"]
+        call_kwargs = mock_ai_client.chat.completions.create.call_args[1]
+        assert call_kwargs["stream"] is True
+        assert call_kwargs["model"] == "openai:gpt-4o-mini"
+        assert call_kwargs["temperature"] == 0.5
+        assert call_kwargs["max_tokens"] == 500
+        assert call_kwargs["messages"][0]["role"] == "system"
+        assert call_kwargs["messages"][1]["content"] == "Test prompt"
+
+    def test_stream_tracks_usage_when_provider_reports_it(self, mock_ai_client):
+        """stream must track usage from providers that include a final usage chunk."""
+        text_chunk = SimpleNamespace(
+            usage=None,
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="Test "))],
+        )
+        usage_chunk = SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=7,
+                completion_tokens=11,
+                total_tokens=18,
+            ),
+            choices=[],
+        )
+        mock_ai_client.chat.completions.create.return_value = [
+            text_chunk,
+            usage_chunk,
+        ]
+
+        from app.services.rag.llm_provider import AISuiteLLMWrapper
+
+        wrapper = AISuiteLLMWrapper(
+            client=mock_ai_client,
+            model="openai:gpt-4o-mini",
+            max_tokens=500,
+            temperature=0.5,
+        )
+        settings = SimpleNamespace(
+            OPENAI_INPUT_COST_PER_TOKEN=0.001,
+            OPENAI_OUTPUT_COST_PER_TOKEN=0.002,
+        )
+
+        with patch(
+            "app.services.rag.llm_provider.get_settings",
+            return_value=settings,
+        ), patch("app.services.rag.llm_provider.track_tokens_and_cost") as track:
+            result = list(wrapper.stream("Test prompt"))
+
+        assert result == ["Test "]
+        call_kwargs = mock_ai_client.chat.completions.create.call_args[1]
+        assert call_kwargs["stream_options"] == {"include_usage": True}
+        track.assert_called_once_with(
+            input_tokens=7,
+            output_tokens=11,
+            input_cost_per_token=0.001,
+            output_cost_per_token=0.002,
+        )
+
+    def test_usage_to_dict_tolerates_partial_usage_fields(self):
+        """Usage accounting should tolerate partial provider usage payloads."""
+        from app.services.rag.llm_provider import _usage_to_dict
+
+        assert _usage_to_dict({"prompt_tokens": None, "completion_tokens": 3}) == {
+            "prompt_tokens": 0,
+            "completion_tokens": 3,
+            "total_tokens": 3,
+        }
+        usage = SimpleNamespace(
+            prompt_tokens=None,
+            completion_tokens=4,
+            total_tokens=None,
+        )
+        assert _usage_to_dict(usage) == {
+            "prompt_tokens": 0,
+            "completion_tokens": 4,
+            "total_tokens": 4,
+        }
 
     def test_invoke_with_tools_returns_tool_call_result(
         self, mock_ai_client, mock_response

@@ -1,4 +1,9 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import {
+  TextDecoder as NodeTextDecoder,
+  TextEncoder as NodeTextEncoder,
+} from "node:util";
 
 import { useChatMessages } from "./use-chat-messages";
 import type { Message } from "../types/chat.types";
@@ -18,7 +23,35 @@ const jsonResponse = (
     json: async () => body,
   }) as unknown as Response;
 
+const streamEvent = (event: string, data: unknown): string =>
+  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+const streamResponse = (events: string[]): Response =>
+  ({
+    ok: true,
+    status: 200,
+    body: new NodeReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new NodeTextEncoder();
+        for (const event of events) {
+          controller.enqueue(encoder.encode(event));
+        }
+        controller.close();
+      },
+    }),
+  }) as unknown as Response;
+
+const finalStreamResponse = (body: unknown): Response =>
+  streamResponse([streamEvent("final", body)]);
+
 describe("useChatMessages", () => {
+  beforeAll(() => {
+    Object.assign(globalThis, {
+      TextDecoder: NodeTextDecoder,
+      TextEncoder: NodeTextEncoder,
+    });
+  });
+
   afterEach(() => {
     // Unmount before clearing storage: RTL's automatic cleanup would run
     // after this hook and the unmount flush would repopulate localStorage.
@@ -36,10 +69,10 @@ describe("useChatMessages", () => {
       queryResponses = [];
       fetchMock = jest.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.includes("/chat/query")) {
+        if (url.includes("/chat/query/stream")) {
           const next = queryResponses.shift();
           if (!next) {
-            throw new Error(`Unexpected /chat/query call: ${url}`);
+            throw new Error(`Unexpected /chat/query/stream call: ${url}`);
           }
           return next;
         }
@@ -53,7 +86,7 @@ describe("useChatMessages", () => {
 
     const getQueryBodies = (): ChatQueryBody[] =>
       fetchMock.mock.calls
-        .filter(([input]) => String(input).includes("/chat/query"))
+        .filter(([input]) => String(input).includes("/chat/query/stream"))
         .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
 
     test("marks client-generated error bubbles with isError while keeping them visible", async () => {
@@ -76,7 +109,7 @@ describe("useChatMessages", () => {
     test("excludes client error bubbles from the chat_history sent to the API", async () => {
       queryResponses.push(
         jsonResponse({ detail: "upstream exploded" }, { ok: false, status: 500 }),
-        jsonResponse({ answer: "All good now" }),
+        finalStreamResponse({ answer: "All good now" }),
       );
 
       const { result } = renderHook(() => useChatMessages());
@@ -115,7 +148,7 @@ describe("useChatMessages", () => {
           },
         ]),
       );
-      queryResponses.push(jsonResponse({ answer: "Fresh answer" }));
+      queryResponses.push(finalStreamResponse({ answer: "Fresh answer" }));
 
       const { result } = renderHook(() => useChatMessages());
 
@@ -136,7 +169,7 @@ describe("useChatMessages", () => {
       let querySignal: AbortSignal | undefined;
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url.includes("/chat/query")) {
+        if (url.includes("/chat/query/stream")) {
           querySignal = init?.signal as AbortSignal | undefined;
           return new Promise<Response>((resolve) => {
             resolveQuery = resolve;
@@ -164,7 +197,7 @@ describe("useChatMessages", () => {
       expect(querySignal?.aborted).toBe(true);
 
       await act(async () => {
-        resolveQuery(jsonResponse({ answer: "Late answer" }));
+        resolveQuery(finalStreamResponse({ answer: "Late answer" }));
         await request;
       });
 
@@ -177,7 +210,7 @@ describe("useChatMessages", () => {
       let querySignal: AbortSignal | undefined;
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url.includes("/chat/query")) {
+        if (url.includes("/chat/query/stream")) {
           querySignal = init?.signal as AbortSignal | undefined;
           return new Promise<Response>((resolve) => {
             resolveQuery = resolve;
@@ -208,7 +241,7 @@ describe("useChatMessages", () => {
       ]);
 
       await act(async () => {
-        resolveQuery(jsonResponse({ answer: "Late answer" }));
+        resolveQuery(finalStreamResponse({ answer: "Late answer" }));
         await request;
       });
 
@@ -216,6 +249,135 @@ describe("useChatMessages", () => {
         "question before cancel",
         "Request canceled.",
       ]);
+    });
+
+    test("streams tokens and replaces the draft with final metadata", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Partial " }),
+          streamEvent("token", { content: "answer" }),
+          streamEvent("final", {
+            message_id: "web_final-message",
+            answer: "Final answer",
+            sources: [
+              {
+                title: "Bisq guide",
+                type: "wiki",
+                content: "Source content",
+                protocol: "all",
+              },
+            ],
+            response_time: 1.2,
+            token_count: 42,
+            confidence: 0.91,
+            detected_version: "bisq2",
+            version_confidence: 0.83,
+            routing_action: "auto_send",
+            ui_labels: {
+              helpful_prompt: "Was this helpful?",
+              helpful_thank_you: "Thanks for the feedback.",
+              staff_helpful_prompt: "Was the staff response helpful?",
+              staff_response_label: "Staff response",
+              support_team_notified: "Support team notified.",
+            },
+          }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("stream question");
+      });
+
+      const streamCall = fetchMock.mock.calls.find(([input]) =>
+        String(input).includes("/chat/query/stream"),
+      );
+      expect(streamCall?.[0]).toContain("/chat/query/stream");
+      expect(result.current.messages).toHaveLength(2);
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.id).toBe("web_final-message");
+      expect(assistantMessage.content).toBe("Final answer");
+      expect(assistantMessage.sources?.[0].title).toBe("Bisq guide");
+      expect(assistantMessage.metadata?.response_time).toBe(1.2);
+      expect(assistantMessage.metadata?.token_count).toBe(42);
+      expect(assistantMessage.confidence).toBe(0.91);
+      expect(assistantMessage.detected_version).toBe("bisq2");
+      expect(assistantMessage.version_confidence).toBe(0.83);
+      expect(assistantMessage.routing_action).toBe("auto_send");
+      expect(assistantMessage.ui_labels?.staff_response_label).toBe(
+        "Staff response",
+      );
+    });
+
+    test("uses final stream answer for human escalation messages", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Draft answer" }),
+          streamEvent("final", {
+            message_id: "web_escalated-message",
+            answer: "Support team notified.",
+            sources: [],
+            response_time: 0.7,
+            requires_human: true,
+            escalation_message_id: "web_escalated-message",
+            user_language: "de",
+          }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("needs human");
+      });
+
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.content).toBe("Support team notified.");
+      expect(assistantMessage.requires_human).toBe(true);
+      expect(assistantMessage.escalation_message_id).toBe("web_escalated-message");
+      expect(assistantMessage.escalation_user_language).toBe("de");
+    });
+
+    test("replaces a streamed draft with an error event message", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Partial draft" }),
+          streamEvent("error", { detail: "backend failed" }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("stream fails");
+      });
+
+      expect(result.current.messages).toHaveLength(2);
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.content).toContain("backend failed");
+      expect(assistantMessage.isError).toBe(true);
+    });
+
+    test("replaces a streamed draft when the stream ends without final", async () => {
+      queryResponses.push(
+        streamResponse([
+          streamEvent("token", { content: "Partial draft" }),
+        ]),
+      );
+
+      const { result } = renderHook(() => useChatMessages());
+
+      await act(async () => {
+        await result.current.sendMessage("stream ends early");
+      });
+
+      expect(result.current.messages).toHaveLength(2);
+      const assistantMessage = result.current.messages[1];
+      expect(assistantMessage.content).toContain(
+        "Response stream ended before the final event",
+      );
+      expect(assistantMessage.isError).toBe(true);
     });
   });
 

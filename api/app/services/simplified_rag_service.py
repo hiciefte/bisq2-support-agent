@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from app.channels.traits import get_channel_traits
 from app.core.config import get_settings
@@ -33,7 +33,7 @@ from app.services.rag.document_retriever import (
     is_bisq_version_comparison_query,
 )
 from app.services.rag.index_state_manager import IndexStateManager
-from app.services.rag.llm_provider import LLMProvider
+from app.services.rag.llm_provider import LLMProvider, needs_live_data
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.nli_validator import NLIValidator
 from app.services.rag.prompt_manager import PromptManager
@@ -1110,6 +1110,92 @@ class SimplifiedRAGService:
 
         return None
 
+    def _generate_streamed_rag_response(
+        self,
+        *,
+        question: str,
+        chat_history: Optional[List[Dict[str, str]]],
+        docs: List[Document],
+        detected_version: str,
+        token_callback: Callable[[str], None],
+    ) -> str:
+        if self.llm is None:
+            logger.warning("LLM not initialized for streaming response")
+            return error_messages.GENERATION_FAILED
+
+        chat_history_str = self.prompt_manager.format_chat_history(chat_history)
+        context = self._format_docs(docs, detected_version)
+        system_content, user_content = self.prompt_manager.format_prompt_messages(
+            question=question,
+            chat_history_str=chat_history_str,
+            context=context,
+        )
+
+        chunks: list[str] = []
+        for token in self.llm.stream(user_content, system_content=system_content):
+            chunks.append(token)
+            token_callback(token)
+
+        response_text = "".join(chunks).strip()
+        if not response_text:
+            logger.warning("Empty streamed response received from LLM")
+            return error_messages.GENERATION_FAILED
+        return response_text
+
+    async def stream_query(
+        self,
+        question: str,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        override_version: Optional[str] = None,
+        detection_source: Optional[str] = None,
+        language_hint: Optional[str] = None,
+        language_hint_confidence: Optional[float] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def enqueue_token(token: str) -> None:
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {"event": "token", "data": token},
+            )
+
+        async def run_query() -> None:
+            try:
+                result = await self.query(
+                    question=question,
+                    chat_history=chat_history,
+                    override_version=override_version,
+                    detection_source=detection_source,
+                    language_hint=language_hint,
+                    language_hint_confidence=language_hint_confidence,
+                    token_callback=enqueue_token,
+                )
+                if result.get("error"):
+                    await queue.put({"event": "error", "data": str(result["error"])})
+                    return
+                await queue.put({"event": "final", "data": result})
+            except Exception as exc:
+                logger.exception("Streaming RAG query failed")
+                await queue.put({"event": "error", "data": str(exc)})
+            finally:
+                await queue.put({"event": "done", "data": None})
+
+        task = asyncio.create_task(run_query())
+        try:
+            while True:
+                event = await queue.get()
+                if event["event"] == "done":
+                    break
+                yield event
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
     async def query(
         self,
         question: str,
@@ -1118,6 +1204,7 @@ class SimplifiedRAGService:
         detection_source: Optional[str] = None,
         language_hint: Optional[str] = None,
         language_hint_confidence: Optional[float] = None,
+        token_callback: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """Process a query and return a response with metadata.
 
@@ -1443,7 +1530,14 @@ class SimplifiedRAGService:
             # The LLM uses MCP HTTP transport to access tools at mcp_url
             mcp_tools_used: list[dict[str, str]] | None = None
             mcp_invocation_succeeded = False
-            if self.mcp_enabled:
+            use_mcp_invocation = self.mcp_enabled and (
+                token_callback is None or needs_live_data(preprocessed_question)
+            )
+            if self.mcp_enabled and not use_mcp_invocation:
+                logger.info(
+                    "MCP enabled, but streaming standard RAG response for non-live-data query"
+                )
+            if use_mcp_invocation:
                 logger.info(
                     "MCP enabled, using tool-enabled invocation via HTTP transport"
                 )
@@ -1518,12 +1612,22 @@ class SimplifiedRAGService:
                 # Pass the already-retrieved, version-aware documents so the
                 # chain does not re-retrieve with a version-blind default and
                 # the generation context matches the reported sources.
-                response_text = await asyncio.to_thread(
-                    self.rag_chain,
-                    preprocessed_question,
-                    chat_history,
-                    docs=docs,
-                )
+                if token_callback is not None:
+                    response_text = await asyncio.to_thread(
+                        self._generate_streamed_rag_response,
+                        question=preprocessed_question,
+                        chat_history=chat_history,
+                        docs=docs,
+                        detected_version=detected_version,
+                        token_callback=token_callback,
+                    )
+                else:
+                    response_text = await asyncio.to_thread(
+                        self.rag_chain,
+                        preprocessed_question,
+                        chat_history,
+                        docs=docs,
+                    )
 
             # Calculate response time
             response_time = time.time() - start_time

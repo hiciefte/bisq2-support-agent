@@ -133,6 +133,89 @@ const parseMcpTools = (value: unknown): McpToolUsage[] | undefined => {
     return tools.length > 0 ? tools : undefined;
 };
 
+const parseStreamEvent = (
+    rawEvent: string,
+): { event: string; data: unknown } | null => {
+    const lines = rawEvent.split(/\r?\n/);
+    let event = "message";
+    const dataLines: string[] = [];
+
+    for (const line of lines) {
+        if (line.startsWith("event:")) {
+            event = line.slice("event:".length).trim();
+        } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice("data:".length).trimStart());
+        }
+    }
+
+    if (dataLines.length === 0) {
+        return null;
+    }
+
+    try {
+        return {
+            event,
+            data: JSON.parse(dataLines.join("\n")),
+        };
+    } catch {
+        return null;
+    }
+};
+
+const messageFromPayload = (
+    payload: JsonRecord,
+    fallbackId: string,
+    fallbackAnswer = "",
+): Message => {
+    const answer =
+        typeof payload.answer === "string" ? payload.answer : fallbackAnswer;
+
+    return {
+        id:
+            typeof payload.message_id === "string"
+                ? payload.message_id
+                : fallbackId,
+        content: cleanupResponse(answer),
+        role: "assistant",
+        timestamp: new Date(),
+        sources: parseSources(payload.sources),
+        metadata: {
+            response_time: isFiniteNumber(payload.response_time)
+                ? payload.response_time
+                : 0,
+            token_count: isFiniteNumber(payload.token_count)
+                ? payload.token_count
+                : 0,
+        },
+        confidence: isFiniteNumber(payload.confidence) ? payload.confidence : undefined,
+        detected_version:
+            typeof payload.detected_version === "string"
+                ? payload.detected_version
+                : undefined,
+        version_confidence: isFiniteNumber(payload.version_confidence)
+            ? payload.version_confidence
+            : undefined,
+        mcp_tools_used: parseMcpTools(payload.mcp_tools_used),
+        routing_action:
+            typeof payload.routing_action === "string"
+                ? payload.routing_action
+                : undefined,
+        requires_human:
+            typeof payload.requires_human === "boolean"
+                ? payload.requires_human
+                : undefined,
+        escalation_message_id:
+            typeof payload.escalation_message_id === "string"
+                ? payload.escalation_message_id
+                : undefined,
+        escalation_user_language:
+            typeof payload.user_language === "string"
+                ? payload.user_language
+                : undefined,
+        ui_labels: parseChatUiLabels(payload.ui_labels),
+    };
+};
+
 const parseStoredMessage = (value: unknown): Message | null => {
     if (!isJsonRecord(value)) {
         return null;
@@ -505,13 +588,27 @@ export const useChatMessages = () => {
 
             const isCurrentRequest = () =>
                 requestGenerationRef.current === requestGeneration;
+            let replaceStreamDraftWithError: ((content: string) => void) | null = null;
+            let requestTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-            try {
-                const timeoutId = setTimeout(
+            const resetRequestTimeout = () => {
+                if (requestTimeoutId) {
+                    clearTimeout(requestTimeoutId);
+                }
+                requestTimeoutId = setTimeout(
                     () => controller.abort(),
                     REQUEST_TIMEOUT_MS,
                 );
+            };
 
+            const clearRequestTimeout = () => {
+                if (requestTimeoutId) {
+                    clearTimeout(requestTimeoutId);
+                    requestTimeoutId = null;
+                }
+            };
+
+            try {
                 // Client-generated error bubbles are UI-only; sending them as
                 // assistant turns would pollute the LLM prompt on the backend.
                 const chatHistory = messageSnapshot
@@ -522,9 +619,122 @@ export const useChatMessages = () => {
                     }))
                     .slice(-MAX_CHAT_HISTORY_LENGTH);
 
-                let response: Response;
+                const draftMessageId = generateUUID();
+                let hasDraftMessage = false;
+                let streamedAnswer = "";
+                let streamBuffer = "";
+                let receivedFinal = false;
+
+                const upsertDraftMessage = (content: string) => {
+                    hasDraftMessage = true;
+                    setMessages((prev) => {
+                        const draftMessage: Message = {
+                            id: draftMessageId,
+                            content,
+                            role: "assistant",
+                            timestamp: new Date(),
+                            metadata: {
+                                response_time: 0,
+                                token_count: 0,
+                            },
+                        };
+                        const draftIndex = prev.findIndex(
+                            (message) => message.id === draftMessageId,
+                        );
+                        const nextMessages =
+                            draftIndex === -1
+                                ? [...prev, draftMessage]
+                                : prev.map((message, index) =>
+                                      index === draftIndex
+                                          ? {
+                                                ...message,
+                                                content,
+                                            }
+                                          : message,
+                                  );
+                        messagesRef.current = nextMessages;
+                        return nextMessages;
+                    });
+                };
+
+                const replaceDraftMessage = (message: Message) => {
+                    hasDraftMessage = true;
+                    setMessages((prev) => {
+                        const draftIndex = prev.findIndex(
+                            (candidate) => candidate.id === draftMessageId,
+                        );
+                        const nextMessages =
+                            draftIndex === -1
+                                ? [...prev, message]
+                                : prev.map((candidate, index) =>
+                                      index === draftIndex ? message : candidate,
+                                  );
+                        messagesRef.current = nextMessages;
+                        return nextMessages;
+                    });
+                };
+
+                const replaceDraftWithError = (content: string) => {
+                    const errorMessage: Message = {
+                        id: hasDraftMessage ? draftMessageId : generateUUID(),
+                        content: cleanupResponse(content),
+                        role: "assistant",
+                        timestamp: new Date(),
+                        isError: true,
+                    };
+                    if (hasDraftMessage) {
+                        replaceDraftMessage(errorMessage);
+                        return;
+                    }
+                    setMessages((prev) => {
+                        const nextMessages = [...prev, errorMessage];
+                        messagesRef.current = nextMessages;
+                        return nextMessages;
+                    });
+                };
+                replaceStreamDraftWithError = replaceDraftWithError;
+
+                const processStreamEvent = (rawEvent: string) => {
+                    const parsed = parseStreamEvent(rawEvent);
+                    if (!parsed || !isCurrentRequest()) {
+                        return;
+                    }
+
+                    if (parsed.event === "token") {
+                        if (
+                            isJsonRecord(parsed.data) &&
+                            typeof parsed.data.content === "string"
+                        ) {
+                            streamedAnswer += parsed.data.content;
+                            upsertDraftMessage(streamedAnswer);
+                        }
+                        return;
+                    }
+
+                    if (parsed.event === "final") {
+                        if (!isJsonRecord(parsed.data)) {
+                            throw new Error("Received malformed final stream event.");
+                        }
+                        receivedFinal = true;
+                        replaceDraftMessage(
+                            messageFromPayload(parsed.data, draftMessageId, streamedAnswer),
+                        );
+                        return;
+                    }
+
+                    if (parsed.event === "error") {
+                        const detail =
+                            isJsonRecord(parsed.data) &&
+                            typeof parsed.data.detail === "string"
+                                ? parsed.data.detail
+                                : "Server returned a streaming error. Please try again.";
+                        throw new Error(detail);
+                    }
+                };
+
                 try {
-                    response = await fetch(`${API_BASE_URL}/chat/query`, {
+                    resetRequestTimeout();
+                    const response = await fetch(`${API_BASE_URL}/chat/query/stream`, {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
@@ -535,96 +745,69 @@ export const useChatMessages = () => {
                         }),
                         signal: controller.signal,
                     });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
 
-                if (!isCurrentRequest()) {
-                    return;
-                }
+                    if (!isCurrentRequest()) {
+                        return;
+                    }
 
-                if (!response.ok) {
-                    let detail = `Server returned ${response.status}. Please try again.`;
-                    try {
-                        const errorBody: unknown = await response.json();
-                        if (isJsonRecord(errorBody) && typeof errorBody.detail === "string") {
-                            detail = errorBody.detail;
+                    if (!response.ok) {
+                        let detail = `Server returned ${response.status}. Please try again.`;
+                        try {
+                            const errorBody: unknown = await response.json();
+                            if (
+                                isJsonRecord(errorBody) &&
+                                typeof errorBody.detail === "string"
+                            ) {
+                                detail = errorBody.detail;
+                            }
+                        } catch {
+                            // Keep default detail when error body cannot be parsed.
                         }
-                    } catch {
-                        // Keep default detail when error body cannot be parsed.
+
+                        if (!isCurrentRequest()) {
+                            return;
+                        }
+
+                        replaceDraftWithError(`Error: ${detail}`);
+                        return;
+                    }
+
+                    if (!response.body) {
+                        throw new Error("Server did not return a response stream.");
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    while (isCurrentRequest()) {
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            break;
+                        }
+                        resetRequestTimeout();
+                        streamBuffer += decoder.decode(value, { stream: true });
+                        const events = streamBuffer.split(/\r?\n\r?\n/);
+                        streamBuffer = events.pop() ?? "";
+                        for (const event of events) {
+                            processStreamEvent(event);
+                        }
+                    }
+
+                    streamBuffer += decoder.decode();
+                    if (streamBuffer.trim().length > 0) {
+                        processStreamEvent(streamBuffer);
                     }
 
                     if (!isCurrentRequest()) {
                         return;
                     }
 
-                    setMessages((prev) => [
-                        ...prev,
-                        {
-                            id: generateUUID(),
-                            content: `Error: ${detail}`,
-                            role: "assistant",
-                            timestamp: new Date(),
-                            isError: true,
-                        },
-                    ]);
-                    return;
+                    if (!receivedFinal) {
+                        throw new Error("Response stream ended before the final event.");
+                    }
+                } finally {
+                    clearRequestTimeout();
                 }
-
-                const data: unknown = await response.json();
-                if (!isCurrentRequest()) {
-                    return;
-                }
-
-                const payload = isJsonRecord(data) ? data : {};
-                const answer = typeof payload.answer === "string" ? payload.answer : "";
-
-                const assistantMessage: Message = {
-                    id:
-                        typeof payload.message_id === "string"
-                            ? payload.message_id
-                            : generateUUID(),
-                    content: cleanupResponse(answer),
-                    role: "assistant",
-                    timestamp: new Date(),
-                    sources: parseSources(payload.sources),
-                    metadata: {
-                        response_time: isFiniteNumber(payload.response_time)
-                            ? payload.response_time
-                            : 0,
-                        token_count: isFiniteNumber(payload.token_count)
-                            ? payload.token_count
-                            : 0,
-                    },
-                    confidence: isFiniteNumber(payload.confidence) ? payload.confidence : undefined,
-                    detected_version:
-                        typeof payload.detected_version === "string"
-                            ? payload.detected_version
-                            : undefined,
-                    version_confidence: isFiniteNumber(payload.version_confidence)
-                        ? payload.version_confidence
-                        : undefined,
-                    mcp_tools_used: parseMcpTools(payload.mcp_tools_used),
-                    routing_action:
-                        typeof payload.routing_action === "string"
-                            ? payload.routing_action
-                            : undefined,
-                    requires_human:
-                        typeof payload.requires_human === "boolean"
-                            ? payload.requires_human
-                            : undefined,
-                    escalation_message_id:
-                        typeof payload.escalation_message_id === "string"
-                            ? payload.escalation_message_id
-                            : undefined,
-                    escalation_user_language:
-                        typeof payload.user_language === "string"
-                            ? payload.user_language
-                            : undefined,
-                    ui_labels: parseChatUiLabels(payload.ui_labels),
-                };
-
-                setMessages((prev) => [...prev, assistantMessage]);
             } catch (error: unknown) {
                 if (!isCurrentRequest()) {
                     return;
@@ -641,16 +824,22 @@ export const useChatMessages = () => {
                     errorContent = `An error occurred: ${error.name} - ${error.message}. Please try again.`;
                 }
 
-                setMessages((prev) => [
-                    ...prev,
-                    {
+                if (replaceStreamDraftWithError) {
+                    replaceStreamDraftWithError(errorContent);
+                } else {
+                    const errorMessage: Message = {
                         id: generateUUID(),
                         content: cleanupResponse(errorContent),
                         role: "assistant",
                         timestamp: new Date(),
                         isError: true,
-                    },
-                ]);
+                    };
+                    setMessages((prev) => {
+                        const nextMessages = [...prev, errorMessage];
+                        messagesRef.current = nextMessages;
+                        return nextMessages;
+                    });
+                }
             } finally {
                 if (activeRequestRef.current?.generation === requestGeneration) {
                     activeRequestRef.current = null;
