@@ -312,3 +312,91 @@ def test_refresh_runtime_services_includes_qdrant(tmp_path: Path) -> None:
     assert (
         "compose -f docker-compose.yml up -d qdrant api web nginx bisq2-api" in logged
     )
+
+
+def test_live_data_chat_smoke_skips_when_mcp_disabled(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENABLE_BISQ_MCP_INTEGRATION=false\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    curl_log = tmp_path / "curl.log"
+    curl = fakebin / "curl"
+    curl.write_text(
+        "#!/bin/bash\n" f'echo "$*" >> "{curl_log}"\n' "exit 64\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        test_live_data_chat_endpoint "http://example.test/api/chat/query" 1 0 "{env_file}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Skipping MCP live-data smoke check" in result.stdout
+    assert not curl_log.exists()
+
+
+def test_live_data_chat_smoke_requires_mcp_tool_metadata(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENABLE_BISQ_MCP_INTEGRATION=true\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    curl = fakebin / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        "cat <<'EOF'\n"
+        '{"answer":"BTC price is available.","mcp_tools_used":null}\n'
+        "200\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        test_live_data_chat_endpoint "http://example.test/api/chat/query" 1 0 "{env_file}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode != 0
+    assert "MCP live-data smoke test failed after 1 attempts" in result.stdout
+
+
+def test_live_data_chat_smoke_accepts_market_price_tool(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENABLE_BISQ_MCP_INTEGRATION=true\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    curl = fakebin / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        "cat <<'EOF'\n"
+        '{"answer":"BTC price is available.",'
+        '"mcp_tools_used":[{"tool":"get_market_prices",'
+        '"timestamp":"2026-07-07T00:00:00+00:00"}]}\n'
+        "200\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+
+    result = run_bash(
+        f"""
+        export PATH="{fakebin}:$PATH"
+        source "{DOCKER_UTILS_SH}"
+        test_live_data_chat_endpoint "http://example.test/api/chat/query" 1 0 "{env_file}"
+        """,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "MCP live-data smoke test successful" in result.stdout
+    assert "get_market_prices" in result.stdout

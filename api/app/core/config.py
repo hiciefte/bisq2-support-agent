@@ -126,6 +126,25 @@ class Settings(BaseSettings):
         description="Enable live Bisq 2 data integration (market prices, offers, reputation)",
     )
 
+    def log_mcp_live_data_startup_state(self) -> None:
+        """Log live-data visibility at startup."""
+        if self.ENABLE_BISQ_MCP_INTEGRATION:
+            logger.info(
+                "MCP live-data integration is enabled "
+                "(MCP_HTTP_URL=%s, BISQ_API_URL=%s)",
+                self.MCP_HTTP_URL,
+                self.BISQ_API_URL,
+            )
+            return
+
+        logger.warning(
+            "MCP live-data integration is DISABLED. Live-data questions that "
+            "need current market prices, offers, or reputation will not call "
+            "Bisq 2 API tools and may fall back to static RAG content. Set "
+            "ENABLE_BISQ_MCP_INTEGRATION=true only when BISQ_API_URL is "
+            "reachable."
+        )
+
     # Matrix integration settings
     MATRIX_HOMESERVER_URL: str = ""  # e.g., "https://matrix.org"
 

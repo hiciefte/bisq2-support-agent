@@ -186,6 +186,7 @@ async def lifespan(app: FastAPI):
     app.state.bisq_startup_self_test = {"status": "unknown", "checks": {}}
     # Set the service for MCP HTTP endpoint
     set_bisq_service(bisq_mcp_service)
+    settings.log_mcp_live_data_startup_state()
     logger.info(
         f"Bisq2MCPService initialized (enabled={settings.ENABLE_BISQ_MCP_INTEGRATION})"
     )

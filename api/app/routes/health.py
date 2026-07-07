@@ -28,12 +28,17 @@ async def health_check(request: Request):
 
     bisq_status = {"status": "unknown"}
     bisq_service = getattr(request.app.state, "bisq_mcp_service", None)
+    mcp_enabled = False
     if bisq_service is not None:
+        mcp_enabled = bool(getattr(bisq_service, "enabled", False))
         try:
             bisq_health = await bisq_service.health_check()
             bisq_status = bisq_health.get("readiness", {"status": "unknown"})
         except Exception:  # noqa: BLE001
             bisq_status = {"status": "unhealthy"}
+    else:
+        app_settings = getattr(request.app.state, "settings", None)
+        mcp_enabled = bool(getattr(app_settings, "ENABLE_BISQ_MCP_INTEGRATION", False))
 
     # Overall status depends on RAG readiness
     overall_status = "healthy" if rag_service_status == "healthy" else "initializing"
@@ -47,6 +52,7 @@ async def health_check(request: Request):
         "status": overall_status,
         "timestamp": int(time.time()),
         "build_id": build_id,
+        "mcp_enabled": mcp_enabled,
         "system": {
             "cpu_percent": cpu_percent,
             "memory_percent": memory.percent,

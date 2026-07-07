@@ -437,6 +437,99 @@ test_chat_endpoint() {
     return 1
 }
 
+is_mcp_live_data_enabled() {
+    local env_file="${1:-${DOCKER_DIR:-}/.env}"
+    local value="${ENABLE_BISQ_MCP_INTEGRATION:-}"
+
+    if [ -z "$value" ] && [ -n "$env_file" ] && [ -f "$env_file" ]; then
+        value=$(
+            grep -E "^(export[[:space:]]+)?ENABLE_BISQ_MCP_INTEGRATION=" "$env_file" |
+                tail -n1 |
+                sed -E "s/^(export[[:space:]]+)?ENABLE_BISQ_MCP_INTEGRATION=//" ||
+                true
+        )
+    fi
+
+    value="${value%%#*}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+
+    is_env_enabled "$value"
+}
+
+test_live_data_chat_endpoint() {
+    local url="${1:-http://localhost/api/chat/query}"
+    local retries="${2:-5}"
+    local delay="${3:-10}"
+    local env_file="${4:-${DOCKER_DIR:-}/.env}"
+    local question="${LIVE_DATA_SMOKE_QUESTION:-What is the current BTC price?}"
+    local payload
+
+    if ! is_mcp_live_data_enabled "$env_file"; then
+        log_warning \
+            "Skipping MCP live-data smoke check because ENABLE_BISQ_MCP_INTEGRATION is disabled"
+        return 0
+    fi
+
+    payload=$(jq -nc --arg question "$question" \
+        '{question: $question, chat_history: [], bypass_hooks: ["escalation"]}')
+
+    log_info "Testing MCP live-data chat endpoint..."
+
+    local attempt=1
+    while [ "$attempt" -le "$retries" ]; do
+        local response
+        local http_code
+
+        response=$(curl -s -w "\n%{http_code}" -X POST \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$url")
+
+        http_code=$(echo "$response" | tail -n1)
+        response=$(echo "$response" | sed '$d')
+
+        if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
+            http_code="000"
+        fi
+
+        if [[ "$http_code" =~ ^2[0-9][0-9]$ ]] && echo "$response" | jq -e '
+            .answer
+            and (.answer | type == "string")
+            and (.mcp_tools_used | type == "array")
+            and any(
+                .mcp_tools_used[];
+                .tool == "get_market_prices" or .tool == "get_offerbook"
+            )
+        ' > /dev/null 2>&1; then
+            local tools
+            tools=$(
+                echo "$response" |
+                    jq -r '[.mcp_tools_used[].tool] | unique | join(",")'
+            )
+            log_success "MCP live-data smoke test successful"
+            log_success "MCP tools used: ${tools}"
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$retries" ]; then
+            log_warning \
+                "MCP live-data smoke test failed (attempt $attempt/$retries, HTTP $http_code). Retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log_error \
+        "MCP live-data smoke test failed after $retries attempts. Last response: $response"
+    return 1
+}
+
 # Function to display service status
 show_service_status() {
     local docker_dir="${1:-$DOCKER_DIR}"
@@ -562,5 +655,7 @@ export -f rebuild_services
 export -f refresh_runtime_services
 export -f reconcile_runtime_services
 export -f test_chat_endpoint
+export -f is_mcp_live_data_enabled
+export -f test_live_data_chat_endpoint
 export -f show_service_status
 export -f check_and_repair_services

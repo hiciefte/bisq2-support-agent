@@ -1,0 +1,29 @@
+import logging
+
+from app.core.config import Settings
+
+
+def test_mcp_disabled_startup_warning_is_prominent(caplog):
+    settings = Settings(ENABLE_BISQ_MCP_INTEGRATION=False)
+
+    with caplog.at_level(logging.WARNING, logger="app.core.config"):
+        settings.log_mcp_live_data_startup_state()
+
+    assert "MCP live-data integration is DISABLED" in caplog.text
+    assert "static RAG content" in caplog.text
+    assert "ENABLE_BISQ_MCP_INTEGRATION=true" in caplog.text
+
+
+def test_mcp_enabled_startup_log_names_endpoints(caplog):
+    settings = Settings(
+        ENABLE_BISQ_MCP_INTEGRATION=True,
+        MCP_HTTP_URL="http://localhost:8000/mcp",
+        BISQ_API_URL="http://bisq2-api:8090",
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.core.config"):
+        settings.log_mcp_live_data_startup_state()
+
+    assert "MCP live-data integration is enabled" in caplog.text
+    assert "http://localhost:8000/mcp" in caplog.text
+    assert "http://bisq2-api:8090" in caplog.text
