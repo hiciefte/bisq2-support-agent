@@ -29,6 +29,43 @@ GRAFANA_DATASOURCE_API_KEY=<generated-read-only-datasource-key>
 
 5. **API Keys**: Grafana's provisioned Admin API datasource must use `GRAFANA_DATASOURCE_API_KEY`, not the master `ADMIN_API_KEY`.
 
+### Accessing Grafana in Production
+
+Production intentionally does not expose Grafana's raw container port on a
+public interface. Keep this binding:
+
+```yaml
+127.0.0.1:${EXPOSE_GRAFANA_PORT:-3001}:3000
+```
+
+Use one of these access paths instead:
+
+1. **Browser through nginx**: use `/grafana/` on the production web origin. This
+   path is subject to nginx allow/deny rules, rate limits, and security headers.
+
+2. **SSH tunnel for maintainers and Grafana MCP**:
+
+   ```bash
+   scripts/grafana-tunnel.sh <ssh-target>
+   ```
+
+   Then open:
+
+   ```text
+   http://127.0.0.1:3001/grafana/
+   ```
+
+   For tools that call the Grafana HTTP API directly, including the Grafana MCP
+   server, use this base URL while the tunnel is running:
+
+   ```text
+   http://127.0.0.1:3001
+   ```
+
+3. **VPN or access proxy**: if browser access must work without SSH tunnels, put
+   `/grafana/` behind a private network, SSO/access proxy, or explicit trusted
+   IP allowlist. Do not reopen public `:3001` just for convenience.
+
 ## Prometheus Security
 
 Prometheus doesn't have built-in authentication. To secure Prometheus, you have several options:
