@@ -142,4 +142,5 @@ fi
 echo ""
 echo "✅ Application started successfully!"
 echo "🌐 Access the application at: http://localhost (or your server IP)"
-echo "📈 Access Grafana dashboard at: http://localhost:3001"
+echo "📈 Access Grafana dashboard locally at: http://localhost:3001/grafana/"
+echo "🔒 In production, use nginx /grafana/ or scripts/grafana-tunnel.sh"
