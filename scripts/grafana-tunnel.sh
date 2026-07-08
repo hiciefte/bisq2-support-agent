@@ -77,5 +77,7 @@ echo "Press Ctrl-C to close the tunnel."
 exec ssh \
     -N \
     -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
     -L "127.0.0.1:${local_port}:${remote_host}:${remote_port}" \
     "$ssh_target"
