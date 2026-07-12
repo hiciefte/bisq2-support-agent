@@ -9,12 +9,14 @@ This service handles all feedback-related functionality:
 """
 
 import asyncio
+import json
 import logging
 import math
 import os
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.db.database import get_database
@@ -45,6 +47,7 @@ _LEARNING_COOLDOWN_SECONDS = 5.0
 # prompt guidance), so state written by the weekly cron script becomes
 # visible to the live server without a restart.
 _LEARNING_STATE_TTL_SECONDS = 300.0
+_STAGE2_DIVERGENCE_REPORT_SCHEMA_VERSION = 1
 
 
 class FeedbackService:
@@ -107,6 +110,7 @@ class FeedbackService:
             # Read-through cache timestamps over persisted learning state
             self._weights_refreshed_at: Optional[float] = None
             self._guidance_refreshed_at: Optional[float] = None
+            self._divergence_counts: Dict[str, int] = {}
 
     def _is_valid_feedback_item(self, item: Dict[str, Any]) -> bool:
         """Check if a feedback item has required fields.
@@ -509,20 +513,87 @@ class FeedbackService:
             or time.monotonic() - refreshed_at >= _LEARNING_STATE_TTL_SECONDS
         )
 
+    def _load_stage2_divergence_counts(self) -> Dict[str, int]:
+        """Load allowlisted counters from the local Stage-2 JSON report.
+
+        Only non-negative integer counters under ``divergence_counts`` are
+        returned. All other report content, including per-sample questions and
+        answers, is deliberately ignored.
+        """
+        if (
+            getattr(self.settings, "ENABLE_STAGE2_DIVERGENCE_GUIDANCE", False)
+            is not True
+        ):
+            return {}
+
+        report_path = Path(self.settings.STAGE2_DIVERGENCE_REPORT_PATH)
+        try:
+            with report_path.open("r", encoding="utf-8") as report_file:
+                report = json.load(report_file)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Ignoring unavailable or malformed Stage-2 divergence report at %s: %s",
+                report_path,
+                exc,
+            )
+            return {}
+
+        if not isinstance(report, dict):
+            logger.warning(
+                "Ignoring malformed Stage-2 divergence report: expected object"
+            )
+            return {}
+
+        schema_version = report.get("schema_version")
+        if (
+            type(schema_version) is not int
+            or schema_version != _STAGE2_DIVERGENCE_REPORT_SCHEMA_VERSION
+        ):
+            logger.warning(
+                "Ignoring Stage-2 divergence report with unsupported schema version"
+            )
+            return {}
+
+        raw_counts = report.get("divergence_counts")
+        if not isinstance(raw_counts, dict):
+            logger.warning(
+                "Ignoring malformed Stage-2 divergence report: "
+                "divergence_counts must be an object"
+            )
+            return {}
+
+        sanitized_counts: Dict[str, int] = {}
+        for signal in sorted(PromptOptimizer.ALLOWED_DIVERGENCE_SIGNALS):
+            if signal not in raw_counts:
+                continue
+            count = raw_counts[signal]
+            if type(count) is not int or count < 0:
+                logger.warning(
+                    "Ignoring malformed Stage-2 divergence report: invalid count for %s",
+                    signal,
+                )
+                return {}
+            sanitized_counts[signal] = count
+
+        return sanitized_counts
+
     def get_prompt_guidance(self) -> List[str]:
         """Get the current prompt guidance based on feedback.
 
         Reads through a short-TTL in-memory cache backed by the persisted
         learning state, so guidance computed by the weekly cron script is
-        visible to the live server without a restart.
+        visible to the live server without a restart. When explicitly enabled,
+        deterministic guidance selected by sanitized Stage-2 counters is merged
+        without persisting or injecting report text.
 
         Returns:
             List of guidance strings to incorporate into prompts
         """
         if self._learning_state_cache_expired(self._guidance_refreshed_at):
             self.prompt_optimizer.load_guidance()
+            self._divergence_counts = self._load_stage2_divergence_counts()
             self._guidance_refreshed_at = time.monotonic()
-        return self.prompt_optimizer.get_prompt_guidance()
+        return self.prompt_optimizer.get_prompt_guidance(self._divergence_counts)
 
     def get_source_weights(self) -> Dict[str, float]:
         """Get the current source weights based on feedback.

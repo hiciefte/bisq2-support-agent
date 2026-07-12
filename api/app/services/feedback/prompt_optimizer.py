@@ -11,7 +11,8 @@ This module handles:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from collections.abc import Mapping
+from typing import Any, ClassVar, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,38 @@ class PromptOptimizer:
     - Dynamically adjusting prompts to address user concerns
     - Persisting guidance through an optional repository (learning_state)
     """
+
+    DIVERGENCE_GUIDANCE: ClassVar[Dict[str, str]] = {
+        "answer_too_long": (
+            "Keep answers tight: answer first, then only the minimum necessary detail."
+        ),
+        "leading_greeting": (
+            "Start with the answer; do not add a greeting or restate the question."
+        ),
+        "scam_warning_missing": (
+            "When a scam-safety trigger is present, lead with the static scam warning "
+            "before any other guidance."
+        ),
+        "scam_warning_false_positive": (
+            "Give the scam warning only when a defined scam-safety trigger is present; "
+            "do not infer one from an unrelated support request."
+        ),
+        "wiki_link_missing": (
+            "When Context provides a canonical fix, use that fix and preserve its "
+            "exact canonical source instead of substituting a generic page."
+        ),
+        "diagnostic_question_missing": (
+            "For troubleshooting with a high-value unknown, ask exactly one targeted "
+            "diagnostic question instead of speculative steps."
+        ),
+        "remedy_term_missing": (
+            "Use the specific recovery action supported by Context; do not replace it "
+            "with generic restart, wait, or contact-support advice."
+        ),
+    }
+    ALLOWED_DIVERGENCE_SIGNALS: ClassVar[frozenset[str]] = frozenset(
+        DIVERGENCE_GUIDANCE
+    )
 
     def __init__(self, repository: Optional[Any] = None):
         """Initialize the prompt optimizer.
@@ -146,10 +179,26 @@ class PromptOptimizer:
 
         return False
 
-    def get_prompt_guidance(self) -> List[str]:
+    def get_prompt_guidance(
+        self, divergence_counts: Optional[Mapping[str, int]] = None
+    ) -> List[str]:
         """Get the current prompt guidance based on feedback.
+
+        Stage-2 divergence counts select only deterministic, human-authored
+        guidance from ``DIVERGENCE_GUIDANCE``. Report text is never copied into
+        the prompt.
+
+        Args:
+            divergence_counts: Sanitized Stage-2 counters keyed by known signal ID.
 
         Returns:
             List of guidance strings to incorporate into prompts
         """
-        return self.prompt_guidance
+        divergence_guidance = [
+            guidance
+            for signal, guidance in self.DIVERGENCE_GUIDANCE.items()
+            if divergence_counts
+            and type(divergence_counts.get(signal)) is int
+            and divergence_counts[signal] > 0
+        ]
+        return list(dict.fromkeys([*self.prompt_guidance, *divergence_guidance]))
