@@ -1,0 +1,130 @@
+{
+  "room_name": "!synthetic-room:example.invalid",
+  "messages": [
+    {
+      "event_id": "$question-diagnostic:example.invalid",
+      "sender": "@user-one:example.invalid",
+      "origin_server_ts": 1000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "My Bisq 1 wallet is stuck during synchronization after restart; what should I do?"
+      }
+    },
+    {
+      "event_id": "$answer-diagnostic:example.invalid",
+      "sender": "@staff-synthetic:example.invalid",
+      "origin_server_ts": 2000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "What is the exact error shown in the status bar?",
+        "m.relates_to": {
+          "m.in_reply_to": {
+            "event_id": "$question-diagnostic:example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "$question-link:example.invalid",
+      "sender": "@user-two:example.invalid",
+      "origin_server_ts": 3000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "Where can I find the official Bisq mediation instructions for my Bisq 1 trade?"
+      }
+    },
+    {
+      "event_id": "$answer-link:example.invalid",
+      "sender": "@staff-synthetic:example.invalid",
+      "origin_server_ts": 4000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "https://bisq.wiki/Dispute_resolution#Mediation",
+        "m.relates_to": {
+          "m.in_reply_to": {
+            "event_id": "$question-link:example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "$question-remedy:example.invalid",
+      "sender": "@user-three:example.invalid",
+      "origin_server_ts": 5000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "How can I repair a Bisq 1 wallet that remains stuck during SPV synchronization?"
+      }
+    },
+    {
+      "event_id": "$answer-remedy:example.invalid",
+      "sender": "@staff-synthetic:example.invalid",
+      "origin_server_ts": 6000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "Run an SPV resync first, then delete outdated Tor files if the connection still fails. See https://bisq.wiki/Resyncing_SPV_file#From_the_GUI.",
+        "m.relates_to": {
+          "m.in_reply_to": {
+            "event_id": "$question-remedy:example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "$question-transfer:example.invalid",
+      "sender": "@user-four:example.invalid",
+      "origin_server_ts": 7000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "How should I move my Bisq 1 setup to a new computer without corrupting the wallet?"
+      }
+    },
+    {
+      "event_id": "$answer-transfer:example.invalid",
+      "sender": "@staff-synthetic:example.invalid",
+      "origin_server_ts": 8000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "Copy the data directory as-is to the new computer, then start Bisq and verify the wallet before trading.",
+        "m.relates_to": {
+          "m.in_reply_to": {
+            "event_id": "$question-transfer:example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "$question-scam:example.invalid",
+      "sender": "@user-five:example.invalid",
+      "origin_server_ts": 9000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "A stranger sent me a direct message asking for my Bisq seed words; is this a scam?"
+      }
+    },
+    {
+      "event_id": "$answer-scam:example.invalid",
+      "sender": "@staff-synthetic:example.invalid",
+      "origin_server_ts": 10000,
+      "type": "m.room.message",
+      "content": {
+        "msgtype": "m.text",
+        "body": "Do not share seed words or private keys. Ignore the message and use only the existing public support channel.",
+        "m.relates_to": {
+          "m.in_reply_to": {
+            "event_id": "$question-scam:example.invalid"
+          }
+        }
+      }
+    }
+  ]
+}
