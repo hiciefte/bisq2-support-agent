@@ -28,6 +28,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -37,11 +38,12 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from statistics import mean, stdev
 from typing import Any
+from urllib.parse import urlparse
 
-import httpx
+# Keep direct-script imports aligned with module execution from the API root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# Keep import behavior consistent with existing evaluation scripts.
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = "api/data/evaluation/benchmarks"
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -50,6 +52,42 @@ DEFAULT_READINESS_TIMEOUT = 300
 DEFAULT_READINESS_POLL = 5
 DEFAULT_PROBE_QUESTION = "Health probe question"
 DEFAULT_PROBE_FAIL_PHRASES = ["not fully initialized", "not initialized"]
+BEHAVIOR_SCHEMA_VERSION = 1
+DEFAULT_BEHAVIOR_OUTPUT = "api/data/evaluation/staff_alignment_behavior.summary.json"
+DEFAULT_BEHAVIOR_THRESHOLDS = {
+    "max_answer_length_ratio": 1.50,
+    "min_greeting_avoidance_rate": 0.95,
+    "min_scam_warning_precision": 0.80,
+    "min_scam_warning_recall": 1.00,
+    "min_wiki_link_recall": 0.90,
+    "min_diagnostic_question_rate": 0.75,
+    "min_remedy_term_overlap": 0.80,
+}
+BEHAVIOR_DIVERGENCE_KEYS = (
+    "answer_too_long",
+    "leading_greeting",
+    "scam_warning_missing",
+    "scam_warning_false_positive",
+    "wiki_link_missing",
+    "diagnostic_question_missing",
+    "remedy_term_missing",
+)
+_BEHAVIOR_GATE_SPECS = (
+    ("greeting_avoidance_rate", "min_greeting_avoidance_rate", "minimum"),
+    ("scam_warning_precision", "min_scam_warning_precision", "minimum"),
+    ("scam_warning_recall", "min_scam_warning_recall", "minimum"),
+    ("wiki_link_recall", "min_wiki_link_recall", "minimum"),
+    ("diagnostic_question_rate", "min_diagnostic_question_rate", "minimum"),
+    ("remedy_term_overlap", "min_remedy_term_overlap", "minimum"),
+)
+
+_WORD_RE = re.compile(r"\b[\w'-]+\b", re.UNICODE)
+_LEADING_GREETING_RE = re.compile(
+    r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b",
+    re.IGNORECASE,
+)
+_URL_CANDIDATE_RE = re.compile(r"https?://[^\s<>()\[\]{}]+", re.IGNORECASE)
+_SAFE_CASE_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,80}$")
 
 
 def _safe_mean(values: list[float]) -> float:
@@ -87,6 +125,378 @@ def _parse_csv_arg(value: str | None) -> list[str] | None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalized_phrase(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _has_scam_warning(answer: str) -> bool:
+    normalized_answer = " ".join(str(answer or "").split())
+    normalized_warning = " ".join(SAFETY_REFLEX_WARNING.split())
+    return normalized_warning in normalized_answer
+
+
+def _has_bisq_wiki_link(text: str) -> bool:
+    for match in _URL_CANDIDATE_RE.findall(text):
+        candidate = match.rstrip(".,;:!?\"'")
+        try:
+            parsed = urlparse(candidate)
+            if (
+                parsed.scheme.lower() == "https"
+                and parsed.hostname == "bisq.wiki"
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.port in (None, 443)
+            ):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    return float(numerator / denominator) if denominator else 1.0
+
+
+def _behavior_text(row: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    choices = " or ".join(f"`{key}`" for key in keys)
+    raise ValueError(f"Behavior row requires a non-empty {choices} string")
+
+
+def _behavior_labels(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Behavior row requires a metadata object")
+    labels = metadata.get("behavior_labels")
+    if not isinstance(labels, dict) or labels.get("reviewed") is not True:
+        raise ValueError("Behavior row requires metadata.behavior_labels.reviewed=true")
+
+    for key in (
+        "scam_warning_warranted",
+        "staff_linked_wiki",
+        "troubleshooting",
+        "diagnostic_expected",
+    ):
+        if not isinstance(labels.get(key), bool):
+            raise ValueError(
+                f"Behavior row requires boolean metadata.behavior_labels.{key}"
+            )
+
+    remedy_terms = labels.get("remedy_terms")
+    if not isinstance(remedy_terms, list) or any(
+        not isinstance(term, str) or not term.strip() or not _normalized_phrase(term)
+        for term in remedy_terms
+    ):
+        raise ValueError(
+            "Behavior row requires metadata.behavior_labels.remedy_terms as "
+            "a list of non-empty strings"
+        )
+    return labels
+
+
+def _generated_source_urls(row: dict[str, Any]) -> list[str]:
+    """Return validated generated-response source URLs, when present."""
+    raw_urls = row.get("source_urls", [])
+    if raw_urls is None:
+        return []
+    if not isinstance(raw_urls, list) or any(
+        not isinstance(url, str) or not url.strip() for url in raw_urls
+    ):
+        raise ValueError("Behavior row source_urls must be a list of non-empty strings")
+    return [url.strip() for url in raw_urls]
+
+
+def _load_behavior_rows(input_path: str) -> list[dict[str, Any]]:
+    with open(input_path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if isinstance(raw, dict):
+        raw = raw.get("individual_results")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            "Behavior input must be a non-empty JSON list or an evaluation result "
+            "with `individual_results`"
+        )
+    if any(not isinstance(row, dict) for row in raw):
+        raise ValueError("Every behavior input row must be a JSON object")
+    return raw
+
+
+def _validate_behavior_thresholds(thresholds: dict[str, float]) -> None:
+    max_ratio = thresholds["max_answer_length_ratio"]
+    if max_ratio <= 0:
+        raise ValueError("max_answer_length_ratio must be greater than zero")
+    for name, value in thresholds.items():
+        if name == "max_answer_length_ratio":
+            continue
+        if value < 0 or value > 1:
+            raise ValueError(f"{name} must be between 0 and 1")
+
+
+def _score_behavior_sample(
+    row: dict[str, Any], index: int, max_answer_length_ratio: float
+) -> dict[str, Any]:
+    _behavior_text(row, "question")
+    staff_answer = _behavior_text(row, "ground_truth", "staff_answer")
+    generated_answer = _behavior_text(row, "answer", "generated_answer")
+    generated_source_urls = _generated_source_urls(row)
+    labels = _behavior_labels(row)
+
+    staff_word_count = len(_WORD_RE.findall(staff_answer))
+    generated_word_count = len(_WORD_RE.findall(generated_answer))
+    if staff_word_count == 0:
+        raise ValueError("Behavior row staff answer must contain at least one word")
+
+    case_id = row.get("case_id")
+    if case_id is None:
+        case_id = f"sample_{index + 1:03d}"
+    if not isinstance(case_id, str) or not _SAFE_CASE_ID_RE.fullmatch(case_id):
+        raise ValueError(
+            "Behavior row case_id must use only letters, digits, dot, underscore, "
+            "or hyphen (maximum 80 characters)"
+        )
+
+    answer_length_ratio = generated_word_count / staff_word_count
+    leading_greeting_avoided = not bool(_LEADING_GREETING_RE.search(generated_answer))
+    scam_warning_present = _has_scam_warning(generated_answer)
+    wiki_link_present = bool(
+        _has_bisq_wiki_link(generated_answer)
+        or any(_has_bisq_wiki_link(url) for url in generated_source_urls)
+    )
+    diagnostic_question_present = generated_answer.count("?") == 1
+
+    normalized_answer = f" {_normalized_phrase(generated_answer)} "
+    remedy_terms = [str(term).strip() for term in labels["remedy_terms"]]
+    matched_remedy_terms = sum(
+        1
+        for term in remedy_terms
+        if f" {_normalized_phrase(term)} " in normalized_answer
+    )
+    remedy_term_overlap = _rate(matched_remedy_terms, len(remedy_terms))
+
+    divergences: list[str] = []
+    if answer_length_ratio > max_answer_length_ratio:
+        divergences.append("answer_too_long")
+    if not leading_greeting_avoided:
+        divergences.append("leading_greeting")
+    if labels["scam_warning_warranted"] and not scam_warning_present:
+        divergences.append("scam_warning_missing")
+    if not labels["scam_warning_warranted"] and scam_warning_present:
+        divergences.append("scam_warning_false_positive")
+    if labels["staff_linked_wiki"] and not wiki_link_present:
+        divergences.append("wiki_link_missing")
+    if labels["diagnostic_expected"] and not diagnostic_question_present:
+        divergences.append("diagnostic_question_missing")
+    if remedy_terms and matched_remedy_terms < len(remedy_terms):
+        divergences.append("remedy_term_missing")
+
+    # Keep the report safe to persist: no question, answer, sender, or event text.
+    return {
+        "case_id": case_id,
+        "answer_length_ratio": round(answer_length_ratio, 6),
+        "leading_greeting_avoided": leading_greeting_avoided,
+        "scam_warning_warranted": labels["scam_warning_warranted"],
+        "scam_warning_present": scam_warning_present,
+        "staff_linked_wiki": labels["staff_linked_wiki"],
+        "wiki_link_present": wiki_link_present,
+        "troubleshooting": labels["troubleshooting"],
+        "diagnostic_expected": labels["diagnostic_expected"],
+        "diagnostic_question_present": diagnostic_question_present,
+        "remedy_terms_expected": len(remedy_terms),
+        "remedy_terms_matched": matched_remedy_terms,
+        "remedy_term_overlap": round(remedy_term_overlap, 6),
+        "divergences": divergences,
+    }
+
+
+def _gate_behavior_summary(
+    metrics: dict[str, float],
+    coverage: dict[str, int],
+    thresholds: dict[str, float],
+    divergence_counts: dict[str, int],
+) -> list[str]:
+    failures: list[str] = []
+    for metric_name, threshold_name, bound in _BEHAVIOR_GATE_SPECS:
+        value = metrics[metric_name]
+        threshold = thresholds[threshold_name]
+        passed = value <= threshold if bound == "maximum" else value >= threshold
+        if not passed:
+            relation = "exceeds" if bound == "maximum" else "below"
+            failures.append(
+                f"{metric_name}: {value:.4f} {relation} {bound} {threshold:.4f}"
+            )
+
+    coverage_checks = {
+        "scam-positive": coverage["scam_warning_warranted"],
+        "scam-negative": coverage["scam_warning_not_warranted"],
+        "wiki-link": coverage["staff_linked_wiki"],
+        "troubleshooting": coverage["troubleshooting"],
+        "diagnostic-expected": coverage["diagnostic_expected"],
+        "remedy-term": coverage["remedy_term_samples"],
+    }
+    failures.extend(
+        f"coverage: no reviewed {name} samples"
+        for name, count in coverage_checks.items()
+        if count == 0
+    )
+    if divergence_counts["answer_too_long"]:
+        failures.append(
+            "answer_length_ratio: "
+            f"{divergence_counts['answer_too_long']} sample(s) exceed maximum "
+            f"{thresholds['max_answer_length_ratio']:.4f}"
+        )
+    return failures
+
+
+def build_staff_alignment_behavior_summary(
+    rows: list[dict[str, Any]],
+    *,
+    thresholds: dict[str, float] | None = None,
+    input_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Score reviewed, precomputed staff/AI answer pairs without I/O or models."""
+    if not rows:
+        raise ValueError("Behavior scoring requires at least one row")
+
+    resolved_thresholds = dict(DEFAULT_BEHAVIOR_THRESHOLDS)
+    if thresholds:
+        unknown = set(thresholds) - set(DEFAULT_BEHAVIOR_THRESHOLDS)
+        if unknown:
+            raise ValueError(
+                f"Unknown behavior thresholds: {', '.join(sorted(unknown))}"
+            )
+        resolved_thresholds.update(thresholds)
+    _validate_behavior_thresholds(resolved_thresholds)
+
+    per_sample = [
+        _score_behavior_sample(
+            row, index, resolved_thresholds["max_answer_length_ratio"]
+        )
+        for index, row in enumerate(rows)
+    ]
+
+    scam_true_positives = sum(
+        1
+        for row in per_sample
+        if row["scam_warning_warranted"] and row["scam_warning_present"]
+    )
+    scam_false_positives = sum(
+        1
+        for row in per_sample
+        if not row["scam_warning_warranted"] and row["scam_warning_present"]
+    )
+    scam_positives = sum(1 for row in per_sample if row["scam_warning_warranted"])
+    wiki_expected = sum(1 for row in per_sample if row["staff_linked_wiki"])
+    wiki_present = sum(
+        1 for row in per_sample if row["staff_linked_wiki"] and row["wiki_link_present"]
+    )
+    troubleshooting = sum(1 for row in per_sample if row["troubleshooting"])
+    diagnostic_expected = sum(1 for row in per_sample if row["diagnostic_expected"])
+    diagnostics_present = sum(
+        1
+        for row in per_sample
+        if row["diagnostic_expected"] and row["diagnostic_question_present"]
+    )
+    remedy_samples = [row for row in per_sample if row["remedy_terms_expected"] > 0]
+
+    metrics = {
+        "answer_length_ratio": round(
+            _safe_mean([row["answer_length_ratio"] for row in per_sample]), 6
+        ),
+        "greeting_avoidance_rate": round(
+            _rate(
+                sum(1 for row in per_sample if row["leading_greeting_avoided"]),
+                len(per_sample),
+            ),
+            6,
+        ),
+        "scam_warning_precision": round(
+            _rate(scam_true_positives, scam_true_positives + scam_false_positives),
+            6,
+        ),
+        "scam_warning_recall": round(_rate(scam_true_positives, scam_positives), 6),
+        "wiki_link_recall": round(_rate(wiki_present, wiki_expected), 6),
+        "diagnostic_question_rate": round(
+            _rate(diagnostics_present, diagnostic_expected), 6
+        ),
+        "remedy_term_overlap": round(
+            _rate(
+                sum(row["remedy_terms_matched"] for row in remedy_samples),
+                sum(row["remedy_terms_expected"] for row in remedy_samples),
+            ),
+            6,
+        ),
+    }
+    coverage = {
+        "samples": len(per_sample),
+        "scam_warning_warranted": scam_positives,
+        "scam_warning_not_warranted": len(per_sample) - scam_positives,
+        "staff_linked_wiki": wiki_expected,
+        "troubleshooting": troubleshooting,
+        "diagnostic_expected": diagnostic_expected,
+        "remedy_term_samples": len(remedy_samples),
+        "remedy_terms_expected": sum(
+            row["remedy_terms_expected"] for row in remedy_samples
+        ),
+    }
+    divergence_counts = {key: 0 for key in BEHAVIOR_DIVERGENCE_KEYS}
+    for row in per_sample:
+        for divergence in row["divergences"]:
+            divergence_counts[divergence] += 1
+
+    failures = _gate_behavior_summary(
+        metrics, coverage, resolved_thresholds, divergence_counts
+    )
+    return {
+        "schema_version": BEHAVIOR_SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "input_sha256": input_sha256,
+        "samples_count": len(per_sample),
+        "metrics": metrics,
+        "coverage": coverage,
+        "divergence_counts": divergence_counts,
+        "per_sample": per_sample,
+        "gate": {
+            "passed": not failures,
+            "failures": failures,
+            "thresholds": resolved_thresholds,
+        },
+    }
+
+
+def run_staff_alignment_behavior(args: argparse.Namespace) -> int:
+    """Score and gate precomputed rows without database, API, or model calls."""
+    rows = _load_behavior_rows(args.input)
+    thresholds = {
+        name: float(getattr(args, name)) for name in DEFAULT_BEHAVIOR_THRESHOLDS
+    }
+    summary = build_staff_alignment_behavior_summary(
+        rows,
+        thresholds=thresholds,
+        input_sha256=_file_sha256(args.input),
+    )
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    print(f"Saved staff-alignment behavior summary: {output_path}")
+    for metric, value in summary["metrics"].items():
+        print(f"  {metric}: {value:.4f}")
+    if summary["gate"]["passed"]:
+        print("Staff-alignment behavior gate passed")
+        return 0
+
+    print("Staff-alignment behavior gate failed:")
+    for failure in summary["gate"]["failures"]:
+        print(f"  - {failure}")
+    return 1
 
 
 def _run_cmd(cmd: list[str]) -> str | None:
@@ -287,6 +697,8 @@ async def _wait_for_api_readiness(
     fail_phrases: list[str],
     bypass_hooks: list[str] | None,
 ) -> dict[str, Any]:
+    import httpx
+
     started = time.time()
     attempts = 0
     last_error = ""
@@ -969,6 +1381,17 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--min-faithfulness", type=float, default=0.40)
     gate_parser.add_argument("--min-answer-relevancy", type=float, default=0.55)
 
+    behavior_parser = subparsers.add_parser(
+        "behavior",
+        help="Offline score and gate reviewed, precomputed staff/AI answer rows",
+    )
+    behavior_parser.add_argument("--input", type=str, required=True)
+    behavior_parser.add_argument("--output", type=str, default=DEFAULT_BEHAVIOR_OUTPUT)
+    for threshold_name, default in DEFAULT_BEHAVIOR_THRESHOLDS.items():
+        behavior_parser.add_argument(
+            f"--{threshold_name.replace('_', '-')}", type=float, default=default
+        )
+
     return parser
 
 
@@ -989,7 +1412,9 @@ def main() -> int:
             return compare_benchmarks(args)
         if args.command == "gate":
             return gate_benchmark_summary(args)
-    except (ValueError, RuntimeError) as e:
+        if args.command == "behavior":
+            return run_staff_alignment_behavior(args)
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"Error: {e}")
         return 2
 

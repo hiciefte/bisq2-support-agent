@@ -228,6 +228,16 @@ class Settings(BaseSettings):
     MAX_CONTEXT_LENGTH: int = 15000  # Maximum length of context to include in prompt
     MAX_SAMPLE_LOG_LENGTH: int = 200  # Maximum length to log in samples
 
+    # Staff-alignment evaluation guidance (local Stage-2 report; opt-in)
+    ENABLE_STAGE2_DIVERGENCE_GUIDANCE: bool = Field(
+        default=False,
+        description="Enable deterministic prompt guidance from a local Stage-2 report",
+    )
+    STAGE2_DIVERGENCE_REPORT_FILE: str = Field(
+        default="evaluation/staff_alignment_behavior.summary.json",
+        description="Local Stage-2 report path; relative paths resolve under DATA_DIR",
+    )
+
     # Qdrant Vector Database Settings
     QDRANT_HOST: str = "qdrant"  # Docker service name
     QDRANT_PORT: int = 6333
@@ -542,6 +552,13 @@ class Settings(BaseSettings):
     def FEEDBACK_DIR_PATH(self) -> str:
         """Complete path to the feedback directory"""
         return os.path.join(self.DATA_DIR, "feedback")
+
+    @property
+    def STAGE2_DIVERGENCE_REPORT_PATH(self) -> str:
+        """Complete path to the local Stage-2 divergence report."""
+        if os.path.isabs(self.STAGE2_DIVERGENCE_REPORT_FILE):
+            return self.STAGE2_DIVERGENCE_REPORT_FILE
+        return os.path.join(self.DATA_DIR, self.STAGE2_DIVERGENCE_REPORT_FILE)
 
     @property
     def CONVERSATIONS_FILE_PATH(self) -> str:

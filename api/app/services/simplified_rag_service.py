@@ -22,9 +22,14 @@ from app.channels.traits import get_channel_traits
 from app.core.config import get_settings
 from app.core.pii_utils import redact_for_logs
 from app.prompts import error_messages
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING, should_apply_safety_reflex
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
+from app.services.rag.canonical_fixes import (
+    canonical_url_for_metadata,
+    find_canonical_fix,
+)
 from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import (
@@ -139,6 +144,19 @@ def apply_support_answer_style(
         clipped = clipped[:preferred_break]
 
     return clipped.rstrip(" ,;:\n") + "..."
+
+
+def _without_static_safety_warning(answer_text: str) -> str:
+    """Remove the exact warning so it can be reinserted once at the front."""
+    return str(answer_text or "").replace(SAFETY_REFLEX_WARNING, "").strip()
+
+
+def _with_static_safety_warning(answer_text: str) -> str:
+    """Lead with the unchanged human-curated warning exactly once."""
+    body = _without_static_safety_warning(answer_text)
+    if not body:
+        return SAFETY_REFLEX_WARNING
+    return f"{SAFETY_REFLEX_WARNING}\n\n{body}"
 
 
 def apply_group_channel_answer_style(
@@ -347,6 +365,39 @@ class SimplifiedRAGService:
                 reordered_docs.append(doc)
                 reordered_scores.append(score)
         return reordered_docs, reordered_scores
+
+    @staticmethod
+    def _inject_canonical_fix(
+        docs: List[Document],
+        doc_scores: List[float],
+        question: str,
+        detected_version: Optional[str],
+    ) -> tuple[List[Document], List[float]]:
+        """Prepend at most one locally verified canonical fix document."""
+        fix = find_canonical_fix(question, detected_version)
+        if fix is None:
+            return docs, doc_scores
+
+        paired = [
+            (doc, doc_scores[index] if index < len(doc_scores) else 0.0)
+            for index, doc in enumerate(docs)
+        ]
+        for index, (doc, score) in enumerate(paired):
+            if (
+                doc.metadata.get("canonical_fix_id") == fix.key
+                and doc.metadata.get("url") == fix.url
+            ):
+                paired.insert(0, paired.pop(index))
+                for rank, (ranked_doc, _) in enumerate(paired):
+                    ranked_doc.metadata["_retrieval_rank"] = rank
+                return [item[0] for item in paired], [item[1] for item in paired]
+
+        injected_fix = fix.to_document()
+        injected_fix.metadata["_canonical_fix_injected"] = True
+        paired.insert(0, (injected_fix, 0.0))
+        for rank, (ranked_doc, _) in enumerate(paired):
+            ranked_doc.metadata["_retrieval_rank"] = rank
+        return [item[0] for item in paired], [item[1] for item in paired]
 
     def _handle_faq_update(
         self,
@@ -945,6 +996,17 @@ class SimplifiedRAGService:
         # Track request rate
         RAG_REQUEST_RATE.inc()
         chat_history = self._normalize_chat_history(question, chat_history)
+        initial_safety_inputs = [question]
+        prior_user_inputs = [
+            entry.get("content", "")
+            for entry in chat_history
+            if entry.get("role") == "user"
+        ]
+        if prior_user_inputs:
+            initial_safety_inputs.append(prior_user_inputs[-1])
+        needs_safety_reflex = any(
+            should_apply_safety_reflex(text) for text in initial_safety_inputs
+        )
 
         try:
             # Used for feedback entries created by this service when no upstream message_id exists.
@@ -953,10 +1015,15 @@ class SimplifiedRAGService:
             if not self.rag_chain:
                 logger.error("RAG chain not initialized. Call setup() first.")
                 return {
-                    "answer": error_messages.NOT_INITIALIZED,
+                    "answer": (
+                        SAFETY_REFLEX_WARNING
+                        if needs_safety_reflex
+                        else error_messages.NOT_INITIALIZED
+                    ),
                     "sources": [],
                     "response_time": time.time() - start_time,
                     "error": "RAG chain not initialized",
+                    "forwarded_to_human": needs_safety_reflex,
                 }
 
             # Log the question with privacy protection
@@ -970,6 +1037,7 @@ class SimplifiedRAGService:
             )
             localized_question = language_state.localized_question
             preprocessed_question = language_state.preprocessed_question
+            safety_question_before_rewrite = preprocessed_question
             canonical_question_en = language_state.canonical_question_en
             original_language = language_state.original_language
             was_translated = language_state.was_translated
@@ -997,6 +1065,18 @@ class SimplifiedRAGService:
                 except Exception as e:
                     logger.warning(f"Query rewrite failed, using original: {e}")
 
+            safety_inputs = [safety_question_before_rewrite, preprocessed_question]
+            prior_user_inputs = [
+                entry.get("content", "")
+                for entry in chat_history
+                if entry.get("role") == "user"
+            ]
+            if prior_user_inputs:
+                safety_inputs.append(prior_user_inputs[-1])
+            needs_safety_reflex = needs_safety_reflex or any(
+                should_apply_safety_reflex(text) for text in safety_inputs
+            )
+
             # Detect version from question and chat history (unless overridden)
             if override_version:
                 detected_version = override_version
@@ -1014,6 +1094,13 @@ class SimplifiedRAGService:
                 logger.info(
                     f"Detected version: {detected_version} (confidence: {version_confidence:.2f})"
                 )
+
+                # A version question must never displace the higher-priority
+                # scam-safety warning. Continue to retrieval so the prompt can
+                # answer from evidence, or use the static no-document fallback.
+                if needs_safety_reflex and clarifying_question:
+                    clarifying_question = None
+                    logger.info("Skipping version clarification for safety reflex")
 
                 # If clarifying question needed and confidence is low, return it immediately
                 if clarifying_question and version_confidence < 0.5:
@@ -1112,9 +1199,25 @@ class SimplifiedRAGService:
                     docs = []
                     doc_scores = []
 
+            docs, doc_scores = self._inject_canonical_fix(
+                docs,
+                doc_scores,
+                preprocessed_question,
+                detected_version,
+            )
+
             # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
                 logger.info("No relevant documents found for the query")
+
+                if needs_safety_reflex:
+                    return {
+                        "answer": SAFETY_REFLEX_WARNING,
+                        "sources": [],
+                        "response_time": time.time() - start_time,
+                        "forwarded_to_human": True,
+                        "feedback_created": False,
+                    }
 
                 # Check if we have conversation history to potentially answer from
                 if chat_history and len(chat_history) > 0:
@@ -1252,7 +1355,7 @@ class SimplifiedRAGService:
                 # Pass the already-retrieved, version-aware documents so the
                 # chain does not re-retrieve with a version-blind default and
                 # the generation context matches the reported sources.
-                if token_callback is not None:
+                if token_callback is not None and not needs_safety_reflex:
                     response_text = await asyncio.to_thread(
                         self._generate_streamed_rag_response,
                         question=preprocessed_question,
@@ -1268,6 +1371,9 @@ class SimplifiedRAGService:
                         chat_history,
                         docs=docs,
                     )
+
+            if needs_safety_reflex:
+                response_text = _with_static_safety_warning(response_text)
 
             # Calculate response time
             response_time = time.time() - start_time
@@ -1292,7 +1398,11 @@ class SimplifiedRAGService:
             slug_manager = SlugManager()  # Initialize once for all FAQ slugs
             for i, doc in enumerate(docs):
                 # Get similarity score for this document
-                similarity_score = doc_scores[i] if i < len(doc_scores) else None
+                similarity_score = (
+                    None
+                    if doc.metadata.get("_canonical_fix_injected") is True
+                    else (doc_scores[i] if i < len(doc_scores) else None)
+                )
 
                 # Truncate content
                 content = (
@@ -1307,7 +1417,11 @@ class SimplifiedRAGService:
 
                 if doc.metadata.get("type") == "wiki":
                     # Generate wiki URL for wiki sources
-                    wiki_url = generate_wiki_url(title=title, section=section)
+                    canonical_url = canonical_url_for_metadata(doc.metadata)
+                    wiki_url = canonical_url or generate_wiki_url(
+                        title=title,
+                        section=section,
+                    )
 
                     sources.append(
                         {
@@ -1410,11 +1524,21 @@ class SimplifiedRAGService:
                 and was_translated
                 and original_language != "en"
             ):
-                final_response = await self.language_handler.translate_text_for_user(
-                    response_text,
-                    original_language,
-                    label="response",
+                translation_input = (
+                    _without_static_safety_warning(response_text)
+                    if needs_safety_reflex
+                    else response_text
                 )
+                if translation_input:
+                    final_response = (
+                        await self.language_handler.translate_text_for_user(
+                            translation_input,
+                            original_language,
+                            label="response",
+                        )
+                    )
+                else:
+                    final_response = ""
 
             # Stabilize version comparison questions for downstream consumers (including E2E).
             # This is content-neutral: we only add a heading if the model didn't include
@@ -1459,6 +1583,8 @@ class SimplifiedRAGService:
                 question_text=preprocessed_question,
                 detection_source=detection_source,
             )
+            if needs_safety_reflex:
+                final_response = _with_static_safety_warning(final_response)
 
             # Update error rate (success)
             update_error_rate(is_error=False)
@@ -1494,11 +1620,15 @@ class SimplifiedRAGService:
             update_error_rate(is_error=True)
 
             return {
-                "answer": error_messages.QUERY_ERROR,
+                "answer": (
+                    SAFETY_REFLEX_WARNING
+                    if needs_safety_reflex
+                    else error_messages.QUERY_ERROR
+                ),
                 "sources": [],
                 "response_time": error_time,
                 "error": str(e),
-                "forwarded_to_human": False,
+                "forwarded_to_human": needs_safety_reflex,
                 "feedback_created": False,
             }
 

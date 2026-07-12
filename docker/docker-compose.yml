@@ -135,6 +135,8 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - DATA_DIR=${DATA_DIR:-/data}
+      - ENABLE_STAGE2_DIVERGENCE_GUIDANCE=${ENABLE_STAGE2_DIVERGENCE_GUIDANCE:-false}
+      - STAGE2_DIVERGENCE_REPORT_FILE=${STAGE2_DIVERGENCE_REPORT_FILE:-evaluation/staff_alignment_behavior.summary.json}
       - BISQ_API_URL=${BISQ_API_URL:-http://bisq2-api:8090} # URL for the containerized Bisq2 API service
       - BISQ_API_LOCAL_ONLY=${BISQ_API_LOCAL_ONLY:-false}
       - BISQ2_CHANNEL_ENABLED=${BISQ2_CHANNEL_ENABLED:-false}

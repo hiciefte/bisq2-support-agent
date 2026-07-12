@@ -502,7 +502,9 @@ def compute_retrieval_rank_metrics(
     )
 
 
-def _load_evaluation_samples(samples_path: str) -> list[dict[str, Any]]:
+def _load_evaluation_samples(
+    samples_path: str, *, allow_behavior_review: bool = False
+) -> list[dict[str, Any]]:
     """Load and validate evaluation sample records.
 
     Expected format: list of dicts with at least `question` and `ground_truth`.
@@ -510,21 +512,27 @@ def _load_evaluation_samples(samples_path: str) -> list[dict[str, Any]]:
     with open(samples_path) as f:
         raw = json.load(f)
 
-    # Guard against accidentally passing an evaluation result artifact as --samples.
+    behavior_review_input = False
     if isinstance(raw, dict):
         if "individual_results" in raw:
-            logger.error(
-                "Samples file appears to be an evaluation *result* JSON "
-                "(contains 'individual_results')."
-            )
-            logger.error(
-                "Use --score-existing for result files, or pass a sample list JSON."
-            )
+            if allow_behavior_review:
+                raw = raw["individual_results"]
+                behavior_review_input = True
+            else:
+                logger.error(
+                    "Samples file appears to be an evaluation *result* or behavior "
+                    "review JSON (contains 'individual_results')."
+                )
+                logger.error(
+                    "Use --score-existing for result files, or explicitly pass "
+                    "--behavior-review-input for a human-reviewed behavior artifact."
+                )
+                sys.exit(1)
         else:
             logger.error(
                 "Samples file must be a JSON list of sample objects, got JSON object."
             )
-        sys.exit(1)
+            sys.exit(1)
 
     if not isinstance(raw, list):
         logger.error("Samples file must be a JSON list, got %s", type(raw).__name__)
@@ -547,6 +555,18 @@ def _load_evaluation_samples(samples_path: str) -> list[dict[str, Any]]:
                 idx,
             )
             sys.exit(1)
+
+        if behavior_review_input:
+            metadata = sample.get("metadata")
+            labels = (
+                metadata.get("behavior_labels") if isinstance(metadata, dict) else None
+            )
+            if not isinstance(labels, dict) or labels.get("reviewed") is not True:
+                logger.error(
+                    "Behavior sample at index %d has not been explicitly human-reviewed",
+                    idx,
+                )
+                sys.exit(1)
 
         sample_contexts = sample.get("contexts", [])
         if isinstance(sample_contexts, list) and any(
@@ -579,6 +599,7 @@ async def run_evaluation(
     ragas_max_workers: int | None = None,
     ragas_batch_size: int | None = None,
     bypass_hooks: list[str] | None = None,
+    behavior_review_input: bool = False,
 ) -> dict[str, Any]:
     """Run evaluation with specified backend.
 
@@ -600,7 +621,9 @@ async def run_evaluation(
         )
         sys.exit(1)
 
-    samples = _load_evaluation_samples(samples_path)
+    samples = _load_evaluation_samples(
+        samples_path, allow_behavior_review=behavior_review_input
+    )
 
     if max_samples:
         samples = samples[:max_samples]
@@ -674,11 +697,15 @@ async def run_evaluation(
             sources = result.get("sources", [])
 
             ctx = []
+            source_urls = []
             for src in sources:
                 if isinstance(src, dict):
                     content = src.get("content", src.get("page_content", ""))
                     if content:
                         ctx.append(content)
+                    url = src.get("url")
+                    if isinstance(url, str) and url.strip():
+                        source_urls.append(url.strip())
                 elif isinstance(src, str):
                     ctx.append(src)
 
@@ -689,9 +716,11 @@ async def run_evaluation(
 
             individual_results.append(
                 {
+                    "case_id": sample.get("case_id", f"sample_{i + 1:03d}"),
                     "question": question,
                     "ground_truth": ground_truth,
                     "answer": answer,
+                    "source_urls": source_urls,
                     "contexts": ctx,
                     "metadata": sample.get("metadata", {}),
                     "response_time": elapsed,
@@ -905,6 +934,14 @@ def main():
         help="Path to an existing evaluation JSON to re-score (does not query the API).",
     )
     parser.add_argument(
+        "--behavior-review-input",
+        action="store_true",
+        help=(
+            "Allow --samples to be a Stage-1 individual_results artifact; every "
+            "row must have metadata.behavior_labels.reviewed=true"
+        ),
+    )
+    parser.add_argument(
         "--max-samples",
         type=int,
         default=None,
@@ -1008,6 +1045,7 @@ def main():
             ragas_max_workers=args.ragas_max_workers,
             ragas_batch_size=args.ragas_batch_size,
             bypass_hooks=bypass_hooks,
+            behavior_review_input=args.behavior_review_input,
         )
     )
 

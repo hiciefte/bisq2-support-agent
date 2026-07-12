@@ -1,0 +1,14 @@
+{
+  "missing_faq_questions": [
+    {
+      "reference": "sanitized-missing-001",
+      "question": "My Bisq 1 wallet is stuck during SPV sync; how can I repair it?",
+      "created_at_ms": 4500
+    },
+    {
+      "reference": "sanitized-future-002",
+      "question": "How can I repair a Bisq 1 wallet that remains stuck during SPV synchronization?",
+      "created_at_ms": 999999
+    }
+  ]
+}

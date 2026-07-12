@@ -123,6 +123,50 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --kb-manifest /data/evaluation/kb_snapshots/kb_2026_02_11/manifest.json
 ```
 
+## Offline Staff-Alignment Behavior Gate
+
+The existing benchmark harness can also score precomputed staff/AI answer pairs
+without a database, running API, model, credentials, or network calls:
+
+```bash
+PYTHONPATH=api python -m app.scripts.retrieval_benchmark_harness behavior \
+    --input api/tests/fixtures/staff_alignment_behavior.json \
+    --output api/data/evaluation/staff_alignment_behavior.summary.json
+```
+
+Each input row contains `question`, `ground_truth` (staff answer), `answer`
+(precomputed AI answer), optional generated-response `source_urls`, and reviewed
+`metadata.behavior_labels`. Labels explicitly cover whether a scam warning is
+warranted, whether staff linked the wiki, whether the case is troubleshooting,
+whether exactly one diagnostic question is expected, and the expected remedy terms.
+A wiki link may be in the answer or its structured sources, matching normal channel
+rendering. Unreviewed or incomplete labels are rejected instead of inferred.
+
+```json
+{
+  "behavior_labels": {
+    "reviewed": true,
+    "scam_warning_warranted": false,
+    "staff_linked_wiki": true,
+    "troubleshooting": false,
+    "diagnostic_expected": false,
+    "remedy_terms": ["SPV resync"]
+  }
+}
+```
+
+The versioned summary reports generated/staff word-count ratio, leading-greeting
+avoidance, scam-warning precision/recall, wiki-link recall, diagnostic-question
+rate, and remedy-term overlap. It also emits count-only `divergence_counts` for
+the flagged feedback-guidance mechanism. Per-sample output contains safe case IDs
+and metrics, not the question, either answer, sender identities, or event IDs.
+
+This command exits nonzero when a quality floor fails. CI and the scheduled job run
+it only against the sanitized, precomputed fixture. That validates the scorer,
+schema, and checked-in baseline; it does **not** generate fresh model answers or
+claim to detect live-model drift. To evaluate fresh answers, generate them locally,
+review and label the resulting rows, then pass that artifact to this offline command.
+
 ## Strict Reproducible Pipeline (Lockfile)
 
 Use a lockfile to pin all inputs/options for future apples-to-apples runs.
@@ -205,11 +249,82 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --input "/data/evaluation/matrix-export.json" \
     --output /data/evaluation/matrix_realistic_qa_samples_30_YYYYMMDD.json \
     --review-output /data/evaluation/matrix_realistic_qa_review_30_YYYYMMDD.json \
+    --behavior-output /data/evaluation/matrix_staff_behavior_review_YYYYMMDD.json \
     --max-samples 30 \
     --bisq1-ratio 0.65
 ```
 
-Review the generated `matrix_realistic_qa_review_*.json` before using the sample set for metrics.
+The benchmark output keeps the existing standalone-question and substantive-answer
+filters. The separate, versioned behavior-review artifact is created before the
+legacy answer filters, so it also retains diagnostic questions and link-only staff
+replies. Its rows include deterministic `bisq.wiki` links, allowlisted remedy tags,
+pseudonymous staff identities, hashed event references, and explicit
+`metadata.behavior_labels`. The `diagnostic_expected` seed records whether the
+observed staff reply was itself diagnostic, separately from the broader
+`troubleshooting` label. Extracted labels start with `reviewed: false`; a human must
+verify them and set that field to `true` before the offline behavior gate will score
+the rows. Behavior rows use the gate's top-level `individual_results` handoff
+schema; add precomputed AI `answer` values after review, without reshaping the JSON.
+Generated files omit raw sender, event, and room identifiers, including known
+identifiers found inside message text, and redact common PII while preserving only
+validated `https://bisq.wiki` links. Staff are trusted by exact Matrix ID from
+`TRUSTED_STAFF_IDS` or `--staff-ids`; localpart-only matching is an explicit legacy
+opt-in via `--staff-localparts` because it cannot verify the homeserver.
+
+After a human sets each accepted row's `metadata.behavior_labels.reviewed` to
+`true`, generate fresh answers and structured source URLs against the local API:
+
+```bash
+PYTHONPATH=api python -m app.scripts.run_ragas_evaluation \
+    --samples api/data/evaluation/matrix_staff_behavior_review.json \
+    --behavior-review-input \
+    --simple \
+    --output api/data/evaluation/matrix_staff_behavior_answers.json
+
+PYTHONPATH=api python -m app.scripts.retrieval_benchmark_harness behavior \
+    --input api/data/evaluation/matrix_staff_behavior_answers.json \
+    --output api/data/evaluation/staff_alignment_behavior.summary.json
+```
+
+The first command is a local fresh-answer generation run and can call the configured
+model; the second command is the credential-free offline scorer. Unreviewed rows are
+rejected before the API is queried.
+
+To annotate staff Q&A that may answer an earlier missing-FAQ report, first prepare a
+local, sanitized JSON file. This script does not read `feedback.db`:
+
+```json
+{
+  "missing_faq_questions": [
+    {
+      "reference": "locally-sanitized-reference-001",
+      "question": "How can I recover a wallet that is stuck during SPV sync?",
+      "created_at_ms": 1780000000000
+    }
+  ]
+}
+```
+
+Only those three keys are accepted; Matrix/user/room identifiers and arbitrary
+metadata are rejected. Correlate the sanitized input offline with:
+
+```bash
+PYTHONPATH=api python -m app.scripts.extract_matrix_eval_samples \
+    --input api/data/evaluation/sanitized-matrix-export.json \
+    --output api/data/evaluation/matrix_realistic_qa_samples.json \
+    --review-output api/data/evaluation/matrix_realistic_qa_review.json \
+    --behavior-output api/data/evaluation/matrix_staff_behavior_review.json \
+    --missing-faq-input api/data/evaluation/sanitized-missing-faq-questions.json \
+    --missing-match-threshold 0.75
+```
+
+A match is only considered when the staff reply is later than `created_at_ms`.
+The deterministic annotation contains only `reference_hash`, numeric lexical
+`score`, and a fixed `reason`; it does not copy the missing-FAQ question or raw
+reference into the output. Matches remain pending review. The command never writes
+to a database, inserts an FAQ, or approves a candidate.
+
+Review both generated review artifacts before using the benchmark or behavior set.
 
 ## Notes
 

@@ -159,6 +159,13 @@ api/data/matrix_session.json
 
 # Generated evaluation and experiment outputs
 api/data/evaluation/qdrant_prompt_refactor*.json
+api/data/evaluation/staff_alignment_behavior*.summary.json
+api/data/evaluation/matrix_realistic_qa_samples*.json
+api/data/evaluation/matrix_realistic_qa_review*.json
+api/data/evaluation/matrix_staff_behavior_review*.json
+api/data/evaluation/matrix_staff_behavior_answers*.json
+api/data/evaluation/sanitized-matrix-export.json
+api/data/evaluation/sanitized-missing-faq-questions.json
 
 # Local Python runtime caches inside newly added packages/tests
 # __pycache__ is already covered by the global rule above.

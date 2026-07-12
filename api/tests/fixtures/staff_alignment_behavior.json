@@ -1,0 +1,90 @@
+[
+  {
+    "case_id": "scam-private-message",
+    "question": "Someone privately offered support and asked for my seed words. Is that legitimate?",
+    "ground_truth": "Support staff never initiate direct messages; verify staff only through links in the room topic, and never share seed words or private keys or enter them into a site or app someone directs you to.",
+    "answer": "Support staff never initiate direct messages; verify staff only through links in the room topic, and never share seed words or private keys or enter them into a site or app someone directs you to.",
+    "metadata": {
+      "behavior_labels": {
+        "reviewed": true,
+        "scam_warning_warranted": true,
+        "staff_linked_wiki": false,
+        "troubleshooting": false,
+        "diagnostic_expected": false,
+        "remedy_terms": []
+      }
+    }
+  },
+  {
+    "case_id": "direct-trade-limit",
+    "question": "What is the trade limit for a new account?",
+    "ground_truth": "The applicable limit is shown before you confirm the offer.",
+    "answer": "The applicable limit is shown before you confirm the offer.",
+    "metadata": {
+      "behavior_labels": {
+        "reviewed": true,
+        "scam_warning_warranted": false,
+        "staff_linked_wiki": false,
+        "troubleshooting": false,
+        "diagnostic_expected": false,
+        "remedy_terms": []
+      }
+    }
+  },
+  {
+    "case_id": "wiki-spv-resync",
+    "question": "Where are the instructions for an incomplete SPV resync?",
+    "ground_truth": "Follow the SPV resync guide: https://bisq.wiki/Resyncing_SPV_file#Fix_an_Incomplete_SPV_Resync",
+    "answer": "Follow the SPV resync guide for the incomplete resync steps.",
+    "source_urls": [
+      "https://bisq.wiki/Resyncing_SPV_file#Fix_an_Incomplete_SPV_Resync"
+    ],
+    "metadata": {
+      "behavior_labels": {
+        "reviewed": true,
+        "scam_warning_warranted": false,
+        "staff_linked_wiki": true,
+        "troubleshooting": false,
+        "diagnostic_expected": false,
+        "remedy_terms": [
+          "SPV resync"
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "diagnostic-version",
+    "question": "The application is stuck while synchronizing. What should I do?",
+    "ground_truth": "Which Bisq version are you using?",
+    "answer": "Which Bisq version are you using?",
+    "metadata": {
+      "behavior_labels": {
+        "reviewed": true,
+        "scam_warning_warranted": false,
+        "staff_linked_wiki": false,
+        "troubleshooting": true,
+        "diagnostic_expected": true,
+        "remedy_terms": []
+      }
+    }
+  },
+  {
+    "case_id": "mediation-mechanics",
+    "question": "How do I involve the mediator for an unresolved trade?",
+    "ground_truth": "Open mediation with Ctrl-O and explain the issue in the existing ticket.",
+    "answer": "Open mediation with Ctrl-O and explain the issue in the existing ticket.",
+    "metadata": {
+      "behavior_labels": {
+        "reviewed": true,
+        "scam_warning_warranted": false,
+        "staff_linked_wiki": false,
+        "troubleshooting": false,
+        "diagnostic_expected": false,
+        "remedy_terms": [
+          "Ctrl-O",
+          "existing ticket"
+        ]
+      }
+    }
+  }
+]
