@@ -61,7 +61,7 @@ _SUSPICIOUS_CONTACT_PATTERNS = (
 )
 _SENSITIVE_REQUESTER_RE = re.compile(
     rf"\b(?:{_CONTACT_ACTOR}|(?:external|unknown|third[- ]party|unofficial)\s+"
-    r"(?:site|website|web site|app|link|form)|(?:this|that)\s+"
+    r"(?:site|website|web site|app|link|form)|(?:an?|some|this|that)\s+"
     r"(?:site|website|web site|app|link|form)|(?:website|web site|link|form))\b",
     re.IGNORECASE,
 )

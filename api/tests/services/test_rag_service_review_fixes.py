@@ -382,6 +382,7 @@ class TestCanonicalFixInjection:
 
         assert response["answered_from"] == "documents"
         assert response["sources"][0]["url"] == fix.url
+        assert response["sources"][0]["similarity_score"] is None
         assert fix.remedy in _llm_invocation_text(service.llm)
 
     def test_canonical_fix_is_not_injected_for_explicit_bisq2(self, service):
@@ -431,6 +432,7 @@ class TestCanonicalFixInjection:
         )
 
         assert docs[0].metadata["canonical_fix_id"] == fix.key
+        assert docs[0].metadata["_canonical_fix_injected"] is True
         assert docs[0].page_content != untrusted.page_content
         assert docs[1] is untrusted
 

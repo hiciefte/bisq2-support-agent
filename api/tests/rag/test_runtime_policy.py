@@ -17,6 +17,7 @@ from app.prompts.runtime_policy import should_apply_safety_reflex
         "Someone contacted me and offered support with my stuck trade.",
         "Someone offered to help me with my trade.",
         "An external app is asking me to enter my seed words.",
+        "An app asked me to enter my seed phrase.",
         "They asked me to send my private key.",
         "I was asked to enter my recovery phrase.",
         "A stranger asked for my seed phrase.",

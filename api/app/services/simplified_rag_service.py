@@ -392,7 +392,9 @@ class SimplifiedRAGService:
                     ranked_doc.metadata["_retrieval_rank"] = rank
                 return [item[0] for item in paired], [item[1] for item in paired]
 
-        paired.insert(0, (fix.to_document(), 1.0))
+        injected_fix = fix.to_document()
+        injected_fix.metadata["_canonical_fix_injected"] = True
+        paired.insert(0, (injected_fix, 0.0))
         for rank, (ranked_doc, _) in enumerate(paired):
             ranked_doc.metadata["_retrieval_rank"] = rank
         return [item[0] for item in paired], [item[1] for item in paired]
@@ -1396,7 +1398,11 @@ class SimplifiedRAGService:
             slug_manager = SlugManager()  # Initialize once for all FAQ slugs
             for i, doc in enumerate(docs):
                 # Get similarity score for this document
-                similarity_score = doc_scores[i] if i < len(doc_scores) else None
+                similarity_score = (
+                    None
+                    if doc.metadata.get("_canonical_fix_injected") is True
+                    else (doc_scores[i] if i < len(doc_scores) else None)
+                )
 
                 # Truncate content
                 content = (
