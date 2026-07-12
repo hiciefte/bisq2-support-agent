@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.prompts import error_messages
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 from app.services.simplified_rag_service import SimplifiedRAGService
 
 
@@ -773,6 +774,93 @@ class TestRAGServiceErrorMessages:
             # Use override_version to bypass version clarification
             response = await rag_service.query(
                 "What is the meaning of life?",
+                chat_history=[],
+                override_version="bisq_easy",
+            )
+
+        assert response["answer"] == error_messages.INSUFFICIENT_INFO
+
+    @pytest.mark.asyncio
+    async def test_no_docs_no_history_uses_static_safety_warning(self, rag_service):
+        """Safety-critical fallback must not depend on retrieval or the LLM."""
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_scores",
+            return_value=([], []),
+        ):
+            response = await rag_service.query(
+                "A support agent sent me a DM asking for my private key.",
+                chat_history=[],
+            )
+
+        assert response["answer"] == SAFETY_REFLEX_WARNING
+        assert response.get("needs_clarification") is not True
+        assert response["feedback_created"] is False
+        rag_service.rag_chain.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_docs_follow_up_preserves_safety_reflex_from_user_history(
+        self, rag_service
+    ):
+        """A query rewrite or terse follow-up must not erase a prior scam signal."""
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_scores",
+            return_value=([], []),
+        ):
+            response = await rag_service.query(
+                "What should I do now?",
+                chat_history=[
+                    {
+                        "role": "user",
+                        "content": "Someone claiming to be support sent me a DM.",
+                    },
+                    {"role": "assistant", "content": "Do not trust that contact."},
+                ],
+                override_version="bisq_easy",
+            )
+
+        assert response["answer"] == SAFETY_REFLEX_WARNING
+        rag_service.rag_chain.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_old_scam_turn_does_not_retrigger_after_new_user_topic(
+        self, rag_service
+    ):
+        """Only the immediate prior user turn carries safety context forward."""
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_scores",
+            return_value=([], []),
+        ):
+            response = await rag_service.query(
+                "What is the limit?",
+                chat_history=[
+                    {"role": "user", "content": "Is this a scam?"},
+                    {"role": "assistant", "content": SAFETY_REFLEX_WARNING},
+                    {
+                        "role": "user",
+                        "content": "Now I have an account limit question.",
+                    },
+                    {"role": "assistant", "content": "What would you like to know?"},
+                ],
+                override_version="bisq_easy",
+            )
+
+        assert response["answer"] == error_messages.INSUFFICIENT_INFO
+
+    @pytest.mark.asyncio
+    async def test_no_docs_ordinary_seed_restore_keeps_existing_fallback(
+        self, rag_service
+    ):
+        """Normal seed/setup questions must not be mislabeled as scam reports."""
+        with patch.object(
+            rag_service.document_retriever,
+            "retrieve_with_scores",
+            return_value=([], []),
+        ):
+            response = await rag_service.query(
+                "How do I restore my own Bisq wallet from seed words?",
                 chat_history=[],
                 override_version="bisq_easy",
             )

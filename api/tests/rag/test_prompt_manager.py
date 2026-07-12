@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.prompts import error_messages
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 from app.prompts.soul import load_soul, reload_soul
 from app.services.rag.prompt_manager import PromptManager
 
@@ -155,6 +156,59 @@ class TestPromptManagerResponseGuidelines:
         assert "Never use headings." in template
         assert "answer in 1-2 sentences and stop" in template
         assert "keep the answer under roughly 70 words" in template
+
+    def test_safety_reflex_is_static_high_precedence_and_compact(self, prompt_manager):
+        prompt = prompt_manager.create_rag_prompt()
+        template = prompt.messages[0].prompt.template
+
+        priority_index = template.index("PROMPT PRIORITY:")
+        safety_index = template.index("SAFETY REFLEX:")
+        evidence_index = template.index("EVIDENCE DISCIPLINE:")
+
+        assert priority_index < safety_index < evidence_index
+        assert template.count(SAFETY_REFLEX_WARNING) == 1
+        assert len(SAFETY_REFLEX_WARNING.split()) <= 35
+        assert SAFETY_REFLEX_WARNING.count(".") == 1
+        assert "lead with this exact warning unchanged" in template
+        assert "Do not trigger merely because" in template
+
+    def test_context_only_prompt_contains_static_safety_reflex(self, prompt_manager):
+        result = prompt_manager.create_context_only_prompt(
+            question="Someone claiming to be support sent me a DM.",
+            chat_history_str="Human: My trade is stuck.",
+        )
+
+        assert "SAFETY REFLEX:" in result
+        assert result.count(SAFETY_REFLEX_WARNING) == 1
+
+    def test_prompt_contains_conditional_single_diagnostic_rule(self, prompt_manager):
+        template = prompt_manager.create_rag_prompt().messages[0].prompt.template
+
+        assert "Context does not already identify a concrete remedy" in template
+        assert "ask the single most informative diagnostic question" in template
+        assert "Ask at most one." in template
+        assert "give it directly instead of asking a diagnostic question" in template
+
+    def test_prompt_contains_evidence_limited_reassurance(self, prompt_manager):
+        template = prompt_manager.create_rag_prompt().messages[0].prompt.template
+
+        assert "Put it after any required safety warning" in template
+        assert "at most one short reassurance" in template
+        assert "only when Context and the identified protocol support it" in template
+        assert (
+            "Never promise fund safety, recovery, or a particular outcome" in template
+        )
+
+    def test_prompt_contains_context_bound_escalation_mechanics(self, prompt_manager):
+        template = prompt_manager.create_rag_prompt().messages[0].prompt.template
+
+        assert "identified version, current trade state, and Context" in template
+        assert "`Ctrl+O`/`Cmd+O`" in template
+        assert "existing mediation ticket" in template
+        assert (
+            "do not direct users to a refund agent through a room-topic link"
+            in template
+        )
 
     def test_prompt_contains_evidence_discipline(self, prompt_manager):
         prompt = prompt_manager.create_rag_prompt()

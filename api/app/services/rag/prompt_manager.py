@@ -27,6 +27,7 @@ from app.prompts.runtime_policy import (
     build_live_data_rendering_block,
     build_prompt_priority_block,
     build_protocol_handling_block,
+    build_safety_reflex_block,
 )
 from app.prompts.soul import load_soul
 from app.utils.instrumentation import instrument_stage, track_tokens_and_cost
@@ -231,6 +232,7 @@ class PromptManager:
         system_sections = [
             soul_text,
             build_prompt_priority_block(),
+            build_safety_reflex_block(),
             build_evidence_discipline_block(),
             _UNTRUSTED_DATA_GUARD,
             build_bisq1_workflow_guardrails_block(),
@@ -368,6 +370,7 @@ class PromptManager:
         soul_text = load_soul()
         system_sections = [
             soul_text,
+            build_safety_reflex_block(),
             build_answer_contract_block(),
             _UNTRUSTED_DATA_GUARD,
             build_context_only_policy_block(is_multisig_query),

@@ -6,7 +6,97 @@ small policy blocks with explicit precedence.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
+
+SAFETY_REFLEX_WARNING = (
+    "Support staff never initiate direct messages; verify staff only through links "
+    "in the room topic, and never share seed words or private keys or enter them "
+    "into a site or app someone directs you to."
+)
+
+_CONTACT_ACTOR = (
+    r"(?:someone|somebody|they|he|she|support(?: staff| agent)?|staff|"
+    r"(?:an?|this|that) (?:admin|moderator|person|stranger|user)|a contact)"
+)
+_DIRECT_MESSAGE = r"(?:dm|direct message|private message)"
+_EXPLICIT_SCAM_CONCERN_RE = re.compile(
+    r"\b(?:scam(?:mer|med|ming|s)?|phish(?:ing|ed)?|"
+    r"impersonat(?:e|ed|ing|ion)|spoof(?:ed|ing)?)\b",
+    re.IGNORECASE,
+)
+_SENSITIVE_WALLET_DATA_RE = re.compile(
+    r"\b(?:wallet data|seed(?: (?:word|words|phrase))?|recovery phrase|mnemonic|"
+    r"private (?:key|keys))\b",
+    re.IGNORECASE,
+)
+_SUSPICIOUS_CONTACT_PATTERNS = (
+    re.compile(
+        rf"\b(?:got|received)\s+(?:an?\s+)?{_DIRECT_MESSAGE}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:unsolicited|unexpected|random)\b.{{0,20}}\b{_DIRECT_MESSAGE}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_DIRECT_MESSAGE}\b.{{0,40}}\b(?:from|by)\s+{_CONTACT_ACTOR}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_CONTACT_ACTOR}\b.{{0,40}}\b(?:sent|wrote)\s+(?:me|us)\b"
+        rf".{{0,15}}\b{_DIRECT_MESSAGE}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_CONTACT_ACTOR}\b.{{0,40}}\b(?:contacted|messaged|dm(?:ed|'d)?|"
+        r"direct[- ]messaged|reached out to|wrote to)\s+(?:me|us)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{_CONTACT_ACTOR}\b.{{0,40}}\b(?:offered|offering|offers?)\b"
+        r".{0,20}\b(?:help|support|assistance)\b",
+        re.IGNORECASE,
+    ),
+)
+_SENSITIVE_REQUESTER_RE = re.compile(
+    rf"\b(?:{_CONTACT_ACTOR}|(?:external|unknown|third[- ]party|unofficial)\s+"
+    r"(?:site|website|web site|app|link|form)|(?:this|that)\s+"
+    r"(?:site|website|web site|app|link|form)|(?:website|web site|link|form))\b",
+    re.IGNORECASE,
+)
+_SENSITIVE_REQUEST_RE = re.compile(
+    r"\b(?:ask(?:ed|ing|s)?|request(?:ed|ing|s)?|told|instructed|"
+    r"want(?:ed|s)?|need(?:ed|s)?|share|send|enter|type|give|upload|provide|submit)\b",
+    re.IGNORECASE,
+)
+_PASSIVE_SENSITIVE_REQUEST_RE = re.compile(
+    r"\b(?:i|we)\s+(?:was|were|am|are|have been|had been)\s+"
+    r"(?:asked|told|instructed|requested)\b",
+    re.IGNORECASE,
+)
+
+
+def should_apply_safety_reflex(question: str) -> bool:
+    """Return whether a question needs the static scam-safety warning."""
+    text = " ".join(str(question or "").split())
+    if not text:
+        return False
+
+    if _EXPLICIT_SCAM_CONCERN_RE.search(text):
+        return True
+
+    if any(pattern.search(text) for pattern in _SUSPICIOUS_CONTACT_PATTERNS):
+        return True
+
+    if not _SENSITIVE_WALLET_DATA_RE.search(text):
+        return False
+
+    if _PASSIVE_SENSITIVE_REQUEST_RE.search(text):
+        return True
+    return bool(
+        _SENSITIVE_REQUESTER_RE.search(text) and _SENSITIVE_REQUEST_RE.search(text)
+    )
 
 
 def build_prompt_priority_block() -> str:
@@ -16,6 +106,15 @@ def build_prompt_priority_block() -> str:
 3. Live tool data beats stale documentation for market/offer/transaction facts.
 4. If version or evidence is unclear, ask one short clarifying question instead of blending answers.
 5. Output must follow the answer contract below."""
+
+
+def build_safety_reflex_block() -> str:
+    return f"""SAFETY REFLEX:
+- Trigger this rule when the user reports an unsolicited direct/private message or DM, someone contacting them or offering support/help, an external site/app asking for wallet data, or another person requesting seed words or private keys.
+- When triggered, lead with this exact warning unchanged: {SAFETY_REFLEX_WARNING}
+- Give the warning even when the user did not ask about safety, and put it before reassurance or troubleshooting.
+- Do not trigger merely because the user asks how to back up, restore, or understand their own wallet seed or private keys.
+- Keep the warning and any essential answer within the compact answer contract."""
 
 
 def build_evidence_discipline_block() -> str:
@@ -51,6 +150,8 @@ def build_ambiguous_support_workflow_block() -> str:
 - Do not assume Bisq Easy, Bisq 1, or a specific UI button/menu path unless the Context explicitly supports that exact version and wording.
 - If version remains unknown after considering Context, do not name Bisq Easy, Bisq 1, MuSig, or any version-specific screen/button/menu label in the final answer.
 - In version-unknown answers, prefer neutral wording such as 'open the affected trade', 'start mediation/dispute from the trade details', or 'contact support staff' over guessed UI copy.
+- When the identified version, current trade state, and Context support a concrete escalation action, use it instead of a generic handoff. For Bisq 1, supported actions may include `Ctrl+O`/`Cmd+O` or replying in an existing mediation ticket.
+- Otherwise hand off generically. Never invent a shortcut or ticket, and do not direct users to a refund agent through a room-topic link.
 - If the exact procedure differs by version and the Context does not let you choose safely, say that the exact label or workflow differs by version and hand off instead of guessing.
 - If the user is asking for a human, manager, or escalation rather than product guidance, acknowledge that and hand off cleanly. Do not answer with product workflow steps."""
 
@@ -69,6 +170,9 @@ def build_answer_contract_block() -> str:
 - Do not narrate tool usage, confidence scores, internal policies, or chain-of-thought.
 - Do not mix Bisq 1 and Bisq 2 guidance unless the user explicitly asks for a comparison.
 - For security, disputes, or money-at-risk topics, be precise and complete, but still cut background noise.
+- For troubleshooting, stuck-trade, sync, or payment-failure questions, if Context does not already identify a concrete remedy or safe next action and one high-value fact is unknown, ask the single most informative diagnostic question instead of speculative multi-step advice. Ask at most one.
+- If Context already identifies the concrete remedy or safe next action, give it directly instead of asking a diagnostic question.
+- For explicit money-at-risk or time-pressure anxiety, use at most one short reassurance only when Context and the identified protocol support it. Put it after any required safety warning; otherwise it may open the answer. Never promise fund safety, recovery, or a particular outcome; omit reassurance when evidence is insufficient.
 - If you do not know, say what you do know and hand off cleanly to human support when needed.
 - Stop once the question is answered. Do not add a summary ending.
 - Think in this order before answering: direct answer, essential steps, risk note, optional clarification. Output only the final answer."""
