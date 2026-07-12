@@ -123,6 +123,50 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml e
     --kb-manifest /data/evaluation/kb_snapshots/kb_2026_02_11/manifest.json
 ```
 
+## Offline Staff-Alignment Behavior Gate
+
+The existing benchmark harness can also score precomputed staff/AI answer pairs
+without a database, running API, model, credentials, or network calls:
+
+```bash
+PYTHONPATH=api python -m app.scripts.retrieval_benchmark_harness behavior \
+    --input api/tests/fixtures/staff_alignment_behavior.json \
+    --output api/data/evaluation/staff_alignment_behavior.summary.json
+```
+
+Each input row contains `question`, `ground_truth` (staff answer), `answer`
+(precomputed AI answer), optional generated-response `source_urls`, and reviewed
+`metadata.behavior_labels`. Labels explicitly cover whether a scam warning is
+warranted, whether staff linked the wiki, whether the case is troubleshooting,
+whether exactly one diagnostic question is expected, and the expected remedy terms.
+A wiki link may be in the answer or its structured sources, matching normal channel
+rendering. Unreviewed or incomplete labels are rejected instead of inferred.
+
+```json
+{
+  "behavior_labels": {
+    "reviewed": true,
+    "scam_warning_warranted": false,
+    "staff_linked_wiki": true,
+    "troubleshooting": false,
+    "diagnostic_expected": false,
+    "remedy_terms": ["SPV resync"]
+  }
+}
+```
+
+The versioned summary reports generated/staff word-count ratio, leading-greeting
+avoidance, scam-warning precision/recall, wiki-link recall, diagnostic-question
+rate, and remedy-term overlap. It also emits count-only `divergence_counts` for
+the flagged feedback-guidance mechanism. Per-sample output contains safe case IDs
+and metrics, not the question, either answer, sender identities, or event IDs.
+
+This command exits nonzero when a quality floor fails. CI and the scheduled job run
+it only against the sanitized, precomputed fixture. That validates the scorer,
+schema, and checked-in baseline; it does **not** generate fresh model answers or
+claim to detect live-model drift. To evaluate fresh answers, generate them locally,
+review and label the resulting rows, then pass that artifact to this offline command.
+
 ## Strict Reproducible Pipeline (Lockfile)
 
 Use a lockfile to pin all inputs/options for future apples-to-apples runs.

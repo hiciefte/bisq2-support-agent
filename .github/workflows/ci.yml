@@ -4,10 +4,13 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *"
 
 jobs:
   lint-and-test:
     name: Lint, Type Check & Test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,6 +78,7 @@ jobs:
 
   security:
     name: Security Scan
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,3 +122,24 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+
+  staff-alignment-offline:
+    name: Offline Staff-Alignment Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.11'
+
+      - name: Score precomputed staff-alignment fixture
+        run: |
+          PYTHONPATH=api python -m app.scripts.retrieval_benchmark_harness behavior \
+            --input api/tests/fixtures/staff_alignment_behavior.json \
+            --output /tmp/staff_alignment_behavior.summary.json
