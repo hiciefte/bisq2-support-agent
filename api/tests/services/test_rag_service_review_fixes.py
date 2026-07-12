@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.services.rag.canonical_fixes import CANONICAL_FIXES
 from app.services.rag.document_retriever import (
+    DocumentRetriever,
     _classify_query_protocol,
     is_bisq_version_comparison_query,
 )
@@ -362,6 +364,98 @@ class TestContextOnlyFallbackVersion:
         invoked = _llm_invocation_text(service.llm)
         assert "The user asked about Bisq 1" in invoked
         assert "The user asked about Bisq 2/Bisq Easy" not in invoked
+
+
+class TestCanonicalFixInjection:
+    """G3: verified issue matches become Context and deterministic sources."""
+
+    @pytest.mark.asyncio
+    async def test_no_retrieved_docs_uses_canonical_fix_and_exact_source(self, service):
+        service.document_retriever.retrieve_with_scores.return_value = ([], [])
+        fix = CANONICAL_FIXES["payment-started-confirmation-loop"]
+
+        response = await service.query(
+            "Payment started keeps saying please send confirmation again",
+            chat_history=[],
+            override_version="Bisq 1",
+        )
+
+        assert response["answered_from"] == "documents"
+        assert response["sources"][0]["url"] == fix.url
+        assert fix.remedy in _llm_invocation_text(service.llm)
+
+    def test_canonical_fix_is_not_injected_for_explicit_bisq2(self, service):
+        docs, scores = service._inject_canonical_fix(
+            [],
+            [],
+            "How do I open mediation in Bisq 2?",
+            "Bisq 2",
+        )
+
+        assert docs == []
+        assert scores == []
+
+    def test_existing_exact_canonical_document_is_promoted_without_duplication(
+        self, service
+    ):
+        fix = CANONICAL_FIXES["incomplete-spv-resync"]
+        unrelated = Document(page_content="Other", metadata={"type": "wiki"})
+        canonical = fix.to_document()
+
+        docs, scores = service._inject_canonical_fix(
+            [unrelated, canonical],
+            [0.8, 0.7],
+            "My SPV resync is stuck at zero",
+            "Bisq 1",
+        )
+
+        assert docs == [canonical, unrelated]
+        assert scores == [0.7, 0.8]
+        assert [doc.metadata["_retrieval_rank"] for doc in docs] == [0, 1]
+        assert sum(doc.metadata.get("canonical_fix_id") == fix.key for doc in docs) == 1
+
+    def test_matching_url_without_registry_id_does_not_replace_curated_fix(
+        self, service
+    ):
+        fix = CANONICAL_FIXES["incomplete-spv-resync"]
+        untrusted = Document(
+            page_content="Unreviewed content with copied metadata URL.",
+            metadata={"type": "wiki", "url": fix.url},
+        )
+
+        docs, _ = service._inject_canonical_fix(
+            [untrusted],
+            [0.9],
+            "My SPV resync is stuck at zero",
+            "Bisq 1",
+        )
+
+        assert docs[0].metadata["canonical_fix_id"] == fix.key
+        assert docs[0].page_content != untrusted.page_content
+        assert docs[1] is untrusted
+
+    def test_canonical_fix_stays_first_when_ranked_docs_are_formatted(self, service):
+        retrieved = Document(
+            page_content="Retrieved context that must follow the canonical fix.",
+            metadata={
+                "type": "wiki",
+                "protocol": "multisig_v1",
+                "_retrieval_rank": 0,
+            },
+        )
+
+        docs, _ = service._inject_canonical_fix(
+            [retrieved],
+            [0.9],
+            "My SPV resync is stuck at zero",
+            "Bisq 1",
+        )
+        formatted = DocumentRetriever(MagicMock()).format_documents(
+            docs, detected_version="Bisq 1"
+        )
+
+        remedy = CANONICAL_FIXES["incomplete-spv-resync"].remedy
+        assert formatted.index(remedy) < formatted.index("Retrieved context")
 
 
 class TestComparisonClassification:

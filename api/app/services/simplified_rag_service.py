@@ -26,6 +26,10 @@ from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING, should_apply_safet
 from app.services.bisq_mcp_service import Bisq2MCPService
 from app.services.faq.slug_manager import SlugManager
 from app.services.rag.auto_send_router import AutoSendRouter
+from app.services.rag.canonical_fixes import (
+    canonical_url_for_metadata,
+    find_canonical_fix,
+)
 from app.services.rag.confidence_scorer import ConfidenceScorer
 from app.services.rag.document_processor import DocumentProcessor
 from app.services.rag.document_retriever import (
@@ -361,6 +365,37 @@ class SimplifiedRAGService:
                 reordered_docs.append(doc)
                 reordered_scores.append(score)
         return reordered_docs, reordered_scores
+
+    @staticmethod
+    def _inject_canonical_fix(
+        docs: List[Document],
+        doc_scores: List[float],
+        question: str,
+        detected_version: Optional[str],
+    ) -> tuple[List[Document], List[float]]:
+        """Prepend at most one locally verified canonical fix document."""
+        fix = find_canonical_fix(question, detected_version)
+        if fix is None:
+            return docs, doc_scores
+
+        paired = [
+            (doc, doc_scores[index] if index < len(doc_scores) else 0.0)
+            for index, doc in enumerate(docs)
+        ]
+        for index, (doc, score) in enumerate(paired):
+            if (
+                doc.metadata.get("canonical_fix_id") == fix.key
+                and doc.metadata.get("url") == fix.url
+            ):
+                paired.insert(0, paired.pop(index))
+                for rank, (ranked_doc, _) in enumerate(paired):
+                    ranked_doc.metadata["_retrieval_rank"] = rank
+                return [item[0] for item in paired], [item[1] for item in paired]
+
+        paired.insert(0, (fix.to_document(), 1.0))
+        for rank, (ranked_doc, _) in enumerate(paired):
+            ranked_doc.metadata["_retrieval_rank"] = rank
+        return [item[0] for item in paired], [item[1] for item in paired]
 
     def _handle_faq_update(
         self,
@@ -1162,6 +1197,13 @@ class SimplifiedRAGService:
                     docs = []
                     doc_scores = []
 
+            docs, doc_scores = self._inject_canonical_fix(
+                docs,
+                doc_scores,
+                preprocessed_question,
+                detected_version,
+            )
+
             # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
                 logger.info("No relevant documents found for the query")
@@ -1369,7 +1411,11 @@ class SimplifiedRAGService:
 
                 if doc.metadata.get("type") == "wiki":
                     # Generate wiki URL for wiki sources
-                    wiki_url = generate_wiki_url(title=title, section=section)
+                    canonical_url = canonical_url_for_metadata(doc.metadata)
+                    wiki_url = canonical_url or generate_wiki_url(
+                        title=title,
+                        section=section,
+                    )
 
                     sources.append(
                         {
