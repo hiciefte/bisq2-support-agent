@@ -422,7 +422,27 @@ def record_bisq2_api_probe(
     if response_time is not None:
         metric_set["response_time"].set(response_time)
 
-    _update_bisq2_aggregate_metrics(response_time)
+    _update_bisq2_aggregate_metrics()
+    _persist_bisq2_api_metrics()
+
+
+def clear_bisq2_api_probes(*probes: str) -> None:
+    """Clear readiness state for probes whose dependent feature is disabled."""
+    if not probes:
+        return
+
+    unknown_probes = set(probes).difference(BISQ2_PROBE_METRICS)
+    if unknown_probes:
+        unknown = ", ".join(sorted(unknown_probes))
+        raise ValueError(f"Unsupported Bisq2 probes: {unknown}")
+
+    for probe in dict.fromkeys(probes):
+        metric_set = BISQ2_PROBE_METRICS[probe]
+        metric_set["status"].set(0)
+        metric_set["timestamp"].set(0)
+        metric_set["response_time"].set(0)
+
+    _update_bisq2_aggregate_metrics()
     _persist_bisq2_api_metrics()
 
 
@@ -647,7 +667,7 @@ def restore_metrics_from_database() -> None:
         logger.exception("Failed to restore metrics from database")
 
 
-def _update_bisq2_aggregate_metrics(response_time: Optional[float] = None) -> None:
+def _update_bisq2_aggregate_metrics() -> None:
     snapshot = get_bisq2_api_readiness_snapshot()
     checked_checks = [
         check
@@ -657,7 +677,14 @@ def _update_bisq2_aggregate_metrics(response_time: Optional[float] = None) -> No
 
     if checked_checks:
         aggregate_healthy = all(bool(check["healthy"]) for check in checked_checks)
+        latest_check = max(
+            checked_checks,
+            key=lambda check: float(check["last_check_timestamp"]),
+        )
         BISQ2_API_HEALTH_STATUS.set(1 if aggregate_healthy else 0)
         BISQ2_API_LAST_CHECK_TIMESTAMP.set(snapshot["last_check_timestamp"])
-        if response_time is not None:
-            BISQ2_API_RESPONSE_TIME.set(response_time)
+        BISQ2_API_RESPONSE_TIME.set(float(latest_check["response_time_seconds"]))
+    else:
+        BISQ2_API_HEALTH_STATUS.set(0)
+        BISQ2_API_LAST_CHECK_TIMESTAMP.set(0)
+        BISQ2_API_RESPONSE_TIME.set(0)

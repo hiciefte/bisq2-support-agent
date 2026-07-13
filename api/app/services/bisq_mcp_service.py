@@ -1488,6 +1488,9 @@ class Bisq2MCPService:
         Returns:
             Dictionary with health status
         """
+        bisq_enabled = self.enabled or self._setting_bool(
+            "BISQ2_CHANNEL_ENABLED", False
+        )
         result = {
             "enabled": self.enabled,
             "circuit_breaker_state": self._circuit_breaker.current_state,
@@ -1497,10 +1500,10 @@ class Bisq2MCPService:
                 "reputation": len(self._reputation_cache),
                 "transactions": len(self._transaction_cache),
             },
-            "readiness": _get_bisq_readiness_snapshot(enabled=self.enabled),
+            "readiness": _get_bisq_readiness_snapshot(enabled=bisq_enabled),
         }
 
-        if self.enabled:
+        if bisq_enabled:
             try:
                 # Probe the same unauthenticated endpoint used by the Docker
                 # healthcheck. Bisq2 does not expose /api/v1/health.

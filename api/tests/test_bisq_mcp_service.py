@@ -46,6 +46,7 @@ def mock_settings():
     settings.BISQ_CACHE_TTL_OFFERS = 30
     settings.BISQ_CACHE_TTL_REPUTATION = 300
     settings.ENABLE_BISQ_MCP_INTEGRATION = True
+    settings.BISQ2_CHANNEL_ENABLED = False
     settings.BISQ_API_AUTH_ENABLED = False
     return settings
 
@@ -57,6 +58,7 @@ def mock_settings_disabled():
     settings.BISQ_API_URL = "http://test-bisq-api:8090"
     settings.BISQ_API_TIMEOUT = 5
     settings.ENABLE_BISQ_MCP_INTEGRATION = False
+    settings.BISQ2_CHANNEL_ENABLED = False
     return settings
 
 
@@ -751,5 +753,36 @@ class TestLifecycle:
             await client.aclose()
             service._client = None
 
+        assert result["api_available"] is True
+        assert requested_paths == ["/api/v1/openapi.json"]
+
+    @pytest.mark.asyncio
+    async def test_health_check_treats_support_channel_as_enabled(
+        self, mock_settings_disabled
+    ):
+        """Channel-only deployments should expose Bisq readiness and availability."""
+        mock_settings_disabled.BISQ2_CHANNEL_ENABLED = True
+        channel_service = Bisq2MCPService(mock_settings_disabled)
+        BISQ2_API_EXPORT_READINESS_STATUS.set(1)
+        BISQ2_API_EXPORT_LAST_CHECK_TIMESTAMP.set(100)
+        requested_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            return httpx.Response(200, json={"openapi": "3.0.1"})
+
+        client = httpx.AsyncClient(
+            base_url=channel_service.active_base_url,
+            transport=httpx.MockTransport(handler),
+        )
+        channel_service._client = client
+        try:
+            result = await channel_service.health_check()
+        finally:
+            await client.aclose()
+            channel_service._client = None
+
+        assert result["enabled"] is False
+        assert result["readiness"]["status"] == "healthy"
         assert result["api_available"] is True
         assert requested_paths == ["/api/v1/openapi.json"]
