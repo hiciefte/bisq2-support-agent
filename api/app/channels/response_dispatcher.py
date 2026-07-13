@@ -21,6 +21,7 @@ from app.channels.policy import (
 )
 from app.channels.streaming import deliver_buffered_stream, deliver_native_stream
 from app.models.escalation import EscalationCreate
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,22 @@ def format_escalation_notice(
         support_handle=support_handle,
         language_code=language_code,
     )
+
+
+def preserve_static_safety_warning(
+    original_answer: str | None,
+    replacement_answer: str,
+) -> str:
+    """Keep the required safety prefix when replacing a review-routed answer."""
+    if not str(original_answer or "").startswith(SAFETY_REFLEX_WARNING):
+        return replacement_answer
+
+    replacement_without_warning = replacement_answer.replace(
+        SAFETY_REFLEX_WARNING, ""
+    ).strip()
+    if not replacement_without_warning:
+        return SAFETY_REFLEX_WARNING
+    return f"{SAFETY_REFLEX_WARNING}\n\n{replacement_without_warning}"
 
 
 class ChannelResponseDispatcher:
@@ -555,6 +572,10 @@ class ChannelResponseDispatcher:
             support_handle="support",
             language_code=original_language,
         )
+        notice_text = preserve_static_safety_warning(
+            getattr(response, "answer", None),
+            notice_text,
+        )
 
         notice = (
             response.model_copy(deep=True)
@@ -675,6 +696,10 @@ class ChannelResponseDispatcher:
             self._resolve_policy_service(),
             self.channel_id,
         )
+        template = preserve_static_safety_warning(
+            getattr(response, "answer", None),
+            template,
+        )
         try:
             setattr(notice, "answer", template)
             setattr(notice, "requires_human", True)
@@ -745,6 +770,10 @@ class ChannelResponseDispatcher:
             str(getattr(response_metadata, "staff_enriched_answer", "") or "").strip(),
             limit=4000,
         )
+        if draft_block.startswith(SAFETY_REFLEX_WARNING):
+            staff_enriched_answer = staff_enriched_answer.replace(
+                SAFETY_REFLEX_WARNING, ""
+            ).strip()
         internal_enrichment_block = ""
         if staff_enriched_answer and staff_enriched_answer != draft_block:
             internal_enrichment_block = (

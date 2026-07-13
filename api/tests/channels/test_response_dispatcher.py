@@ -7,6 +7,7 @@ from app.channels.response_dispatcher import (
     DeliveryMode,
     format_escalation_notice,
 )
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 
 
 @pytest.mark.unit
@@ -266,6 +267,62 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_public_escalation_notice_preserves_exact_static_safety_warning():
+    incoming = SimpleNamespace(
+        message_id="m-safety-public",
+        question="An app asked me to enter my seed phrase.",
+        channel_metadata={"room_id": "!support:matrix.org"},
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer=f"{SAFETY_REFLEX_WARNING}\n\nEvidence-backed safety detail.",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="needs_human",
+            routing_reason="safety review",
+            confidence_score=0.3,
+        ),
+    )
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=188)
+    )
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = SimpleNamespace(
+        public_escalation_notice_enabled=True,
+        escalation_notification_channel="public_room",
+        escalation_user_notice_template="this needs a team member. someone will follow up.",
+    )
+    runtime = MagicMock()
+    runtime.resolve_optional = MagicMock(
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
+    )
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.get_delivery_target.return_value = "!support:matrix.org"
+    channel.send_message = AsyncMock(return_value=True)
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+    )
+
+    await dispatcher.dispatch(incoming, response)
+
+    notice = channel.send_message.call_args.args[1]
+    assert notice.answer.startswith(SAFETY_REFLEX_WARNING)
+    assert notice.answer.count(SAFETY_REFLEX_WARNING) == 1
+    assert "team member" in notice.answer.lower()
+    assert "evidence-backed safety detail" not in notice.answer.lower()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is_none():
     incoming = SimpleNamespace(
         message_id="m-4",
@@ -321,6 +378,64 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
     notice = channel.send_message.call_args.args[1]
     assert "#99" not in notice.answer
     assert "team member" in notice.answer.lower()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel_id", ["matrix", "bisq2"])
+async def test_user_escalation_notice_preserves_exact_static_safety_warning(channel_id):
+    incoming = SimpleNamespace(
+        message_id="m-safety-user",
+        question="An app asked me to enter my seed phrase.",
+        channel_metadata={"room_id": "!support:matrix.org"},
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer=f"{SAFETY_REFLEX_WARNING}\n\nEvidence-backed safety detail.",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="needs_human",
+            routing_reason="safety review",
+            confidence_score=0.1,
+        ),
+    )
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=199)
+    )
+    policy_service = MagicMock()
+    policy_service.get_policy.return_value = SimpleNamespace(
+        public_escalation_notice_enabled=False,
+        escalation_notification_channel="none",
+        escalation_user_notice_mode="message",
+        escalation_user_notice_template="this needs a team member. someone will follow up.",
+    )
+    runtime = MagicMock()
+    runtime.resolve_optional = MagicMock(
+        side_effect=lambda name: (
+            policy_service if name == "channel_autoresponse_policy_service" else None
+        )
+    )
+    channel = MagicMock()
+    channel.runtime = runtime
+    channel.get_delivery_target.return_value = "!support:matrix.org"
+    channel.send_message = AsyncMock(return_value=True)
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id=channel_id,
+        escalation_service=escalation_service,
+    )
+
+    await dispatcher.dispatch(incoming, response)
+
+    notice = channel.send_message.call_args.args[1]
+    assert notice.answer.startswith(SAFETY_REFLEX_WARNING)
+    assert notice.answer.count(SAFETY_REFLEX_WARNING) == 1
+    assert "team member" in notice.answer.lower()
+    assert "evidence-backed safety detail" not in notice.answer.lower()
 
 
 @pytest.mark.unit
@@ -615,6 +730,42 @@ async def test_staff_room_notice_includes_internal_code_enrichment_without_repla
     assert "Sell offer creation checks reputation." in staff_notice
     assert "not sent by reactions or `/send`" in staff_notice
     assert "- React `👍` to send only the copy-ready reply to the user." in staff_notice
+
+
+@pytest.mark.unit
+def test_staff_room_notice_deduplicates_static_safety_warning_from_enrichment():
+    incoming = SimpleNamespace(
+        question="An app asked me to enter my seed phrase.",
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer=f"{SAFETY_REFLEX_WARNING}\n\nCopy-ready safety detail.",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="queue_medium",
+            routing_reason="Codebase evidence attached for staff-room review.",
+            confidence_score=0.91,
+            staff_enriched_answer=(
+                f"{SAFETY_REFLEX_WARNING}\n\nCopy-ready safety detail.\n\n"
+                "Staff-only codebase context:\n- Never request seed words."
+            ),
+        ),
+    )
+    dispatcher = ChannelResponseDispatcher(channel=MagicMock(), channel_id="matrix")
+
+    notice = dispatcher._build_staff_room_escalation_notice_response(
+        incoming=incoming,
+        response=response,
+        escalation=SimpleNamespace(id=128),
+    )
+
+    assert notice.answer.count(SAFETY_REFLEX_WARNING) == 1
+    assert "Copy-ready safety detail." in notice.answer
+    assert "Staff-only codebase context" in notice.answer
+    assert "Never request seed words." in notice.answer
 
 
 @pytest.mark.unit

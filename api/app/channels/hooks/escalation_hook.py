@@ -13,6 +13,7 @@ from app.channels.models import GatewayError, IncomingMessage, OutgoingMessage
 from app.channels.response_dispatcher import (
     ChannelResponseDispatcher,
     format_escalation_notice,
+    preserve_static_safety_warning,
 )
 from prometheus_client import Counter
 
@@ -96,7 +97,8 @@ class EscalationPostHook(BasePostProcessingHook):
         return None
 
     def _replace_answer(self, incoming, outgoing, escalation_id: int):
-        """Replace outgoing.answer with channel-specific escalation message."""
+        """Replace the answer while retaining any required static safety warning."""
+        original_answer = outgoing.answer
         username = incoming.user.channel_user_id or incoming.user.user_id
         metadata = getattr(outgoing, "metadata", None)
         raw_language = getattr(metadata, "original_language", None)
@@ -105,7 +107,7 @@ class EscalationPostHook(BasePostProcessingHook):
         )
         if isinstance(original_language, str) and len(original_language) > 8:
             original_language = None
-        outgoing.answer = format_escalation_notice(
+        notice = format_escalation_notice(
             channel_id=incoming.channel.value,
             username=username,
             escalation_id=escalation_id,
@@ -113,4 +115,8 @@ class EscalationPostHook(BasePostProcessingHook):
             language_code=original_language,
             channel=None,
             channel_registry=self.channel_registry,
+        )
+        outgoing.answer = preserve_static_safety_warning(
+            original_answer,
+            notice,
         )

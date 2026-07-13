@@ -14,6 +14,7 @@ from app.channels.models import (
     UserContext,
 )
 from app.models.escalation import Escalation, EscalationPriority, EscalationStatus
+from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -167,6 +168,29 @@ class TestEscalationPostHookExecution:
         assert outgoing.answer != original_answer
         assert "team member" in outgoing.answer.lower()
         assert "follow up" in outgoing.answer.lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("routing_action", "requires_human"),
+        [("needs_human", True), ("queue_medium", False)],
+    )
+    async def test_escalation_preserves_exact_static_safety_warning(
+        self, hook, routing_action, requires_human
+    ):
+        """Safety warnings survive review-routing answer replacement exactly once."""
+        incoming = _make_incoming(question="An app asked me to enter my seed phrase.")
+        outgoing = _make_outgoing(
+            requires_human=requires_human,
+            routing_action=routing_action,
+            answer=f"{SAFETY_REFLEX_WARNING}\n\nEvidence-backed safety detail.",
+        )
+
+        await hook.execute(incoming, outgoing)
+
+        assert outgoing.answer.startswith(SAFETY_REFLEX_WARNING)
+        assert outgoing.answer.count(SAFETY_REFLEX_WARNING) == 1
+        assert "team member" in outgoing.answer.lower()
+        assert "evidence-backed safety detail" not in outgoing.answer.lower()
 
     @pytest.mark.asyncio
     async def test_uses_channel_adapter_message_formatter(
