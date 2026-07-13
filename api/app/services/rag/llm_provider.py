@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import aisuite as ai  # type: ignore[import-untyped]
+import aisuite as ai
 import httpx
 from app.core.config import get_settings
 from app.services.rag.embeddings_provider import OpenAIEmbeddingsProvider

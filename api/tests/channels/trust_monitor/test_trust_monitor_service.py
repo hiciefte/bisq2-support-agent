@@ -186,6 +186,43 @@ def test_name_collision_creates_finding_and_publishes_to_admin_ui(tmp_path) -> N
     assert stored.items[0].suspect_display_name == "Alice  Support"
 
 
+def test_failed_alert_schedule_is_not_recorded_as_notified(
+    tmp_path, monkeypatch
+) -> None:
+    service, _ = _service(tmp_path)
+    actions: list[str] = []
+
+    class _UnscheduledPublisher:
+        def publish(self, _finding) -> bool:
+            return False
+
+    service.publisher = _UnscheduledPublisher()
+    monkeypatch.setattr(
+        "app.channels.trust_monitor.service.record_trust_finding",
+        lambda **kwargs: actions.append(kwargs["action"]),
+    )
+
+    finding = service.ingest_event(
+        TrustEvent(
+            channel_id="matrix",
+            space_id="!support:matrix.org",
+            actor_id="@unscheduled:matrix.org",
+            actor_display_name="Alice Support",
+            event_type=TrustEventType.MEMBER_JOINED,
+            occurred_at=datetime.now(UTC),
+            external_event_id="$unscheduled-member",
+        )
+    )
+
+    assert finding is not None
+    stored = service.store.get_finding(finding.id)
+    assert stored is not None
+    assert stored.last_notified_at is None
+    assert stored.notification_count == 0
+    assert "notified" not in actions
+    assert "notification_failed" in actions
+
+
 def test_duplicate_name_collision_refreshes_finding_without_republishing(
     tmp_path,
 ) -> None:

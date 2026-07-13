@@ -1,5 +1,6 @@
 """Tests for EscalationService lifecycle orchestration."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,7 @@ from app.models.escalation import (
     EscalationAlreadyClaimedError,
     EscalationClosedError,
     EscalationCreate,
+    EscalationDeliveryStatus,
     EscalationInvalidStateError,
     EscalationNotFoundError,
     EscalationNotRespondedError,
@@ -600,15 +602,235 @@ class TestEscalationServiceRespond:
             status=EscalationStatus.IN_REVIEW, staff_id="staff_1", channel="matrix"
         )
         responded = _make_escalation(
-            status=EscalationStatus.RESPONDED, channel="matrix"
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Answer",
+            delivery_status=EscalationDeliveryStatus.PENDING,
+        )
+        failed = responded.model_copy(
+            update={
+                "delivery_status": EscalationDeliveryStatus.FAILED,
+                "delivery_attempts": 1,
+                "delivery_error": "Delivery returned False",
+            }
+        )
+        mock_repository.get_by_id.return_value = claimed
+        mock_repository.update.side_effect = [responded, responded, failed]
+        mock_response_delivery.deliver.return_value = False
+
+        result = await service.respond_to_escalation(1, "Answer", "staff_1")
+
+        assert result.delivery_status is EscalationDeliveryStatus.FAILED
+        assert mock_repository.update.await_count == 3
+        response_patch = mock_repository.update.await_args_list[0].args[1]
+        attempt_patch = mock_repository.update.await_args_list[1].args[1]
+        failure_patch = mock_repository.update.await_args_list[2].args[1]
+        assert response_patch.delivery_status is EscalationDeliveryStatus.PENDING
+        assert attempt_patch.delivery_status is EscalationDeliveryStatus.PENDING
+        assert attempt_patch.delivery_attempts == 1
+        assert failure_patch.delivery_status is EscalationDeliveryStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_web_response_remains_not_required(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        claimed = _make_escalation(
+            status=EscalationStatus.IN_REVIEW,
+            staff_id="staff_1",
+            channel="web",
+        )
+        responded = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            staff_answer="Answer",
+            staff_id="staff_1",
+            channel="web",
+            delivery_status=EscalationDeliveryStatus.NOT_REQUIRED,
         )
         mock_repository.get_by_id.return_value = claimed
         mock_repository.update.return_value = responded
-        mock_response_delivery.deliver.return_value = False
 
-        await service.respond_to_escalation(1, "Answer", "staff_1")
-        # update should be called twice: first for response, then for delivery status
-        assert mock_repository.update.await_count == 2
+        result = await service.respond_to_escalation(1, "Answer", "staff_1")
+
+        response_patch = mock_repository.update.await_args.args[1]
+        assert response_patch.delivery_status is EscalationDeliveryStatus.NOT_REQUIRED
+        assert result.delivery_status is EscalationDeliveryStatus.NOT_REQUIRED
+        mock_response_delivery.deliver.assert_awaited_once_with(responded, "Answer")
+
+    @pytest.mark.asyncio
+    async def test_retry_delivery_is_bounded_and_idempotent(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        failed = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Saved answer",
+            staff_id="staff_1",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_attempts=1,
+        )
+        pending = failed.model_copy(
+            update={
+                "delivery_status": EscalationDeliveryStatus.PENDING,
+                "delivery_attempts": 2,
+            }
+        )
+        delivered = pending.model_copy(
+            update={"delivery_status": EscalationDeliveryStatus.DELIVERED}
+        )
+        mock_repository.get_by_id.side_effect = [failed, delivered]
+        mock_repository.update.side_effect = [pending, delivered]
+        mock_response_delivery.deliver.return_value = True
+
+        first = await service.retry_delivery(1)
+        second = await service.retry_delivery(1)
+
+        assert first.delivery_status is EscalationDeliveryStatus.DELIVERED
+        assert second.delivery_status is EscalationDeliveryStatus.DELIVERED
+        mock_response_delivery.deliver.assert_awaited_once_with(pending, "Saved answer")
+        assert mock_repository.update.await_args_list[0].args[1].delivery_attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_retries_deliver_saved_answer_once(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        failed = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Saved answer",
+            staff_id="staff_1",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_attempts=1,
+        )
+        state = failed
+
+        async def get_current(_escalation_id):
+            return state
+
+        async def update_current(_escalation_id, patch):
+            nonlocal state
+            changes = patch.model_dump(exclude_unset=True)
+            state = state.model_copy(update=changes)
+            return state
+
+        async def slow_delivery(_escalation, _answer):
+            await asyncio.sleep(0.01)
+            return True
+
+        mock_repository.get_by_id.side_effect = get_current
+        mock_repository.update.side_effect = update_current
+        mock_response_delivery.deliver.side_effect = slow_delivery
+
+        first, second = await asyncio.gather(
+            service.retry_delivery(1),
+            service.retry_delivery(1),
+        )
+
+        assert first.delivery_status is EscalationDeliveryStatus.DELIVERED
+        assert second.delivery_status is EscalationDeliveryStatus.DELIVERED
+        assert mock_response_delivery.deliver.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_response_can_be_replaced_before_retry(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        failed = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            ai_draft_answer="Draft",
+            staff_answer="Answer A",
+            staff_id="staff_1",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_attempts=1,
+        )
+        state = failed
+
+        async def get_current(_escalation_id):
+            return state
+
+        async def update_current(_escalation_id, patch):
+            nonlocal state
+            changes = patch.model_dump(exclude_unset=True)
+            state = state.model_copy(update=changes)
+            return state
+
+        mock_repository.get_by_id.side_effect = get_current
+        mock_repository.update.side_effect = update_current
+
+        result = await service.respond_to_escalation(1, "Answer B", "staff_1")
+
+        assert result.delivery_status is EscalationDeliveryStatus.DELIVERED
+        assert result.staff_answer == "Answer B"
+        mock_response_delivery.deliver.assert_awaited_once()
+        delivered_escalation, delivered_answer = (
+            mock_response_delivery.deliver.await_args.args
+        )
+        assert delivered_escalation.staff_answer == "Answer B"
+        assert delivered_answer == "Answer B"
+
+    @pytest.mark.asyncio
+    async def test_retry_delivery_rejects_exhausted_attempt_budget(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Saved answer",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_attempts=4,
+        )
+
+        with pytest.raises(EscalationInvalidStateError, match="retry limit"):
+            await service.retry_delivery(1)
+
+        mock_response_delivery.deliver.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_zero_retry_budget_allows_only_the_initial_attempt(
+        self,
+        service,
+        mock_repository,
+        mock_response_delivery,
+        mock_settings,
+    ):
+        mock_settings.ESCALATION_DELIVERY_MAX_RETRIES = 0
+        mock_repository.get_by_id.return_value = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Saved answer",
+            delivery_status=EscalationDeliveryStatus.FAILED,
+            delivery_attempts=1,
+        )
+
+        with pytest.raises(EscalationInvalidStateError, match="retry limit"):
+            await service.retry_delivery(1)
+
+        mock_response_delivery.deliver.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_same_staff_respond_recovers_interrupted_pending_delivery(
+        self, service, mock_repository, mock_response_delivery
+    ):
+        interrupted = _make_escalation(
+            status=EscalationStatus.RESPONDED,
+            channel="matrix",
+            staff_answer="Saved answer",
+            staff_id="staff_1",
+            delivery_status=EscalationDeliveryStatus.PENDING,
+            delivery_attempts=1,
+        )
+        retrying = interrupted.model_copy(update={"delivery_attempts": 2})
+        delivered = retrying.model_copy(
+            update={"delivery_status": EscalationDeliveryStatus.DELIVERED}
+        )
+        mock_repository.get_by_id.side_effect = [interrupted, interrupted]
+        mock_repository.update.side_effect = [retrying, delivered]
+
+        result = await service.respond_to_escalation(1, "Saved answer", "staff_1")
+
+        assert result.delivery_status is EscalationDeliveryStatus.DELIVERED
+        mock_response_delivery.deliver.assert_awaited_once_with(
+            retrying, "Saved answer"
+        )
 
     @pytest.mark.asyncio
     async def test_respond_nonexistent_raises_error(self, service, mock_repository):

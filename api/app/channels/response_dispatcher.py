@@ -9,6 +9,7 @@ import inspect
 import logging
 from collections.abc import Mapping
 from copy import deepcopy
+from enum import Enum
 from typing import Any
 
 from app.channels.delivery_planner import DeliveryMode, DeliveryPlanner
@@ -27,6 +28,21 @@ logger = logging.getLogger(__name__)
 
 _DIRECT_DELIVERY_ACTIONS = frozenset({"auto_send", "needs_clarification"})
 _REVIEW_QUEUE_ACTIONS = frozenset({"queue_medium", "needs_human"})
+
+
+class DispatchOutcome(str, Enum):
+    """Terminal outcome of one channel response dispatch attempt."""
+
+    SENT = "sent"
+    QUEUED = "queued"
+    FAILED = "failed"
+
+    @classmethod
+    def coerce(cls, value: Any) -> "DispatchOutcome":
+        """Normalize legacy bool callbacks while preserving typed outcomes."""
+        if isinstance(value, cls):
+            return value
+        return cls.SENT if value is True else cls.FAILED
 
 
 def _formatter_accepts_kwarg(formatter: Any, name: str) -> bool:
@@ -167,12 +183,12 @@ class ChannelResponseDispatcher:
         self.escalation_service = escalation_service
         self.delivery_planner = delivery_planner or DeliveryPlanner()
 
-    async def dispatch(self, incoming: Any, response: Any) -> bool:
+    async def dispatch(self, incoming: Any, response: Any) -> DispatchOutcome:
         """Dispatch one response.
 
         Returns:
-            True when a response was sent to the channel.
-            False when not sent (e.g. queued for review, missing target, filtered).
+            SENT when delivered, QUEUED when persisted for staff review, and
+            FAILED when neither action completed.
         """
         if self.should_autosend_response(response):
             if self.channel is None:
@@ -181,7 +197,7 @@ class ChannelResponseDispatcher:
                     self.channel_id,
                     getattr(incoming, "message_id", "<unknown>"),
                 )
-                return False
+                return DispatchOutcome.FAILED
             target = self.channel.get_delivery_target(
                 getattr(incoming, "channel_metadata", {})
             )
@@ -191,7 +207,7 @@ class ChannelResponseDispatcher:
                     self.channel_id,
                     getattr(incoming, "message_id", "<unknown>"),
                 )
-                return False
+                return DispatchOutcome.FAILED
             try:
                 plan = self.delivery_planner.plan(
                     channel=self.channel,
@@ -200,7 +216,7 @@ class ChannelResponseDispatcher:
                 if plan.mode == DeliveryMode.STREAM_NATIVE:
                     try:
                         if await deliver_native_stream(self.channel, target, response):
-                            return True
+                            return DispatchOutcome.SENT
                     except Exception:
                         logger.debug(
                             (
@@ -211,22 +227,30 @@ class ChannelResponseDispatcher:
                             getattr(incoming, "message_id", "<unknown>"),
                             exc_info=True,
                         )
-                    return await deliver_buffered_stream(self.channel, target, response)
+                    buffered = await deliver_buffered_stream(
+                        self.channel, target, response
+                    )
+                    return DispatchOutcome.SENT if buffered else DispatchOutcome.FAILED
                 if plan.mode == DeliveryMode.STREAM_BUFFERED:
-                    return await deliver_buffered_stream(self.channel, target, response)
-                return bool(await self.channel.send_message(target, response))
+                    buffered = await deliver_buffered_stream(
+                        self.channel, target, response
+                    )
+                    return DispatchOutcome.SENT if buffered else DispatchOutcome.FAILED
+                sent = bool(await self.channel.send_message(target, response))
+                return DispatchOutcome.SENT if sent else DispatchOutcome.FAILED
             except Exception:
                 logger.exception(
                     "Failed sending %s message_id=%s",
                     self.channel_id,
                     getattr(incoming, "message_id", "<unknown>"),
                 )
-                return False
+                return DispatchOutcome.FAILED
 
         if self.should_create_escalation(response):
             escalation = await self.create_escalation_for_review(incoming, response)
-            if escalation is not None:
-                await self._notify_review_queued(incoming, response, escalation)
+            if escalation is None:
+                return DispatchOutcome.FAILED
+            await self._notify_review_queued(incoming, response, escalation)
             logger.debug(
                 "Queued %s message_id=%s for support review (routing_action=%s)",
                 self.channel_id,
@@ -239,7 +263,8 @@ class ChannelResponseDispatcher:
                 .lower()
                 or "<empty>",
             )
-        return False
+            return DispatchOutcome.QUEUED
+        return DispatchOutcome.FAILED
 
     @staticmethod
     def should_autosend_response(response: Any) -> bool:

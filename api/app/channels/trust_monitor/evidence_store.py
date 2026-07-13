@@ -405,6 +405,31 @@ class TrustMonitorStore:
             ).fetchone()
         return self._finding_from_row(row) if row else None
 
+    def mark_finding_notified(
+        self,
+        finding_id: int,
+        *,
+        notified_at: datetime,
+    ) -> TrustFinding:
+        """Record a notification only after its delivery was scheduled."""
+        timestamp = notified_at.astimezone(UTC).isoformat()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE trust_findings SET
+                    last_notified_at = ?,
+                    notification_count = notification_count + 1
+                WHERE id = ?
+                """,
+                (timestamp, finding_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM trust_findings WHERE id = ?", (finding_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown trust finding {finding_id}")
+        return self._finding_from_row(row)
+
     def get_finding(self, finding_id: int) -> TrustFinding | None:
         with self.connection() as conn:
             row = conn.execute(

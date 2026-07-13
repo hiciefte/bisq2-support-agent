@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         run: |
@@ -64,7 +66,7 @@ jobs:
       - name: Type check with mypy
         run: |
           cd api
-          mypy app/ --ignore-missing-imports --no-strict-optional --warn-redundant-casts --warn-unused-ignores --explicit-package-bases || echo "Mypy found type issues - these should be fixed in a future PR"
+          mypy app/ --ignore-missing-imports --no-strict-optional --warn-redundant-casts --warn-unused-ignores --explicit-package-bases
 
       - name: Lint with flake8
         run: |
@@ -76,6 +78,60 @@ jobs:
           cd api
           pytest tests/ -v --tb=short
 
+  frontend:
+    name: Frontend Lint, Type Check & Test
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run Jest tests
+        run: npm test -- --runInBand
+
+  shell-validation:
+    name: Shell Lint & Deployment Tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/tests/*.sh
+
+      - name: Test environment configuration helpers
+        run: bash scripts/tests/test_env_config.sh
+
   security:
     name: Security Scan
     if: github.event_name != 'schedule'
@@ -86,6 +142,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Run Hadolint on API Dockerfile
         uses: hadolint/hadolint-action@v3.1.0

@@ -45,7 +45,8 @@ configure_hidden_service() {
     log_info "[2/6] Configuring Tor hidden service..."
 
     local TOR_CONFIG="/etc/tor/torrc"
-    local BACKUP_FILE="${TOR_CONFIG}.backup-$(date +%Y%m%d%H%M%S)"
+    local BACKUP_FILE
+    BACKUP_FILE="${TOR_CONFIG}.backup-$(date +%Y%m%d%H%M%S)"
 
     # Backup existing configuration
     if [ -f "$TOR_CONFIG" ]; then
@@ -168,7 +169,7 @@ configure_environment() {
 
     # Wait for .onion address generation (max 60 seconds)
     local ONION_ADDRESS=""
-    for i in {1..60}; do
+    for _ in {1..60}; do
         if [ -f "${HIDDEN_SERVICE_DIR}/hostname" ]; then
             ONION_ADDRESS=$(cat "${HIDDEN_SERVICE_DIR}/hostname")
             log_success "Generated .onion address: ${GREEN}${ONION_ADDRESS}${NC}"
@@ -247,7 +248,8 @@ backup_keys() {
 
     local HIDDEN_SERVICE_DIR="/var/lib/tor/bisq-support"
     local BACKUP_DIR="$INSTALL_DIR/backups/tor-keys"
-    local TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    local TIMESTAMP
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
     mkdir -p "$BACKUP_DIR"
     cp -r "${HIDDEN_SERVICE_DIR}/." "${BACKUP_DIR}/initial-keys-${TIMESTAMP}/"
@@ -291,7 +293,8 @@ verify_installation() {
     fi
 
     # Check 4: Correct permissions
-    local HS_PERMS=$(stat -c "%a" /var/lib/tor/bisq-support 2>/dev/null || stat -f "%OLp" /var/lib/tor/bisq-support 2>/dev/null || echo "000")
+    local HS_PERMS
+    HS_PERMS=$(stat -c "%a" /var/lib/tor/bisq-support 2>/dev/null || stat -f "%OLp" /var/lib/tor/bisq-support 2>/dev/null || echo "000")
     if [ "$HS_PERMS" = "700" ]; then
         log_success "Hidden service directory permissions correct (700)"
         ((CHECKS_PASSED++))
@@ -300,7 +303,8 @@ verify_installation() {
     fi
 
     # Check 5: No Tor warnings in logs
-    local WARNINGS=$(journalctl -u tor --since "5 minutes ago" 2>/dev/null | grep -i "warn" | wc -l || echo "0")
+    local WARNINGS
+    WARNINGS=$(journalctl -u tor --since "5 minutes ago" 2>/dev/null | grep -ic "warn" || true)
     if [ "$WARNINGS" -eq 0 ]; then
         log_success "No warnings in Tor logs"
         ((CHECKS_PASSED++))
@@ -328,7 +332,8 @@ main() {
     backup_keys
     verify_installation
 
-    local ONION_ADDR=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "ERROR")
+    local ONION_ADDR
+    ONION_ADDR=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "ERROR")
 
     echo ""
     log_success "=== Setup Complete ==="

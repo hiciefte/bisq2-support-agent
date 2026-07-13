@@ -11,6 +11,7 @@ import re
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Literal, Optional, Set, cast
 
 from app.channels.base import ChannelBase
@@ -35,6 +36,8 @@ from app.channels.staff import (
     StaffResolver,
     collect_staff_display_names,
     collect_trusted_staff_ids,
+    resolve_channel_staff_resolver,
+    staff_resolver_service_key,
 )
 from app.channels.traits import ChannelTraits
 
@@ -90,6 +93,7 @@ class Bisq2Channel(ChannelBase):
         """Register Bisq2 channel dependencies in shared runtime."""
         from app.channels.plugins.bisq2.chatops_adapter import Bisq2ChatOpsAdapter
         from app.channels.plugins.bisq2.client.api import Bisq2API
+        from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
         from app.channels.plugins.bisq2.client.websocket import Bisq2WebSocketClient
         from app.channels.plugins.bisq2.reaction_handler import Bisq2ReactionHandler
         from app.channels.plugins.bisq2.utils import build_bisq_websocket_url
@@ -107,7 +111,21 @@ class Bisq2Channel(ChannelBase):
         )
         runtime.register("bisq2_api", bisq_api, allow_override=True)
         runtime.register("bisq2_websocket_client", ws_client, allow_override=True)
-        runtime.register("staff_resolver", staff_resolver, allow_override=True)
+        runtime.register(
+            "bisq2_sync_state_manager",
+            BisqSyncStateManager(
+                str(
+                    Path(str(getattr(settings, "DATA_DIR", "/data") or "/data"))
+                    / "bisq_live_channel_sync_state.json"
+                )
+            ),
+            allow_override=True,
+        )
+        runtime.register(
+            staff_resolver_service_key("bisq2"),
+            staff_resolver,
+            allow_override=True,
+        )
 
         chatops_channel_ids = {
             str(channel_id or "").strip()
@@ -212,12 +230,15 @@ class Bisq2Channel(ChannelBase):
             except Exception:
                 self._logger.exception("Failed to start Bisq2 reaction handler")
 
+        # Establish the REST high-water mark before opening the websocket. Any
+        # messages at/after the boundary are buffered by the prime and deduped
+        # with subsequent websocket delivery, closing the startup loss window.
+        await self._prime_rest_fallback_cursor(bisq_api)
+
         # Wire support message websocket stream if registered
         ws_client = self.runtime.resolve_optional("bisq2_websocket_client")
         if ws_client:
-            ws_started = await self._start_support_message_websocket(ws_client)
-            if ws_started:
-                await self._prime_rest_fallback_cursor(bisq_api)
+            await self._start_support_message_websocket(ws_client)
 
     async def stop(self) -> None:
         """Stop the Bisq2 channel."""
@@ -308,6 +329,7 @@ class Bisq2Channel(ChannelBase):
             # Mark self-sent messages as seen immediately so polling does not
             # feed them back as new incoming user questions.
             self._mark_seen(external_message_id)
+            await self._persist_sync_state()
 
             # Track sent message for reaction correlation
             tracker = self.runtime.resolve_optional("sent_message_tracker")
@@ -399,6 +421,7 @@ class Bisq2Channel(ChannelBase):
                 ws_messages, source_name="Bisq2 WebSocket"
             )
             incoming_messages.extend(ws_incoming)
+            await self._persist_sync_state()
             if ws_incoming:
                 self._logger.info(
                     "Consumed %s messages from Bisq2 WebSocket",
@@ -431,7 +454,8 @@ class Bisq2Channel(ChannelBase):
                 export_timestamp = datetime.now(timezone.utc)
 
             if not messages:
-                self._last_poll_since = export_timestamp
+                self._update_rest_cursor(export_timestamp)
+                await self._persist_sync_state()
                 return incoming_messages
 
             rest_incoming = await self._process_raw_messages(
@@ -442,7 +466,8 @@ class Bisq2Channel(ChannelBase):
             self._logger.info(
                 f"Polled {len(incoming_messages)} messages from Bisq2 API"
             )
-            self._last_poll_since = export_timestamp
+            self._update_rest_cursor(export_timestamp)
+            await self._persist_sync_state()
             return incoming_messages
 
         except Exception:
@@ -509,9 +534,33 @@ class Bisq2Channel(ChannelBase):
 
     def __init__(self, runtime) -> None:
         super().__init__(runtime)
-        self._last_poll_since = None
-        self._seen_message_ids = set()
-        self._seen_message_order = deque()
+        self._sync_state_manager = self.runtime.resolve_optional(
+            "bisq2_sync_state_manager"
+        )
+        persisted_since = getattr(self._sync_state_manager, "last_sync_timestamp", None)
+        self._last_poll_since = (
+            persisted_since if isinstance(persisted_since, datetime) else None
+        )
+        get_ordered_ids = getattr(
+            self._sync_state_manager, "get_processed_ids_in_order", None
+        )
+        if callable(get_ordered_ids):
+            persisted_ids: Any = get_ordered_ids()
+        else:
+            persisted_ids = getattr(
+                self._sync_state_manager, "processed_message_ids", set()
+            )
+        if not isinstance(persisted_ids, (list, set, tuple)):
+            persisted_ids = []
+        persisted_order = list(
+            dict.fromkeys(
+                str(message_id)
+                for message_id in persisted_ids
+                if str(message_id).strip()
+            )
+        )
+        self._seen_message_ids = set(persisted_order)
+        self._seen_message_order = deque(persisted_order)
         self._max_seen_message_ids = 10000
         self._message_cache_by_id = {}
         self._ws_message_buffer = deque(maxlen=self._MAX_WS_MESSAGE_BUFFER)
@@ -618,26 +667,37 @@ class Bisq2Channel(ChannelBase):
         if self._last_poll_since is not None:
             return
 
+        # Capture the live boundary before fallible I/O. The first regular REST
+        # poll resumes from this exact point even if the startup snapshot takes a
+        # long time or reports a later export timestamp.
+        prime_boundary = datetime.now(timezone.utc)
+        self._update_rest_cursor(prime_boundary)
+
         export_chat_messages = getattr(bisq_api, "export_chat_messages", None)
         if not callable(export_chat_messages):
+            await self._persist_sync_state()
             return
 
         try:
             result_or_awaitable = export_chat_messages(since=None)
             if not inspect.isawaitable(result_or_awaitable):
+                await self._persist_sync_state()
                 return
             result = await result_or_awaitable
         except Exception:
             self._logger.debug(
                 "Failed to prime Bisq2 REST fallback cursor", exc_info=True
             )
+            await self._persist_sync_state()
             return
 
         if not isinstance(result, dict):
+            await self._persist_sync_state()
             return
 
-        # Seed dedupe state from startup snapshot to avoid replay if backend
-        # ignores `since` filtering on subsequent fallback polls.
+        # Seed only messages provably older than the boundary. Messages at/after
+        # it (and messages without a trustworthy timestamp) are live work: buffer
+        # them for the first poll instead of suppressing them as history.
         prime_messages = result.get("messages")
         if isinstance(prime_messages, list):
             for raw_message in prime_messages:
@@ -647,12 +707,36 @@ class Bisq2Channel(ChannelBase):
                 raw_with_id = dict(raw_message)
                 raw_with_id["messageId"] = message_id
                 self._cache_message(raw_with_id)
-                self._mark_seen(message_id)
+                timestamp_ms = self._resolve_timestamp_ms(raw_with_id)
+                if timestamp_ms > 0:
+                    message_time = datetime.fromtimestamp(
+                        timestamp_ms / 1000.0, tz=timezone.utc
+                    )
+                else:
+                    message_time = None
+                if message_time is not None and message_time < prime_boundary:
+                    self._mark_seen(message_id)
+                else:
+                    self._ws_message_buffer.append(raw_with_id)
 
-        export_timestamp = self._extract_export_timestamp(result)
-        if export_timestamp is None:
-            export_timestamp = datetime.now(timezone.utc)
-        self._last_poll_since = export_timestamp
+        await self._persist_sync_state()
+
+    def _update_rest_cursor(self, timestamp: datetime) -> None:
+        """Update the in-memory and durable REST high-water marks together."""
+        self._last_poll_since = timestamp
+        update_last_sync = getattr(self._sync_state_manager, "update_last_sync", None)
+        if callable(update_last_sync):
+            update_last_sync(timestamp)
+
+    async def _persist_sync_state(self) -> None:
+        """Persist cursor/dedup state without blocking the channel event loop."""
+        save_state = getattr(self._sync_state_manager, "save_state", None)
+        if not callable(save_state):
+            return
+        try:
+            await asyncio.to_thread(save_state)
+        except Exception:
+            self._logger.warning("Failed to persist Bisq2 sync state", exc_info=True)
 
     async def _on_websocket_event(self, event: Dict[str, Any]) -> None:
         """Buffer support websocket events for processing in poll cycle."""
@@ -1065,7 +1149,7 @@ class Bisq2Channel(ChannelBase):
 
     def _is_staff_conversation_message(self, message: ConversationMessage) -> bool:
         """Check whether a normalized conversation message was sent by staff."""
-        staff_resolver = self.runtime.resolve_optional("staff_resolver")
+        staff_resolver = resolve_channel_staff_resolver(self.runtime, self.channel_id)
         if staff_resolver is None:
             return False
 
@@ -1103,6 +1187,9 @@ class Bisq2Channel(ChannelBase):
 
         self._seen_message_ids.add(message_id)
         self._seen_message_order.append(message_id)
+        mark_processed = getattr(self._sync_state_manager, "mark_processed", None)
+        if callable(mark_processed):
+            mark_processed(message_id)
 
         while len(self._seen_message_order) > self._max_seen_message_ids:
             oldest = self._seen_message_order.popleft()

@@ -15,7 +15,12 @@ from app.db.migration_validator import (
     validate_column_not_exists,
     validate_migration_sql,
 )
-from app.db.run_migrations import get_applied_migrations, run_migrations
+from app.db.run_migrations import (
+    apply_migration,
+    get_applied_migrations,
+    rollback_migration,
+    run_migrations,
+)
 
 
 @pytest.fixture
@@ -363,3 +368,128 @@ class TestMigrationEdgeCases:
         validate_migration_sql(sql_with_comments, conn)
 
         conn.close()
+
+    def test_failed_migration_rolls_back_partial_ddl(self, tmp_path):
+        """A later statement failure must roll back earlier DDL in the script."""
+        db_path = tmp_path / "partial_migration.db"
+        conn = sqlite3.connect(db_path)
+        get_applied_migrations(conn)
+
+        migration_sql = """
+        CREATE TABLE partial_probe (id INTEGER);
+        CREATE INDEX invalid_probe_idx ON partial_probe(missing_column);
+        """
+
+        with pytest.raises(sqlite3.OperationalError, match="missing_column"):
+            apply_migration(
+                conn,
+                "999_partial_probe.sql",
+                migration_sql,
+                down_sql=None,
+                checksum="partial-checksum",
+            )
+
+        partial_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("partial_probe",),
+        ).fetchone()
+        tracking_row = conn.execute(
+            "SELECT status FROM schema_migrations WHERE migration_name = ?",
+            ("999_partial_probe.sql",),
+        ).fetchone()
+        conn.close()
+
+        assert partial_table is None
+        assert tracking_row == ("failed",)
+
+    def test_failed_migration_is_not_reported_as_applied(self, tmp_path):
+        """Failure audit rows must not suppress the next migration attempt."""
+        db_path = tmp_path / "failed_tracking.db"
+        conn = sqlite3.connect(db_path)
+        get_applied_migrations(conn)
+        conn.execute(
+            """
+            INSERT INTO schema_migrations
+            (migration_name, checksum, status, error_message)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("999_retry.sql", "old-checksum", "failed", "transient failure"),
+        )
+        conn.commit()
+
+        applied = get_applied_migrations(conn)
+        conn.close()
+
+        assert "999_retry.sql" not in applied
+
+    def test_successful_retry_replaces_failed_tracking_row(self, tmp_path):
+        """A retry must update, not collide with, the unique failed audit row."""
+        db_path = tmp_path / "retry_migration.db"
+        conn = sqlite3.connect(db_path)
+        get_applied_migrations(conn)
+        conn.execute(
+            """
+            INSERT INTO schema_migrations
+            (migration_name, checksum, status, error_message)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("999_retry.sql", "old-checksum", "failed", "transient failure"),
+        )
+        conn.commit()
+
+        apply_migration(
+            conn,
+            "999_retry.sql",
+            "CREATE TABLE retry_probe (id INTEGER);",
+            down_sql=None,
+            checksum="new-checksum",
+        )
+
+        tracking_row = conn.execute(
+            """
+            SELECT checksum, status, error_message
+            FROM schema_migrations
+            WHERE migration_name = ?
+            """,
+            ("999_retry.sql",),
+        ).fetchone()
+        applied = get_applied_migrations(conn)
+        conn.close()
+
+        assert tracking_row == ("new-checksum", "success", None)
+        assert "999_retry.sql" in applied
+
+    def test_failed_rollback_restores_partial_ddl_and_tracking_row(self, tmp_path):
+        """A failed down script must leave both schema and audit row intact."""
+        db_path = tmp_path / "partial_rollback.db"
+        conn = sqlite3.connect(db_path)
+        get_applied_migrations(conn)
+        apply_migration(
+            conn,
+            "999_rollback_probe.sql",
+            "CREATE TABLE rollback_probe (id INTEGER);",
+            down_sql=(
+                "DROP TABLE rollback_probe;"
+                "CREATE INDEX invalid_rollback_idx "
+                "ON missing_rollback_table(id);"
+            ),
+            checksum="rollback-checksum",
+        )
+        conn.close()
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            rollback_migration(str(db_path), "999_rollback_probe.sql")
+
+        conn = sqlite3.connect(db_path)
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("rollback_probe",),
+        ).fetchone()
+        tracking_row = conn.execute(
+            "SELECT status FROM schema_migrations WHERE migration_name = ?",
+            ("999_rollback_probe.sql",),
+        ).fetchone()
+        conn.close()
+
+        assert table_exists == (1,)
+        assert tracking_row == ("success",)

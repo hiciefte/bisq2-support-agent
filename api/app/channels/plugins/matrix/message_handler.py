@@ -14,6 +14,8 @@ from app.channels.models import ChannelType, IncomingMessage, UserContext
 from app.channels.plugins.matrix.room_filter import normalize_room_ids
 from app.channels.policy import is_generation_enabled
 from app.channels.response_dispatcher import ChannelResponseDispatcher
+from app.channels.staff import resolve_channel_staff_resolver
+from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
 
 class _MissingNioEvent:
@@ -317,16 +319,7 @@ class MatrixMessageHandler:
             return False
 
     def _resolve_staff_resolver(self, runtime: Any) -> Any | None:
-        if runtime is None:
-            return None
-        resolve_optional = getattr(runtime, "resolve_optional", None)
-        if not callable(resolve_optional):
-            return None
-        try:
-            return resolve_optional("staff_resolver")
-        except Exception:
-            logger.debug("Failed resolving Matrix staff_resolver", exc_info=True)
-            return None
+        return resolve_channel_staff_resolver(runtime, "matrix")
 
     @staticmethod
     def _resolve_sender_display_name(*, room: Any, sender_id: str) -> str:
@@ -377,23 +370,22 @@ class MatrixMessageHandler:
                 if timestamp_ms
                 else datetime.now(timezone.utc)
             )
-            service.ingest_event(
-                TrustEvent(
-                    channel_id=self.channel_id,
-                    space_id=room_id,
-                    actor_id=sender_id,
-                    actor_display_name=self._resolve_sender_display_name(
-                        room=room,
-                        sender_id=sender_id,
-                    ),
-                    event_type=event_type,
-                    occurred_at=occurred_at,
-                    external_event_id=str(getattr(event, "event_id", "") or ""),
-                    target_message_id=reply_to_event_id
-                    or str(getattr(event, "event_id", "") or ""),
-                    metadata={"body_length": len(self._extract_event_text(event))},
-                )
+            trust_event = TrustEvent(
+                channel_id=self.channel_id,
+                space_id=room_id,
+                actor_id=sender_id,
+                actor_display_name=self._resolve_sender_display_name(
+                    room=room,
+                    sender_id=sender_id,
+                ),
+                event_type=event_type,
+                occurred_at=occurred_at,
+                external_event_id=str(getattr(event, "event_id", "") or ""),
+                target_message_id=reply_to_event_id
+                or str(getattr(event, "event_id", "") or ""),
+                metadata={"body_length": len(self._extract_event_text(event))},
             )
+            await run_in_trust_monitor_executor(service.ingest_event, trust_event)
         except Exception:
             logger.debug(
                 "Failed recording Matrix trust-monitor event room_id=%s sender_id=%s",

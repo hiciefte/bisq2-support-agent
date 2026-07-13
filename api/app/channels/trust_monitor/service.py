@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ from app.channels.trust_monitor.events import TrustEvent
 from app.channels.trust_monitor.evidence_store import TrustMonitorStore
 from app.channels.trust_monitor.models import (
     TrustAccessAuditEntry,
+    TrustAlertSurface,
     TrustFeedbackAction,
     TrustFinding,
     TrustFindingCounts,
@@ -33,6 +35,8 @@ from app.metrics.operator_metrics import (
     record_trust_finding,
 )
 from app.services.trust_monitor_policy_service import TrustMonitorPolicyService
+
+logger = logging.getLogger(__name__)
 
 
 class TrustMonitorService:
@@ -171,6 +175,8 @@ class TrustMonitorService:
             )
         else:
             notify = True
+        if candidate.alert_surface is TrustAlertSurface.NONE:
+            notify = False
         finding = self.store.upsert_finding(
             detector_key=candidate.detector_key,
             channel_id=event.channel_id,
@@ -182,7 +188,7 @@ class TrustMonitorService:
             alert_surface=candidate.alert_surface,
             evidence_summary=candidate.evidence_summary,
             created_at=candidate.occurred_at,
-            notify=notify,
+            notify=False,
         )
         record_trust_finding(
             detector=finding.detector_key,
@@ -190,12 +196,31 @@ class TrustMonitorService:
             surface=finding.alert_surface.value,
         )
         if notify:
-            self.publisher.publish(finding)
-            record_trust_finding(
-                detector=finding.detector_key,
-                action="notified",
-                surface=finding.alert_surface.value,
-            )
+            try:
+                delivered = self.publisher.publish(finding)
+            except Exception:
+                delivered = False
+                logger.exception(
+                    "Trust alert publisher failed detector=%s actor=%s",
+                    finding.detector_key,
+                    finding.suspect_actor_id,
+                )
+            if delivered:
+                finding = self.store.mark_finding_notified(
+                    finding.id,
+                    notified_at=candidate.occurred_at,
+                )
+                record_trust_finding(
+                    detector=finding.detector_key,
+                    action="notified",
+                    surface=finding.alert_surface.value,
+                )
+            else:
+                record_trust_finding(
+                    detector=finding.detector_key,
+                    action="notification_failed",
+                    surface=finding.alert_surface.value,
+                )
         return finding
 
     def list_findings(

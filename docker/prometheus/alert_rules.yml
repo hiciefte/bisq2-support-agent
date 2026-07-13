@@ -29,24 +29,31 @@ groups:
           runbook_url: "https://github.com/hiciefte/bisq2-support-agent/blob/main/docs/runbooks/rag-high-latency.md"
 
       - alert: ContainerDown
-        expr: up{job="cadvisor", container=~"api|web|bisq2-api|nginx"} == 0
+        expr: |
+          absent(container_last_seen{container_label_com_docker_compose_service="api"})
+          or absent(container_last_seen{container_label_com_docker_compose_service="web"})
+          or absent(container_last_seen{container_label_com_docker_compose_service="bisq2-api"})
+          or absent(container_last_seen{container_label_com_docker_compose_service="nginx"})
         for: 2m
         labels:
           severity: critical
           component: infrastructure
         annotations:
-          summary: "Critical container {{ $labels.container }} is down"
-          description: "Container {{ $labels.container }} has been down for 2 minutes. Service may be unavailable."
+          summary: "Critical service {{ $labels.container_label_com_docker_compose_service }} is absent"
+          description: "cAdvisor has reported no container for {{ $labels.container_label_com_docker_compose_service }} for 2 minutes. Service may be unavailable."
 
       - alert: ContainerUnhealthy
-        expr: container_health_status{container=~"api|web|bisq2-api|nginx"} == 0
+        expr: |
+          (time() - max by (container_label_com_docker_compose_service) (
+            max_over_time(container_last_seen{container_label_com_docker_compose_service=~"api|web|bisq2-api|nginx"}[10m])
+          )) > 120
         for: 5m
         labels:
           severity: critical
           component: infrastructure
         annotations:
-          summary: "Container {{ $labels.container }} is unhealthy"
-          description: "Health checks failing for {{ $labels.container }}. Investigate container logs."
+          summary: "Critical service {{ $labels.container_label_com_docker_compose_service }} telemetry is stale"
+          description: "cAdvisor has not observed {{ $labels.container_label_com_docker_compose_service }} recently. Investigate its container state and health check."
 
   - name: data_quality_alerts
     interval: 1m
@@ -76,14 +83,14 @@ groups:
           description: "Last successful update was {{ $value | humanizeDuration }} ago."
 
       - alert: LowUserSatisfaction
-        expr: feedback_satisfaction_rate < 0.60
+        expr: bisq_feedback_helpful_rate < 60
         for: 24h
         labels:
           severity: warning
           component: quality
         annotations:
           summary: "User satisfaction below 60%"
-          description: "Current satisfaction rate: {{ $value | humanizePercentage }}. Review recent feedback."
+          description: "Current helpful-feedback rate: {{ $value }}%. Review recent feedback."
 
       - alert: HighRAGCost
         expr: avg(rag_cost_per_request_usd) > 0.02

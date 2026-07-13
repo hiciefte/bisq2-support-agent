@@ -12,6 +12,7 @@ allows). The scanner itself never posts into the observed public rooms.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -124,9 +125,22 @@ class ProactiveImpersonationScanner:
         for finding in user_findings + room_findings:
             if self.on_finding is not None:
                 try:
-                    self.on_finding(finding)
+                    callback_result = self.on_finding(finding)
+                    if inspect.isawaitable(callback_result):
+                        callback_result = await callback_result
+                    if callback_result is False:
+                        self._allow_finding_retry(finding)
                 except Exception:
                     logger.warning("on_finding callback failed", exc_info=True)
+                    self._allow_finding_retry(finding)
+
+    def _allow_finding_retry(self, finding: DetectorResult) -> None:
+        """Undo in-process suppression after persistence or delivery failure."""
+        finding_id = str(finding.suspect_actor_id or "").strip()
+        if finding.detector_key == self.DETECTOR_KEY_USER:
+            self._reported_user_ids.discard(finding_id)
+        elif finding.detector_key == self.DETECTOR_KEY_ROOM:
+            self._reported_room_ids.discard(finding_id)
 
     # ------------------------------------------------------------------
     # User directory scanning

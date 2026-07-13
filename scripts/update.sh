@@ -14,15 +14,20 @@ source "$SCRIPT_DIR/lib/docker-utils.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/git-utils.sh"
 
-# Initialize colors and environment
+# Initialize colors and load deploy paths before deriving INSTALL_DIR.
 setup_colors
+
+if ! source_deploy_paths; then
+    if [[ "${BASH_SOURCE[0]}" == "$0" && -z "${BISQ_SUPPORT_INSTALL_DIR:-}" ]]; then
+        log_error "Deploy paths are unavailable; refusing to use implicit production paths"
+        exit 1
+    fi
+fi
+
 init_common_env
 
 # Display banner
 display_banner "Bisq Support Assistant - Maintenance Script"
-
-# Source deploy-path vars only; docker/.env provides app config
-source_deploy_paths
 
 echo "Installation Directory: $INSTALL_DIR"
 
@@ -31,7 +36,7 @@ validate_environment() {
     log_info "Validating environment..."
 
     # Check for required commands
-    if ! check_required_commands git docker jq curl; then
+    if ! check_required_commands git docker jq curl openssl; then
         exit 1
     fi
 
@@ -49,6 +54,12 @@ validate_environment() {
     if ! check_root; then
         log_warning "This script may need root privileges for some operations"
         log_warning "Consider running with sudo if you encounter permission errors"
+    fi
+
+    local grafana_secrets_dir="${BISQ_SUPPORT_SECRETS_DIR:-$INSTALL_DIR/secrets}"
+    if ! ensure_grafana_runtime_secrets "$DOCKER_DIR/.env" "$grafana_secrets_dir"; then
+        log_error "Grafana runtime secret provisioning failed"
+        exit 1
     fi
 
     if ! validate_runtime_configuration "$DOCKER_DIR/.env"; then
@@ -357,11 +368,11 @@ apply_updates() {
 
             # Build with BUILD_ID for cache invalidation, then start
             # Note: --build-arg only works with 'docker compose build', not 'up --build'
-            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api; then
+            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api matrix-alert-relay; then
                 log_error "Failed to build API service"
                 rollback_update "API rebuild failed"
             fi
-            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api matrix-alert-relay; then
                 log_error "Failed to start API service"
                 rollback_update "API rebuild failed"
             fi
@@ -370,6 +381,9 @@ apply_updates() {
             sleep 95
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after rebuild"
+            fi
+            if ! wait_for_healthy "matrix-alert-relay" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Matrix alert relay health check failed after rebuild"
             fi
 
             # Ensure nginx is healthy and routing to the new API
@@ -399,7 +413,7 @@ apply_updates() {
         elif [ "$API_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" restart api; then
+            if ! docker compose -f "$COMPOSE_FILE" restart api matrix-alert-relay; then
                 log_error "Failed to restart API service"
                 rollback_update "API restart failed"
             fi
@@ -408,6 +422,9 @@ apply_updates() {
             sleep 95
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after restart"
+            fi
+            if ! wait_for_healthy "matrix-alert-relay" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Matrix alert relay health check failed after restart"
             fi
 
             # Ensure nginx is healthy and routing to the restarted API
@@ -575,7 +592,7 @@ run_faq_sqlite_migration() {
     # SQLite is the authoritative source after initial migration
     # Running migration again would overwrite verified status and lose production changes
     local faq_count
-    faq_count=$(docker exec docker-api-1 python -c "
+    if ! faq_count=$(docker exec docker-api-1 python -c "
 import sqlite3
 from pathlib import Path
 db_path = Path('/data/faqs.db')
@@ -586,7 +603,15 @@ if db_path.exists():
     print(count)
 else:
     print(0)
-" 2>/dev/null || echo "0")
+" 2>/dev/null); then
+        log_error "Could not verify the authoritative FAQ store; refusing to run migration"
+        return 1
+    fi
+
+    if [[ ! "$faq_count" =~ ^[0-9]+$ ]]; then
+        log_error "FAQ count probe returned an invalid value; refusing to run migration"
+        return 1
+    fi
 
     if [ "$faq_count" -gt 0 ]; then
         log_success "SQLite already has $faq_count FAQs - skipping migration (SQLite is authoritative)"
@@ -674,7 +699,6 @@ main() {
     run_faq_sqlite_migration || {
         log_error "FAQ SQLite migration failed - rolling back update"
         rollback_update "SQLite migration failed"
-        return 1
     }
 
     # Apply updates (rebuild or restart services)
@@ -694,7 +718,8 @@ main() {
     show_service_status "$DOCKER_DIR" "$COMPOSE_FILE"
 }
 
-# Run main function
-main
-
-exit 0
+# Run main function only when executed, not when sourced by tests.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main
+    exit 0
+fi

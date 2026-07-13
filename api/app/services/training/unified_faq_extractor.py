@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import Settings
 
 try:
-    import aisuite as ai  # type: ignore[import-untyped]
+    import aisuite as ai
 except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 
     class _AiSuiteFallback:

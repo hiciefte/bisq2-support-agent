@@ -21,6 +21,7 @@ from langchain_core.documents import Document
 from qdrant_client.http import models as rest
 
 COLLECTION = "test_collection"
+ACTIVE_COLLECTION = f"{COLLECTION}__active"
 
 
 def _settings(tmp_path: Path) -> MagicMock:
@@ -37,7 +38,7 @@ def _settings(tmp_path: Path) -> MagicMock:
 class FakeQdrantClient:
     """Minimal in-memory Qdrant stand-in for upsert/delete/search."""
 
-    def __init__(self, collections: tuple[str, ...] = (COLLECTION,)) -> None:
+    def __init__(self, collections: tuple[str, ...] = (ACTIVE_COLLECTION,)) -> None:
         self.points: Dict[int, Any] = {}
         self._collections = set(collections)
         self.upsert_calls: List[Any] = []
@@ -48,6 +49,17 @@ class FakeQdrantClient:
         return SimpleNamespace(
             collections=[SimpleNamespace(name=name) for name in self._collections]
         )
+
+    def get_aliases(self):
+        aliases = []
+        if ACTIVE_COLLECTION in self._collections:
+            aliases.append(
+                SimpleNamespace(
+                    alias_name=ACTIVE_COLLECTION,
+                    collection_name="test_collection__physical",
+                )
+            )
+        return SimpleNamespace(aliases=aliases)
 
     def upsert(self, collection_name: str, points, **kwargs):
         assert collection_name in self._collections

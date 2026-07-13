@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from app.services.rag.source_refs import imprecise_code_source_refs
 from langchain_core.documents import Document
 

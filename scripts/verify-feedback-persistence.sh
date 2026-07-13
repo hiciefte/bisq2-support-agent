@@ -45,11 +45,13 @@ check_feedback_directory() {
     log_info "Feedback directory exists: $FEEDBACK_DIR"
 
     # Check permissions
-    local perms=$(stat -c '%a' "$FEEDBACK_DIR" 2>/dev/null || stat -f '%A' "$FEEDBACK_DIR" 2>/dev/null)
+    local perms
+    perms=$(stat -c '%a' "$FEEDBACK_DIR" 2>/dev/null || stat -f '%A' "$FEEDBACK_DIR" 2>/dev/null)
     log_info "Directory permissions: $perms"
 
     # Check ownership
-    local owner=$(stat -c '%u:%g' "$FEEDBACK_DIR" 2>/dev/null || stat -f '%u:%g' "$FEEDBACK_DIR" 2>/dev/null)
+    local owner
+    owner=$(stat -c '%u:%g' "$FEEDBACK_DIR" 2>/dev/null || stat -f '%u:%g' "$FEEDBACK_DIR" 2>/dev/null)
     log_info "Directory ownership: $owner (expected: 1001:1001)"
 
     if [ "$owner" != "1001:1001" ]; then
@@ -74,7 +76,8 @@ check_docker_volume() {
         log_info "Named Docker volume 'bisq2-feedback-data' exists"
 
         # Get volume mount point
-        local mountpoint=$(docker volume inspect bisq2-feedback-data -f '{{.Mountpoint}}' 2>/dev/null)
+        local mountpoint
+        mountpoint=$(docker volume inspect bisq2-feedback-data -f '{{.Mountpoint}}' 2>/dev/null)
         log_info "Volume mount point: $mountpoint"
     else
         log_warning "Named Docker volume 'bisq2-feedback-data' does not exist yet"
@@ -95,7 +98,8 @@ count_feedback_entries() {
         # Count entries in all feedback JSONL files
         for file in "$FEEDBACK_DIR"/feedback_*.jsonl; do
             if [ -f "$file" ]; then
-                local entries=$(wc -l < "$file" 2>/dev/null || echo "0")
+                local entries
+                entries=$(wc -l < "$file" 2>/dev/null || echo "0")
                 total_entries=$((total_entries + entries))
                 file_count=$((file_count + 1))
                 log_info "  $(basename "$file"): $entries entries"

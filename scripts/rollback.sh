@@ -13,15 +13,20 @@ source "$SCRIPT_DIR/lib/docker-utils.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/git-utils.sh"
 
-# Initialize colors and environment
+# Initialize colors and load deploy paths before deriving INSTALL_DIR.
 setup_colors
+
+if ! source_deploy_paths; then
+    if [[ "${BASH_SOURCE[0]}" == "$0" && -z "${BISQ_SUPPORT_INSTALL_DIR:-}" ]]; then
+        log_error "Deploy paths are unavailable; refusing to use implicit production paths"
+        exit 1
+    fi
+fi
+
 init_common_env
 
 # Display banner
 display_banner "Bisq Support Assistant - Rollback Script"
-
-# Source deploy-path vars only; docker/.env provides app config
-source_deploy_paths
 
 echo "Installation Directory: $INSTALL_DIR"
 
@@ -31,6 +36,7 @@ LIST_BACKUPS=false
 SKIP_VALIDATION=false
 
 usage() {
+    local exit_code="${1:-0}"
     echo "Usage: $0 [OPTIONS] [BACKUP_REF]"
     echo ""
     echo "Roll back to a previous version of the Bisq Support Assistant"
@@ -49,7 +55,7 @@ usage() {
     echo "  $0 backup-20250930    # Roll back to specific backup tag"
     echo "  $0 -l                 # List available backups"
     echo ""
-    exit 0
+    exit "$exit_code"
 }
 
 # Parse arguments
@@ -64,11 +70,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            usage
+            usage 0
             ;;
         -*)
             log_error "Unknown option: $1"
-            usage
+            usage 2
             ;;
         *)
             BACKUP_REF="$1"
@@ -144,8 +150,7 @@ perform_rollback() {
     # If no reference specified, use latest backup
     if [ -z "$target_ref" ]; then
         log_info "No backup reference specified, using most recent backup..."
-        target_ref=$(get_latest_backup "$INSTALL_DIR")
-        if [ $? -ne 0 ]; then
+        if ! target_ref=$(get_latest_backup "$INSTALL_DIR"); then
             log_error "No backup tags found. Cannot perform automatic rollback."
             log_info "Use 'git tag -l' to see available tags or specify a commit hash."
             exit 1
@@ -270,7 +275,8 @@ main() {
     show_service_status "$DOCKER_DIR" "$COMPOSE_FILE"
 }
 
-# Run main function
-main
-
-exit 0
+# Run main function only when executed, not when sourced by tests.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main
+    exit 0
+fi

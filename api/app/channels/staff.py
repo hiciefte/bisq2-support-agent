@@ -40,6 +40,31 @@ class StaffResolver:
         return set(self._display_names)
 
 
+def staff_resolver_service_key(channel_id: str) -> str:
+    """Return the runtime service key for one channel's staff identities."""
+    normalized = str(channel_id or "").strip().lower()
+    if not normalized:
+        raise ValueError("channel_id is required for a staff resolver")
+    return f"staff_resolver:{normalized}"
+
+
+def resolve_channel_staff_resolver(runtime: Any, channel_id: str) -> Any | None:
+    """Resolve a channel-scoped resolver with a legacy-key fallback."""
+    resolve_optional = getattr(runtime, "resolve_optional", None)
+    if not callable(resolve_optional):
+        return None
+    try:
+        resolver = resolve_optional(staff_resolver_service_key(channel_id))
+    except Exception:
+        resolver = None
+    if resolver is not None:
+        return resolver
+    try:
+        return resolve_optional("staff_resolver")
+    except Exception:
+        return None
+
+
 def collect_trusted_staff_ids(
     settings: Any, *, channel_id: str | None = None
 ) -> list[str]:
@@ -47,9 +72,10 @@ def collect_trusted_staff_ids(
     staff_ids: list[str] = []
     normalized_channel_id = str(channel_id or "").strip().lower()
 
-    candidates: list[Any] = [getattr(settings, "TRUSTED_STAFF_IDS", [])]
     if normalized_channel_id == "bisq2":
-        candidates.insert(0, getattr(settings, "BISQ2_STAFF_PROFILE_IDS", []))
+        candidates: list[Any] = [getattr(settings, "BISQ2_STAFF_PROFILE_IDS", [])]
+    else:
+        candidates = [getattr(settings, "TRUSTED_STAFF_IDS", [])]
 
     for candidate in candidates:
         if isinstance(candidate, str):

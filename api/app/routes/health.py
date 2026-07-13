@@ -1,7 +1,7 @@
 import os
 import time
 
-import psutil  # type: ignore[import-untyped]
+import psutil
 from fastapi import APIRouter, Request
 
 router = APIRouter()

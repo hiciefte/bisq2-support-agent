@@ -57,18 +57,19 @@ class TestQdrantHybridRetriever:
         retriever = QdrantHybridRetriever(mock_settings)
 
         assert retriever.settings == mock_settings
-        assert retriever.collection_name == "test_collection"
+        assert retriever.collection_name == "test_collection__active"
 
     def test_health_check_healthy(
         self, mock_settings, mock_qdrant_client, mock_embeddings
     ):
         """Test health check when Qdrant is healthy."""
-        # Mock get_collections to return a list with our collection
-        mock_collection = MagicMock()
-        mock_collection.name = "test_collection"
+        # Mock connectivity plus the stable active alias.
         mock_collections = MagicMock()
-        mock_collections.collections = [mock_collection]
+        mock_collections.collections = [MagicMock()]
         mock_qdrant_client.get_collections.return_value = mock_collections
+        mock_alias = MagicMock()
+        mock_alias.alias_name = "test_collection__active"
+        mock_qdrant_client.get_aliases.return_value.aliases = [mock_alias]
 
         retriever = QdrantHybridRetriever(mock_settings)
         result = retriever.health_check()
@@ -209,7 +210,7 @@ class TestQdrantHybridRetriever:
 
         assert info["points_count"] == 500
         assert info["status"] == "green"
-        assert info["name"] == "test_collection"
+        assert info["name"] == "test_collection__active"
 
 
 class TestBM25TokenizerIntegration:

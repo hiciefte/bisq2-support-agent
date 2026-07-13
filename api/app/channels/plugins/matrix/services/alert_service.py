@@ -122,7 +122,7 @@ class MatrixAlertService:
         """Check if Matrix alerting is configured.
 
         Returns:
-            True if homeserver and alert room are configured
+            True if the complete password-authenticated alert lane is configured
         """
         homeserver_value = getattr(self.settings, "MATRIX_HOMESERVER_URL", "")
         alert_room_value = getattr(self.settings, "MATRIX_ALERT_ROOM", "")
@@ -132,7 +132,13 @@ class MatrixAlertService:
         alert_room = (
             alert_room_value.strip() if isinstance(alert_room_value, str) else ""
         )
-        return bool(homeserver) and bool(alert_room)
+        return bool(
+            homeserver
+            and alert_room
+            and self._get_alert_user()
+            and self._get_alert_password()
+            and NIO_AVAILABLE
+        )
 
     async def _get_client(self) -> "AsyncClient":
         """Get or create authenticated Matrix client.

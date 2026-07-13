@@ -93,7 +93,7 @@ class ColBERTReranker(RerankerProtocol):
             try:
                 logger.info(f"Loading ColBERT model: {self.model_name}")
 
-                from ragatouille import (  # type: ignore[import-not-found]
+                from ragatouille import (
                     RAGPretrainedModel,
                 )
 

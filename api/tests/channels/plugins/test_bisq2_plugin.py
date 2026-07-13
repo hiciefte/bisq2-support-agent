@@ -8,6 +8,7 @@ not by the channel plugin. Bisq2 sends responses via REST API.
 
 import asyncio
 from collections import deque
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,6 +73,36 @@ class TestBisq2ChannelProperties:
         runtime = MagicMock(spec=ChannelRuntime)
         channel = Bisq2Channel(runtime)
         assert ChannelCapability.SEND_RESPONSES in channel.capabilities
+
+    @pytest.mark.unit
+    def test_live_channel_uses_state_file_separate_from_training(self, tmp_path):
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
+        from app.channels.runtime import ChannelRuntime
+
+        settings = MagicMock()
+        settings.DATA_DIR = str(tmp_path)
+        settings.BISQ_API_URL = "http://localhost:8090"
+        settings.BISQ2_CHATOPS_CHANNEL_IDS = []
+        settings.BISQ2_STAFF_IDS = []
+        settings.BISQ_STAFF_USERS = []
+        runtime = ChannelRuntime(settings=settings)
+
+        Bisq2Channel.setup_dependencies(runtime, settings)
+
+        live_state = runtime.resolve("bisq2_sync_state_manager")
+        training_state = Path(tmp_path) / "bisq_sync_state.json"
+        assert (
+            live_state.state_file
+            == Path(tmp_path) / "bisq_live_channel_sync_state.json"
+        )
+        assert live_state.state_file != training_state
+
+        live_state.mark_processed("live-message")
+        live_state.save_state()
+        training_manager = BisqSyncStateManager(str(training_state))
+        assert training_manager.is_processed("live-message") is False
+        assert training_manager.last_sync_timestamp is None
 
     @pytest.mark.unit
     def test_get_delivery_target_prefers_conversation_id(self):
@@ -302,8 +333,8 @@ class TestBisq2ChannelLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_start_does_not_prime_rest_cursor_without_websocket(self):
-        """Without WS, startup should not trigger REST export prefetch."""
+    async def test_start_primes_rest_cursor_without_websocket(self):
+        """Polling-only startup must establish a cursor before the first live poll."""
         from app.channels.plugins.bisq2.channel import Bisq2Channel
         from app.channels.runtime import ChannelRuntime
 
@@ -325,8 +356,185 @@ class TestBisq2ChannelLifecycle:
         channel = Bisq2Channel(runtime)
         await channel.start()
 
-        assert channel._last_poll_since is None
-        mock_bisq_api.export_chat_messages.assert_not_awaited()
+        assert channel._last_poll_since is not None
+        mock_bisq_api.export_chat_messages.assert_awaited_once_with(since=None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_start_primes_rest_cursor_after_websocket_failure(self):
+        """A failed websocket must still leave the REST fallback safely primed."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        mock_bisq_api = MagicMock()
+        mock_bisq_api.setup = AsyncMock(return_value=None)
+        mock_bisq_api.export_chat_messages = AsyncMock(
+            return_value={"exportDate": "2026-02-20T12:00:00Z", "messages": []}
+        )
+        mock_ws_client = MagicMock()
+        mock_ws_client.on_event = MagicMock()
+        mock_ws_client.connect = AsyncMock(side_effect=RuntimeError("offline"))
+
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "bisq2_api": mock_bisq_api,
+                "bisq2_websocket_client": mock_ws_client,
+            }.get(name)
+        )
+
+        channel = Bisq2Channel(runtime)
+        await channel.start()
+
+        assert channel._last_poll_since is not None
+        mock_bisq_api.export_chat_messages.assert_awaited_once_with(since=None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_startup_boundary_emits_message_arriving_during_prime_once(self):
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.runtime import ChannelRuntime
+
+        call_order: list[str] = []
+        historical = {
+            "messageId": "old-msg",
+            "author": "old-user",
+            "message": "How did an old trade work?",
+            "conversationId": "support.support",
+            "date": "2020-01-01T00:00:00Z",
+        }
+        live = {
+            "messageId": "live-msg",
+            "author": "live-user",
+            "message": "How do I complete this trade?",
+            "conversationId": "support.support",
+            "date": "2099-01-01T00:00:00Z",
+        }
+        mock_bisq_api = MagicMock()
+        mock_bisq_api.setup = AsyncMock(return_value=None)
+
+        async def export_chat_messages(*, since):
+            if since is None:
+                call_order.append("prime")
+                return {
+                    "exportDate": "2099-01-01T00:00:01Z",
+                    "messages": [historical, live],
+                }
+            return {"exportDate": "2099-01-01T00:00:02Z", "messages": []}
+
+        mock_bisq_api.export_chat_messages = AsyncMock(side_effect=export_chat_messages)
+        mock_ws_client = MagicMock()
+
+        async def connect():
+            call_order.append("websocket")
+
+        mock_ws_client.connect = AsyncMock(side_effect=connect)
+        mock_ws_client.subscribe = AsyncMock(return_value={"success": True})
+        mock_ws_client.listen_forever = AsyncMock(return_value=None)
+        mock_ws_client.on_event = MagicMock()
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "bisq2_api": mock_bisq_api,
+                "bisq2_websocket_client": mock_ws_client,
+            }.get(name)
+        )
+
+        channel = Bisq2Channel(runtime)
+        await channel.start()
+        await channel._on_websocket_event(
+            {
+                "topic": "SUPPORT_CHAT_MESSAGES",
+                "modificationType": "ADDED",
+                "payload": {
+                    "messageId": "live-msg",
+                    "author": "live-user",
+                    "text": "How do I complete this trade?",
+                    "conversationId": "support.support",
+                    "channelId": "support.support",
+                    "timestamp": 4070908800000,
+                },
+            }
+        )
+
+        assert call_order[:2] == ["prime", "websocket"]
+        assert "old-msg" in channel._seen_message_ids
+        assert "live-msg" not in channel._seen_message_ids
+
+        messages = await channel.poll_conversations()
+
+        assert [message.message_id for message in messages] == ["live-msg"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_restart_loads_persisted_rest_cursor_and_seen_ids(self, tmp_path):
+        """A fresh channel process must resume after the last persisted export."""
+        from app.channels.plugins.bisq2.channel import Bisq2Channel
+        from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
+        from app.channels.runtime import ChannelRuntime
+
+        state_path = tmp_path / "bisq-sync-state.json"
+        first_state = BisqSyncStateManager(str(state_path))
+        historical = {
+            "messageId": "old-msg-1",
+            "author": "old-user",
+            "message": "old question",
+            "conversationId": "support.support",
+            "date": "2026-02-20T12:00:00Z",
+        }
+        first_api = MagicMock()
+        first_api.setup = AsyncMock(return_value=None)
+        first_api.export_chat_messages = AsyncMock(
+            return_value={
+                "exportDate": "2026-02-20T12:00:01Z",
+                "messages": [historical],
+            }
+        )
+        first_runtime = MagicMock(spec=ChannelRuntime)
+        first_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "bisq2_api": first_api,
+                "bisq2_sync_state_manager": first_state,
+            }.get(name)
+        )
+
+        first_channel = Bisq2Channel(first_runtime)
+        await first_channel.start()
+
+        restarted_state = BisqSyncStateManager(str(state_path))
+        new_message = {
+            "messageId": "new-msg-2",
+            "author": "new-user",
+            "message": "How do I complete this trade?",
+            "conversationId": "support.support",
+            "date": "2026-02-20T12:00:02Z",
+        }
+        restarted_api = MagicMock()
+        restarted_api.setup = AsyncMock(return_value=None)
+        restarted_api.export_chat_messages = AsyncMock(
+            return_value={
+                "exportDate": "2026-02-20T12:00:02Z",
+                # Simulate a backend that overlaps the incremental window.
+                "messages": [historical, new_message],
+            }
+        )
+        restarted_runtime = MagicMock(spec=ChannelRuntime)
+        restarted_runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "bisq2_api": restarted_api,
+                "bisq2_sync_state_manager": restarted_state,
+            }.get(name)
+        )
+
+        restarted_channel = Bisq2Channel(restarted_runtime)
+        persisted_cursor = restarted_state.last_sync_timestamp
+        messages = await restarted_channel.poll_conversations()
+
+        assert [message.message_id for message in messages] == ["new-msg-2"]
+        assert restarted_channel._last_poll_since is not None
+        restarted_api.export_chat_messages.assert_awaited_once_with(
+            since=persisted_cursor
+        )
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -1487,6 +1695,9 @@ async def test_send_message_marks_self_sent_message_as_seen():
     mock_bisq_api.send_support_message = AsyncMock(
         return_value={"messageId": "self-msg-1"}
     )
+    sync_state = MagicMock()
+    sync_state.last_sync_timestamp = None
+    sync_state.get_processed_ids_in_order.return_value = []
 
     runtime = MagicMock(spec=ChannelRuntime)
 
@@ -1495,6 +1706,8 @@ async def test_send_message_marks_self_sent_message_as_seen():
             return mock_bisq_api
         if name == "sent_message_tracker":
             return None
+        if name == "bisq2_sync_state_manager":
+            return sync_state
         return None
 
     runtime.resolve_optional = MagicMock(side_effect=resolve_optional)
@@ -1519,3 +1732,5 @@ async def test_send_message_marks_self_sent_message_as_seen():
 
     assert bool(sent) is True
     assert "self-msg-1" in channel._seen_message_ids
+    sync_state.mark_processed.assert_called_once_with("self-msg-1")
+    sync_state.save_state.assert_called_once_with()

@@ -107,7 +107,7 @@ wait_for_healthy() {
 
     echo -e "${BLUE}⏳ Waiting for $service to become healthy...${NC}"
 
-    while [ $waited -lt $max_wait ]; do
+    while [ "$waited" -lt "$max_wait" ]; do
         if check_service "$service" >/dev/null 2>&1; then
             echo -e "${GREEN}✅ $service is now healthy${NC}"
             return 0
@@ -123,8 +123,8 @@ wait_for_healthy() {
 # Main health check logic
 main() {
     local failed_services=()
-    local critical_services=("api" "web" "nginx")
-    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler")
+    local critical_services=("qdrant" "api" "matrix-alert-relay" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("qdrant" "nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
 
     echo -e "${BLUE}Checking all services...${NC}"
     echo ""

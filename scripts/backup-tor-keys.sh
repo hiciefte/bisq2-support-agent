@@ -81,7 +81,7 @@ backup_keys() {
 
     # Display backed up files
     log_info "Backed up files:"
-    ls -lh "$BACKUP_DIR/" | tail -n +2 | while read -r line; do
+    find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -exec ls -lh -- {} + | while read -r line; do
         echo "  $line"
     done
 }
@@ -91,7 +91,8 @@ create_manifest() {
     log_info "[4/6] Creating backup manifest..."
 
     local MANIFEST_FILE="$BACKUP_DIR/MANIFEST.txt"
-    local ONION_ADDR=$(cat "$HIDDEN_SERVICE_DIR/hostname")
+    local ONION_ADDR
+    ONION_ADDR=$(cat "$HIDDEN_SERVICE_DIR/hostname")
 
     cat > "$MANIFEST_FILE" << EOF
 Bisq Support Agent - Tor Hidden Service Backup
@@ -102,10 +103,13 @@ Hidden Service Address: ${ONION_ADDR}
 Backup Location: ${BACKUP_DIR}
 
 Files Included:
-$(ls -1 "$BACKUP_DIR" | grep -v "MANIFEST.txt")
+$(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 ! -name "MANIFEST.txt" -exec basename {} \; | sort)
 
 SHA256 Checksums:
-$(cd "$BACKUP_DIR" && sha256sum * 2>/dev/null | grep -v "MANIFEST.txt" || true)
+$(
+    cd "$BACKUP_DIR" || exit 1
+    sha256sum -- ./* 2>/dev/null | grep -v "MANIFEST.txt" || true
+)
 
 CRITICAL SECURITY NOTES:
 ========================
@@ -167,7 +171,8 @@ encrypt_backup() {
     rm -rf "backup-${TIMESTAMP}"
 
     # Calculate checksum of encrypted file
-    local CHECKSUM=$(sha256sum "$ENCRYPTED_ARCHIVE" | cut -d' ' -f1)
+    local CHECKSUM
+    CHECKSUM=$(sha256sum "$ENCRYPTED_ARCHIVE" | cut -d' ' -f1)
 
     log_success "Encrypted backup created: $ENCRYPTED_ARCHIVE"
     log_info "SHA256: $CHECKSUM"
@@ -210,7 +215,8 @@ cleanup_old_backups() {
     local RETENTION_COUNT=10  # Keep last 10 backups
 
     # Count existing backups
-    local BACKUP_COUNT=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "backup-*" | wc -l)
+    local BACKUP_COUNT
+    BACKUP_COUNT=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type d -name "backup-*" | wc -l)
 
     if [ "$BACKUP_COUNT" -gt "$RETENTION_COUNT" ]; then
         local TO_DELETE=$((BACKUP_COUNT - RETENTION_COUNT))
@@ -230,7 +236,8 @@ cleanup_old_backups() {
 
     # Also cleanup old encrypted archives if encryption was used
     if [ "$ENCRYPT" = true ]; then
-        local ENCRYPTED_COUNT=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type f -name "tor-keys-*.tar.gz.gpg" | wc -l)
+        local ENCRYPTED_COUNT
+        ENCRYPTED_COUNT=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type f -name "tor-keys-*.tar.gz.gpg" | wc -l)
 
         if [ "$ENCRYPTED_COUNT" -gt "$RETENTION_COUNT" ]; then
             local TO_DELETE=$((ENCRYPTED_COUNT - RETENTION_COUNT))
@@ -254,11 +261,13 @@ display_summary() {
     log_success "=== Backup Complete ==="
     echo ""
 
-    local ONION_ADDR=$(cat "$HIDDEN_SERVICE_DIR/hostname")
+    local ONION_ADDR
+    ONION_ADDR=$(cat "$HIDDEN_SERVICE_DIR/hostname")
     log_info "Hidden Service: ${GREEN}${ONION_ADDR}${NC}"
 
     if [ "$ENCRYPT" = true ]; then
-        local ENCRYPTED_FILE=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type f -name "tor-keys-${TIMESTAMP}.tar.gz.gpg")
+        local ENCRYPTED_FILE
+        ENCRYPTED_FILE=$(find "$BACKUP_BASE_DIR" -maxdepth 1 -type f -name "tor-keys-${TIMESTAMP}.tar.gz.gpg")
         log_info "Encrypted Backup: ${ENCRYPTED_FILE}"
     else
         log_info "Unencrypted Backup: ${BACKUP_DIR}"

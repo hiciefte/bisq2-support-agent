@@ -16,6 +16,8 @@ import asyncio
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from app.channels.traits import get_channel_traits
@@ -69,6 +71,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _GROUP_CHANNEL_MAX_ANSWER_LENGTH = 500
+_CONTEXT_LLM_FALLBACK_WORKERS = 4
 _DEFINITION_QUESTION_PATTERNS = (
     r"^\s*what\s+is\b",
     r"^\s*what'?s\b",
@@ -241,6 +244,10 @@ class SimplifiedRAGService:
         self.retriever = None
         self.document_retriever = None  # Will be initialized after retriever
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._context_llm_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
+            max_workers=_CONTEXT_LLM_FALLBACK_WORKERS,
+            thread_name_prefix="context-llm-fallback",
+        )
         self.llm = None
         self.rag_chain = None
         self.prompt = None
@@ -562,58 +569,65 @@ class SimplifiedRAGService:
             try:
                 logger.info("Starting simplified RAG service setup...")
 
-                # Load documents
-                logger.info("Loading documents...")
-                self._refresh_source_weights_for_rebuild()
+                # Exclude point updates from the FAQ snapshot through alias swap.
+                # The writer-preferred guard also prevents a rebuild from starving
+                # under a steady stream of unrelated FAQ updates.
+                async with self.faq_index_sync.rebuild_guard():
+                    # Load documents
+                    logger.info("Loading documents...")
+                    self._refresh_source_weights_for_rebuild()
 
-                # Load wiki data from WikiService
-                wiki_docs = []
-                if self.wiki_service:
-                    wiki_docs = self.wiki_service.load_wiki_data()
-                else:
-                    logger.warning(
-                        "WikiService not provided, skipping wiki data loading"
+                    # Load wiki data from WikiService
+                    wiki_docs = []
+                    if self.wiki_service:
+                        wiki_docs = self.wiki_service.load_wiki_data()
+                    else:
+                        logger.warning(
+                            "WikiService not provided, skipping wiki data loading"
+                        )
+
+                    # Load FAQ data from FAQService
+                    faq_docs = []
+                    if self.faq_service:
+                        faq_docs = self.faq_service.load_faq_data()
+                    else:
+                        logger.warning(
+                            "FAQService not provided, skipping FAQ data loading"
+                        )
+
+                    llm_wiki_docs = self.llm_wiki_loader.load_documents(
+                        self.settings.LLM_WIKI_DIR_PATH
                     )
 
-                # Load FAQ data from FAQService
-                faq_docs = []
-                if self.faq_service:
-                    faq_docs = self.faq_service.load_faq_data()
-                else:
-                    logger.warning("FAQService not provided, skipping FAQ data loading")
+                    # Combine all documents
+                    all_docs = wiki_docs + faq_docs + llm_wiki_docs
+                    logger.info(
+                        "Loaded %d wiki documents, %d FAQ documents, "
+                        "and %d LLM Wiki pages",
+                        len(wiki_docs),
+                        len(faq_docs),
+                        len(llm_wiki_docs),
+                    )
 
-                llm_wiki_docs = self.llm_wiki_loader.load_documents(
-                    self.settings.LLM_WIKI_DIR_PATH
-                )
+                    if not all_docs:
+                        logger.warning("No documents loaded. Check your data paths.")
+                        return False
 
-                # Combine all documents
-                all_docs = wiki_docs + faq_docs + llm_wiki_docs
-                logger.info(
-                    "Loaded %d wiki documents, %d FAQ documents, and %d LLM Wiki pages",
-                    len(wiki_docs),
-                    len(faq_docs),
-                    len(llm_wiki_docs),
-                )
+                    # Split documents using document processor
+                    splits = self.document_processor.split_documents(all_docs)
 
-                if not all_docs:
-                    logger.warning("No documents loaded. Check your data paths.")
-                    return False
+                    # Initialize embeddings
+                    logger.info("Initializing embedding model...")
+                    self.initialize_embeddings()
 
-                # Split documents using document processor
-                splits = self.document_processor.split_documents(all_docs)
-
-                # Initialize embeddings
-                logger.info("Initializing embedding model...")
-                self.initialize_embeddings()
-
-                # Ensure Qdrant index exists and is up-to-date.
-                logger.info("Ensuring Qdrant index is up-to-date...")
-                index_result = self.index_manager.rebuild_index(
-                    documents=splits,
-                    embeddings=self.embeddings,
-                    force=force_rebuild,
-                )
-                logger.info(f"Qdrant index ready: {index_result}")
+                    # Ensure Qdrant index exists and is up-to-date.
+                    logger.info("Ensuring Qdrant index is up-to-date...")
+                    index_result = self.index_manager.rebuild_index(
+                        documents=splits,
+                        embeddings=self.embeddings,
+                        force=force_rebuild,
+                    )
+                    logger.info(f"Qdrant index ready: {index_result}")
 
                 # Initialize retriever (Qdrant-only).
                 self._initialize_retriever()
@@ -652,6 +666,10 @@ class SimplifiedRAGService:
     async def cleanup(self):
         """Clean up resources."""
         logger.info("Cleaning up simplified RAG service resources...")
+        context_llm_executor = self._context_llm_executor
+        self._context_llm_executor = None
+        if context_llm_executor is not None:
+            context_llm_executor.shutdown(wait=False, cancel_futures=True)
         self.retriever = None
         self.document_retriever = None
         self.rag_chain = None
@@ -728,8 +746,24 @@ class SimplifiedRAGService:
                 )
             )
 
-            # Get response from LLM
-            response_text = self.llm.invoke(user_content, system_content=system_content)
+            # The provider exposes a synchronous invoke API. Keep it off the event
+            # loop and bound the no-document fallback so one slow provider call
+            # cannot stall unrelated requests indefinitely.
+            context_llm_executor = self._context_llm_executor
+            if context_llm_executor is None:
+                raise RuntimeError("Context LLM executor has been shut down")
+
+            response_text = await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(
+                    context_llm_executor,
+                    partial(
+                        self.llm.invoke,
+                        user_content,
+                        system_content=system_content,
+                    ),
+                ),
+                timeout=self.settings.CONTEXT_LLM_TIMEOUT_SECONDS,
+            )
             response_content = (
                 response_text.content
                 if hasattr(response_text, "content")

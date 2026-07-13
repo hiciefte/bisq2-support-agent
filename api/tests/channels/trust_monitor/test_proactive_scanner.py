@@ -8,6 +8,7 @@ operator policy.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,9 +16,7 @@ from unittest.mock import AsyncMock
 import pytest
 from app.channels.trust_monitor.detectors.base import DetectorResult
 from app.channels.trust_monitor.models import TrustAlertSurface
-from app.channels.trust_monitor.proactive_scanner import (
-    ProactiveImpersonationScanner,
-)
+from app.channels.trust_monitor.proactive_scanner import ProactiveImpersonationScanner
 
 
 def _make_result() -> DetectorResult:
@@ -75,3 +74,53 @@ async def test_scanner_forwards_findings_via_on_finding_callback() -> None:
     await scanner._run_scans()
 
     assert captured == [result]
+
+
+@pytest.mark.asyncio
+async def test_scanner_awaits_async_finding_callback() -> None:
+    captured: list[DetectorResult] = []
+
+    async def capture(finding: DetectorResult) -> None:
+        await asyncio.sleep(0)
+        captured.append(finding)
+
+    scanner = ProactiveImpersonationScanner(
+        homeserver_url="https://matrix.org",
+        access_token="syt_test",
+        staff_resolver=SimpleNamespace(get_display_names=lambda: set()),
+        trusted_staff_ids=set(),
+        monitored_room_ids={"!room:matrix.org"},
+        matrix_client=SimpleNamespace(room_send=AsyncMock()),
+        on_finding=capture,
+    )
+    result = _make_result()
+    scanner._scan_user_directory = AsyncMock(return_value=[result])  # type: ignore[method-assign]
+    scanner._scan_public_rooms = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+    await scanner._run_scans()
+
+    assert captured == [result]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callback_result", [False, True])
+async def test_scanner_retries_only_after_callback_failure(callback_result) -> None:
+    callback = AsyncMock(return_value=callback_result)
+    scanner = ProactiveImpersonationScanner(
+        homeserver_url="https://matrix.org",
+        access_token="syt_test",
+        staff_resolver=SimpleNamespace(get_display_names=lambda: set()),
+        trusted_staff_ids=set(),
+        monitored_room_ids={"!room:matrix.org"},
+        matrix_client=SimpleNamespace(room_send=AsyncMock()),
+        on_finding=callback,
+    )
+    result = _make_result()
+    scanner._reported_user_ids.add(result.suspect_actor_id)
+    scanner._scan_user_directory = AsyncMock(return_value=[result])  # type: ignore[method-assign]
+    scanner._scan_public_rooms = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+    await scanner._run_scans()
+
+    callback.assert_awaited_once_with(result)
+    assert (result.suspect_actor_id in scanner._reported_user_ids) is callback_result

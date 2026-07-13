@@ -74,7 +74,7 @@ wait_for_healthy() {
 
     log_info "Waiting for $service to become healthy..."
 
-    while [ $waited -lt $max_wait ]; do
+    while [ "$waited" -lt "$max_wait" ]; do
         if check_service "$service" "$docker_dir" "$compose_file" >/dev/null 2>&1; then
             log_success "$service is now healthy"
             return 0
@@ -172,26 +172,26 @@ restart_service_with_deps() {
 ensure_dependent_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
-    local missing_services=""
+    local missing_services=()
 
     cd "$docker_dir" || return 1
 
     # Check if web and nginx are running
     if ! docker compose -f "$compose_file" ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services web"
+        missing_services+=("web")
     fi
 
     if ! docker compose -f "$compose_file" ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services nginx"
+        missing_services+=("nginx")
     fi
 
     if uses_qdrant_runtime && ! docker compose -f "$compose_file" ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services qdrant"
+        missing_services+=("qdrant")
     fi
 
-    if [ -n "$missing_services" ]; then
-        log_info "Starting missing dependent services:$missing_services"
-        docker compose -f "$compose_file" up -d $missing_services
+    if [ "${#missing_services[@]}" -gt 0 ]; then
+        log_info "Starting missing dependent services: ${missing_services[*]}"
+        docker compose -f "$compose_file" up -d "${missing_services[@]}"
     fi
 }
 
@@ -332,7 +332,7 @@ rebuild_services() {
 refresh_runtime_services() {
     local docker_dir="${1:-$DOCKER_DIR}"
     local compose_file="${2:-docker-compose.yml}"
-    local services=("api" "web" "nginx" "bisq2-api")
+    local services=("api" "matrix-alert-relay" "web" "nginx" "bisq2-api")
 
     if uses_qdrant_runtime; then
         services=("qdrant" "${services[@]}")
@@ -381,7 +381,7 @@ test_chat_endpoint() {
     log_info "Testing chat endpoint..."
 
     local attempt=1
-    while [ $attempt -le $retries ]; do
+    while [ "$attempt" -le "$retries" ]; do
         local response
         local http_code
 
@@ -549,8 +549,8 @@ check_and_repair_services() {
     local compose_file="${2:-docker-compose.yml}"
     local failed_services=()
     # All core and monitoring services are critical for production operation
-    local critical_services=("api" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
-    local all_services=("nginx" "web" "api" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
+    local critical_services=("api" "matrix-alert-relay" "web" "nginx" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager")
+    local all_services=("nginx" "web" "api" "matrix-alert-relay" "bisq2-api" "prometheus" "grafana" "node-exporter" "scheduler" "alertmanager" "cadvisor")
 
     if uses_qdrant_runtime; then
         critical_services=("qdrant" "${critical_services[@]}")
@@ -559,12 +559,31 @@ check_and_repair_services() {
 
     cd "$docker_dir" || return 1
 
+    # The currently loaded helpers can outlive a rollback's git reset. Keep the
+    # relay critical when the checked-out Compose file defines it, but do not
+    # try to repair a service that does not exist in an older revision.
+    local compose_services
+    local relay_service_defined=1
+    if compose_services=$(docker compose -f "$compose_file" config --services 2>/dev/null); then
+        relay_service_defined=0
+        local defined_service
+        while IFS= read -r defined_service; do
+            if [ "$defined_service" = "matrix-alert-relay" ]; then
+                relay_service_defined=1
+                break
+            fi
+        done <<< "$compose_services"
+    fi
+
     log_info "Checking all services..."
     echo ""
 
     # Check all services and separate critical from non-critical failures
     local failed_critical=()
     for service in "${all_services[@]}"; do
+        if [ "$service" = "matrix-alert-relay" ] && [ "$relay_service_defined" -eq 0 ]; then
+            continue
+        fi
         if ! check_service "$service" "$docker_dir" "$compose_file"; then
             failed_services+=("$service")
             # Check if this is a critical service

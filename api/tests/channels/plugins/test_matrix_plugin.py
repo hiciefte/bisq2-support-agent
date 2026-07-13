@@ -8,6 +8,7 @@ Note: Matrix channel wraps the existing Matrix integration components:
 - Matrix nio AsyncClient for room operations
 """
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,10 +18,12 @@ from app.channels.models import (
     ChannelType,
     IncomingMessage,
     OutgoingMessage,
+    SendResult,
     UserContext,
 )
 from app.channels.plugins.matrix.channel import MatrixChannel
 from app.channels.runtime import ChannelRuntime
+from app.channels.trust_monitor.publisher import CompositeTrustAlertPublisher
 
 
 class TestMatrixChannelProperties:
@@ -97,6 +100,87 @@ class TestMatrixChannelLifecycle:
 
         assert channel.is_connected is True
         mock_conn_manager.connect.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_start_wires_trust_alerts_before_message_handler(self):
+        order: list[str] = []
+        mock_conn_manager = SimpleNamespace(
+            connect=AsyncMock(),
+        )
+        message_handler = SimpleNamespace(
+            channel=None,
+            start=AsyncMock(side_effect=lambda: order.append("message_handler")),
+        )
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace()
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: {
+                "matrix_connection_manager": mock_conn_manager,
+                "matrix_message_handler": message_handler,
+            }.get(name)
+        )
+        channel = MatrixChannel(runtime)
+        channel._wire_trust_monitor_alerts = AsyncMock(
+            side_effect=lambda: order.append("trust_alerts")
+        )
+
+        await channel.start()
+
+        assert order[:2] == ["trust_alerts", "message_handler"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_wire_trust_monitor_binds_matrix_owner_loop(self):
+        publisher = SimpleNamespace(
+            matrix_notifier=None,
+            bind_loop=MagicMock(),
+        )
+        trust_monitor_service = SimpleNamespace(publisher=publisher)
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(MATRIX_STAFF_ROOM="!staff:matrix.org")
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                trust_monitor_service if name == "trust_monitor_service" else None
+            )
+        )
+        channel = MatrixChannel(runtime)
+
+        await channel._wire_trust_monitor_alerts()
+
+        publisher.bind_loop.assert_called_once_with(asyncio.get_running_loop())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trust_monitor_notifier_reports_transport_failure(self, monkeypatch):
+        publisher = SimpleNamespace(matrix_notifier=None, bind_loop=MagicMock())
+        trust_monitor_service = SimpleNamespace(publisher=publisher)
+        runtime = MagicMock(spec=ChannelRuntime)
+        runtime.settings = SimpleNamespace(MATRIX_STAFF_ROOM="!staff:matrix.org")
+        runtime.resolve_optional = MagicMock(
+            side_effect=lambda name: (
+                trust_monitor_service if name == "trust_monitor_service" else None
+            )
+        )
+        channel = MatrixChannel(runtime)
+        channel.send_message = AsyncMock(
+            return_value=SendResult(sent=False, error="transport down")
+        )
+        monkeypatch.setattr(
+            "app.channels.trust_monitor.alert_formatting.format_trust_alert_for_matrix",
+            lambda _finding: "trust alert",
+        )
+
+        await channel._wire_trust_monitor_alerts()
+        delivered = await publisher.matrix_notifier(SimpleNamespace(id=1))
+
+        assert delivered is False
+
+    def test_trust_publisher_timeout_covers_missing_room_recovery_budget(self):
+        assert (
+            CompositeTrustAlertPublisher.DEFAULT_DELIVERY_TIMEOUT_SECONDS
+            > MatrixChannel.MATRIX_OP_TIMEOUT_SECONDS * 4
+        )
 
     @pytest.mark.unit
     @pytest.mark.asyncio

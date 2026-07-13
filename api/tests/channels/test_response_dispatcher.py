@@ -5,6 +5,7 @@ import pytest
 from app.channels.response_dispatcher import (
     ChannelResponseDispatcher,
     DeliveryMode,
+    DispatchOutcome,
     format_escalation_notice,
 )
 from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
@@ -12,7 +13,7 @@ from app.prompts.runtime_policy import SAFETY_REFLEX_WARNING
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_dispatch_autosend_returns_false_when_transport_raises():
+async def test_dispatch_autosend_returns_failed_when_transport_raises():
     incoming = SimpleNamespace(message_id="m-1", channel_metadata={})
     response = SimpleNamespace(
         requires_human=False,
@@ -23,9 +24,9 @@ async def test_dispatch_autosend_returns_false_when_transport_raises():
     channel.send_message = AsyncMock(side_effect=RuntimeError("network failure"))
 
     dispatcher = ChannelResponseDispatcher(channel=channel, channel_id="bisq2")
-    sent = await dispatcher.dispatch(incoming, response)
+    outcome = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert outcome is DispatchOutcome.FAILED
     channel.send_message.assert_awaited_once_with("target-1", response)
 
 
@@ -141,7 +142,7 @@ async def test_dispatch_falls_back_to_buffered_when_native_stream_fails(monkeypa
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is True
+    assert sent is DispatchOutcome.SENT
     native.assert_awaited_once_with(channel, "target-1", response)
     buffered.assert_awaited_once_with(channel, "target-1", response)
 
@@ -197,12 +198,54 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     escalation_service.create_escalation.assert_awaited_once()
     channel.send_message.assert_awaited_once()
     notice = channel.send_message.call_args.args[1]
     assert "team member" in notice.answer.lower()
     assert "#77" not in notice.answer
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_queued_dispatch_stays_terminal_when_review_notice_delivery_raises():
+    incoming = SimpleNamespace(
+        message_id="m-notice-failure",
+        question="my trade is stuck",
+        channel_metadata={"room_id": "!support:matrix.org"},
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer="draft",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="needs_human",
+            routing_reason="manual_review",
+            confidence_score=0.2,
+        ),
+    )
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=78)
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target.return_value = "!support:matrix.org"
+    channel.send_message = AsyncMock(side_effect=RuntimeError("transport down"))
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+    )
+
+    outcome = await dispatcher.dispatch(incoming, response)
+
+    assert outcome is DispatchOutcome.QUEUED
+    escalation_service.create_escalation.assert_awaited_once()
+    channel.send_message.assert_awaited_once()
 
 
 @pytest.mark.unit
@@ -256,7 +299,7 @@ async def test_dispatch_sends_public_escalation_notice_when_enabled():
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     escalation_service.create_escalation.assert_awaited_once()
     channel.send_message.assert_awaited_once()
     notice = channel.send_message.call_args.args[1]
@@ -373,7 +416,7 @@ async def test_dispatch_uses_user_notice_when_escalation_notification_channel_is
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     channel.send_message.assert_awaited_once()
     notice = channel.send_message.call_args.args[1]
     assert "#99" not in notice.answer
@@ -493,7 +536,7 @@ async def test_dispatch_sends_staff_room_notice_when_configured():
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     assert channel.send_message.await_count == 2
     user_notice_call = channel.send_message.await_args_list[0]
     staff_notice_call = channel.send_message.await_args_list[1]
@@ -578,7 +621,7 @@ async def test_dispatch_staff_room_can_be_silent_to_user_when_notice_mode_is_non
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     channel.send_message.assert_awaited_once()
     staff_notice_call = channel.send_message.await_args_list[0]
     assert staff_notice_call.args[0] == "!staff:matrix.org"
@@ -649,7 +692,7 @@ async def test_dispatch_staff_room_notice_includes_copyable_source_links():
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     channel.send_message.assert_awaited_once()
     staff_notice = channel.send_message.await_args_list[0].args[1].answer
     assert "Sources to copy:" in staff_notice
@@ -718,7 +761,7 @@ async def test_staff_room_notice_includes_internal_code_enrichment_without_repla
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     channel.send_message.assert_awaited_once()
     staff_notice = channel.send_message.await_args_list[0].args[1].answer
     assert "Reply to user (copy-ready):" in staff_notice
@@ -821,7 +864,7 @@ async def test_dispatch_falls_back_to_message_for_unsupported_user_notice_mode()
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     channel.send_message.assert_awaited_once()
     sent_notice = channel.send_message.call_args.args[1]
     assert "team member" in sent_notice.answer.lower()
@@ -887,7 +930,7 @@ async def test_dispatch_resolves_staff_room_from_channel_method():
 
     sent = await dispatcher.dispatch(incoming, response)
 
-    assert sent is False
+    assert sent is DispatchOutcome.QUEUED
     assert channel.send_message.await_count == 2
     staff_notice_call = channel.send_message.await_args_list[1]
     assert staff_notice_call.args[0] == "!staff-from-method:matrix.org"

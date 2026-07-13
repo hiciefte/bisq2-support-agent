@@ -12,12 +12,21 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.services.simplified_rag_service import SimplifiedRAGService
 from langchain_core.documents import Document
+
+
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 1) -> None:
+    async def poll() -> None:
+        while not predicate():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(poll(), timeout=timeout)
 
 
 def _faq_doc(faq_id: str, question: str, answer: str) -> Document:
@@ -159,6 +168,112 @@ class TestIncrementalFAQUpdate:
 
         assert calls == 2
         assert max_active == 1
+
+    @pytest.mark.asyncio
+    async def test_different_faq_incremental_updates_can_overlap(self, rag_service):
+        active = 0
+        max_active = 0
+        guard = threading.Lock()
+        both_started = threading.Event()
+        release = threading.Event()
+
+        def blocking_sync(_faq_id: str) -> None:
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+                if active == 2:
+                    both_started.set()
+            release.wait(timeout=1)
+            with guard:
+                active -= 1
+
+        rag_service._sync_faq_in_index = blocking_sync
+        tasks = [
+            asyncio.create_task(
+                rag_service.faq_index_sync.apply_incremental_update(
+                    "update", faq_id, None
+                )
+            )
+            for faq_id in ("faq-1", "faq-2")
+        ]
+
+        try:
+            overlapped = await asyncio.to_thread(both_started.wait, 0.2)
+        finally:
+            release.set()
+            await asyncio.gather(*tasks)
+
+        assert overlapped is True
+        assert max_active == 2
+
+    @pytest.mark.asyncio
+    async def test_incremental_update_waits_for_full_rebuild(self, rag_service):
+        sync_started = asyncio.Event()
+
+        def record_sync(_faq_id: str) -> None:
+            sync_started.set()
+
+        rag_service._sync_faq_in_index = record_sync
+        async with rag_service.faq_index_sync.rebuild_guard():
+            update_task = asyncio.create_task(
+                rag_service.faq_index_sync.apply_incremental_update(
+                    "update", "faq-1", None
+                )
+            )
+            await asyncio.sleep(0)
+            assert not sync_started.is_set()
+
+        await update_task
+        assert sync_started.is_set()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_update_holds_rebuild_gate_until_worker_finishes(
+        self, rag_service
+    ):
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        rebuild_entered = asyncio.Event()
+
+        def blocking_sync(_faq_id: str) -> None:
+            worker_started.set()
+            release_worker.wait(timeout=1)
+
+        rag_service._sync_faq_in_index = blocking_sync
+        update_task = asyncio.create_task(
+            rag_service.faq_index_sync.apply_incremental_update("update", "faq-1", None)
+        )
+        assert await asyncio.to_thread(worker_started.wait, 1) is True
+
+        update_task.cancel()
+
+        async def enter_rebuild() -> None:
+            async with rag_service.faq_index_sync.rebuild_guard():
+                rebuild_entered.set()
+
+        rebuild_task = asyncio.create_task(enter_rebuild())
+        await asyncio.sleep(0)
+        assert rebuild_entered.is_set() is False
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await update_task
+        await asyncio.wait_for(rebuild_entered.wait(), timeout=1)
+        await rebuild_task
+
+    @pytest.mark.asyncio
+    async def test_cancelled_same_faq_waiter_releases_lock_reference(self, rag_service):
+        held_lock = await rag_service.faq_index_sync.acquire_lock("faq-1")
+        waiter = asyncio.create_task(rag_service.faq_index_sync.acquire_lock("faq-1"))
+        await _wait_until(lambda: rag_service._faq_index_lock_refs.get("faq-1") == 2)
+
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await rag_service.faq_index_sync.release_lock("faq-1", held_lock)
+
+        assert rag_service._faq_index_locks == {}
+        assert rag_service._faq_index_lock_refs == {}
 
     @pytest.mark.asyncio
     async def test_embeddings_initialization_is_serialized(self, rag_service):

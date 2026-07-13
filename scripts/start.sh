@@ -63,7 +63,7 @@ check_service_health() {
     local max_attempts=$2
     local attempt=1
 
-    while [ $attempt -le $max_attempts ]; do
+    while [ "$attempt" -le "$max_attempts" ]; do
         if docker compose -f docker-compose.yml ps --format json "$service" 2>/dev/null | grep -q '"Health":"healthy"'; then
             echo "✅ $service is healthy"
             return 0
@@ -86,24 +86,24 @@ check_service_health() {
 
 # Function to start dependent services if they're not running
 ensure_dependent_services() {
-    local missing_services=""
+    local missing_services=()
 
     # Check if web and nginx are running
     if ! docker compose -f docker-compose.yml ps --format json web 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services web"
+        missing_services+=("web")
     fi
 
     if ! docker compose -f docker-compose.yml ps --format json nginx 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services nginx"
+        missing_services+=("nginx")
     fi
 
     if uses_qdrant_runtime && ! docker compose -f docker-compose.yml ps --format json qdrant 2>/dev/null | grep -q '"State":"running"'; then
-        missing_services="$missing_services qdrant"
+        missing_services+=("qdrant")
     fi
 
-    if [ -n "$missing_services" ]; then
-        echo "🔄 Starting missing dependent services:$missing_services"
-        docker compose -f docker-compose.yml up -d $missing_services
+    if [ "${#missing_services[@]}" -gt 0 ]; then
+        echo "🔄 Starting missing dependent services: ${missing_services[*]}"
+        docker compose -f docker-compose.yml up -d "${missing_services[@]}"
     fi
 }
 

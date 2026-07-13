@@ -31,7 +31,7 @@ from app.channels.plugins.bisq2.client.api import (
     Bisq2API,
 )
 from app.core.config import Settings
-from cachetools import TTLCache  # type: ignore[import-untyped]
+from cachetools import TTLCache
 from tenacity import (
     retry,
     retry_if_exception_type,

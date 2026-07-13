@@ -110,7 +110,8 @@ get_file_age_days() {
     fi
 
     # Calculate age in days
-    local current_time=$(date +%s)
+    local current_time
+    current_time=$(date +%s)
     local age_seconds=$((current_time - file_mtime))
     local age_days=$((age_seconds / 86400))
 
@@ -135,9 +136,9 @@ get_file_size() {
 # Function to format bytes to human-readable
 format_bytes() {
     local bytes=$1
-    if [ $bytes -lt 1024 ]; then
+    if [ "$bytes" -lt 1024 ]; then
         echo "${bytes}B"
-    elif [ $bytes -lt 1048576 ]; then
+    elif [ "$bytes" -lt 1048576 ]; then
         echo "$((bytes / 1024))KB"
     else
         echo "$((bytes / 1048576))MB"
@@ -158,7 +159,7 @@ for filename in "${FILES_TO_CLEAN[@]}"; do
     file_size=$(get_file_size "$filepath")
 
     if [ "$age_days" -ge "$RETENTION_DAYS" ]; then
-        log "Found old file: $filename (age: ${age_days} days, size: $(format_bytes $file_size))"
+        log "Found old file: $filename (age: ${age_days} days, size: $(format_bytes "$file_size"))"
 
         if [ "$DRY_RUN" = true ]; then
             log "Would delete: $filepath"

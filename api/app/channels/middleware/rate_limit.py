@@ -4,8 +4,8 @@ Implements per-user rate limiting using token bucket algorithm.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Dict, Optional
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Callable, Dict, Optional
 
 from app.channels.hooks import BasePreProcessingHook, HookPriority
 from app.channels.models import GatewayError, IncomingMessage
@@ -99,3 +99,80 @@ class RateLimitHook(BasePreProcessingHook):
             window_seconds=int(self.capacity / self.refill_rate),
             retry_after_seconds=metadata.get("retry_after_seconds", 1),
         )
+
+
+class GlobalLLMTokenBudgetHook(BasePreProcessingHook):
+    """Fail closed when the process-wide UTC-day reservation budget is exhausted.
+
+    Each admitted request reserves an operator-selected fixed worst-case amount
+    that accounts for the complete RAG workflow, not merely user text. This is an
+    admission circuit breaker rather than provider billing reconciliation. The
+    deployment runs one API process; a process restart resets this in-memory
+    counter, which is documented explicitly rather than presented as exact usage.
+    """
+
+    def __init__(
+        self,
+        daily_token_budget: int,
+        max_completion_tokens: int,
+        reservation_tokens_per_request: Optional[int] = None,
+        now: Optional[Callable[[], datetime]] = None,
+    ) -> None:
+        super().__init__(name="global_llm_budget", priority=120)
+        if daily_token_budget <= 0:
+            raise ValueError("daily_token_budget must be positive")
+        if max_completion_tokens <= 0:
+            raise ValueError("max_completion_tokens must be positive")
+        reservation = reservation_tokens_per_request or max_completion_tokens
+        if reservation <= 0:
+            raise ValueError("reservation_tokens_per_request must be positive")
+        self.daily_token_budget = daily_token_budget
+        self.max_completion_tokens = max_completion_tokens
+        self.reservation_tokens_per_request = reservation
+        self._now = now or (lambda: datetime.now(timezone.utc))
+        self._budget_day: Optional[date] = None
+        self._reserved_tokens = 0
+
+    def should_skip(self, message: IncomingMessage) -> bool:
+        """The application-wide circuit breaker is never bypassable."""
+        return False
+
+    def _estimate_tokens(self, message: IncomingMessage) -> int:
+        del message
+        return self.reservation_tokens_per_request
+
+    async def execute(self, message: IncomingMessage) -> Optional[GatewayError]:
+        now = self._now().astimezone(timezone.utc)
+        if self._budget_day != now.date():
+            self._budget_day = now.date()
+            self._reserved_tokens = 0
+
+        reservation = self._estimate_tokens(message)
+        if self._reserved_tokens + reservation <= self.daily_token_budget:
+            self._reserved_tokens += reservation
+            return None
+
+        next_day = datetime.combine(
+            now.date() + timedelta(days=1), time.min, tzinfo=timezone.utc
+        )
+        retry_after = max(1, int((next_day - now).total_seconds()))
+        error = ErrorFactory.rate_limit_exceeded(
+            limit=self.daily_token_budget,
+            window_seconds=86400,
+            retry_after_seconds=retry_after,
+        )
+        error.error_message = "Global daily LLM reservation budget exhausted."
+        error.details.update(
+            {
+                "scope": "global_daily_llm_reservations",
+                "reserved_tokens": self._reserved_tokens,
+                "requested_reservation": reservation,
+            }
+        )
+        self._logger.error(
+            "Global daily LLM reservation budget exhausted: reserved=%s requested=%s limit=%s",
+            self._reserved_tokens,
+            reservation,
+            self.daily_token_budget,
+        )
+        return error

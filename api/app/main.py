@@ -64,7 +64,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
 
 try:
-    import aisuite  # type: ignore[import-untyped]
+    import aisuite
 except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 
     class _AisuiteFallback:
@@ -328,6 +328,11 @@ async def lifespan(app: FastAPI):
     channel_gateway = create_channel_gateway(
         rag_service=cast(RAGServiceProtocol, rag_service),
         register_default_hooks=True,
+        global_daily_llm_token_budget=settings.GLOBAL_DAILY_LLM_TOKEN_BUDGET,
+        max_completion_tokens=settings.MAX_TOKENS,
+        llm_token_reservation_per_request=(
+            settings.GLOBAL_LLM_TOKEN_RESERVATION_PER_REQUEST
+        ),
         ingress_context_service=getattr(app.state, "ingress_context_service", None),
     )
     from app.channels.hooks.channel_autoresponse_hook import (

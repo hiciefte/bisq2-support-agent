@@ -33,8 +33,10 @@ from app.channels.staff import (
     StaffResolver,
     collect_staff_display_names,
     collect_trusted_staff_ids,
+    staff_resolver_service_key,
 )
 from app.channels.traits import ChannelTraits
+from app.channels.trust_monitor.executor import run_in_trust_monitor_executor
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +167,11 @@ class MatrixChannel(ChannelBase):
             ),
             display_names=collect_staff_display_names(settings),
         )
-        runtime.register("staff_resolver", matrix_staff_resolver, allow_override=True)
+        runtime.register(
+            staff_resolver_service_key("matrix"),
+            matrix_staff_resolver,
+            allow_override=True,
+        )
 
         runtime.register(
             "matrix_message_handler",
@@ -305,6 +311,10 @@ class MatrixChannel(ChannelBase):
             self._logger.exception(f"Failed to connect to Matrix homeserver: {e}")
             self._is_connected = False
 
+        # Bind delivery before the message callback can ingest a finding. The
+        # handler starts Matrix sync, so wiring after start leaves a real race.
+        await self._wire_trust_monitor_alerts()
+
         # Wire message handler if registered (push message flow)
         message_handler = self.runtime.resolve_optional("matrix_message_handler")
         if message_handler:
@@ -325,7 +335,6 @@ class MatrixChannel(ChannelBase):
                 self._logger.info("Matrix trust monitor handler started")
             except Exception as e:
                 self._logger.warning(f"Failed to start trust monitor handler: {e}")
-        await self._wire_trust_monitor_alerts()
         await self._start_proactive_scanner()
 
         # Wire reaction handler if registered
@@ -419,7 +428,7 @@ class MatrixChannel(ChannelBase):
         settings = getattr(self.runtime, "settings", None)
         policy_service = self.runtime.resolve_optional("trust_monitor_policy_service")
 
-        async def _notify_staff_room(finding: Any) -> None:
+        async def _notify_staff_room(finding: Any) -> bool:
             from app.channels.trust_monitor.alert_formatting import (
                 format_trust_alert_for_matrix,
             )
@@ -439,7 +448,7 @@ class MatrixChannel(ChannelBase):
                 or str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
             )
             if not target:
-                return
+                return False
             message = OutgoingMessage(
                 message_id=f"trust-{finding.id}",
                 in_reply_to="",
@@ -459,9 +468,12 @@ class MatrixChannel(ChannelBase):
                     version_confidence=None,
                 ),
             )
-            await self.send_message(target, message)
+            return bool(await self.send_message(target, message))
 
         publisher.matrix_notifier = _notify_staff_room
+        bind_loop = getattr(publisher, "bind_loop", None)
+        if callable(bind_loop):
+            bind_loop(asyncio.get_running_loop())
 
     async def _start_proactive_scanner(self) -> None:
         """Start Matrix-specific proactive trust-monitor scans."""
@@ -491,8 +503,9 @@ class MatrixChannel(ChannelBase):
 
         sync_rooms = resolve_allowed_sync_rooms(settings)
 
-        def _handle_proactive_finding(result: Any) -> None:
-            persist_proactive_finding(
+        async def _handle_proactive_finding(result: Any) -> bool:
+            return await run_in_trust_monitor_executor(
+                persist_proactive_finding,
                 trust_monitor_service=trust_monitor_service,
                 sync_rooms=sync_rooms,
                 result=result,

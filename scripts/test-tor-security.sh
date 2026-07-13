@@ -1,4 +1,6 @@
 #!/bin/bash
+# Helpers are invoked indirectly through run_test.
+# shellcheck disable=SC2317,SC2329
 # scripts/test-tor-security.sh
 # Comprehensive security testing for Tor hidden service deployment
 # Tests for DNS leaks, clearnet leaks, cookie security, CSP, and more
@@ -287,7 +289,7 @@ echo -e "\n${BLUE}=== Rate Limiting Tests ===${NC}"
 # Make 10 rapid requests to test rate limiting
 RATE_LIMIT_TEST=0
 for _ in {1..10}; do
-    STATUS=$(curl -s -o /dev/null -w '%{http_code}' $API_URL/health)
+    STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$API_URL/health")
     if [ "$STATUS" = "429" ]; then
         RATE_LIMIT_TEST=1
         break

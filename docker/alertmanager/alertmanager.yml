@@ -41,7 +41,7 @@ inhibit_rules:
       alertname: 'ContainerDown'
     target_match:
       alertname: 'ContainerUnhealthy'
-    equal: ['container']
+    equal: ['container_label_com_docker_compose_service']
 
   # Don't alert on high latency if error rate is critical
   - source_match:
@@ -55,17 +55,17 @@ receivers:
   # Default Matrix receiver (all alerts)
   - name: 'matrix-notifications'
     webhook_configs:
-      - url: 'http://api:8000/alertmanager/alerts'
+      - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
 
   # Critical alerts receiver
   - name: 'matrix-critical'
     webhook_configs:
-      - url: 'http://api:8000/alertmanager/alerts'
+      - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
 
   # Warning alerts receiver
   - name: 'matrix-warnings'
     webhook_configs:
-      - url: 'http://api:8000/alertmanager/alerts'
+      - url: 'http://matrix-alert-relay:8000/alerts'
         send_resolved: true
