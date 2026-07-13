@@ -8,6 +8,7 @@ from typing import Any, Dict
 from app.channels.plugins.bisq2.client.api import Bisq2API
 from app.core.config import Settings
 from app.metrics.task_metrics import (
+    clear_bisq2_api_probes,
     get_bisq2_api_readiness_snapshot,
     record_bisq2_api_probe,
 )
@@ -31,34 +32,48 @@ class BisqStartupSelfTestService:
 
     async def run(self) -> Dict[str, Any]:
         """Execute startup probes and return a readiness snapshot."""
-        if not self.bisq_mcp_service.enabled:
+        channel_enabled = self.settings.BISQ2_CHANNEL_ENABLED
+        mcp_enabled = self.bisq_mcp_service.enabled
+        disabled_probes = []
+        if not channel_enabled:
+            disabled_probes.append("export")
+        if not mcp_enabled:
+            disabled_probes.extend(("market_prices", "offerbook"))
+        if disabled_probes:
+            clear_bisq2_api_probes(*disabled_probes)
+
+        if not channel_enabled and not mcp_enabled:
             return get_bisq2_api_readiness_snapshot(enabled=False)
 
-        try:
-            export_result = await self.bisq_api.export_chat_messages()
-            record_bisq2_api_probe("export", is_healthy=bool(export_result))
-        except Exception:  # noqa: BLE001
-            logger.exception("Bisq export startup self-test failed")
-            record_bisq2_api_probe("export", is_healthy=False)
+        if channel_enabled:
+            try:
+                export_result = await self.bisq_api.export_chat_messages()
+                record_bisq2_api_probe("export", is_healthy=bool(export_result))
+            except Exception:  # noqa: BLE001
+                logger.exception("Bisq export startup self-test failed")
+                record_bisq2_api_probe("export", is_healthy=False)
 
-        try:
-            prices_result = await self.bisq_mcp_service.get_market_prices("EUR")
-            record_bisq2_api_probe(
-                "market_prices",
-                is_healthy=bool(prices_result.get("success")),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Bisq market-price startup self-test failed")
-            record_bisq2_api_probe("market_prices", is_healthy=False)
+        if mcp_enabled:
+            try:
+                prices_result = await self.bisq_mcp_service.get_market_prices("EUR")
+                record_bisq2_api_probe(
+                    "market_prices",
+                    is_healthy=bool(prices_result.get("success")),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Bisq market-price startup self-test failed")
+                record_bisq2_api_probe("market_prices", is_healthy=False)
 
-        try:
-            offerbook_result = await self.bisq_mcp_service.get_offerbook("EUR", "SELL")
-            record_bisq2_api_probe(
-                "offerbook",
-                is_healthy=bool(offerbook_result.get("success")),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Bisq offerbook startup self-test failed")
-            record_bisq2_api_probe("offerbook", is_healthy=False)
+            try:
+                offerbook_result = await self.bisq_mcp_service.get_offerbook(
+                    "EUR", "SELL"
+                )
+                record_bisq2_api_probe(
+                    "offerbook",
+                    is_healthy=bool(offerbook_result.get("success")),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Bisq offerbook startup self-test failed")
+                record_bisq2_api_probe("offerbook", is_healthy=False)
 
         return get_bisq2_api_readiness_snapshot(enabled=True)

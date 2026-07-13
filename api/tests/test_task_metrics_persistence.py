@@ -22,6 +22,7 @@ from app.metrics.task_metrics import (
     FEEDBACK_PROCESSING_LAST_RUN_STATUS,
     WIKI_UPDATE_LAST_RUN_STATUS,
     WIKI_UPDATE_PAGES_PROCESSED,
+    clear_bisq2_api_probes,
     get_bisq2_api_readiness_snapshot,
     record_bisq2_api_probe,
     restore_metrics_from_database,
@@ -474,3 +475,30 @@ class TestPrometheusIntegration:
         assert snapshot["status"] == "healthy"
         assert snapshot["checks"]["export"]["status"] == "healthy"
         assert snapshot["checks"]["market_prices"]["status"] == "not_checked"
+
+    def test_clear_bisq_probes_persists_disabled_state_and_recomputes_aggregate(
+        self, test_settings
+    ):
+        """Disabled feature probes must not survive restart as stale failures."""
+        init_persistence(test_settings)
+        clear_bisq2_api_probes("export", "market_prices", "offerbook")
+        record_bisq2_api_probe("market_prices", is_healthy=True, response_time=0.2)
+        record_bisq2_api_probe("export", is_healthy=False, response_time=0.4)
+
+        clear_bisq2_api_probes("export")
+
+        snapshot = get_bisq2_api_readiness_snapshot(enabled=True)
+        persisted = get_persistence().load_all_metrics()
+        assert snapshot["status"] == "healthy"
+        assert snapshot["checks"]["export"]["status"] == "not_checked"
+        assert persisted["bisq2_api_export_last_check_timestamp"] == 0
+        assert persisted["bisq2_api_export_response_time_seconds"] == 0
+        assert persisted["bisq2_api_health_status"] == 1
+        assert persisted["bisq2_api_response_time_seconds"] == 0.2
+
+        clear_bisq2_api_probes("market_prices", "offerbook")
+
+        persisted = get_persistence().load_all_metrics()
+        assert persisted["bisq2_api_health_status"] == 0
+        assert persisted["bisq2_api_last_check_timestamp"] == 0
+        assert persisted["bisq2_api_response_time_seconds"] == 0
