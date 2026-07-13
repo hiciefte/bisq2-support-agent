@@ -562,58 +562,65 @@ class SimplifiedRAGService:
             try:
                 logger.info("Starting simplified RAG service setup...")
 
-                # Load documents
-                logger.info("Loading documents...")
-                self._refresh_source_weights_for_rebuild()
+                # Exclude point updates from the FAQ snapshot through alias swap.
+                # The writer-preferred guard also prevents a rebuild from starving
+                # under a steady stream of unrelated FAQ updates.
+                async with self.faq_index_sync.rebuild_guard():
+                    # Load documents
+                    logger.info("Loading documents...")
+                    self._refresh_source_weights_for_rebuild()
 
-                # Load wiki data from WikiService
-                wiki_docs = []
-                if self.wiki_service:
-                    wiki_docs = self.wiki_service.load_wiki_data()
-                else:
-                    logger.warning(
-                        "WikiService not provided, skipping wiki data loading"
+                    # Load wiki data from WikiService
+                    wiki_docs = []
+                    if self.wiki_service:
+                        wiki_docs = self.wiki_service.load_wiki_data()
+                    else:
+                        logger.warning(
+                            "WikiService not provided, skipping wiki data loading"
+                        )
+
+                    # Load FAQ data from FAQService
+                    faq_docs = []
+                    if self.faq_service:
+                        faq_docs = self.faq_service.load_faq_data()
+                    else:
+                        logger.warning(
+                            "FAQService not provided, skipping FAQ data loading"
+                        )
+
+                    llm_wiki_docs = self.llm_wiki_loader.load_documents(
+                        self.settings.LLM_WIKI_DIR_PATH
                     )
 
-                # Load FAQ data from FAQService
-                faq_docs = []
-                if self.faq_service:
-                    faq_docs = self.faq_service.load_faq_data()
-                else:
-                    logger.warning("FAQService not provided, skipping FAQ data loading")
+                    # Combine all documents
+                    all_docs = wiki_docs + faq_docs + llm_wiki_docs
+                    logger.info(
+                        "Loaded %d wiki documents, %d FAQ documents, "
+                        "and %d LLM Wiki pages",
+                        len(wiki_docs),
+                        len(faq_docs),
+                        len(llm_wiki_docs),
+                    )
 
-                llm_wiki_docs = self.llm_wiki_loader.load_documents(
-                    self.settings.LLM_WIKI_DIR_PATH
-                )
+                    if not all_docs:
+                        logger.warning("No documents loaded. Check your data paths.")
+                        return False
 
-                # Combine all documents
-                all_docs = wiki_docs + faq_docs + llm_wiki_docs
-                logger.info(
-                    "Loaded %d wiki documents, %d FAQ documents, and %d LLM Wiki pages",
-                    len(wiki_docs),
-                    len(faq_docs),
-                    len(llm_wiki_docs),
-                )
+                    # Split documents using document processor
+                    splits = self.document_processor.split_documents(all_docs)
 
-                if not all_docs:
-                    logger.warning("No documents loaded. Check your data paths.")
-                    return False
+                    # Initialize embeddings
+                    logger.info("Initializing embedding model...")
+                    self.initialize_embeddings()
 
-                # Split documents using document processor
-                splits = self.document_processor.split_documents(all_docs)
-
-                # Initialize embeddings
-                logger.info("Initializing embedding model...")
-                self.initialize_embeddings()
-
-                # Ensure Qdrant index exists and is up-to-date.
-                logger.info("Ensuring Qdrant index is up-to-date...")
-                index_result = self.index_manager.rebuild_index(
-                    documents=splits,
-                    embeddings=self.embeddings,
-                    force=force_rebuild,
-                )
-                logger.info(f"Qdrant index ready: {index_result}")
+                    # Ensure Qdrant index exists and is up-to-date.
+                    logger.info("Ensuring Qdrant index is up-to-date...")
+                    index_result = self.index_manager.rebuild_index(
+                        documents=splits,
+                        embeddings=self.embeddings,
+                        force=force_rebuild,
+                    )
+                    logger.info(f"Qdrant index ready: {index_result}")
 
                 # Initialize retriever (Qdrant-only).
                 self._initialize_retriever()

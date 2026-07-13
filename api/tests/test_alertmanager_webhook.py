@@ -70,6 +70,7 @@ def sample_resolved_payload():
 def mock_matrix_service():
     """Mock Matrix alert service."""
     service = MagicMock()
+    service.is_configured.return_value = True
     service.send_alert_message = AsyncMock(return_value=True)
     return service
 
@@ -268,6 +269,23 @@ class TestAlertsEndpoint:
 
         assert response.status_code == 503
         assert response.json()["detail"] == "matrix_service_unavailable"
+
+    def test_receive_alerts_rejects_unconfigured_matrix_service(
+        self, sample_alert_payload, mock_matrix_service
+    ):
+        """Permanent configuration gaps are rejected before delivery."""
+        from app.main import app
+
+        mock_matrix_service.is_configured.return_value = False
+        app.state.matrix_alert_service = mock_matrix_service
+
+        response = TestClient(app).post(
+            "/alertmanager/alerts", json=sample_alert_payload
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "matrix_service_not_configured"
+        mock_matrix_service.send_alert_message.assert_not_awaited()
 
     def test_receive_alerts_handles_send_failure(
         self, sample_alert_payload, mock_matrix_service

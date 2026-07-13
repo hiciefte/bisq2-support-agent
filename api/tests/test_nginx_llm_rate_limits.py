@@ -32,15 +32,33 @@ def test_nginx_declares_address_keyed_llm_zone() -> None:
 
 @pytest.mark.parametrize("config_path", SITE_CONFIGS, ids=lambda path: path.name)
 @pytest.mark.parametrize(
-    "declaration",
+    ("declaration", "rewrite"),
     [
-        "location = /api/chat/query {",
-        "location = /api/chat/query/stream {",
+        (
+            'location ~ "^/api/chat/query/?$" {',
+            "rewrite ^/api/chat/query/?$ /chat/query break;",
+        ),
+        (
+            'location ~ "^/api/chat/query/stream/?$" {',
+            "rewrite ^/api/chat/query/stream/?$ /chat/query/stream break;",
+        ),
     ],
 )
 def test_chat_endpoints_apply_session_and_address_limits(
-    config_path: Path, declaration: str
+    config_path: Path, declaration: str, rewrite: str
 ) -> None:
     block = _location_block(config_path.read_text(encoding="utf-8"), declaration)
     assert "limit_req zone=api " in block
     assert "limit_req zone=llm_addr " in block
+    assert rewrite in block
+
+
+@pytest.mark.parametrize("config_path", SITE_CONFIGS, ids=lambda path: path.name)
+def test_synchronous_chat_query_has_llm_sized_proxy_timeouts(
+    config_path: Path,
+) -> None:
+    declaration = 'location ~ "^/api/chat/query/?$" {'
+    block = _location_block(config_path.read_text(encoding="utf-8"), declaration)
+
+    assert "proxy_read_timeout 10m;" in block
+    assert "proxy_send_timeout 10m;" in block

@@ -426,7 +426,7 @@ class MatrixChannel(ChannelBase):
         settings = getattr(self.runtime, "settings", None)
         policy_service = self.runtime.resolve_optional("trust_monitor_policy_service")
 
-        async def _notify_staff_room(finding: Any) -> None:
+        async def _notify_staff_room(finding: Any) -> bool:
             from app.channels.trust_monitor.alert_formatting import (
                 format_trust_alert_for_matrix,
             )
@@ -446,7 +446,7 @@ class MatrixChannel(ChannelBase):
                 or str(getattr(settings, "MATRIX_STAFF_ROOM", "") or "").strip()
             )
             if not target:
-                return
+                return False
             message = OutgoingMessage(
                 message_id=f"trust-{finding.id}",
                 in_reply_to="",
@@ -466,7 +466,7 @@ class MatrixChannel(ChannelBase):
                     version_confidence=None,
                 ),
             )
-            await self.send_message(target, message)
+            return bool(await self.send_message(target, message))
 
         publisher.matrix_notifier = _notify_staff_room
         bind_loop = getattr(publisher, "bind_loop", None)
@@ -501,8 +501,9 @@ class MatrixChannel(ChannelBase):
 
         sync_rooms = resolve_allowed_sync_rooms(settings)
 
-        def _handle_proactive_finding(result: Any) -> None:
-            persist_proactive_finding(
+        async def _handle_proactive_finding(result: Any) -> bool:
+            return await asyncio.to_thread(
+                persist_proactive_finding,
                 trust_monitor_service=trust_monitor_service,
                 sync_rooms=sync_rooms,
                 result=result,

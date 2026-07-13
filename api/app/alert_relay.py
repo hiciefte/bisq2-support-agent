@@ -13,7 +13,7 @@ from typing import AsyncIterator
 from app.channels.plugins.matrix.services.alert_service import MatrixAlertService
 from app.core.config import get_settings
 from app.routes.alertmanager import router as alertmanager_router
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,7 @@ matrix_alert_service = MatrixAlertService(get_settings())
 async def lifespan(relay_app: FastAPI) -> AsyncIterator[None]:
     """Own the relay's Matrix client without starting the main API services."""
     relay_app.state.matrix_alert_service = matrix_alert_service
-    relay_app.state.relay_configured = matrix_alert_service.is_configured()
-    if relay_app.state.relay_configured:
+    if matrix_alert_service.is_configured():
         logger.info("Matrix alert relay configured")
     else:
         logger.error("Matrix alert relay is missing its alert-lane configuration")
@@ -39,13 +38,21 @@ async def lifespan(relay_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Bisq Matrix Alert Relay", lifespan=lifespan)
 app.state.matrix_alert_service = matrix_alert_service
-app.state.relay_configured = matrix_alert_service.is_configured()
 app.include_router(alertmanager_router)
 
 
 @app.get("/ready")
-async def ready() -> dict[str, str]:
+async def ready(request: Request) -> dict[str, str]:
     """Fail readiness when the Matrix alert lane is not configured."""
-    if not bool(getattr(app.state, "relay_configured", False)):
+    service = getattr(request.app.state, "matrix_alert_service", None)
+    is_configured = getattr(service, "is_configured", None)
+    try:
+        configured = bool(is_configured()) if callable(is_configured) else False
+    except Exception:
+        logger.warning(
+            "Failed to check Matrix alert relay configuration", exc_info=True
+        )
+        configured = False
+    if not configured:
         raise HTTPException(status_code=503, detail="matrix_alert_relay_not_configured")
     return {"status": "ready"}

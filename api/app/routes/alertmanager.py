@@ -184,6 +184,18 @@ async def receive_alerts(
         )
         raise HTTPException(status_code=503, detail="matrix_service_unavailable")
 
+    is_configured = getattr(matrix_service, "is_configured", None)
+    try:
+        configured = bool(is_configured()) if callable(is_configured) else False
+    except Exception as exc:
+        logger.error("Failed to check Matrix alert service configuration: %s", exc)
+        configured = False
+    if not configured:
+        logger.error(
+            "Matrix alert service is not configured; rejecting webhook before delivery"
+        )
+        raise HTTPException(status_code=503, detail="matrix_service_not_configured")
+
     if not payload.alerts:
         return AlertResponse(status="ok", alerts_processed=0)
 

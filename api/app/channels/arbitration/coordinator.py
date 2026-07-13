@@ -126,7 +126,13 @@ class ArbitrationCoordinator:
 
         if delay_seconds <= 0:
             response = await on_release(incoming)
-            outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+            outcome = await self._dispatch_with_retry(
+                incoming=incoming,
+                response=response,
+                on_dispatch=on_dispatch,
+                channel=channel,
+                channel_id=channel_id,
+            )
             return outcome is DispatchOutcome.SENT
 
         if (
@@ -139,7 +145,13 @@ class ArbitrationCoordinator:
                 normalized_thread,
             )
             response = await on_release(incoming)
-            outcome = DispatchOutcome.coerce(await on_dispatch(incoming, response))
+            outcome = await self._dispatch_with_retry(
+                incoming=incoming,
+                response=response,
+                on_dispatch=on_dispatch,
+                channel=channel,
+                channel_id=channel_id,
+            )
             return outcome is DispatchOutcome.SENT
 
         lock = self._lock_for(normalized_thread)

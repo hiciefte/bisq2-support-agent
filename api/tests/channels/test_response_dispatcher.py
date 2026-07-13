@@ -208,6 +208,48 @@ async def test_dispatch_suppresses_public_escalation_notice_for_group_channels_b
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_queued_dispatch_stays_terminal_when_review_notice_delivery_raises():
+    incoming = SimpleNamespace(
+        message_id="m-notice-failure",
+        question="my trade is stuck",
+        channel_metadata={"room_id": "!support:matrix.org"},
+        user=SimpleNamespace(
+            user_id="@alice:matrix.org", channel_user_id="@alice:matrix.org"
+        ),
+    )
+    response = SimpleNamespace(
+        requires_human=True,
+        answer="draft",
+        sources=[],
+        metadata=SimpleNamespace(
+            routing_action="needs_human",
+            routing_reason="manual_review",
+            confidence_score=0.2,
+        ),
+    )
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=78)
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target.return_value = "!support:matrix.org"
+    channel.send_message = AsyncMock(side_effect=RuntimeError("transport down"))
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="matrix",
+        escalation_service=escalation_service,
+    )
+
+    outcome = await dispatcher.dispatch(incoming, response)
+
+    assert outcome is DispatchOutcome.QUEUED
+    escalation_service.create_escalation.assert_awaited_once()
+    channel.send_message.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_dispatch_sends_public_escalation_notice_when_enabled():
     incoming = SimpleNamespace(
         message_id="m-3",

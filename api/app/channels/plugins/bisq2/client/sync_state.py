@@ -58,8 +58,10 @@ class BisqSyncStateManager:
                 return
 
             try:
-                with open(self.state_file, "r") as f:
+                with self.state_file.open("r", encoding="utf-8") as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("Sync state root must be a JSON object")
 
                 # Restore timestamp
                 last_sync = data.get("last_sync_timestamp")
@@ -85,7 +87,10 @@ class BisqSyncStateManager:
                     f"processed_ids={len(self.processed_message_ids)}"
                 )
 
-            except (IOError, json.JSONDecodeError):
+            except (OSError, UnicodeError, ValueError, TypeError):
+                self.last_sync_timestamp = None
+                self.processed_message_ids = set()
+                self._processed_message_order = deque()
                 logger.exception(f"Failed to load sync state from {self.state_file}")
 
     def save_state(self) -> None:

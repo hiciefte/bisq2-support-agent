@@ -98,6 +98,133 @@ async def test_enqueue_with_zero_delay_dispatches_immediately() -> None:
 
 
 @pytest.mark.asyncio
+async def test_zero_delay_dispatch_retries_failed_transport_once() -> None:
+    incoming = _incoming()
+    response = _outgoing(incoming)
+    on_release = AsyncMock(return_value=response)
+    on_dispatch = AsyncMock(side_effect=[DispatchOutcome.FAILED, DispatchOutcome.SENT])
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(delay=0),
+        dispatch_retry_delay_seconds=0,
+    )
+
+    sent = await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=on_release,
+        on_dispatch=on_dispatch,
+    )
+
+    assert sent is True
+    assert on_dispatch.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_delay_failed_retry_escalates_and_notifies() -> None:
+    incoming = _incoming()
+    response = _outgoing(incoming)
+    on_release = AsyncMock(return_value=response)
+    on_dispatch = AsyncMock(return_value=DispatchOutcome.FAILED)
+    escalation_service = MagicMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=102)
+    )
+    channel = MagicMock()
+    channel.get_delivery_target.return_value = "!room:server"
+    channel.send_message = AsyncMock(return_value=True)
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(delay=0),
+        escalation_service=escalation_service,
+        dispatch_retry_delay_seconds=0,
+    )
+
+    sent = await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=on_release,
+        on_dispatch=on_dispatch,
+        channel=channel,
+    )
+
+    assert sent is False
+    assert on_dispatch.await_count == 2
+    escalation_service.create_escalation.assert_awaited_once()
+    channel.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_zero_delay_queued_dispatch_is_terminal() -> None:
+    incoming = _incoming()
+    response = _outgoing(incoming)
+    on_dispatch = AsyncMock(return_value=DispatchOutcome.QUEUED)
+    escalation_service = MagicMock()
+    escalation_service.create_escalation = AsyncMock()
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(delay=0),
+        escalation_service=escalation_service,
+        dispatch_retry_delay_seconds=0,
+    )
+
+    sent = await coordinator.enqueue(
+        incoming=incoming,
+        thread_id=("!room:server", "@user:server"),
+        room_or_conversation_id="!room:server",
+        on_release=AsyncMock(return_value=response),
+        on_dispatch=on_dispatch,
+    )
+
+    assert sent is False
+    on_dispatch.assert_awaited_once_with(incoming, response)
+    escalation_service.create_escalation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overflow_failed_retry_escalates_and_notifies() -> None:
+    coordinator = ArbitrationCoordinator(
+        policy_service=_policy_service(delay=60),
+        escalation_service=MagicMock(),
+        max_concurrent_threads=1,
+        dispatch_retry_delay_seconds=0,
+    )
+    coordinator.escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=103)
+    )
+    occupied = _incoming(message_id="$occupied")
+    await coordinator.enqueue(
+        incoming=occupied,
+        thread_id=("!room:server", "@occupied:server"),
+        room_or_conversation_id="!room:server",
+        on_release=AsyncMock(return_value=_outgoing(occupied)),
+        on_dispatch=AsyncMock(return_value=DispatchOutcome.SENT),
+    )
+
+    incoming = _incoming(message_id="$overflow", room_id="!other:server")
+    response = _outgoing(incoming)
+    on_dispatch = AsyncMock(return_value=DispatchOutcome.FAILED)
+    channel = MagicMock()
+    channel.get_delivery_target.return_value = "!other:server"
+    channel.send_message = AsyncMock(return_value=True)
+    try:
+        sent = await coordinator.enqueue(
+            incoming=incoming,
+            thread_id=("!other:server", "@other:server"),
+            room_or_conversation_id="!other:server",
+            on_release=AsyncMock(return_value=response),
+            on_dispatch=on_dispatch,
+            channel=channel,
+        )
+    finally:
+        await coordinator.shutdown(timeout_seconds=1)
+
+    assert sent is False
+    assert on_dispatch.await_count == 2
+    coordinator.escalation_service.create_escalation.assert_awaited_once()
+    channel.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_wait_timer_releases_and_dispatches_in_autonomous_mode() -> None:
     incoming = _incoming()
     response = _outgoing(incoming)

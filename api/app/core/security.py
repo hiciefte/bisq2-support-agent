@@ -229,7 +229,11 @@ def verify_admin_access(
     """
     # First, check for authentication cookie
     auth_cookie = request.cookies.get("admin_authenticated")
-    if auth_cookie and verify_admin_session_token(auth_cookie):
+    if (
+        settings.ADMIN_API_KEY
+        and auth_cookie
+        and verify_admin_session_token(auth_cookie)
+    ):
         logger.debug(
             f"Admin access granted via cookie from {request.client.host if request.client else 'unknown'}"
         )
@@ -247,7 +251,7 @@ def verify_admin_access(
         # Full admin credentials take precedence when a legacy first-upgrade
         # compatibility window temporarily uses the same value for Grafana.
         # Both helpers retain constant-time comparison semantics.
-        if verify_admin_key(provided_key, settings):
+        if settings.ADMIN_API_KEY and verify_admin_key(provided_key, settings):
             if len(provided_key) < MIN_API_KEY_LENGTH:
                 logger.warning(
                     f"Successful login with insecure admin key length: {len(provided_key)} chars"

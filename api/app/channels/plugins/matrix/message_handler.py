@@ -369,23 +369,22 @@ class MatrixMessageHandler:
                 if timestamp_ms
                 else datetime.now(timezone.utc)
             )
-            service.ingest_event(
-                TrustEvent(
-                    channel_id=self.channel_id,
-                    space_id=room_id,
-                    actor_id=sender_id,
-                    actor_display_name=self._resolve_sender_display_name(
-                        room=room,
-                        sender_id=sender_id,
-                    ),
-                    event_type=event_type,
-                    occurred_at=occurred_at,
-                    external_event_id=str(getattr(event, "event_id", "") or ""),
-                    target_message_id=reply_to_event_id
-                    or str(getattr(event, "event_id", "") or ""),
-                    metadata={"body_length": len(self._extract_event_text(event))},
-                )
+            trust_event = TrustEvent(
+                channel_id=self.channel_id,
+                space_id=room_id,
+                actor_id=sender_id,
+                actor_display_name=self._resolve_sender_display_name(
+                    room=room,
+                    sender_id=sender_id,
+                ),
+                event_type=event_type,
+                occurred_at=occurred_at,
+                external_event_id=str(getattr(event, "event_id", "") or ""),
+                target_message_id=reply_to_event_id
+                or str(getattr(event, "event_id", "") or ""),
+                metadata={"body_length": len(self._extract_event_text(event))},
             )
+            await asyncio.to_thread(service.ingest_event, trust_event)
         except Exception:
             logger.debug(
                 "Failed recording Matrix trust-monitor event room_id=%s sender_id=%s",

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_SH = REPO_ROOT / "scripts" / "lib" / "common.sh"
 DOCKER_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "docker-utils.sh"
+CHECK_HEALTH_SH = REPO_ROOT / "scripts" / "check-health.sh"
 GIT_UTILS_SH = REPO_ROOT / "scripts" / "lib" / "git-utils.sh"
 ROLLBACK_SH = REPO_ROOT / "scripts" / "rollback.sh"
 UPDATE_SH = REPO_ROOT / "scripts" / "update.sh"
@@ -536,3 +538,23 @@ def test_live_data_chat_smoke_accepts_market_price_tool(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "MCP live-data smoke test successful" in result.stdout
     assert "get_market_prices" in result.stdout
+
+
+def test_standalone_health_check_tracks_all_runtime_services() -> None:
+    content = CHECK_HEALTH_SH.read_text(encoding="utf-8")
+
+    def array_values(name: str) -> set[str]:
+        match = re.search(rf"local {name}=\((.*?)\)", content, flags=re.DOTALL)
+        assert match is not None, f"Missing {name} array"
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    critical_services = array_values("critical_services")
+    all_services = array_values("all_services")
+
+    assert {"qdrant", "matrix-alert-relay", "alertmanager"} <= critical_services
+    assert {
+        "qdrant",
+        "matrix-alert-relay",
+        "alertmanager",
+        "cadvisor",
+    } <= all_services

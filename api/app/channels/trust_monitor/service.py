@@ -197,15 +197,15 @@ class TrustMonitorService:
         )
         if notify:
             try:
-                scheduled = self.publisher.publish(finding)
+                delivered = self.publisher.publish(finding)
             except Exception:
-                scheduled = False
+                delivered = False
                 logger.exception(
                     "Trust alert publisher failed detector=%s actor=%s",
                     finding.detector_key,
                     finding.suspect_actor_id,
                 )
-            if scheduled:
+            if delivered:
                 finding = self.store.mark_finding_notified(
                     finding.id,
                     notified_at=candidate.occurred_at,

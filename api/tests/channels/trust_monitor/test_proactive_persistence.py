@@ -7,6 +7,7 @@ operator policy may want ADMIN_UI only.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -61,7 +62,7 @@ def test_persister_overrides_detector_surface_with_policy_admin_ui() -> None:
     service, captured, publisher = _make_service(TrustAlertSurface.ADMIN_UI)
     result = _make_result(TrustAlertSurface.BOTH)
 
-    persist_proactive_finding(
+    completed = persist_proactive_finding(
         trust_monitor_service=service,
         sync_rooms=["!room:matrix.org"],
         result=result,
@@ -69,6 +70,7 @@ def test_persister_overrides_detector_surface_with_policy_admin_ui() -> None:
 
     assert captured["alert_surface"] == TrustAlertSurface.ADMIN_UI
     assert len(publisher.published) == 1
+    assert completed is True
 
 
 def test_persister_uses_policy_both_when_configured() -> None:
@@ -97,7 +99,7 @@ def test_persister_falls_back_space_id_when_no_sync_rooms() -> None:
     assert captured["space_id"] == "proactive_scan"
 
 
-def test_persister_records_notification_only_after_successful_schedule() -> None:
+def test_persister_records_notification_only_after_successful_delivery() -> None:
     captured: dict = {}
     marked: list[str] = []
 
@@ -119,7 +121,7 @@ def test_persister_records_notification_only_after_successful_schedule() -> None
         ),
     )
 
-    persist_proactive_finding(
+    completed = persist_proactive_finding(
         trust_monitor_service=service,
         sync_rooms=["!room:matrix.org"],
         result=_make_result(TrustAlertSurface.BOTH),
@@ -127,6 +129,7 @@ def test_persister_records_notification_only_after_successful_schedule() -> None
 
     assert captured["notify"] is False
     assert marked == []
+    assert completed is False
 
 
 def test_persister_swallows_exceptions() -> None:
@@ -144,8 +147,52 @@ def test_persister_swallows_exceptions() -> None:
     result = _make_result(TrustAlertSurface.BOTH)
 
     # Must not raise — the proactive scanner loop relies on this.
-    persist_proactive_finding(
+    completed = persist_proactive_finding(
         trust_monitor_service=service,
         sync_rooms=["!room:matrix.org"],
         result=result,
     )
+    assert completed is False
+
+
+def test_publisher_failure_is_not_logged_as_persistence_failure(caplog) -> None:
+    service, captured, _ = _make_service(TrustAlertSurface.STAFF_ROOM)
+
+    def raise_publish(_finding):
+        raise RuntimeError("matrix unavailable")
+
+    service.publisher.publish = raise_publish
+
+    with caplog.at_level(logging.WARNING):
+        completed = persist_proactive_finding(
+            trust_monitor_service=service,
+            sync_rooms=["!room:matrix.org"],
+            result=_make_result(TrustAlertSurface.STAFF_ROOM),
+        )
+
+    assert captured["detector_key"] == "user_directory_impersonation"
+    assert "Failed to publish proactive finding" in caplog.text
+    assert "Failed to persist proactive finding" not in caplog.text
+    assert completed is False
+
+
+def test_notification_state_failure_has_distinct_log(caplog) -> None:
+    service, captured, _ = _make_service(TrustAlertSurface.STAFF_ROOM)
+
+    def raise_mark(_finding_id, *, notified_at):
+        del notified_at
+        raise RuntimeError("database unavailable")
+
+    service.store.mark_finding_notified = raise_mark
+
+    with caplog.at_level(logging.WARNING):
+        completed = persist_proactive_finding(
+            trust_monitor_service=service,
+            sync_rooms=["!room:matrix.org"],
+            result=_make_result(TrustAlertSurface.STAFF_ROOM),
+        )
+
+    assert captured["detector_key"] == "user_directory_impersonation"
+    assert "Failed to mark proactive finding" in caplog.text
+    assert "Failed to persist proactive finding" not in caplog.text
+    assert completed is True

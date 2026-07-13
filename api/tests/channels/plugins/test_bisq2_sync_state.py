@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from app.channels.plugins.bisq2.client.sync_state import BisqSyncStateManager
 
 
@@ -57,3 +58,48 @@ def test_concurrent_saves_are_serialized_and_atomic(tmp_path) -> None:
         f"message-{index}" for index in range(200)
     }
     assert list(tmp_path.glob("*.tmp*")) == []
+
+
+def test_non_ascii_message_ids_round_trip_as_utf8(tmp_path) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    manager = BisqSyncStateManager(str(state_path))
+    manager.mark_processed("nachricht-λ-漢字")
+
+    manager.save_state()
+
+    restarted = BisqSyncStateManager(str(state_path))
+    assert restarted.is_processed("nachricht-λ-漢字") is True
+
+
+def test_invalid_utf8_state_falls_back_to_fresh_state(tmp_path) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    state_path.write_bytes(b'{"processed_message_ids":["\xff"]}')
+
+    manager = BisqSyncStateManager(str(state_path))
+
+    assert manager.last_sync_timestamp is None
+    assert manager.processed_message_ids == set()
+
+
+def test_invalid_timestamp_state_falls_back_to_fresh_state(tmp_path) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    state_path.write_text(
+        '{"last_sync_timestamp":"not-a-timestamp","processed_message_ids":["m-1"]}',
+        encoding="utf-8",
+    )
+
+    manager = BisqSyncStateManager(str(state_path))
+
+    assert manager.last_sync_timestamp is None
+    assert manager.processed_message_ids == set()
+
+
+@pytest.mark.parametrize("content", ["[]", "null", '"scalar"', "42"])
+def test_non_object_json_state_falls_back_to_fresh_state(tmp_path, content) -> None:
+    state_path = tmp_path / "bisq-sync-state.json"
+    state_path.write_text(content, encoding="utf-8")
+
+    manager = BisqSyncStateManager(str(state_path))
+
+    assert manager.last_sync_timestamp is None
+    assert manager.processed_message_ids == set()

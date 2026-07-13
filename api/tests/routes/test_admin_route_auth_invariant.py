@@ -29,6 +29,10 @@ def _operation_id(operation: tuple[APIRoute, str]) -> str:
 _PROTECTED_ADMIN_OPERATIONS = _protected_admin_operations()
 
 
+def test_protected_admin_operations_are_discovered() -> None:
+    assert _PROTECTED_ADMIN_OPERATIONS, "No protected /admin operations discovered"
+
+
 def _concrete_path(route: APIRoute) -> str:
     """Fill path placeholders with values accepted by common convertors."""
 
