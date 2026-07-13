@@ -106,7 +106,10 @@ Files Included:
 $(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 ! -name "MANIFEST.txt" -exec basename {} \; | sort)
 
 SHA256 Checksums:
-$(cd "$BACKUP_DIR" && sha256sum -- ./* 2>/dev/null | grep -v "MANIFEST.txt" || true)
+$(
+    cd "$BACKUP_DIR" || exit 1
+    sha256sum -- ./* 2>/dev/null | grep -v "MANIFEST.txt" || true
+)
 
 CRITICAL SECURITY NOTES:
 ========================

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Helpers are invoked indirectly through run_test.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 # scripts/test-tor-security.sh
 # Comprehensive security testing for Tor hidden service deployment
 # Tests for DNS leaks, clearnet leaks, cookie security, CSP, and more

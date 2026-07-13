@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from app.core.config import Settings
 from app.services.faq.slug_manager import SlugManager
 from app.services.knowledge_updates.topic_clusters import (
