@@ -337,7 +337,7 @@ Language code:"""
         if self.local_backend != "langdetect":
             return
         try:
-            from langdetect import (  # type: ignore[import-not-found]
+            from langdetect import (
                 DetectorFactory,
                 detect_langs,
             )

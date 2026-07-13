@@ -306,7 +306,7 @@ fi
 OPENAI_API_KEY_CURRENT=$(grep "^OPENAI_API_KEY=" .env | cut -d '=' -f2-)
 if [ -z "$OPENAI_API_KEY_CURRENT" ]; then
     echo -e "${YELLOW}OpenAI API key is missing or empty in .env file.${NC}"
-    read -p "Enter your OpenAI API key: " OPENAI_API_KEY_INPUT
+    read -r -p "Enter your OpenAI API key: " OPENAI_API_KEY_INPUT
     update_env_var "OPENAI_API_KEY" "$OPENAI_API_KEY_INPUT"
 else
     echo -e "${GREEN}OpenAI API key found in .env file.${NC}"
@@ -439,16 +439,13 @@ echo "3. Logs are available in $INSTALL_DIR/api/data/logs and via 'docker compos
 echo "4. Run './scripts/update.sh' to update the application"
 echo "5. Security updates are configured to run automatically"
 echo "6. Bisq 2 API logs are available with: docker logs bisq2-api"
-echo "======================================================"${NC}
+echo -e "======================================================${NC}"
 
 # Define installation directory using sourced variable or default
 # Defaulting to /opt/bisq-support which aligns with deploy.sh
 INSTALL_DIR=${BISQ_SUPPORT_INSTALL_DIR:-/opt/bisq-support}
 DOCKER_DIR="$INSTALL_DIR/docker"
 COMPOSE_FILE="docker-compose.yml"
-HEALTH_CHECK_RETRIES=30
-HEALTH_CHECK_INTERVAL=2
-
 # Define application user and group
 APP_USER="bisq-support"
 APP_GROUP="bisq-support"

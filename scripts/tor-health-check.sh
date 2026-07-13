@@ -41,7 +41,8 @@ check_tor_service() {
         ((CHECKS_PASSED++))
 
         # Check uptime
-        local UPTIME=$(systemctl show tor --property=ActiveEnterTimestamp --value)
+        local UPTIME
+        UPTIME=$(systemctl show tor --property=ActiveEnterTimestamp --value)
         log_info "Service started: $UPTIME"
     else
         log_error "CRITICAL: Tor service is not running"
@@ -67,7 +68,8 @@ check_onion_address() {
     local HIDDEN_SERVICE_DIR="/var/lib/tor/bisq-support"
 
     if [ -f "${HIDDEN_SERVICE_DIR}/hostname" ]; then
-        local ONION_ADDR=$(cat "${HIDDEN_SERVICE_DIR}/hostname")
+        local ONION_ADDR
+        ONION_ADDR=$(cat "${HIDDEN_SERVICE_DIR}/hostname")
         log_success ".onion address exists: ${GREEN}${ONION_ADDR}${NC}"
         ((CHECKS_PASSED++))
 
@@ -133,7 +135,8 @@ check_permissions() {
     local HIDDEN_SERVICE_DIR="/var/lib/tor/bisq-support"
 
     # Check hidden service directory permissions (should be 700)
-    local HS_PERMS=$(stat -c "%a" "$HIDDEN_SERVICE_DIR" 2>/dev/null || stat -f "%OLp" "$HIDDEN_SERVICE_DIR" 2>/dev/null || echo "000")
+    local HS_PERMS
+    HS_PERMS=$(stat -c "%a" "$HIDDEN_SERVICE_DIR" 2>/dev/null || stat -f "%OLp" "$HIDDEN_SERVICE_DIR" 2>/dev/null || echo "000")
     if [ "$HS_PERMS" = "700" ]; then
         log_success "Hidden service directory permissions correct (700)"
         ((CHECKS_PASSED++))
@@ -144,7 +147,8 @@ check_permissions() {
     fi
 
     # Check ownership (should be debian-tor)
-    local HS_OWNER=$(stat -c "%U" "$HIDDEN_SERVICE_DIR" 2>/dev/null || stat -f "%Su" "$HIDDEN_SERVICE_DIR" 2>/dev/null || echo "unknown")
+    local HS_OWNER
+    HS_OWNER=$(stat -c "%U" "$HIDDEN_SERVICE_DIR" 2>/dev/null || stat -f "%Su" "$HIDDEN_SERVICE_DIR" 2>/dev/null || echo "unknown")
     if [ "$HS_OWNER" = "debian-tor" ] || [ "$HS_OWNER" = "_tor" ]; then
         log_success "Hidden service directory owner correct ($HS_OWNER)"
         ((CHECKS_PASSED++))
@@ -161,7 +165,8 @@ check_tor_circuits() {
 
     # Use tor-prompt to check circuit status if available
     if command -v tor-prompt >/dev/null 2>&1; then
-        local CIRCUITS=$(echo "GETINFO circuit-status" | tor-prompt 2>/dev/null | grep "BUILT" | wc -l || echo "0")
+        local CIRCUITS
+        CIRCUITS=$(echo "GETINFO circuit-status" | tor-prompt 2>/dev/null | grep -c "BUILT" || true)
         if [ "$CIRCUITS" -gt 0 ]; then
             log_success "Active Tor circuits: $CIRCUITS"
             ((CHECKS_PASSED++))
@@ -181,7 +186,8 @@ check_tor_logs() {
     log_info "[7/12] Checking Tor logs..."
 
     # Check for critical errors in last 24 hours
-    local ERRORS=$(journalctl -u tor --since "24 hours ago" 2>/dev/null | grep -i "err" | wc -l || echo "0")
+    local ERRORS
+    ERRORS=$(journalctl -u tor --since "24 hours ago" 2>/dev/null | grep -ic "err" || true)
     if [ "$ERRORS" -eq 0 ]; then
         log_success "No errors in Tor logs (last 24 hours)"
         ((CHECKS_PASSED++))
@@ -198,7 +204,8 @@ check_tor_logs() {
     fi
 
     # Check for warnings
-    local WARNINGS=$(journalctl -u tor --since "1 hour ago" 2>/dev/null | grep -i "warn" | wc -l || echo "0")
+    local WARNINGS
+    WARNINGS=$(journalctl -u tor --since "1 hour ago" 2>/dev/null | grep -ic "warn" || true)
     if [ "$WARNINGS" -eq 0 ]; then
         log_success "No warnings in Tor logs (last hour)"
         ((CHECKS_PASSED++))
@@ -221,12 +228,14 @@ check_environment() {
 
         # Check TOR_HIDDEN_SERVICE variable
         if grep -q "^TOR_HIDDEN_SERVICE=" "$ENV_FILE"; then
-            local CONFIGURED_ONION=$(grep "^TOR_HIDDEN_SERVICE=" "$ENV_FILE" | cut -d= -f2)
+            local CONFIGURED_ONION
+            CONFIGURED_ONION=$(grep "^TOR_HIDDEN_SERVICE=" "$ENV_FILE" | cut -d= -f2)
             log_success "TOR_HIDDEN_SERVICE configured: $CONFIGURED_ONION"
             ((CHECKS_PASSED++))
 
             # Verify it matches actual .onion address
-            local ACTUAL_ONION=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "")
+            local ACTUAL_ONION
+            ACTUAL_ONION=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "")
             if [ "$CONFIGURED_ONION" = "$ACTUAL_ONION" ]; then
                 log_success "Configured .onion matches actual address"
                 ((CHECKS_PASSED++))
@@ -243,7 +252,8 @@ check_environment() {
 
         # Check TOR_SOCKS_PROXY variable
         if grep -q "^TOR_SOCKS_PROXY=" "$ENV_FILE"; then
-            local SOCKS_PROXY=$(grep "^TOR_SOCKS_PROXY=" "$ENV_FILE" | cut -d= -f2)
+            local SOCKS_PROXY
+            SOCKS_PROXY=$(grep "^TOR_SOCKS_PROXY=" "$ENV_FILE" | cut -d= -f2)
             log_success "TOR_SOCKS_PROXY configured: $SOCKS_PROXY"
             ((CHECKS_PASSED++))
         else
@@ -265,13 +275,15 @@ check_key_backups() {
     local BACKUP_DIR="$INSTALL_DIR/backups/tor-keys"
 
     if [ -d "$BACKUP_DIR" ]; then
-        local BACKUP_COUNT=$(find "$BACKUP_DIR" -type d -name "initial-keys-*" | wc -l)
+        local BACKUP_COUNT
+        BACKUP_COUNT=$(find "$BACKUP_DIR" -type d -name "initial-keys-*" | wc -l)
         if [ "$BACKUP_COUNT" -gt 0 ]; then
             log_success "Found $BACKUP_COUNT key backup(s)"
             ((CHECKS_PASSED++))
 
             # Check latest backup
-            local LATEST_BACKUP=$(find "$BACKUP_DIR" -type d -name "initial-keys-*" | sort -r | head -1)
+            local LATEST_BACKUP
+            LATEST_BACKUP=$(find "$BACKUP_DIR" -type d -name "initial-keys-*" | sort -r | head -1)
             log_info "Latest backup: $(basename "$LATEST_BACKUP")"
         else
             log_warning "No key backups found in $BACKUP_DIR"
@@ -289,7 +301,8 @@ check_key_backups() {
 check_hidden_service_reachability() {
     log_info "[10/12] Checking hidden service reachability..."
 
-    local ONION_ADDR=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "")
+    local ONION_ADDR
+    ONION_ADDR=$(cat /var/lib/tor/bisq-support/hostname 2>/dev/null || echo "")
 
     if [ -n "$ONION_ADDR" ]; then
         # Try to connect via torsocks
@@ -360,9 +373,11 @@ check_system_resources() {
     log_info "[12/12] Checking system resources..."
 
     # Check memory usage of Tor process
-    local TOR_PID=$(pgrep -x tor || echo "")
+    local TOR_PID
+    TOR_PID=$(pgrep -x tor || echo "")
     if [ -n "$TOR_PID" ]; then
-        local TOR_MEM=$(ps -o rss= -p "$TOR_PID" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
+        local TOR_MEM
+        TOR_MEM=$(ps -o rss= -p "$TOR_PID" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
         log_info "Tor memory usage: ${TOR_MEM}MB"
 
         if [ "$TOR_MEM" -lt 500 ]; then
@@ -378,7 +393,8 @@ check_system_resources() {
     fi
 
     # Check disk space for Tor data
-    local TOR_DATA_USAGE=$(du -sm /var/lib/tor 2>/dev/null | cut -f1 || echo "0")
+    local TOR_DATA_USAGE
+    TOR_DATA_USAGE=$(du -sm /var/lib/tor 2>/dev/null | cut -f1 || echo "0")
     log_info "Tor data directory size: ${TOR_DATA_USAGE}MB"
 
     if [ "$TOR_DATA_USAGE" -lt 1000 ]; then
@@ -400,6 +416,7 @@ generate_report() {
 
     local TOTAL_CHECKS=$((CHECKS_PASSED + CHECKS_FAILED + CHECKS_WARNING))
 
+    log_info "Total:    $TOTAL_CHECKS"
     log_success "Passed:   $CHECKS_PASSED"
     log_warning "Warnings: $CHECKS_WARNING"
     log_error "Failed:   $CHECKS_FAILED"

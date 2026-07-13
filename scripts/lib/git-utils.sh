@@ -238,7 +238,8 @@ preserve_production_data() {
     fi
 
     # Add PID to backup directory name for uniqueness
-    local backup_dir="$repo_dir/api/data/.backup_$(date +%Y%m%d_%H%M%S)_$$"
+    local backup_dir
+    backup_dir="$repo_dir/api/data/.backup_$(date +%Y%m%d_%H%M%S)_$$"
 
     # Files that should never be overwritten by git (dynamic production data)
     # NOTE: faqs.db is the authoritative FAQ source (SQLite)
@@ -266,7 +267,8 @@ preserve_production_data() {
         fi
 
         # SECURITY: Check file size to prevent disk exhaustion
-        local file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
+        local file_size
+        file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
         if [ "$file_size" -gt "$max_file_size" ]; then
             log_warning "Skipping oversized file (>50MB): $file"
             continue

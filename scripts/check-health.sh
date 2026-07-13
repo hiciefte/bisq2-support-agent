@@ -107,7 +107,7 @@ wait_for_healthy() {
 
     echo -e "${BLUE}⏳ Waiting for $service to become healthy...${NC}"
 
-    while [ $waited -lt $max_wait ]; do
+    while [ "$waited" -lt "$max_wait" ]; do
         if check_service "$service" >/dev/null 2>&1; then
             echo -e "${GREEN}✅ $service is now healthy${NC}"
             return 0

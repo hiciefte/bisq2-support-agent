@@ -392,12 +392,15 @@ class QdrantIndexManager:
                 points=upsert_points,
                 wait=True,
             )
-        self._delete_stale_faq_points(faq_id, keep_ids=[p.id for p in points])
+        keep_ids: List[rest.ExtendedPointId] = [p.id for p in points]
+        self._delete_stale_faq_points(faq_id, keep_ids=keep_ids)
 
         logger.info(f"Incrementally upserted {len(points)} point(s) for FAQ {faq_id}")
         return len(points)
 
-    def _delete_stale_faq_points(self, faq_id: str, keep_ids: List[int]) -> None:
+    def _delete_stale_faq_points(
+        self, faq_id: str, keep_ids: List[rest.ExtendedPointId]
+    ) -> None:
         """Remove a FAQ's leftover points while keeping the ones just written.
 
         Runs after the new points are upserted; excluding ``keep_ids`` via

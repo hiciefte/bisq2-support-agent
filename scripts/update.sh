@@ -14,15 +14,20 @@ source "$SCRIPT_DIR/lib/docker-utils.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/git-utils.sh"
 
-# Initialize colors and environment
+# Initialize colors and load deploy paths before deriving INSTALL_DIR.
 setup_colors
+
+if ! source_deploy_paths; then
+    if [[ "${BASH_SOURCE[0]}" == "$0" && -z "${BISQ_SUPPORT_INSTALL_DIR:-}" ]]; then
+        log_error "Deploy paths are unavailable; refusing to use implicit production paths"
+        exit 1
+    fi
+fi
+
 init_common_env
 
 # Display banner
 display_banner "Bisq Support Assistant - Maintenance Script"
-
-# Source deploy-path vars only; docker/.env provides app config
-source_deploy_paths
 
 echo "Installation Directory: $INSTALL_DIR"
 
@@ -575,7 +580,7 @@ run_faq_sqlite_migration() {
     # SQLite is the authoritative source after initial migration
     # Running migration again would overwrite verified status and lose production changes
     local faq_count
-    faq_count=$(docker exec docker-api-1 python -c "
+    if ! faq_count=$(docker exec docker-api-1 python -c "
 import sqlite3
 from pathlib import Path
 db_path = Path('/data/faqs.db')
@@ -586,7 +591,15 @@ if db_path.exists():
     print(count)
 else:
     print(0)
-" 2>/dev/null || echo "0")
+" 2>/dev/null); then
+        log_error "Could not verify the authoritative FAQ store; refusing to run migration"
+        return 1
+    fi
+
+    if [[ ! "$faq_count" =~ ^[0-9]+$ ]]; then
+        log_error "FAQ count probe returned an invalid value; refusing to run migration"
+        return 1
+    fi
 
     if [ "$faq_count" -gt 0 ]; then
         log_success "SQLite already has $faq_count FAQs - skipping migration (SQLite is authoritative)"
@@ -674,7 +687,6 @@ main() {
     run_faq_sqlite_migration || {
         log_error "FAQ SQLite migration failed - rolling back update"
         rollback_update "SQLite migration failed"
-        return 1
     }
 
     # Apply updates (rebuild or restart services)
@@ -694,7 +706,8 @@ main() {
     show_service_status "$DOCKER_DIR" "$COMPOSE_FILE"
 }
 
-# Run main function
-main
-
-exit 0
+# Run main function only when executed, not when sourced by tests.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main
+    exit 0
+fi

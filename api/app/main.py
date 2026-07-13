@@ -64,7 +64,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_fastapi_instrumentator import metrics as instrumentator_metrics
 
 try:
-    import aisuite  # type: ignore[import-untyped]
+    import aisuite
 except ModuleNotFoundError:  # pragma: no cover - exercised in minimal test envs
 
     class _AisuiteFallback:

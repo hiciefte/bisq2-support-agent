@@ -36,12 +36,13 @@ log_debug() {
 # Environment detection
 get_project_root() {
     # Get the directory of the calling script
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" &>/dev/null && pwd)"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" &>/dev/null && pwd)"
     echo "$script_dir/.."
 }
 
 get_script_dir() {
-    echo "$(cd "$(dirname "${BASH_SOURCE[1]}")" &>/dev/null && pwd)"
+    cd "$(dirname "${BASH_SOURCE[1]}")" &>/dev/null && pwd
 }
 
 # Validate required commands
@@ -119,7 +120,7 @@ source_env_file() {
 
 # Allowed deploy-path variable prefixes/names.
 # Everything else in deploy.env is considered app config (a shadowing risk).
-_DEPLOY_PATH_VARS="BISQ_SUPPORT_INSTALL_DIR|BISQ_SUPPORT_REPO_URL|BISQ2_INSTALL_DIR|BISQ2_REPO_URL"
+_DEPLOY_PATH_VARS="BISQ_SUPPORT_INSTALL_DIR|BISQ_SUPPORT_REPO_URL|BISQ_SUPPORT_SECRETS_DIR|BISQ2_INSTALL_DIR|BISQ2_REPO_URL"
 
 # Source ONLY deploy-path variables from deploy.env.
 # App config vars are ignored so they cannot shadow docker/.env values.
@@ -232,7 +233,7 @@ detect_env_shadowing() {
 
         if grep -qE "^${var_name}=" "$docker_file"; then
             local deploy_val docker_val
-            deploy_val=$(grep -E "^(export )?${var_name}=" "$deploy_file" | head -1 | sed "s/^[^=]*=//")
+            deploy_val="${line#*=}"
             docker_val=$(grep -E "^${var_name}=" "$docker_file" | head -1 | sed "s/^[^=]*=//")
 
             if [ "$deploy_val" != "$docker_val" ]; then
@@ -361,6 +362,8 @@ init_common_env() {
 # Trap for cleanup on exit
 setup_cleanup_trap() {
     local cleanup_function="$1"
+    # Expanding the validated function name now is intentional.
+    # shellcheck disable=SC2064
     trap "$cleanup_function" EXIT INT TERM
 }
 

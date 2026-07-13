@@ -102,7 +102,7 @@ TRUST_MONITOR_MATRIX_STAFF_ROOM=!staff:matrix.org
 EOF
 
 output=$(validate_app_env "$TMPDIR/good.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -eq 0 ]; then
+if [ "$rc" -eq 0 ]; then
     pass "valid config passes validation"
 else
     fail "valid config should pass" "exit code $rc, output: $output"
@@ -120,7 +120,7 @@ TRUST_MONITOR_MATRIX_STAFF_ROOM=!staff:matrix.org
 EOF
 
 output=$(validate_app_env "$TMPDIR/missing_staff.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     pass "missing MATRIX_STAFF_ROOM detected"
 else
     fail "should fail when MATRIX_STAFF_ROOM missing" "exit code $rc"
@@ -138,7 +138,7 @@ TRUST_MONITOR_MATRIX_STAFF_ROOM=!staff:matrix.org
 EOF
 
 output=$(validate_app_env "$TMPDIR/missing_sync.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     pass "missing MATRIX_SYNC_ROOMS detected"
 else
     fail "should fail when MATRIX_SYNC_ROOMS missing" "exit code $rc"
@@ -156,7 +156,7 @@ EOF
 
 output=$(validate_app_env "$TMPDIR/missing_trust.env" 2>&1) && rc=$? || rc=$?
 # Should still pass (warnings not errors) but output should contain warning
-if [ $rc -eq 0 ] && echo "$output" | grep -qi "warn"; then
+if [ "$rc" -eq 0 ] && echo "$output" | grep -qi "warn"; then
     pass "missing trust monitor vars produce warning"
 else
     fail "should warn about missing trust monitor vars" "rc=$rc, output: $output"
@@ -181,7 +181,7 @@ OPENAI_API_KEY=sk-correct
 EOF
 
 output=$(detect_env_shadowing "$TMPDIR/shadow_deploy.env" "$TMPDIR/shadow_docker.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     pass "shadowing detected returns non-zero"
 else
     fail "should detect shadowing" "exit code $rc"
@@ -206,7 +206,7 @@ export BISQ2_REPO_URL="git@github.com:hiciefte/bisq2.git"
 EOF
 
 output=$(detect_env_shadowing "$TMPDIR/clean_deploy.env" "$TMPDIR/shadow_docker.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -eq 0 ]; then
+if [ "$rc" -eq 0 ]; then
     pass "clean deploy.env has no shadowing"
 else
     fail "should pass with clean deploy.env" "exit code $rc, output: $output"
@@ -218,7 +218,7 @@ fi
 run_test "source_deploy_paths handles missing file"
 
 output=$(source_deploy_paths "$TMPDIR/nonexistent.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     pass "missing file returns non-zero"
 else
     fail "should fail for missing file" "exit code $rc"
@@ -237,7 +237,7 @@ MATRIX_CHATOPS_ROOM_IDS=!ops:matrix.org
 EOF
 
 output=$(validate_runtime_configuration "$TMPDIR/runtime_ok.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -eq 0 ]; then
+if [ "$rc" -eq 0 ]; then
     pass "valid runtime config passes"
 else
     fail "valid runtime config should pass" "exit code $rc, output: $output"
@@ -253,7 +253,7 @@ MATRIX_CHATOPS_ENABLED=true
 EOF
 
 output=$(validate_runtime_configuration "$TMPDIR/runtime_bad.env" 2>&1) && rc=$? || rc=$?
-if [ $rc -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     pass "missing MATRIX_CHATOPS_ROOM_IDS detected from file"
 else
     fail "should fail when chatops enabled without room IDs" "exit code $rc"
@@ -268,7 +268,7 @@ run_test "validate_runtime_configuration backward compat (no file arg)"
 unset TRUST_MONITOR_ENABLED MATRIX_CHATOPS_ENABLED BISQ2_CHATOPS_ENABLED 2>/dev/null || true
 
 output=$(validate_runtime_configuration 2>&1) && rc=$? || rc=$?
-if [ $rc -eq 0 ]; then
+if [ "$rc" -eq 0 ]; then
     pass "no-arg call with clean env passes"
 else
     fail "should pass with defaults when no file given" "exit code $rc, output: $output"
