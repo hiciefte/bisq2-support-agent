@@ -38,6 +38,28 @@ class TestQdrantSettings:
         assert settings.HYBRID_SEMANTIC_WEIGHT == 0.6
         assert settings.HYBRID_KEYWORD_WEIGHT == 0.4
 
+    def test_fail_closed_rag_defaults(self):
+        from app.core.config import Settings
+
+        settings = Settings()
+        assert settings.RAG_RETRIEVAL_RELEVANCE_FLOOR == 0.65
+        assert settings.MCP_LIVE_DATA_TIMEOUT_SECONDS == 30.0
+
+    def test_retrieval_floor_is_configurable_and_bounded(self):
+        from app.core.config import Settings
+
+        settings = Settings(
+            _env_file=None,
+            RAG_RETRIEVAL_RELEVANCE_FLOOR=0.72,
+        )
+        assert settings.RAG_RETRIEVAL_RELEVANCE_FLOOR == 0.72
+
+        with pytest.raises(ValueError):
+            Settings(
+                _env_file=None,
+                RAG_RETRIEVAL_RELEVANCE_FLOOR=1.01,
+            )
+
     def test_hybrid_weights_sum_to_one(self):
         from app.core.config import Settings
 

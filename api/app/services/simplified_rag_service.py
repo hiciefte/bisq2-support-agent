@@ -14,6 +14,7 @@ File Naming Conventions:
 
 import asyncio
 import logging
+import math
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ from app.services.rag.llm_provider import LLMProvider, needs_live_data
 from app.services.rag.llm_wiki_loader import LLMWikiLoader
 from app.services.rag.mcp_reconciliation import (
     extract_last_tool_result,
+    live_data_tool_calls_failed,
     reconcile_live_data_fallbacks,
     strip_bracket_wrapper,
 )
@@ -787,6 +789,11 @@ class SimplifiedRAGService:
                 "response_time": time.time() - start_time,
                 "answered_from": "context",  # Metadata flag
                 "context_fallback": True,
+                "confidence": 0.0,
+                "routing_action": "needs_human",
+                "routing_reason": "Context-only answer requires human review.",
+                "requires_human": True,
+                "forwarded_to_human": True,
             }
 
         except Exception as e:
@@ -798,7 +805,30 @@ class SimplifiedRAGService:
                 "response_time": time.time() - start_time,
                 "forwarded_to_human": True,
                 "context_fallback_failed": True,
+                "confidence": 0.0,
+                "routing_action": "needs_human",
+                "routing_reason": "Context-only answer generation failed.",
+                "requires_human": True,
             }
+
+    @staticmethod
+    def _best_calibrated_retrieval_score(
+        docs: List[Document], doc_scores: List[float]
+    ) -> Optional[float]:
+        """Return the best absolute semantic score, or None when uncalibrated."""
+        calibrated_scores: list[float] = []
+        for index, doc in enumerate(docs):
+            if doc.metadata.get("_score_type") != "absolute_cosine":
+                continue
+            if index >= len(doc_scores):
+                continue
+            try:
+                score = float(doc_scores[index])
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(score):
+                calibrated_scores.append(max(0.0, min(1.0, score)))
+        return max(calibrated_scores) if calibrated_scores else None
 
     def _resolve_source_default_version(
         self, question: str, detection_source: Optional[str]
@@ -1240,6 +1270,33 @@ class SimplifiedRAGService:
                 detected_version,
             )
 
+            has_canonical_fix = any(
+                doc.metadata.get("_canonical_fix_injected") is True for doc in docs
+            )
+            noncanonical_docs = [
+                doc
+                for doc in docs
+                if doc.metadata.get("_canonical_fix_injected") is not True
+            ]
+            noncanonical_scores = [
+                score
+                for doc, score in zip(docs, doc_scores)
+                if doc.metadata.get("_canonical_fix_injected") is not True
+            ]
+            best_retrieval_score = self._best_calibrated_retrieval_score(
+                noncanonical_docs,
+                noncanonical_scores,
+            )
+            retrieval_requires_review = (
+                bool(noncanonical_docs)
+                and not has_canonical_fix
+                and (
+                    best_retrieval_score is None
+                    or best_retrieval_score
+                    < self.settings.RAG_RETRIEVAL_RELEVANCE_FLOOR
+                )
+            )
+
             # If no documents were retrieved, check if we can answer from conversation context
             if not docs:
                 logger.info("No relevant documents found for the query")
@@ -1307,8 +1364,10 @@ class SimplifiedRAGService:
             # The LLM uses MCP HTTP transport to access tools at mcp_url
             mcp_tools_used: list[dict[str, str]] | None = None
             mcp_invocation_succeeded = False
+            live_data_required = needs_live_data(preprocessed_question)
+            live_data_failed = False
             use_mcp_invocation = self.mcp_enabled and (
-                token_callback is None or needs_live_data(preprocessed_question)
+                token_callback is None or live_data_required
             )
             if self.mcp_enabled and not use_mcp_invocation:
                 logger.info(
@@ -1351,40 +1410,60 @@ class SimplifiedRAGService:
                         )
                         raise RuntimeError("MCP tool invocation failed")
 
-                    response_text = tool_result.content
-                    response_text = self._reconcile_live_data_fallbacks(
-                        response_text=response_text,
-                        tool_calls=tool_result.tool_calls_made,
-                    )
-                    mcp_invocation_succeeded = True
-
-                    # Return detailed tool usage info if LLM actually called tools
-                    if tool_result.tool_calls_made:
-                        from datetime import datetime, timezone
-
-                        timestamp = datetime.now(timezone.utc).isoformat()
-                        mcp_tools_used = [
-                            {
-                                "tool": tc["tool"],
-                                "timestamp": timestamp,
-                                "result": tc.get(
-                                    "result"
-                                ),  # Include raw result for rich rendering
-                            }
-                            for tc in tool_result.tool_calls_made
-                        ]
-                        logger.info(
-                            f"MCP tool calls made: {[tc['tool'] for tc in tool_result.tool_calls_made]}"
+                    if live_data_required and live_data_tool_calls_failed(
+                        tool_result.tool_calls_made
+                    ):
+                        logger.error(
+                            "MCP live-data tool returned an unavailable result; "
+                            "routing to human review"
                         )
+                        response_text = error_messages.LIVE_DATA_UNAVAILABLE
+                        live_data_failed = True
                     else:
-                        logger.info(
-                            "LLM processed with tools available but didn't use any"
+                        response_text = tool_result.content
+                        response_text = self._reconcile_live_data_fallbacks(
+                            response_text=response_text,
+                            tool_calls=tool_result.tool_calls_made,
                         )
-                except Exception as e:
-                    logger.warning(f"MCP tool invocation failed, falling back: {e}")
-                    # Fall through to standard RAG chain
+                        mcp_invocation_succeeded = True
 
-            if not mcp_invocation_succeeded:
+                    if mcp_invocation_succeeded:
+                        # Return detailed tool usage info if the LLM called tools.
+                        if tool_result.tool_calls_made:
+                            from datetime import datetime, timezone
+
+                            timestamp = datetime.now(timezone.utc).isoformat()
+                            mcp_tools_used = [
+                                {
+                                    "tool": tc["tool"],
+                                    "timestamp": timestamp,
+                                    "result": tc.get("result"),
+                                }
+                                for tc in tool_result.tool_calls_made
+                            ]
+                            logger.info(
+                                "MCP tool calls made: %s",
+                                [tc["tool"] for tc in tool_result.tool_calls_made],
+                            )
+                        else:
+                            logger.info(
+                                "LLM processed with tools available but didn't use any"
+                            )
+                except Exception as e:
+                    if live_data_required:
+                        logger.error(
+                            "MCP live-data invocation failed; routing to human review",
+                            exc_info=True,
+                        )
+                        response_text = error_messages.LIVE_DATA_UNAVAILABLE
+                        live_data_failed = True
+                    else:
+                        logger.warning(
+                            "MCP tool invocation failed, falling back to static RAG: %s",
+                            e,
+                        )
+
+            if not mcp_invocation_succeeded and not live_data_failed:
                 # Standard RAG chain invocation (no MCP tools available).
                 # Pass the already-retrieved, version-aware documents so the
                 # chain does not re-retrieve with a version-blind default and
@@ -1533,6 +1612,21 @@ class SimplifiedRAGService:
                 question=preprocessed_question,
             )
 
+            if retrieval_requires_review:
+                logger.warning(
+                    "Retrieval relevance is below the autonomous-delivery floor "
+                    "(best=%s, floor=%.2f); routing to human review",
+                    (
+                        f"{best_retrieval_score:.3f}"
+                        if best_retrieval_score is not None
+                        else "uncalibrated"
+                    ),
+                    self.settings.RAG_RETRIEVAL_RELEVANCE_FLOOR,
+                )
+                confidence = 0.0
+            if live_data_failed:
+                confidence = 0.0
+
             # Get routing decision based on confidence
             routing_action = await self.auto_send_router.route_response(
                 confidence=confidence,
@@ -1550,6 +1644,15 @@ class SimplifiedRAGService:
                 detected_version=detected_version,
                 version_confidence=version_confidence,
             )
+            if retrieval_requires_review:
+                routing_reason = (
+                    "Retrieval relevance is below the autonomous-delivery floor. "
+                    + routing_reason
+                )
+            if live_data_failed:
+                routing_reason = (
+                    "Live data is temporarily unavailable; human review required."
+                )
 
             # Translate response back to user's language if needed
             final_response = response_text

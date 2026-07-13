@@ -3,6 +3,12 @@
 import re
 from typing import Any, Dict, List, Optional
 
+_TOOL_FAILURE_MARKERS = (
+    "error:",
+    "data unavailable",
+    "service temporarily unavailable",
+)
+
 
 def extract_last_tool_result(
     tool_calls: Optional[List[Dict[str, Any]]],
@@ -25,6 +31,22 @@ def strip_bracket_wrapper(text: str) -> str:
     if value.startswith("[") and value.endswith("]") and len(value) >= 2:
         return value[1:-1].strip()
     return value
+
+
+def live_data_tool_calls_failed(
+    tool_calls: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Return True when a completed live-data tool call has no usable result."""
+    if not tool_calls:
+        return False
+    for call in tool_calls:
+        result = str(call.get("result", "") or "").strip()
+        if not result:
+            return True
+        normalized = result.casefold()
+        if any(marker in normalized for marker in _TOOL_FAILURE_MARKERS):
+            return True
+    return False
 
 
 def reconcile_live_data_fallbacks(

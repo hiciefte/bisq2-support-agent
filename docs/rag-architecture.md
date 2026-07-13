@@ -149,6 +149,8 @@ See [Code Evidence Schema](code-evidence-schema.md).
 | `QUERY_REWRITE_MODEL` | `openai:gpt-4o-mini` | LLM model for query rewriting |
 | `QUERY_REWRITE_TIMEOUT_SECONDS` | `2.0` | Timeout for LLM rewrite |
 | `QUERY_REWRITE_MAX_HISTORY_TURNS` | `4` | Max chat history turns for context |
+| `RAG_RETRIEVAL_RELEVANCE_FLOOR` | `0.65` | Minimum calibrated semantic similarity for autonomous delivery |
+| `MCP_LIVE_DATA_TIMEOUT_SECONDS` | `30` | Per-request timeout for MCP live-data HTTP calls |
 | `ENABLE_COLBERT_RERANK` | app default: `false` | Compose default currently enables it (`true`) |
 | `COLBERT_TOP_N` | `5` | Final docs retained after rerank |
 | `LLM_WIKI_DIR_PATH` | `{DATA_DIR}/knowledge/llm_wiki/pages` | Internal LLM Wiki page directory |

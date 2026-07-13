@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -28,6 +29,67 @@ async def test_dispatch_autosend_returns_failed_when_transport_raises():
 
     assert outcome is DispatchOutcome.FAILED
     channel.send_message.assert_awaited_once_with("target-1", response)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("routing_action", ["", "legacy_auto_send"])
+async def test_dispatch_queues_missing_or_unknown_routing_action(
+    routing_action, caplog
+):
+    incoming = SimpleNamespace(
+        message_id="m-fail-closed",
+        question="How does Bisq Easy work?",
+        channel_metadata={"room_id": "support-room"},
+        user=SimpleNamespace(user_id="u-1", channel_user_id="alice"),
+    )
+    response = SimpleNamespace(
+        answer="Draft answer",
+        original_question=incoming.question,
+        sources=[],
+        requires_human=False,
+        metadata=SimpleNamespace(
+            routing_action=routing_action,
+            routing_reason=None,
+            confidence_score=0.99,
+        ),
+    )
+    channel = MagicMock()
+    channel.runtime = None
+    channel.get_delivery_target.return_value = "support-room"
+    channel.send_message = AsyncMock(return_value=True)
+    escalation_service = AsyncMock()
+    escalation_service.create_escalation = AsyncMock(
+        return_value=SimpleNamespace(id=101)
+    )
+    dispatcher = ChannelResponseDispatcher(
+        channel=channel,
+        channel_id="bisq2",
+        escalation_service=escalation_service,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        outcome = await dispatcher.dispatch(incoming, response)
+
+    assert outcome is DispatchOutcome.QUEUED
+    escalation_service.create_escalation.assert_awaited_once()
+    assert all(
+        call.args[1] is not response for call in channel.send_message.await_args_list
+    )
+    assert "routing_action" in caplog.text
+    assert "review" in caplog.text.lower()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("routing_action", ["auto_send", "needs_clarification"])
+def test_known_direct_delivery_actions_remain_autosend(routing_action):
+    response = SimpleNamespace(
+        requires_human=False,
+        metadata=SimpleNamespace(routing_action=routing_action),
+    )
+
+    assert ChannelResponseDispatcher.should_autosend_response(response) is True
+    assert ChannelResponseDispatcher.should_create_escalation(response) is False
 
 
 @pytest.mark.unit

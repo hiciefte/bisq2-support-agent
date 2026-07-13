@@ -12,6 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.prompts import error_messages
+from app.services.rag.auto_send_router import AutoSendRouter
 from app.services.rag.canonical_fixes import CANONICAL_FIXES
 from app.services.rag.document_retriever import (
     DocumentRetriever,
@@ -32,6 +34,7 @@ def _make_docs():
                 "title": "Trading",
                 "section": "Intro",
                 "protocol": "bisq_easy",
+                "_score_type": "absolute_cosine",
             },
         ),
         Document(
@@ -41,6 +44,7 @@ def _make_docs():
                 "title": "Reputation",
                 "section": None,
                 "protocol": "bisq_easy",
+                "_score_type": "absolute_cosine",
             },
         ),
     ]
@@ -364,6 +368,131 @@ class TestContextOnlyFallbackVersion:
         invoked = _llm_invocation_text(service.llm)
         assert "The user asked about Bisq 1" in invoked
         assert "The user asked about Bisq 2/Bisq Easy" not in invoked
+
+    @pytest.mark.asyncio
+    async def test_context_only_fallback_is_always_queued_for_review(self, service):
+        service.document_retriever.retrieve_with_scores.return_value = ([], [])
+        service.llm.invoke.return_value = LLMResponse(
+            content="From context: reopen the dispute from the trade screen."
+        )
+
+        response = await service.query(
+            "How do I reopen it?",
+            chat_history=[
+                {"role": "user", "content": "My dispute closed."},
+                {"role": "assistant", "content": "Let's look at that."},
+            ],
+            override_version="Bisq 1",
+        )
+
+        assert response["answered_from"] == "context"
+        assert response["routing_action"] == "needs_human"
+        assert response["requires_human"] is True
+        assert response["forwarded_to_human"] is True
+
+
+class TestFailClosedAnswerRouting:
+    @pytest.mark.asyncio
+    async def test_sub_floor_retrieval_forces_existing_router_to_review(self, service):
+        service.settings.RAG_RETRIEVAL_RELEVANCE_FLOOR = 0.65
+        service.document_retriever.retrieve_with_scores.return_value = (
+            _make_docs(),
+            [0.64, 0.50],
+        )
+        service.confidence_scorer.calculate_confidence = AsyncMock(return_value=0.99)
+        service.auto_send_router = AutoSendRouter()
+
+        response = await service.query(
+            "How does reputation work in Bisq 2?", chat_history=[]
+        )
+
+        assert response["confidence"] == 0.0
+        assert response["routing_action"] == "needs_human"
+        assert response["requires_human"] is True
+        assert response["forwarded_to_human"] is True
+
+    @pytest.mark.asyncio
+    async def test_above_floor_retrieval_keeps_normal_router_decision(self, service):
+        service.settings.RAG_RETRIEVAL_RELEVANCE_FLOOR = 0.65
+        service.document_retriever.retrieve_with_scores.return_value = (
+            _make_docs(),
+            [0.90, 0.80],
+        )
+        service.confidence_scorer.calculate_confidence = AsyncMock(return_value=0.99)
+        service.auto_send_router = AutoSendRouter()
+
+        response = await service.query(
+            "How does reputation work in Bisq 2?", chat_history=[]
+        )
+
+        assert response["confidence"] == 0.99
+        assert response["routing_action"] == "auto_send"
+        assert response["requires_human"] is False
+
+    @pytest.mark.asyncio
+    async def test_uncalibrated_retrieval_fails_closed_to_review(self, service):
+        docs = _make_docs()
+        for doc in docs:
+            doc.metadata.pop("_score_type")
+        service.document_retriever.retrieve_with_scores.return_value = (
+            docs,
+            [0.99, 0.98],
+        )
+        service.confidence_scorer.calculate_confidence = AsyncMock(return_value=0.99)
+        service.auto_send_router = AutoSendRouter()
+
+        response = await service.query(
+            "How does reputation work in Bisq 2?", chat_history=[]
+        )
+
+        assert response["confidence"] == 0.0
+        assert response["routing_action"] == "needs_human"
+        assert "relevance" in response["routing_reason"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure_mode", ["timeout", "infrastructure", "tool_unavailable"]
+    )
+    async def test_live_data_failure_returns_deterministic_review_response(
+        self, service, failure_mode
+    ):
+        service.mcp_enabled = True
+        service.rag_chain = MagicMock(return_value="Static BTC price from documents")
+        service.auto_send_router = AutoSendRouter()
+        if failure_mode == "timeout":
+            service.llm.invoke_with_tools = MagicMock(
+                side_effect=TimeoutError("MCP request timed out")
+            )
+        elif failure_mode == "infrastructure":
+            service.llm.invoke_with_tools = MagicMock(
+                return_value=ToolCallResult(
+                    content="MCP transport failed",
+                    success=False,
+                )
+            )
+        else:
+            service.llm.invoke_with_tools = MagicMock(
+                return_value=ToolCallResult(
+                    content="A static-looking current price",
+                    tool_calls_made=[
+                        {
+                            "tool": "get_market_prices",
+                            "result": "[Live Price Data Unavailable: temporary failure]",
+                        }
+                    ],
+                )
+            )
+
+        response = await service.query(
+            "What is the BTC price right now?", chat_history=[]
+        )
+
+        assert response["answer"] == error_messages.LIVE_DATA_UNAVAILABLE
+        assert response["routing_action"] == "needs_human"
+        assert response["requires_human"] is True
+        assert response["forwarded_to_human"] is True
+        assert response["mcp_tools_used"] is None
+        service.rag_chain.assert_not_called()
 
 
 class TestCanonicalFixInjection:
