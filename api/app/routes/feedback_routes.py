@@ -1,13 +1,11 @@
-import json
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict
 
 from app.channels.plugins.web.identity import derive_web_user_context
 from app.channels.reactions import ReactionEvent, ReactionRating
-from app.core.config import get_settings
 from app.core.exceptions import BaseAppException
 from app.models.feedback import ReactionSubmitRequest
 from app.services.feedback_service import get_feedback_service
@@ -104,36 +102,21 @@ async def submit_reaction(request: Request, reaction: ReactionSubmitRequest):
 
 
 @router.get("/feedback/stats")
-async def get_feedback_stats():
+async def get_feedback_stats(request: Request):
     """
     Get aggregated feedback statistics.
     """
     try:
-        settings = get_settings()
-        feedback_dir = Path(settings.FEEDBACK_DIR_PATH)
-        if not feedback_dir.exists():
-            return {"total_feedback": 0, "average_rating": 0, "positive_ratio": 0}
-
-        total_feedback = 0
-        total_rating = 0
-        positive_ratings = 0
-
-        # Process all feedback files
-        for feedback_file in feedback_dir.glob("feedback_*.jsonl"):
-            with open(feedback_file) as f:
-                for line in f:
-                    feedback = json.loads(line)
-                    total_feedback += 1
-                    total_rating += feedback["rating"]
-                    if feedback["rating"] > 0:
-                        positive_ratings += 1
-
-        average_rating = total_rating / total_feedback if total_feedback > 0 else 0
-        positive_ratio = positive_ratings / total_feedback if total_feedback > 0 else 0
+        feedback_service = get_feedback_service(request)
+        stats = await asyncio.to_thread(feedback_service.repository.get_feedback_stats)
+        total_feedback = int(stats["total"])
+        positive_ratio = float(stats["positive_rate"])
 
         return {
             "total_feedback": total_feedback,
-            "average_rating": average_rating,
+            # Feedback ratings are constrained to 0 or 1, so their average is
+            # the same value as the positive-feedback ratio.
+            "average_rating": positive_ratio,
             "positive_ratio": positive_ratio,
         }
 

@@ -23,6 +23,16 @@ from app.db.migration_validator import MigrationValidationError, validate_migrat
 logger = logging.getLogger(__name__)
 
 
+def _execute_script_in_transaction(cursor: sqlite3.Cursor, sql: str) -> None:
+    """Execute a SQL script inside a transaction left open for the caller.
+
+    ``sqlite3.Cursor.executescript`` commits any pending transaction before it
+    starts. The ``BEGIN`` therefore has to be part of the script itself so a
+    later statement failure can be rolled back together with earlier DDL.
+    """
+    cursor.executescript(f"BEGIN IMMEDIATE;\n{sql}")
+
+
 def calculate_checksum(file_path: Path) -> str:
     """
     Calculate SHA256 checksum of migration file.
@@ -99,8 +109,14 @@ def get_applied_migrations(conn: sqlite3.Connection) -> List[str]:
     # Upgrade table to include metadata columns
     _upgrade_schema_migrations_table(conn)
 
-    # Get applied migrations
-    cursor.execute("SELECT migration_name FROM schema_migrations ORDER BY id")
+    # Failure rows are audit records, not completed migrations. Excluding them
+    # allows the next startup to retry after a transient migration failure.
+    cursor.execute("""
+        SELECT migration_name
+        FROM schema_migrations
+        WHERE status = 'success'
+        ORDER BY id
+        """)
     return [row[0] for row in cursor.fetchall()]
 
 
@@ -171,7 +187,7 @@ def apply_migration(
 
         # Apply the migration SQL
         logger.info(f"Applying migration: {migration_name}")
-        cursor.executescript(up_sql)
+        _execute_script_in_transaction(cursor, up_sql)
 
         # Calculate execution time
         execution_time_ms = int((time.time() - start_time) * 1000)
@@ -180,8 +196,15 @@ def apply_migration(
         cursor.execute(
             """
             INSERT INTO schema_migrations
-            (migration_name, checksum, execution_time_ms, status, down_sql)
-            VALUES (?, ?, ?, ?, ?)
+            (migration_name, checksum, execution_time_ms, status, error_message, down_sql)
+            VALUES (?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(migration_name) DO UPDATE SET
+                checksum = excluded.checksum,
+                applied_at = CURRENT_TIMESTAMP,
+                execution_time_ms = excluded.execution_time_ms,
+                status = excluded.status,
+                error_message = NULL,
+                down_sql = excluded.down_sql
             """,
             (migration_name, checksum, execution_time_ms, "success", down_sql),
         )
@@ -199,9 +222,16 @@ def apply_migration(
             execution_time_ms = int((time.time() - start_time) * 1000)
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO schema_migrations
+                INSERT INTO schema_migrations
                 (migration_name, checksum, execution_time_ms, status, error_message, down_sql)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(migration_name) DO UPDATE SET
+                    checksum = excluded.checksum,
+                    applied_at = CURRENT_TIMESTAMP,
+                    execution_time_ms = excluded.execution_time_ms,
+                    status = excluded.status,
+                    error_message = excluded.error_message,
+                    down_sql = excluded.down_sql
                 """,
                 (
                     migration_name,
@@ -278,7 +308,7 @@ def rollback_migration(db_path: str, migration_name: str, force: bool = False) -
 
         # Execute down migration
         logger.info(f"Executing rollback SQL for {migration_name}")
-        cursor.executescript(down_sql)
+        _execute_script_in_transaction(cursor, down_sql)
 
         # Remove from applied migrations
         cursor.execute(
