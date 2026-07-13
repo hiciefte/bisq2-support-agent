@@ -382,8 +382,8 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT ]; do
     HEALTHY_CONTAINERS=$(docker compose -f docker-compose.yml ps --filter health=healthy -q | wc -l) # Count healthy
 
     if [ "$TOTAL_SERVICES" -eq 0 ]; then
-      echo -e "${YELLOW}No services defined in docker-compose.yml?${NC}"
-      break
+      echo -e "${RED}No services defined in docker-compose.yml.${NC}"
+      exit 1
     fi
 
     if [ "$HEALTHY_CONTAINERS" -eq "$TOTAL_SERVICES" ]; then
@@ -403,7 +403,7 @@ if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
     docker compose -f docker-compose.yml ps
     echo "--- Last logs --- "
     docker compose -f docker-compose.yml logs --tail=50
-    # Consider exiting: exit 1
+    exit 1
 fi
 
 # Setup automatic security updates

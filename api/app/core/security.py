@@ -244,6 +244,24 @@ def verify_admin_access(
     provided_key = request.headers.get("X-API-KEY")
 
     if provided_key:
+        # Full admin credentials take precedence when a legacy first-upgrade
+        # compatibility window temporarily uses the same value for Grafana.
+        # Both helpers retain constant-time comparison semantics.
+        if verify_admin_key(provided_key, settings):
+            if len(provided_key) < MIN_API_KEY_LENGTH:
+                logger.warning(
+                    f"Successful login with insecure admin key length: {len(provided_key)} chars"
+                )
+            else:
+                logger.debug(
+                    f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
+                )
+            request.state.admin_actor = "admin_api_key"
+            request.state.admin_auth_method = "api_key"
+            # Set session cookie after successful header-based auth for better UX
+            set_admin_cookie(response)
+            return True
+
         if verify_grafana_datasource_key(provided_key, settings):
             if not _is_grafana_read_request(request):
                 logger.warning(
@@ -263,28 +281,13 @@ def verify_admin_access(
             )
             return True
 
-        if verify_admin_key(provided_key, settings):
-            if len(provided_key) < MIN_API_KEY_LENGTH:
-                logger.warning(
-                    f"Successful login with insecure admin key length: {len(provided_key)} chars"
-                )
-            else:
-                logger.debug(
-                    f"Admin access granted via header from {request.client.host if request.client else 'unknown'}"
-                )
-            request.state.admin_actor = "admin_api_key"
-            request.state.admin_auth_method = "api_key"
-            # Set session cookie after successful header-based auth for better UX
-            set_admin_cookie(response)
-            return True
-        else:
-            logger.warning(
-                f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid admin credentials",
-            )
+        logger.warning(
+            f"Invalid admin credentials provided from {request.client.host if request.client else 'unknown'}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin credentials",
+        )
 
     # No authentication found
     logger.warning(

@@ -272,6 +272,181 @@ uses_qdrant_runtime() {
     true
 }
 
+_read_env_value() {
+    local env_file="$1"
+    local key="$2"
+
+    awk -v key="$key" '
+        index($0, key "=") == 1 {
+            print substr($0, length(key) + 2)
+            exit
+        }
+    ' "$env_file"
+}
+
+_write_env_value() {
+    local env_file="$1"
+    local key="$2"
+    local value="$3"
+    local env_tmp
+
+    env_tmp=$(mktemp "${env_file}.tmp.XXXXXX") || return 1
+    if ! awk -v key="$key" -v value="$value" '
+        BEGIN { found = 0 }
+        index($0, key "=") == 1 {
+            if (!found) {
+                print key "=" value
+                found = 1
+            }
+            next
+        }
+        { print }
+        END {
+            if (!found) {
+                print key "=" value
+            }
+        }
+    ' "$env_file" > "$env_tmp"; then
+        rm -f "$env_tmp"
+        return 1
+    fi
+
+    chmod 600 "$env_tmp"
+    mv "$env_tmp" "$env_file"
+}
+
+_secret_file_mode() {
+    local secret_file="$1"
+
+    if stat -c '%a' "$secret_file" >/dev/null 2>&1; then
+        stat -c '%a' "$secret_file"
+    else
+        stat -f '%Lp' "$secret_file"
+    fi
+}
+
+validate_grafana_runtime_secrets() {
+    local env_file="$1"
+    local secrets_dir="$2"
+    local entry env_name secret_name env_value file_value mode
+    local entries=(
+        "GRAFANA_ADMIN_PASSWORD:grafana_admin_password"
+        "GRAFANA_DATASOURCE_API_KEY:grafana_datasource_api_key"
+    )
+
+    if [ ! -f "$env_file" ]; then
+        log_error "Grafana environment file not found: $env_file"
+        return 1
+    fi
+
+    for entry in "${entries[@]}"; do
+        env_name="${entry%%:*}"
+        secret_name="${entry#*:}"
+        env_value=$(_read_env_value "$env_file" "$env_name")
+
+        if [ -z "$env_value" ]; then
+            log_error "$env_name is missing or empty in $env_file"
+            return 1
+        fi
+
+        if [ ! -s "$secrets_dir/$secret_name" ]; then
+            log_error "Grafana secret file is missing or empty: $secrets_dir/$secret_name"
+            return 1
+        fi
+
+        file_value=$(cat "$secrets_dir/$secret_name")
+        if [ "$env_value" != "$file_value" ]; then
+            log_error "$env_name differs from $secrets_dir/$secret_name; refusing to rotate either value"
+            return 1
+        fi
+
+        mode=$(_secret_file_mode "$secrets_dir/$secret_name")
+        if [ "$mode" != "600" ]; then
+            log_error "Grafana secret file must have mode 600: $secrets_dir/$secret_name (found $mode)"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+ensure_grafana_runtime_secrets() {
+    local env_file="$1"
+    local secrets_dir="${2:-${INSTALL_DIR:-/opt/bisq-support}/secrets}"
+    local entry env_name secret_name secret_file env_value file_value selected_value
+    local entries=(
+        "GRAFANA_ADMIN_PASSWORD:grafana_admin_password"
+        "GRAFANA_DATASOURCE_API_KEY:grafana_datasource_api_key"
+    )
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        log_error "openssl is required to provision Grafana runtime secrets"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$env_file")" "$secrets_dir"
+    chmod 700 "$secrets_dir"
+    touch "$env_file"
+    chmod 600 "$env_file"
+
+    # Detect conflicts before writing either secret, so the operation fails
+    # without partially reconciling a mismatched legacy installation.
+    for entry in "${entries[@]}"; do
+        env_name="${entry%%:*}"
+        secret_name="${entry#*:}"
+        secret_file="$secrets_dir/$secret_name"
+        env_value=$(_read_env_value "$env_file" "$env_name")
+        file_value=""
+        if [ -s "$secret_file" ]; then
+            file_value=$(cat "$secret_file")
+        fi
+
+        if [ -n "$env_value" ] && [ -n "$file_value" ] && [ "$env_value" != "$file_value" ]; then
+            log_error "$env_name differs from $secret_file; refusing to rotate either value"
+            return 1
+        fi
+    done
+
+    for entry in "${entries[@]}"; do
+        env_name="${entry%%:*}"
+        secret_name="${entry#*:}"
+        secret_file="$secrets_dir/$secret_name"
+        env_value=$(_read_env_value "$env_file" "$env_name")
+        file_value=""
+        if [ -s "$secret_file" ]; then
+            file_value=$(cat "$secret_file")
+        fi
+
+        if [ -n "$env_value" ]; then
+            selected_value="$env_value"
+        elif [ -n "$file_value" ]; then
+            selected_value="$file_value"
+        else
+            selected_value=$(openssl rand -base64 32 | tr -d '\n')
+            if [ -z "$selected_value" ]; then
+                log_error "Failed to generate $env_name"
+                return 1
+            fi
+        fi
+
+        if [ ! -s "$secret_file" ]; then
+            local secret_tmp
+            secret_tmp=$(mktemp "${secret_file}.tmp.XXXXXX") || return 1
+            chmod 600 "$secret_tmp"
+            printf '%s\n' "$selected_value" > "$secret_tmp"
+            mv "$secret_tmp" "$secret_file"
+        fi
+        chmod 600 "$secret_file"
+
+        if ! _write_env_value "$env_file" "$env_name" "$selected_value"; then
+            log_error "Failed to write $env_name to $env_file"
+            return 1
+        fi
+    done
+
+    validate_grafana_runtime_secrets "$env_file" "$secrets_dir"
+}
+
 validate_runtime_configuration() {
     # Reads from env file if given, otherwise falls back to shell env.
     local env_file="${1:-}"
@@ -386,6 +561,11 @@ export -f validate_app_env
 export -f detect_env_shadowing
 export -f is_env_enabled
 export -f uses_qdrant_runtime
+export -f _read_env_value
+export -f _write_env_value
+export -f _secret_file_mode
+export -f validate_grafana_runtime_secrets
+export -f ensure_grafana_runtime_secrets
 export -f validate_runtime_configuration
 export -f display_banner
 export -f get_container_name

@@ -445,7 +445,8 @@ def test_refresh_runtime_services_includes_qdrant(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     logged = log_file.read_text(encoding="utf-8")
     assert (
-        "compose -f docker-compose.yml up -d qdrant api web nginx bisq2-api" in logged
+        "compose -f docker-compose.yml up -d qdrant api matrix-alert-relay web nginx bisq2-api"
+        in logged
     )
 
 

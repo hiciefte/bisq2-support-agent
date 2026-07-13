@@ -130,7 +130,9 @@ services:
       - MAX_TOKENS=${MAX_TOKENS}
       # Admin and security configuration
       - ADMIN_API_KEY=${ADMIN_API_KEY}
-      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-}
+      # ADMIN_API_KEY is a secure compatibility fallback for the first upgrade
+      # from a legacy .env; update.sh provisions a dedicated non-rotating value.
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-${ADMIN_API_KEY:-}}
       - REACTOR_IDENTITY_SALT=${REACTOR_IDENTITY_SALT:-}
       - COOKIE_SECURE=${COOKIE_SECURE}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
@@ -387,11 +389,12 @@ services:
       - grafana-data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+      # Secure one-upgrade fallback; update.sh persists a dedicated password.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-${ADMIN_API_KEY:-}}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
-      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-}
+      - GRAFANA_DATASOURCE_API_KEY=${GRAFANA_DATASOURCE_API_KEY:-${ADMIN_API_KEY:-}}
       # Subpath configuration for nginx reverse proxy at /grafana/
       # Grafana handles subpath (receives /grafana/ prefix, serves from subpath)
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
@@ -404,6 +407,12 @@ services:
       - prometheus
     networks:
       - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
@@ -432,6 +441,12 @@ services:
       - "9100"
     networks:
       - bisq-support-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -477,6 +492,58 @@ services:
           cpus: '0.3'
           memory: 512M
 
+  # Isolated Matrix relay for Alertmanager notifications. This deliberately
+  # starts only the lightweight relay app, not the API's database/RAG lifespan.
+  matrix-alert-relay:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+      args:
+        - BUILD_ENV=production
+        - APP_UID=${APP_UID:-1001}
+        - APP_GID=${APP_GID:-1001}
+    restart: always
+    command: ["uvicorn", "app.alert_relay:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]
+    volumes:
+      - matrix-alert-relay-data:/data
+    environment:
+      - DATA_DIR=/data
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MATRIX_HOMESERVER_URL=${MATRIX_HOMESERVER_URL:-}
+      - MATRIX_ALERT_USER=${MATRIX_ALERT_USER:-}
+      - MATRIX_ALERT_PASSWORD=${MATRIX_ALERT_PASSWORD:-}
+      - MATRIX_ALERT_ROOM=${MATRIX_ALERT_ROOM:-}
+      - MATRIX_ALERT_SESSION_FILE=/data/matrix_alert_relay_session.json
+    expose:
+      - "8000"
+    networks:
+      - bisq-support-network
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+
   # Alertmanager for alert routing and notification
   alertmanager:
     image: prom/alertmanager:v0.26.0
@@ -507,10 +574,6 @@ services:
         limits:
           cpus: '0.3'
           memory: 256M
-
-  # NOTE: matrix-alertmanager-webhook service removed (Phase 9)
-  # Alerts are now forwarded via API: /alertmanager/alerts
-  # Uses password-based Matrix auth with automatic session refresh
 
   # Scheduler for periodic tasks
   scheduler:
@@ -543,6 +606,9 @@ services:
         echo '*/15 * * * * /scripts/rag-health-check.sh >> /var/log/cron/rag-health.log 2>&1' >> /etc/crontabs/root &&
         echo '*/10 * * * * /scripts/bisq-readiness-check.sh >> /var/log/cron/bisq-readiness.log 2>&1' >> /etc/crontabs/root &&
         echo '0 */12 * * * /scripts/poll-matrix.sh >> /var/log/cron/matrix-poll.log 2>&1' >> /etc/crontabs/root &&
+        # The heartbeat proves crond is executing jobs, not merely running.
+        echo '* * * * * touch /tmp/scheduler-heartbeat' >> /etc/crontabs/root &&
+        touch /tmp/scheduler-heartbeat &&
         # Start cron daemon in foreground, logging verbosely to stderr (which goes to docker logs)
         crond -f -l 8 -d 8
       "
@@ -555,6 +621,14 @@ services:
         condition: service_healthy
     networks:
       - bisq-support-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pidof crond >/dev/null && test -e /tmp/scheduler-heartbeat && now=$$(date +%s) && last=$$(stat -c %Y /tmp/scheduler-heartbeat) && test $$((now - last)) -lt 180'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
     deploy:
       resources:
         limits:
@@ -570,6 +644,7 @@ volumes:
   prometheus-data:
   grafana-data:
   alertmanager-data:
+  matrix-alert-relay-data:
   qdrant-data:
     name: bisq2-qdrant-data
   web_node_modules:

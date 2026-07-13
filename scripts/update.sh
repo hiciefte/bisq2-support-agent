@@ -36,7 +36,7 @@ validate_environment() {
     log_info "Validating environment..."
 
     # Check for required commands
-    if ! check_required_commands git docker jq curl; then
+    if ! check_required_commands git docker jq curl openssl; then
         exit 1
     fi
 
@@ -54,6 +54,12 @@ validate_environment() {
     if ! check_root; then
         log_warning "This script may need root privileges for some operations"
         log_warning "Consider running with sudo if you encounter permission errors"
+    fi
+
+    local grafana_secrets_dir="${BISQ_SUPPORT_SECRETS_DIR:-$INSTALL_DIR/secrets}"
+    if ! ensure_grafana_runtime_secrets "$DOCKER_DIR/.env" "$grafana_secrets_dir"; then
+        log_error "Grafana runtime secret provisioning failed"
+        exit 1
     fi
 
     if ! validate_runtime_configuration "$DOCKER_DIR/.env"; then
@@ -362,11 +368,11 @@ apply_updates() {
 
             # Build with BUILD_ID for cache invalidation, then start
             # Note: --build-arg only works with 'docker compose build', not 'up --build'
-            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api; then
+            if ! docker compose -f "$COMPOSE_FILE" build --build-arg BUILD_ID="${BUILD_ID:-bisq-support-build}" api matrix-alert-relay; then
                 log_error "Failed to build API service"
                 rollback_update "API rebuild failed"
             fi
-            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api; then
+            if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps api matrix-alert-relay; then
                 log_error "Failed to start API service"
                 rollback_update "API rebuild failed"
             fi
@@ -375,6 +381,9 @@ apply_updates() {
             sleep 95
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after rebuild"
+            fi
+            if ! wait_for_healthy "matrix-alert-relay" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Matrix alert relay health check failed after rebuild"
             fi
 
             # Ensure nginx is healthy and routing to the new API
@@ -404,7 +413,7 @@ apply_updates() {
         elif [ "$API_RESTART_NEEDED" = "true" ]; then
             log_info "Restarting API service..."
 
-            if ! docker compose -f "$COMPOSE_FILE" restart api; then
+            if ! docker compose -f "$COMPOSE_FILE" restart api matrix-alert-relay; then
                 log_error "Failed to restart API service"
                 rollback_update "API restart failed"
             fi
@@ -413,6 +422,9 @@ apply_updates() {
             sleep 95
             if ! wait_for_healthy "api" 120 "$DOCKER_DIR" "$COMPOSE_FILE"; then
                 rollback_update "API health check failed after restart"
+            fi
+            if ! wait_for_healthy "matrix-alert-relay" 60 "$DOCKER_DIR" "$COMPOSE_FILE"; then
+                rollback_update "Matrix alert relay health check failed after restart"
             fi
 
             # Ensure nginx is healthy and routing to the restarted API

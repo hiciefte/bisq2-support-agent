@@ -63,3 +63,20 @@ def test_grafana_key_cannot_delete_feedback(
     )
 
     assert response.status_code == 403
+
+
+def test_legacy_equal_grafana_and_admin_key_keeps_full_admin_access(
+    test_client: TestClient, test_settings, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        test_settings,
+        "GRAFANA_DATASOURCE_API_KEY",
+        test_settings.ADMIN_API_KEY,
+    )
+
+    response = test_client.delete(
+        "/admin/feedback/nonexistent-feedback-id",
+        headers={"X-API-KEY": test_settings.ADMIN_API_KEY},
+    )
+
+    assert response.status_code != 403

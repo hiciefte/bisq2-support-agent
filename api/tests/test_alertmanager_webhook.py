@@ -250,10 +250,13 @@ class TestAlertsEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["alerts_processed"] == 2
-        assert mock_matrix_service.send_alert_message.call_count == 2
+        assert mock_matrix_service.send_alert_message.call_count == 1
+        batched_message = mock_matrix_service.send_alert_message.await_args.args[0]
+        assert "Alert1" in batched_message
+        assert "Alert2" in batched_message
 
     def test_receive_alerts_no_matrix_service(self, sample_alert_payload):
-        """Test graceful handling when matrix service is not available."""
+        """Unavailable delivery must make Alertmanager retry the webhook."""
         from app.main import app
 
         # Remove matrix service
@@ -263,11 +266,8 @@ class TestAlertsEndpoint:
         client = TestClient(app)
         response = client.post("/alertmanager/alerts", json=sample_alert_payload)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["alerts_processed"] == 0
-        assert "warning" in data
+        assert response.status_code == 503
+        assert response.json()["detail"] == "matrix_service_unavailable"
 
     def test_receive_alerts_handles_send_failure(
         self, sample_alert_payload, mock_matrix_service
@@ -284,10 +284,23 @@ class TestAlertsEndpoint:
         client = TestClient(app)
         response = client.post("/alertmanager/alerts", json=sample_alert_payload)
 
-        # Should still return 200 but with 0 processed
-        assert response.status_code == 200
-        data = response.json()
-        assert data["alerts_processed"] == 0
+        assert response.status_code == 503
+        assert response.json()["detail"] == "matrix_delivery_failed"
+
+    def test_receive_alerts_handles_false_send_result(
+        self, sample_alert_payload, mock_matrix_service
+    ):
+        """A false Matrix result is a failed delivery, not a processed alert."""
+        from app.main import app
+
+        mock_matrix_service.send_alert_message = AsyncMock(return_value=False)
+        app.state.matrix_alert_service = mock_matrix_service
+
+        client = TestClient(app)
+        response = client.post("/alertmanager/alerts", json=sample_alert_payload)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "matrix_delivery_failed"
 
 
 # =============================================================================
